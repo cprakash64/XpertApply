@@ -483,14 +483,14 @@ describe("Jobs workspace", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Networking" }));
     await waitFor(() => expect(api.peopleCalls()).toEqual(["GET /jobs/1/people"]));
     // Reading the allowance is free and visible before spending it.
-    expect(await screen.findByText("12 of 20 people searches remaining today.")).toBeInTheDocument();
+    expect(screen.queryByText(/people searches remaining today/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Find people" }));
     expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
     expect(api.peopleCalls().filter((call) => call.startsWith("POST"))).toEqual([
       "POST /jobs/1/people/discover"
     ]);
-    expect(await screen.findByText(/11 searches remaining/)).toBeInTheDocument();
+    expect(screen.queryByText(/searches remaining/)).not.toBeInTheDocument();
   });
 
   it("shows cached people results without searching, and the card reflects the count", async () => {
@@ -531,7 +531,7 @@ describe("Jobs workspace", () => {
 
     // Stored results stay visible at zero remaining searches.
     expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
-    expect(screen.getByText("0 of 20 people searches remaining today.")).toBeInTheDocument();
+    expect(screen.queryByText(/people searches remaining today/)).not.toBeInTheDocument();
     expect(api.peopleCalls().filter((call) => call.startsWith("POST"))).toEqual([]);
 
     // Back on the list, the card's People action reports the loaded count

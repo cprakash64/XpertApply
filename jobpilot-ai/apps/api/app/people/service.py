@@ -35,6 +35,12 @@ from app.models.entities import (
     UserJobPeopleRecommendation,
     UserProfile,
 )
+from app.people.actionable import (
+    ACTIONABLE_CONTACT_POLICY_VERSION,
+    evaluate_actionable_contact,
+    is_displayable_record,
+)
+from app.people.brightdata import BRIGHTDATA_PROFILE_STRATEGY_VERSION
 from app.people.circuit import CircuitSnapshot, circuit_state
 from app.people.coalescing import (
     provider_search_coalescer,
@@ -48,8 +54,20 @@ from app.people.employment_validation import (
 )
 from app.people.errors import PeopleErrorCode, code_for_reason
 from app.people.feature_flags import is_beta
+from app.people.finalization import (
+    PEOPLE_DISPLAY_POLICY_VERSION,
+    PEOPLE_FINALIZATION_VERSION,
+    PROVIDER_ERROR_STATUSES,
+    FinalizationEvent,
+    ProviderOutcome,
+    decide_outcome,
+    display_policy_rejection,
+    every_failure_was_a_budget_stop,
+)
+from app.people.finalization import dominant_failure as _dominant_failure
 from app.people.intelligence import extract_job_people_profile
 from app.people.observability import metric
+from app.people.openai_web import OPENAI_IDENTITY_VERSION, OpenAIWebPeopleProvider
 from app.people.pdl_company import PDL_COMPANY_RESOLUTION_VERSION
 from app.people.pdl_query import PDL_QUERY_LADDER_VERSION
 from app.people.provider_usage import (
@@ -58,7 +76,9 @@ from app.people.provider_usage import (
 )
 from app.people.providers import (
     APOLLO_ENRICHMENT_ADAPTER_VERSION,
+    APOLLO_ENRICHMENT_STRATEGY_VERSION,
     PDL_DISCOVERY_STRATEGY_VERSION,
+    ApolloPeopleProvider,
     PDLPeopleProvider,
     ProviderUnavailable,
     get_email_provider,
@@ -103,6 +123,18 @@ from app.people.title_ontology import (
     manager_title_groups,
     recruiter_title_groups,
 )
+from app.people.waterfall import (
+    ACTIONABLE_SKIPS,
+    CoverageTarget,
+    ProviderAvailability,
+    ProviderStep,
+    ProviderStepResult,
+    SkipReason,
+    WaterfallResult,
+    categories_below_target,
+    configured_provider_order,
+    run_waterfall,
+)
 
 logger = logging.getLogger("jobpilot.people")
 
@@ -135,6 +167,23 @@ PEOPLE_SEARCH_CONTRACT_VERSION = ":".join(
         PDL_COMPANY_RESOLUTION_VERSION,
         SCORING_VERSION,
         PEOPLE_RESULT_SCHEMA_VERSION,
+        PEOPLE_FINALIZATION_VERSION,
+        # Whether a stored "nobody matched" is still true depends on which
+        # records this product is willing to show, and on how far Apollo is
+        # allowed to go to complete one.
+        PEOPLE_DISPLAY_POLICY_VERSION,
+        # Whether a stored contact is still showable depends on the acceptance
+        # gate that produced it. A run finalized when masked, linkless records
+        # counted as contacts is not comparable to one finalized under this
+        # policy, and must not be replayed as though it were.
+        ACTIONABLE_CONTACT_POLICY_VERSION,
+        BRIGHTDATA_PROFILE_STRATEGY_VERSION,
+        OPENAI_IDENTITY_VERSION,
+        APOLLO_ENRICHMENT_STRATEGY_VERSION,
+        # The chain itself is part of the contract: a result produced when only
+        # PDL could answer is not comparable to one produced with Apollo behind
+        # it, and must not be replayed as though it were.
+        f"order:{'>'.join(configured_provider_order())}",
     )
 )
 # Key under which each run records the contract it was produced under. Runs
@@ -173,125 +222,47 @@ DISPLAYABLE_EMPLOYMENT_STATUSES = frozenset(
 # the generic "paused after repeated provider failures" line is reserved for a
 # genuinely open provider circuit and must never appear for an empty result, an
 # unresolved domain, a per-user budget, or a request-specific rejection.
+# Four user-facing outcomes and no fifth. Naming which vendor failed, or
+# explaining an integration defect as a spent budget, tells a user something
+# they cannot act on and — in the live case — something untrue. Capacity copy is
+# reserved for the codes that mean a budget really did stop the search.
+_TEMPORARILY_UNAVAILABLE = (
+    "People search is temporarily unavailable. Please try again later."
+)
+_CAPACITY_REACHED = (
+    "People search is temporarily unavailable because provider capacity has "
+    "been reached."
+)
 _SAFE_PROVIDER_MESSAGES = {
-    "provider_unauthorized": (
-        "People search is temporarily unavailable because the provider "
-        "connection needs attention."
-    ),
-    "provider_forbidden": (
-        "People search is temporarily unavailable because the provider "
-        "connection needs attention."
-    ),
-    "provider_not_configured": (
-        "People search is temporarily unavailable because the provider "
-        "connection needs attention."
-    ),
-    "provider_configuration_circuit_open": (
-        "People search is temporarily unavailable because the provider "
-        "connection needs attention."
-    ),
-    "provider_master_key_required_or_forbidden": (
-        "Apollo complete-profile access is unavailable for the configured account."
-    ),
+    "provider_unauthorized": _TEMPORARILY_UNAVAILABLE,
+    "provider_forbidden": _TEMPORARILY_UNAVAILABLE,
+    "provider_not_configured": _TEMPORARILY_UNAVAILABLE,
+    "provider_configuration_circuit_open": _TEMPORARILY_UNAVAILABLE,
+    "provider_master_key_required_or_forbidden": _TEMPORARILY_UNAVAILABLE,
     "provider_rate_limited": (
-        "The people provider is temporarily rate-limited. Try again after the "
+        "People search is temporarily unavailable. Try again after the "
         "displayed retry time."
     ),
-    "provider_timeout": (
-        "The people provider is temporarily unavailable. Cached results are "
-        "shown when available."
-    ),
-    "provider_network_error": (
-        "The people provider is temporarily unavailable. Cached results are "
-        "shown when available."
-    ),
-    "provider_unavailable": (
-        "The people provider is temporarily unavailable. Cached results are "
-        "shown when available."
-    ),
-    "provider_circuit_open": (
-        "The people provider is temporarily unavailable. Cached results are "
-        "shown when available."
-    ),
-    "provider_budget_exceeded": (
-        "People search is paused for today because the provider account's "
-        "daily search budget is used up."
-    ),
+    "provider_timeout": _TEMPORARILY_UNAVAILABLE,
+    "provider_network_error": _TEMPORARILY_UNAVAILABLE,
+    "provider_unavailable": _TEMPORARILY_UNAVAILABLE,
+    "provider_circuit_open": _TEMPORARILY_UNAVAILABLE,
+    "provider_budget_exceeded": _CAPACITY_REACHED,
     "provider_user_limit_exceeded": "You have reached today's people-search limit.",
     "company_domain_unresolved": (
-        "We could not confidently identify this company in the people provider."
+        "We could not confidently identify this company yet."
     ),
-    "provider_route_invalid": (
-        "We could not complete this search because the provider request was "
-        "invalid."
-    ),
-    "no_results": (
-        "No strong recruiter, manager, or referral matches were found for this "
-        "company yet."
-    ),
-    "provider_schema_error": "The people provider returned an unsupported response.",
-    "provider_request_invalid": (
-        "We could not complete this search because the provider request was "
-        "invalid."
-    ),
-    "provider_response_invalid": "The people provider returned an unsupported response.",
+    "provider_route_invalid": _TEMPORARILY_UNAVAILABLE,
+    "no_results": "No strong contacts were found for this company yet.",
+    "provider_schema_error": _TEMPORARILY_UNAVAILABLE,
+    "provider_request_invalid": _TEMPORARILY_UNAVAILABLE,
+    "provider_response_invalid": _TEMPORARILY_UNAVAILABLE,
     "provider_request_cancelled": "The people search was cancelled before it completed.",
 }
 
 
 def _safe_provider_message(reason: str) -> str:
-    return _SAFE_PROVIDER_MESSAGES.get(
-        reason, "Professional data providers are temporarily unavailable."
-    )
-
-
-# Which run status a typed failure produces. Keeping these distinct is what
-# lets the UI say "we could not identify the domain" instead of implying the
-# provider is down.
-_STATUS_FOR_CODE: dict[PeopleErrorCode, str] = {
-    PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED: "domain_unresolved",
-    # A genuinely malformed request. Reachable now only by a real request
-    # defect: a provider that answered a valid query with zero records is
-    # handled as an empty result, not as a rejection.
-    PeopleErrorCode.INVALID_INPUT: "invalid_request",
-    PeopleErrorCode.USER_BUDGET_EXHAUSTED: "user_budget_exhausted",
-    PeopleErrorCode.PROVIDER_BUDGET_EXHAUSTED: "provider_budget_exhausted",
-    PeopleErrorCode.AUTHENTICATION_FAILED: "provider_configuration_error",
-    PeopleErrorCode.AUTHORIZATION_FAILED: "provider_configuration_error",
-}
-
-# Every terminal state that is a failure rather than a result. Used wherever the
-# code previously hard-coded {"provider_unavailable", "persistence_error"}.
-PROVIDER_ERROR_STATUSES = frozenset(
-    {
-        "provider_unavailable",
-        "persistence_error",
-        "domain_unresolved",
-        "invalid_request",
-        "user_budget_exhausted",
-        "provider_budget_exhausted",
-        "provider_configuration_error",
-    }
-)
-
-# When several categories fail differently, report the most actionable one.
-# Configuration beats budget beats rate limiting beats transient beats
-# request-scoped, because that is the order in which an operator or user can
-# actually do something about it.
-_FAILURE_PRIORITY: tuple[PeopleErrorCode, ...] = (
-    PeopleErrorCode.AUTHENTICATION_FAILED,
-    PeopleErrorCode.AUTHORIZATION_FAILED,
-    PeopleErrorCode.PROVIDER_BUDGET_EXHAUSTED,
-    PeopleErrorCode.USER_BUDGET_EXHAUSTED,
-    PeopleErrorCode.RATE_LIMITED,
-    PeopleErrorCode.PROVIDER_SERVER_ERROR,
-    PeopleErrorCode.PROVIDER_TIMEOUT,
-    PeopleErrorCode.NETWORK_ERROR,
-    PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED,
-    PeopleErrorCode.INVALID_INPUT,
-    PeopleErrorCode.REQUEST_CANCELLED,
-    PeopleErrorCode.UNKNOWN_PROVIDER_ERROR,
-)
+    return _SAFE_PROVIDER_MESSAGES.get(reason, _TEMPORARILY_UNAVAILABLE)
 
 
 # Failures that mean the user's unit bought nothing. Configuration and
@@ -334,18 +305,24 @@ def _refundable_failure(code: PeopleErrorCode, provider: object) -> bool:
     return not _provider_work_started(provider)
 
 
-def _dominant_failure(reasons: list[str]) -> str | None:
-    """Pick the reason a human most needs to see out of a mixed failure list."""
+_ACTIONABLE_REJECTION_METRICS = {
+    "masked_name": "people_masked_name_rejected_total",
+    "incomplete_name": "people_masked_name_rejected_total",
+    "missing_name": "people_masked_name_rejected_total",
+    "missing_linkedin_url": "people_missing_linkedin_rejected_total",
+    "invalid_linkedin_url": "people_missing_linkedin_rejected_total",
+    "ambiguous_identity": "people_ambiguous_identity_rejected_total",
+}
 
-    if not reasons:
-        return None
-    by_code: dict[PeopleErrorCode, str] = {}
+
+def _record_actionable_rejection(reasons: list[str], *, provider: str) -> None:
+    """Count why a contact was withheld. Reasons only — never who was withheld."""
+
+    metric("people_contacts_rejected_total", provider=provider)
     for reason in reasons:
-        by_code.setdefault(code_for_reason(reason), reason)
-    for code in _FAILURE_PRIORITY:
-        if code in by_code:
-            return by_code[code]
-    return reasons[0]
+        name = _ACTIONABLE_REJECTION_METRICS.get(reason)
+        if name:
+            metric(name, provider=provider, reason=reason)
 
 
 def _log_provider_failure(exc: ProviderUnavailable, discovery_run_id: int) -> None:
@@ -588,7 +565,22 @@ def _provider_error_retry_state(
     return remaining == 0, remaining or None, retry_at
 
 
-def _provider_error_blocks_discovery(run: PeopleDiscoveryRun) -> bool:
+def _provider_error_blocks_discovery(
+    run: PeopleDiscoveryRun, *, fallback_available: bool = False
+) -> bool:
+    """Whether a stored failure should short-circuit a new discovery.
+
+    A budget stop recorded against one provider says nothing about the others.
+    Replaying it while a funded fallback is standing by is exactly what kept a
+    job pinned to "the provider budget has been reached" after Apollo had been
+    added to the chain: the cached PDL failure was returned before the waterfall
+    ever ran.
+    """
+
+    if fallback_available and code_for_reason(run.failure_code or "") is (
+        PeopleErrorCode.PROVIDER_BUDGET_EXHAUSTED
+    ):
+        return False
     retry_eligible, _, _ = _provider_error_retry_state(run)
     return not retry_eligible
 
@@ -1252,6 +1244,75 @@ def _ensure_recommendation(
     return recommendation
 
 
+def _fallback_provider_available(db: Session, user_id: int) -> bool:
+    """Whether any non-primary provider in the chain could still run.
+
+    Deliberately conservative: it checks configuration, credentials and budget,
+    the same gates the waterfall applies, so the pre-flight check and the
+    waterfall can never disagree about whether a fallback exists.
+    """
+
+    primary = str(settings.people_primary_provider).strip().lower()
+    for name in configured_provider_order():
+        if name == primary:
+            continue
+        if name == "apollo":
+            if not (
+                settings.people_apollo_discovery_enabled
+                and (settings.apollo_api_key or "").strip()
+            ):
+                continue
+            if _provider_budget_state(
+                db,
+                provider="apollo",
+                user_id=user_id,
+                global_budget=settings.people_apollo_daily_credit_budget,
+                per_user_budget=settings.people_apollo_per_user_daily_limit,
+            ):
+                continue
+            return True
+        if name == "openai_web":
+            if not OpenAIWebPeopleProvider.configured():
+                continue
+            if _provider_budget_state(
+                db,
+                provider="openai_web",
+                user_id=user_id,
+                global_budget=settings.people_openai_web_daily_call_budget,
+                per_user_budget=settings.people_openai_web_per_user_daily_limit,
+            ):
+                continue
+            return True
+    return False
+
+
+def _log_unavailable_providers(steps: list[ProviderStep], discovery_run_id: int) -> None:
+    """Say, once per discovery, why a configured provider cannot run.
+
+    A provider that is enabled but unusable is an operator problem, and it must
+    not be inferable only from the absence of a log line.
+    """
+
+    for step in steps:
+        availability = getattr(step, "availability", None)
+        if availability is None:
+            continue
+        state = availability()
+        if state.available or state.reason is None:
+            continue
+        level = (
+            logging.WARNING if state.reason in ACTIONABLE_SKIPS else logging.INFO
+        )
+        logger.log(
+            level,
+            "people_provider_unavailable provider=%s reason=%s discovery_run_id=%s%s",
+            state.provider,
+            state.reason.value,
+            discovery_run_id,
+            f" detail={state.detail}" if state.detail else "",
+        )
+
+
 def _budget_check(db: Session, user_id: int) -> None:
     start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     provider = settings.people_primary_provider.lower()
@@ -1316,7 +1377,12 @@ def _budget_check(db: Session, user_id: int) -> None:
     # Both limits below are measured in provider *credit units*, not user
     # actions, so neither may be presented as the user's search limit. The
     # user's allowance lives in app.people.quota and is counted in actions.
-    if global_budget and global_used >= global_budget:
+    # A spent primary budget is only a hard stop when no other provider in the
+    # chain could answer. Previously this raised before any provider ran, so an
+    # exhausted PDL allowance disabled People search even with a funded Apollo
+    # account behind it.
+    fallback_available = _fallback_provider_available(db, user_id)
+    if global_budget and global_used >= global_budget and not fallback_available:
         metric(
             "people_budget_rejections_total",
             provider=provider,
@@ -1326,15 +1392,12 @@ def _budget_check(db: Session, user_id: int) -> None:
             status_code=429,
             detail={
                 "code": "PEOPLE_PROVIDER_BUDGET_EXCEEDED",
-                "message": (
-                    "People search is temporarily unavailable because the "
-                    "provider budget has been reached."
-                ),
+                "message": _CAPACITY_REACHED,
                 "availability_reason": "provider_budget_exceeded",
                 "retryable": False,
             },
         )
-    if per_user_budget and user_used >= per_user_budget:
+    if per_user_budget and user_used >= per_user_budget and not fallback_available:
         metric(
             "people_budget_rejections_total",
             provider=provider,
@@ -1344,10 +1407,7 @@ def _budget_check(db: Session, user_id: int) -> None:
             status_code=429,
             detail={
                 "code": "PEOPLE_PROVIDER_BUDGET_EXCEEDED",
-                "message": (
-                    "People search is temporarily unavailable because the "
-                    "provider budget has been reached."
-                ),
+                "message": _CAPACITY_REACHED,
                 "availability_reason": "provider_budget_exceeded",
                 "retryable": False,
             },
@@ -1916,13 +1976,606 @@ def _redis_lock(
                 pass
 
 
+def _provider_budget_state(
+    db: Session,
+    *,
+    provider: str,
+    user_id: int,
+    global_budget: int,
+    per_user_budget: int,
+) -> SkipReason | None:
+    """``None`` when this provider may spend, otherwise the typed blocking reason.
+
+    Each provider is measured against its own configured allowance, so one
+    exhausted account never speaks for another.
+
+    A provider with *no* budget configured returns INVALID_CONFIGURATION rather
+    than a budget-exhausted state: an unbounded paid provider is not a safe
+    default, but neither is silently behaving as though someone had switched it
+    off. That distinction is what makes the live failure visible — the operator
+    enabled Apollo and left both budgets at zero, and every discovery skipped it
+    without ever saying so.
+    """
+
+    if global_budget <= 0 and per_user_budget <= 0:
+        return SkipReason.INVALID_CONFIGURATION
+    start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    global_used = int(
+        db.scalar(
+            select(
+                func.coalesce(func.sum(PeopleProviderOperationUsage.budget_units), 0)
+            ).where(
+                PeopleProviderOperationUsage.occurred_at >= start,
+                PeopleProviderOperationUsage.provider == provider,
+            )
+        )
+        or 0
+    )
+    user_used = int(
+        db.scalar(
+            select(
+                func.coalesce(func.sum(PeopleProviderOperationUsage.budget_units), 0)
+            ).where(
+                PeopleProviderOperationUsage.user_id == user_id,
+                PeopleProviderOperationUsage.occurred_at >= start,
+                PeopleProviderOperationUsage.provider == provider,
+            )
+        )
+        or 0
+    )
+    if global_budget and global_used >= global_budget:
+        return SkipReason.DAILY_BUDGET_EXHAUSTED
+    if per_user_budget and user_used >= per_user_budget:
+        return SkipReason.USER_BUDGET_EXHAUSTED
+    return None
+
+
+class _ApolloFallbackStep:
+    """Apollo People Search, then enrichment for the few survivors.
+
+    Search returns identifiers; only enrichment reveals a LinkedIn URL, so the
+    two are separate calls and enrichment is deliberately applied to a small
+    ranked subset rather than to every row the search returned.
+
+    The rule this class exists to enforce: **a failed enrichment loses fields,
+    not people.** A live Apollo account answered People Search correctly and
+    then rejected ``/people/bulk_match`` with HTTP 422. That rejection used to
+    be logged and dropped, which cost the run twice over — the search results
+    were still discarded downstream, and the only failure left to report was an
+    earlier PDL budget stop that had not stopped anything.
+    """
+
+    name = "apollo"
+
+    def __init__(
+        self,
+        db: Session,
+        *,
+        user: User,
+        job_id: int,
+        run: PeopleDiscoveryRun,
+        profile: JobPeopleSearchProfile,
+    ) -> None:
+        self._db = db
+        self._user = user
+        self._job_id = job_id
+        self._run = run
+        self._profile = profile
+        self._provider: ApolloPeopleProvider | None = None
+
+    def availability(self) -> ProviderAvailability:
+        """Every gate, as a typed answer rather than a generic unavailability."""
+
+        if not settings.people_apollo_discovery_enabled:
+            return ProviderAvailability.blocked("apollo", SkipReason.DISABLED)
+        if not (settings.apollo_api_key or "").strip():
+            return ProviderAvailability.blocked("apollo", SkipReason.MISSING_CREDENTIALS)
+        if (
+            settings.people_apollo_daily_credit_budget <= 0
+            and settings.people_apollo_per_user_daily_limit <= 0
+        ):
+            return ProviderAvailability.blocked(
+                "apollo",
+                SkipReason.INVALID_CONFIGURATION,
+                "Apollo is enabled but PEOPLE_APOLLO_DAILY_CREDIT_BUDGET and "
+                "PEOPLE_APOLLO_PER_USER_DAILY_LIMIT are both 0; set a positive "
+                "budget or remove apollo from PEOPLE_PROVIDER_ORDER",
+            )
+        if int(settings.people_apollo_max_enrichments_per_discovery) <= 0:
+            return ProviderAvailability.blocked(
+                "apollo",
+                SkipReason.INVALID_CONFIGURATION,
+                "PEOPLE_APOLLO_MAX_ENRICHMENTS_PER_DISCOVERY is 0, so Apollo "
+                "could never resolve a LinkedIn URL",
+            )
+        # Apollo cannot search without a company identity any more than PDL can.
+        if not (self._profile.company_domain or self._profile.company_name):
+            return ProviderAvailability.blocked("apollo", SkipReason.COMPANY_UNRESOLVED)
+        blocked = _provider_budget_state(
+            self._db,
+            provider="apollo",
+            user_id=self._user.id,
+            global_budget=settings.people_apollo_daily_credit_budget,
+            per_user_budget=settings.people_apollo_per_user_daily_limit,
+        )
+        if blocked:
+            return ProviderAvailability.blocked("apollo", blocked)
+        snapshot = circuit_state(
+            provider="apollo",
+            account_fingerprint=provider_account_fingerprint(settings.apollo_api_key),
+            operation="people_search",
+        )
+        if snapshot.open_kinds:
+            return ProviderAvailability.blocked("apollo", SkipReason.CIRCUIT_OPEN)
+        return ProviderAvailability.ok("apollo")
+
+    def gate(self, categories: tuple[PeopleCategory, ...]) -> None:
+        self.availability().raise_if_blocked()
+
+    async def run(
+        self, categories: tuple[PeopleCategory, ...], call_budget: int
+    ) -> ProviderStepResult:
+        provider = ApolloPeopleProvider()
+        self._provider = provider
+        _configure_provider_usage(
+            provider,
+            db=self._db,
+            user_id=self._user.id,
+            job_id=self._job_id,
+            discovery_run_id=self._run.id,
+            adapter_version=APOLLO_ENRICHMENT_ADAPTER_VERSION,
+        )
+        limits = {
+            "likely_recruiter": settings.people_apollo_recruiter_results,
+            "potential_hiring_manager": settings.people_apollo_manager_results,
+            "potential_referrer": settings.people_apollo_referral_results,
+        }
+        found: dict[PeopleCategory, list[ProviderPerson]] = {
+            category: [] for category in _PEOPLE_CATEGORIES
+        }
+        calls = 0
+        raw_count = 0
+        no_match: set[str] = set()
+        failure: str | None = None
+        warnings: list[str] = []
+        searched_successfully = False
+        # The acceptance funnel, in counts only. Every value below is an
+        # integer: no name, no identifier, no title, no URL, no raw record.
+        counts: dict[str, int] = defaultdict(int)
+        display_rejections: dict[str, int] = defaultdict(int)
+
+        for category in categories:
+            if calls >= call_budget:
+                break
+            queries = build_category_search_queries(self._profile, category)
+            if not queries:
+                continue
+            # One search per category: the strongest company identity plus the
+            # category's own titles. Repeating the ladder here would multiply
+            # cost for a fallback that exists to fill a gap.
+            query = queries[0].model_copy(
+                update={"limit": max(1, int(limits.get(category, 4)))}
+            )
+            try:
+                rows = await provider.search_people(query)
+                calls += 1
+                searched_successfully = True
+            except ProviderUnavailable as exc:
+                failure = exc.reason
+                _log_provider_failure(exc, self._run.id)
+                break
+            counts["search_results_received"] += int(
+                getattr(provider, "last_search_raw_count", len(rows))
+            )
+            counts["search_candidates_normalized"] += len(rows)
+            raw_count += len(rows)
+            if not rows:
+                no_match.add(category)
+                continue
+            displayable: list[ProviderPerson] = []
+            for person in rows:
+                if self._exact_company(person):
+                    counts["exact_company_passed"] += 1
+                if _title_category_affinity(person.current_title) == category:
+                    counts["title_category_passed"] += 1
+                rejection = display_policy_rejection(person.full_name)
+                if rejection is not None:
+                    display_rejections[rejection] += 1
+                    continue
+                counts["display_policy_passed"] += 1
+                displayable.append(person)
+            if not displayable:
+                # The provider answered; nothing it returned can honestly be
+                # shown. That is an empty result for this category, and it is
+                # emphatically not a budget stop.
+                no_match.add(category)
+                continue
+            found[category] = deduplicate(displayable)
+
+        # Enrichment reveals LinkedIn URLs, and is capped hard: only the top
+        # ranked survivors of each category are worth a paid enrichment.
+        enrich_budget = min(
+            max(0, call_budget - calls),
+            int(settings.people_apollo_max_enrichments_per_discovery),
+        )
+        enrichment_failed = False
+        if enrich_budget and any(found.values()):
+            requests: list[PersonEnrichmentRequest] = []
+            for category in categories:
+                for person in found[category][:2]:
+                    if len(requests) >= enrich_budget:
+                        break
+                    if person.linkedin_url:
+                        # Already carries the field enrichment would buy.
+                        continue
+                    requests.append(
+                        PersonEnrichmentRequest(
+                            provider_person_id=person.provider_person_id,
+                            category=category,
+                        )
+                    )
+            if requests:
+                counts["enrichment_attempted"] = len(requests)
+                try:
+                    enriched_rows = await provider.enrich_people(requests)
+                    calls += 1
+                except ProviderUnavailable as exc:
+                    # A failed enrichment loses LinkedIn URLs, not the people.
+                    # It is carried as a warning so the finalizer can still name
+                    # it when nothing survived, and ignore it when people did.
+                    _log_provider_failure(exc, self._run.id)
+                    enriched_rows = []
+                    enrichment_failed = True
+                    warnings.append(exc.reason)
+                by_id = {
+                    row.provider_person_id: row
+                    for row in enriched_rows
+                    if row.provider_person_id
+                }
+                counts["enrichment_succeeded"] = len(by_id)
+                counts["enrichment_failed"] = max(
+                    0, len(requests) - len(by_id)
+                )
+                for category in _PEOPLE_CATEGORIES:
+                    found[category] = [
+                        by_id.get(person.provider_person_id, person)
+                        for person in found[category]
+                    ]
+
+        accepted = sum(len(rows) for rows in found.values())
+        counts["candidates_accepted"] = accepted
+        for reason, count in display_rejections.items():
+            counts[f"display_policy_rejected_{reason}"] = count
+        if display_rejections:
+            logger.info(
+                "apollo_display_policy discovery_run_id=%s policy_version=%s "
+                "display_policy_rejected=%s",
+                self._run.id,
+                PEOPLE_DISPLAY_POLICY_VERSION,
+                dict(sorted(display_rejections.items())),
+            )
+        logger.info(
+            "apollo_candidate_funnel discovery_run_id=%s %s",
+            self._run.id,
+            " ".join(f"{key}={counts[key]}" for key in sorted(counts)),
+        )
+
+        return ProviderStepResult(
+            candidates=found,
+            calls=calls,
+            raw_count=raw_count,
+            no_match_categories=no_match,
+            failure_reason=failure,
+            warnings=warnings,
+            stage_counts=dict(counts),
+            outcome=_provider_step_outcome(
+                searched=searched_successfully,
+                failure=failure,
+                accepted=accepted,
+                enrichment_failed=enrichment_failed,
+            ),
+        )
+
+    def _exact_company(self, person: ProviderPerson) -> bool:
+        expected = (self._profile.company_domain or "").strip().lower()
+        if not expected:
+            return False
+        return (person.current_company_domain or "").strip().lower() == expected
+
+
+def _provider_step_outcome(
+    *,
+    searched: bool,
+    failure: str | None,
+    accepted: int,
+    enrichment_failed: bool,
+) -> str:
+    """Which of the five typed provider outcomes this attempt was.
+
+    "Failed" alone hid the live case entirely: Apollo's search worked and its
+    enrichment did not, which is neither a healthy provider nor a broken one.
+    """
+
+    if failure is not None:
+        return ProviderOutcome.SEARCH_FAILED.value
+    if not searched:
+        return ProviderOutcome.PROVIDER_SKIPPED.value
+    if not accepted:
+        return ProviderOutcome.SEARCH_NO_MATCH.value
+    return (
+        ProviderOutcome.SEARCH_SUCCESS_ENRICHMENT_FAILED.value
+        if enrichment_failed
+        else ProviderOutcome.SEARCH_SUCCESS_ENRICHMENT_SUCCESS.value
+    )
+
+
+class _PublicWebFallbackStep:
+    """Optional, bounded public-web discovery. Never authoritative."""
+
+    name = "openai_web"
+
+    def __init__(
+        self,
+        db: Session,
+        *,
+        user: User,
+        profile: JobPeopleSearchProfile,
+        run: PeopleDiscoveryRun,
+    ) -> None:
+        self._db = db
+        self._user = user
+        self._profile = profile
+        self._run = run
+        self.rejected: dict[str, int] = {}
+
+    def availability(self) -> ProviderAvailability:
+        if not settings.people_openai_web_discovery_enabled:
+            return ProviderAvailability.blocked("openai_web", SkipReason.DISABLED)
+        if not (settings.openai_api_key or "").strip():
+            return ProviderAvailability.blocked(
+                "openai_web", SkipReason.MISSING_CREDENTIALS
+            )
+        # A public-web search for an unidentified company returns strangers.
+        if not (self._profile.company_domain or self._profile.company_normalized_name):
+            return ProviderAvailability.blocked(
+                "openai_web", SkipReason.COMPANY_UNRESOLVED
+            )
+        blocked = _provider_budget_state(
+            self._db,
+            provider="openai_web",
+            user_id=self._user.id,
+            global_budget=settings.people_openai_web_daily_call_budget,
+            per_user_budget=settings.people_openai_web_per_user_daily_limit,
+        )
+        if blocked:
+            return ProviderAvailability.blocked("openai_web", blocked)
+        return ProviderAvailability.ok("openai_web")
+
+    def gate(self, categories: tuple[PeopleCategory, ...]) -> None:
+        self.availability().raise_if_blocked()
+
+    async def run(
+        self, categories: tuple[PeopleCategory, ...], call_budget: int
+    ) -> ProviderStepResult:
+        provider = OpenAIWebPeopleProvider()
+        outcome = await provider.discover(
+            company_name=self._profile.company_name,
+            company_aliases=tuple(self._profile.company_aliases),
+            company_domain=self._profile.company_domain,
+            categories=categories,
+        )
+        self.rejected = dict(outcome.rejected)
+        found: dict[PeopleCategory, list[ProviderPerson]] = {
+            category: [] for category in _PEOPLE_CATEGORIES
+        }
+        for person in outcome.candidates:
+            category = _title_category_affinity(person.current_title)
+            if category in categories:
+                found[category].append(person)
+        no_match = {
+            category
+            for category in categories
+            if not found[category] and not outcome.failure_reason
+        }
+        accepted = sum(len(rows) for rows in found.values())
+        return ProviderStepResult(
+            candidates=found,
+            calls=min(outcome.searches_used, call_budget),
+            raw_count=provider.last_search_raw_count,
+            no_match_categories=no_match,
+            failure_reason=outcome.failure_reason,
+            stage_counts={
+                "search_results_received": provider.last_search_raw_count,
+                "search_candidates_normalized": len(outcome.candidates),
+                "candidates_accepted": accepted,
+            },
+            # The public web adapter has no separate enrichment step, so its
+            # outcomes collapse onto the same vocabulary every other provider
+            # reports — which is what lets the finalizer treat it identically.
+            outcome=_provider_step_outcome(
+                searched=outcome.failure_reason is None,
+                failure=outcome.failure_reason,
+                accepted=accepted,
+                enrichment_failed=False,
+            ),
+        )
+
+
+def _final_provider_label(
+    accepted_sources: dict[str, int],
+    *,
+    attempted: list[str],
+    primary: str,
+) -> str:
+    """Who supplied the result this run is reporting.
+
+    One provider that supplied every accepted contact is named outright. When
+    several contributed, a neutral ``multi:`` label records the set rather than
+    crediting one of them. With nothing accepted the column falls back to the
+    chain that was attempted, so a failed run still says how far it got.
+    """
+
+    contributors = sorted(name for name, count in accepted_sources.items() if count)
+    if len(contributors) == 1:
+        return contributors[0][:40]
+    if contributors:
+        return f"multi:{'+'.join(contributors)}"[:40]
+    if len(attempted) > 1:
+        return f"multi:{'+'.join(attempted)}"[:40]
+    return (attempted[0] if attempted else primary)[:40]
+
+
+async def _run_provider_fallbacks(
+    db: Session,
+    *,
+    user: User,
+    job_id: int,
+    run: PeopleDiscoveryRun,
+    profile: JobPeopleSearchProfile,
+    categories: dict[PeopleCategory, list[ProviderPerson]],
+    primary_failures: list[str],
+    primary_no_match: set[str],
+    diagnostics: dict[str, dict],
+    company_identity: object | None,
+) -> WaterfallResult | None:
+    """Offer the categories the primary left short to the rest of the chain.
+
+    Returns ``None`` when no fallback provider is configured after the primary,
+    so the caller keeps the primary's results untouched.
+    """
+
+    order = configured_provider_order()
+    primary = str(settings.people_primary_provider).strip().lower()
+    followers = [name for name in order if name != primary]
+    if not followers:
+        return None
+
+    target = CoverageTarget.from_settings()
+    gaps = categories_below_target(categories, target)
+    if not gaps:
+        return None
+
+    # A request-scoped primary failure (unresolved company, invalid input) means
+    # no other provider can help either.
+    for reason in primary_failures:
+        if code_for_reason(reason) in {
+            PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED,
+            PeopleErrorCode.INVALID_INPUT,
+            PeopleErrorCode.USER_BUDGET_EXHAUSTED,
+            PeopleErrorCode.REQUEST_CANCELLED,
+        }:
+            return None
+    if not settings.people_provider_fallback_on_no_match and not primary_failures:
+        return None
+
+    steps: list[ProviderStep] = []
+    web_step: _PublicWebFallbackStep | None = None
+    for name in followers:
+        if name == "apollo":
+            steps.append(
+                _ApolloFallbackStep(
+                    db, user=user, job_id=job_id, run=run, profile=profile
+                )
+            )
+        elif name == "openai_web":
+            web_step = _PublicWebFallbackStep(
+                db, user=user, profile=profile, run=run
+            )
+            steps.append(web_step)
+    if not steps:
+        return None
+
+    _log_unavailable_providers(steps, run.id)
+    result = await run_waterfall(
+        steps,
+        seed=categories,
+        target=target,
+        discovery_run_id=run.id,
+    )
+    # Diagnostics stay per-category and provider-labelled so an operator can see
+    # which hop produced which people without any of it reaching the UI.
+    for attempt in result.attempts:
+        for category in attempt.categories:
+            entry = diagnostics.setdefault(category, {})
+            entry.setdefault("provider_fallbacks", []).append(attempt.safe_summary())
+    if web_step is not None and web_step.rejected:
+        for category in gaps:
+            diagnostics.setdefault(category, {})[
+                "public_web_rejections"
+            ] = dict(web_step.rejected)
+    logger.info(
+        "people_waterfall job_id=%s discovery_run_id=%s providers=%s coverage=%s "
+        "calls=%s duplicates=%s",
+        job_id,
+        run.id,
+        ",".join(result.providers_attempted) or "none",
+        result.coverage(),
+        result.total_calls,
+        result.duplicates_dropped,
+    )
+    return result
+
+
 async def discover(
     db: Session,
     user: User,
     job_id: int,
     strategy: DiscoveryStrategy = "exact",
 ) -> dict:
+    """One user action, one final outcome, one ``people_waterfall_finalized``.
+
+    The event is emitted from a ``finally`` deliberately. Every previous
+    attempt to log the chain's conclusion lived on the success path, so the
+    branches that mattered most — a rejected fallback request, an internal
+    error, a cancelled request, a cache hit — produced nothing at all, and a
+    live investigation had to infer the outcome from the absence of a line.
+    """
+
     started = time.monotonic()
+    event = FinalizationEvent(
+        job_id=job_id,
+        discovery_run_id=None,
+        provider_order=configured_provider_order(),
+    )
+    try:
+        return await _discover_once(
+            db, user, job_id, strategy, started=started, event=event
+        )
+    except HTTPException as exc:
+        # A quota, burst, or eligibility rejection never reached a provider.
+        # It is still a discovery request, and still gets its one event.
+        event.final_status = "rejected"
+        event.final_reason = _rejection_reason(exc)
+        raise
+    except BaseException as exc:
+        event.final_status = "aborted"
+        event.final_reason = type(exc).__name__
+        raise
+    finally:
+        event.duration_ms = (time.monotonic() - started) * 1000
+        event.emit()
+
+
+def _rejection_reason(exc: HTTPException) -> str:
+    """The typed code behind a pre-provider rejection, never its message."""
+
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if isinstance(code, str) and code:
+            return code[:60]
+    return f"http_{exc.status_code}"
+
+
+async def _discover_once(
+    db: Session,
+    user: User,
+    job_id: int,
+    strategy: DiscoveryStrategy,
+    *,
+    started: float,
+    event: FinalizationEvent,
+) -> dict:
     metric(
         "people_discovery_requests_total",
         provider=settings.people_primary_provider,
@@ -1946,6 +2599,11 @@ async def discover(
         )
         metric("people_discovery_duration_ms", (time.monotonic() - started) * 1000)
         logger.info("people_discovery cache_hit=true job_id=%s scoring_version=%s", job_id, SCORING_VERSION)
+        event.discovery_run_id = run.id
+        event.final_status = "complete"
+        event.accepted_count = len(fresh)
+        event.quota_decision = "not_charged"
+        event.cache_decision = "hit_candidates"
         return recommendations_payload(db, user, job_id)
 
     fingerprint = query_fingerprint(job, strategy)
@@ -1967,6 +2625,10 @@ async def discover(
             strategy,
             SCORING_VERSION,
         )
+        event.discovery_run_id = cached_no_match.id
+        event.final_status = cached_no_match.status
+        event.quota_decision = "not_charged"
+        event.cache_decision = "hit_no_match"
         return recommendations_payload(db, user, job_id)
 
     cached_provider_error = _current_provider_error_run(
@@ -1977,13 +2639,21 @@ async def discover(
     )
     if (
         cached_provider_error is not None
-        and _provider_error_blocks_discovery(cached_provider_error)
+        and _provider_error_blocks_discovery(
+            cached_provider_error,
+            fallback_available=_fallback_provider_available(db, user.id),
+        )
     ):
         metric(
             "people_discovery_cache_hits_total",
             provider="database_provider_error",
             scoring_version=SCORING_VERSION,
         )
+        event.discovery_run_id = cached_provider_error.id
+        event.final_status = cached_provider_error.status
+        event.final_reason = cached_provider_error.failure_code
+        event.quota_decision = "not_charged"
+        event.cache_decision = "hit_provider_error"
         return recommendations_payload(db, user, job_id)
 
     if strategy == "broadened":
@@ -2015,6 +2685,9 @@ async def discover(
             # A coalesced waiter pays nothing: the leader's single unit covers
             # the work both callers are waiting on.
             metric("people_discovery_coalesced_waiter_total", provider=settings.people_primary_provider)
+            event.final_status = "in_progress"
+            event.quota_decision = "not_charged"
+            event.cache_decision = "coalesced_waiter"
             return {
                 "status": "in_progress",
                 "availability_reason": "available",
@@ -2033,7 +2706,12 @@ async def discover(
                 },
             }
         # Recheck after lock acquisition.
-        if _fresh_candidates(db, job_id, user.id):
+        rechecked = _fresh_candidates(db, job_id, user.id)
+        if rechecked:
+            event.final_status = "complete"
+            event.accepted_count = len(rechecked)
+            event.quota_decision = "not_charged"
+            event.cache_decision = "hit_candidates_after_lock"
             return recommendations_payload(db, user, job_id)
         if _fresh_no_match_run(
             db,
@@ -2041,6 +2719,9 @@ async def discover(
             user_id=user.id,
             fingerprint=fingerprint,
         ) is not None:
+            event.final_status = "complete"
+            event.quota_decision = "not_charged"
+            event.cache_decision = "hit_no_match_after_lock"
             return recommendations_payload(db, user, job_id)
         cached_provider_error = _current_provider_error_run(
             db,
@@ -2050,8 +2731,16 @@ async def discover(
         )
         if (
             cached_provider_error is not None
-            and _provider_error_blocks_discovery(cached_provider_error)
+            and _provider_error_blocks_discovery(
+                cached_provider_error,
+                fallback_available=_fallback_provider_available(db, user.id),
+            )
         ):
+            event.discovery_run_id = cached_provider_error.id
+            event.final_status = cached_provider_error.status
+            event.final_reason = cached_provider_error.failure_code
+            event.quota_decision = "not_charged"
+            event.cache_decision = "hit_provider_error_after_lock"
             return recommendations_payload(db, user, job_id)
         # Past every cache and coalescing opportunity: this is a genuine new
         # search, so exactly one user unit is reserved here — never inside the
@@ -2093,6 +2782,7 @@ async def discover(
         )
         db.add(run)
         db.commit()
+        event.discovery_run_id = run.id
         _configure_provider_usage(
             provider,
             db=db,
@@ -2146,6 +2836,12 @@ async def discover(
             for category in _PEOPLE_CATEGORIES
         }
         failures: list[str] = []
+        # Provider problems that cost the run some data but not its people: an
+        # Apollo enrichment rejected while the search results survived. The
+        # finalizer reads these only when nothing at all was accepted, so they
+        # never downgrade a run that produced contacts — and never let an
+        # earlier budget stop answer for them either.
+        warnings: list[str] = []
         # Categories the provider answered successfully with zero people. These
         # are results, not failures, and are what separates a truthful
         # "no strong matches" from "the provider rejected the request".
@@ -2153,6 +2849,16 @@ async def discover(
         searched = 0
         enriched: list[ProviderPerson] = []
         displayed: dict[str, int] = defaultdict(int)
+        # Which provider each surviving contact came from. The run's `provider`
+        # column is written from this, so a result Apollo supplied is never
+        # filed under PDL.
+        accepted_sources: dict[str, int] = {}
+        # Every provider that actually ran, in order. Starts with the primary,
+        # which is attempted before the waterfall is consulted.
+        providers_attempted: list[str] = [settings.people_primary_provider]
+        # Typed outcome per provider, for the finalization event.
+        provider_outcomes: dict[str, str] = {}
+        provider_calls = 0
         employment_outcomes: dict[str, int] = defaultdict(int)
         pdl_company_identity = None
         pipeline_stage = "search"
@@ -2352,30 +3058,55 @@ async def discover(
                     category=category,
                     scoring_version=SCORING_VERSION,
                 )
-            pipeline_stage = "enrichment"
-            if (
-                not any(categories.values())
-                and settings.people_pdl_fallback_enabled
-                and settings.people_primary_provider != "pdl"
-            ):
-                fallback = PDLPeopleProvider()
-                _configure_provider_usage(
-                    fallback,
-                    db=db,
-                    user_id=user.id,
-                    job_id=job_id,
-                    discovery_run_id=run.id,
-                    adapter_version="provider-neutral-v1",
+            pipeline_stage = "fallback"
+            provider_calls += sum(
+                int(diagnostics[category]["provider_call_count"])
+                for category in _PEOPLE_CATEGORIES
+            )
+            provider_outcomes[settings.people_primary_provider] = (
+                _provider_step_outcome(
+                    searched=any(
+                        diagnostics[category]["query_executed"]
+                        for category in _PEOPLE_CATEGORIES
+                    ),
+                    failure=_dominant_failure(failures),
+                    accepted=sum(len(rows) for rows in categories.values()),
+                    enrichment_failed=False,
                 )
-                for category in _PEOPLE_CATEGORIES:
-                    fallback_rows: list[ProviderPerson] = []
-                    for query in build_category_search_queries(profile, category):
-                        try:
-                            fallback_rows.extend(await fallback.search_people(query))
-                        except ProviderUnavailable as exc:
-                            failures.append(exc.reason)
-                            _log_provider_failure(exc, run.id)
-                    categories[category] = deduplicate(fallback_rows)
+            )
+            # The primary provider has had its turn. Anything it left short is
+            # offered to the rest of the configured chain — Apollo, then the
+            # optional public-web fallback — for those categories only. A spent
+            # PDL budget stops PDL, not the product.
+            waterfall_result = await _run_provider_fallbacks(
+                db,
+                user=user,
+                job_id=job_id,
+                run=run,
+                profile=profile,
+                categories=categories,
+                primary_failures=failures,
+                primary_no_match=no_match_categories,
+                diagnostics=diagnostics,
+                company_identity=pdl_company_identity,
+            )
+            if waterfall_result is not None:
+                categories = waterfall_result.candidates
+                failures.extend(waterfall_result.failures)
+                warnings.extend(waterfall_result.warnings)
+                # A follower that answered with nobody is a truthful result and
+                # must reach the finalizer: it is what stops an earlier
+                # provider's budget stop from speaking for a provider that was
+                # never blocked at all.
+                no_match_categories |= waterfall_result.no_match_categories
+                provider_outcomes.update(waterfall_result.provider_outcomes)
+                provider_calls += waterfall_result.total_calls
+                company_context["provider_waterfall"] = waterfall_result.safe_summary()
+                for name in waterfall_result.providers_attempted:
+                    if name not in providers_attempted:
+                        providers_attempted.append(name)
+
+            pipeline_stage = "enrichment"
 
             preliminary_by_category: dict[PeopleCategory, list[PreliminaryCandidate]] = {
                 category: [] for category in _PEOPLE_CATEGORIES
@@ -2474,9 +3205,25 @@ async def discover(
             )
             for _score, category, _person, _school, _employer in enrich_targets:
                 diagnostics[category]["selected_for_enrichment"] += 1
+            # Only the primary provider's own records can be enriched by the
+            # primary provider. A fallback provider's people arrive already
+            # complete — its step ran its own search *and* its own enrichment —
+            # and their identifiers belong to a different namespace entirely.
+            #
+            # Passing them here is what erased the live Apollo results: PDL's
+            # enrich_people answers from its own search cache, found nothing
+            # under an Apollo id, and every Apollo contact was dropped as an
+            # "enrichment miss" before the run had a chance to display one.
+            primary_name = str(settings.people_primary_provider).strip().lower()
+            primary_targets = [
+                item for item in enrich_targets if item[2].provider == primary_name
+            ]
+            carried_targets = [
+                item for item in enrich_targets if item[2].provider != primary_name
+            ]
             unique_enrichment_requests = list(
                 dict.fromkeys(
-                    item[2].provider_person_id for item in enrich_targets
+                    item[2].provider_person_id for item in primary_targets
                 )
             )
             try:
@@ -2488,7 +3235,7 @@ async def discover(
                             rank_score=score,
                         )
                         for score, category, person, _school, _employer
-                        in enrich_targets
+                        in primary_targets
                     ]
                 )
             except ProviderUnavailable as exc:
@@ -2506,14 +3253,24 @@ async def discover(
                 len(unique_enrichment_requests),
                 provider=settings.people_primary_provider,
             )
-            enriched_by_id = {item.provider_person_id: item for item in enriched}
+            # Keyed by provider as well as id: two providers' identifier spaces
+            # overlap, and a collision would attach one person's record to
+            # another's.
+            enriched_by_id: dict[tuple[str, str], ProviderPerson] = {
+                (item.provider, item.provider_person_id): item for item in enriched
+            }
+            for _score, _category, person, _school, _employer in carried_targets:
+                enriched_by_id.setdefault(
+                    (person.provider, person.provider_person_id), person
+                )
             rejection_reason_for = getattr(
                 provider, "enrichment_rejection_reason", lambda _value: None
             )
             for _score, category, initial, _school, _employer in enrich_targets:
                 key = (
                     "enrichment_matches"
-                    if initial.provider_person_id in enriched_by_id
+                    if (initial.provider, initial.provider_person_id)
+                    in enriched_by_id
                     else "enrichment_misses"
                 )
                 diagnostics[category][key] += 1
@@ -2545,7 +3302,9 @@ async def discover(
                     diagnostics[category]["display_cap_excluded"] += 1
                     diagnostics[category]["candidates_rejected"] += 1
                     continue
-                person = enriched_by_id.get(initial.provider_person_id)
+                person = enriched_by_id.get(
+                    (initial.provider, initial.provider_person_id)
+                )
                 if person is None:
                     diagnostics[category]["candidates_rejected"] += 1
                     continue
@@ -2708,6 +3467,35 @@ async def discover(
                     and score >= threshold + 15
                 ):
                     rejection_reasons = []
+                # The actionable-contact gate, applied last so no earlier
+                # relaxation can talk its way past it. A candidate that fails
+                # here still takes the suppression path below — it is persisted
+                # as a suppressed row and stays available as an internal search
+                # hint, but it is never a visible recommendation.
+                decision = evaluate_actionable_contact(
+                    person,
+                    profile,
+                    category=category,
+                    employment_status=employment.status,
+                )
+                metric("people_contacts_evaluated_total", provider=person.provider)
+                if not decision.accepted:
+                    # Merged, not counted: the suppression branch below tallies
+                    # every reason exactly once, and counting here as well
+                    # double-reported each withheld contact.
+                    rejection_reasons = list(
+                        dict.fromkeys([*rejection_reasons, *decision.rejection_reasons])
+                    )
+                    _record_actionable_rejection(
+                        decision.rejection_reasons, provider=person.provider
+                    )
+                else:
+                    # Accepted candidates carry the validated URL, never the raw
+                    # one the provider sent.
+                    person = decision.candidate or person
+                    metric(
+                        "people_contacts_accepted_total", provider=person.provider
+                    )
                 if rejection_reasons:
                     pipeline_stage = "recommendation_persistence"
                     canonical = _person_for_provider(db, person)
@@ -2824,6 +3612,9 @@ async def discover(
                 canonical.employment_revalidation_required = False
                 canonical.employment_conflict_detected_at = None
                 displayed[category] += 1
+                accepted_sources[person.provider] = (
+                    accepted_sources.get(person.provider, 0) + 1
+                )
                 diagnostics[category]["accepted"] += 1
                 diagnostics[category]["final_displayed_count"] += 1
                 metric(
@@ -2836,38 +3627,40 @@ async def discover(
             usage = await provider.get_usage()
             run = db.get(PeopleDiscoveryRun, run.id)
             any_displayed = any(displayed.values())
-            # A category the provider answered with zero people is a result, not
-            # a failure. Only real failures can downgrade the run.
-            run.status = "partial" if failures and any_displayed else "complete"
-            if any_displayed and no_match_categories:
-                # Some categories matched and some were answered with nobody:
-                # the honest answer is partial coverage, not a provider problem.
-                run.status = "partial"
-            if failures and not any_displayed:
-                # The failure a human can act on wins, and its typed code — not
-                # the fact that *something* failed — decides the status. An
-                # unresolved domain or an exhausted user budget must never be
-                # reported as a provider outage.
-                dominant = _dominant_failure(failures) or "provider_unavailable"
-                dominant_code = code_for_reason(dominant)
-                run.status = _STATUS_FOR_CODE.get(
-                    dominant_code, "provider_unavailable"
-                )
-                run.failure_code = dominant[:60]
-                run.safe_failure_message = _safe_provider_message(dominant)
-                if _refundable_failure(dominant_code, provider):
-                    # Nothing useful was bought with the user's unit: either
-                    # JobPilot's own data was insufficient, or the provider was
-                    # never meaningfully reached. Give it back.
-                    reservation.refund(db, reason=str(dominant_code))
-            elif not any_displayed and no_match_categories:
-                # Every category the provider answered came back empty. The run
-                # completed successfully; there is simply nobody to show.
-                run.status = "complete"
-                run.failure_code = None
-                run.safe_failure_message = None
+            # ONE decision, for the whole chain, in one place. Every branch that
+            # used to write its own status is gone: that is how a follower's
+            # rejected request could be logged and then forgotten while an
+            # earlier provider's budget stop was reported as the final word.
+            outcome = decide_outcome(
+                accepted_count=sum(displayed.values()),
+                failures=failures,
+                warnings=warnings,
+                no_match_categories=no_match_categories,
+            )
+            run.status = outcome.status
+            run.failure_code = outcome.reason[:60] if outcome.reason else None
+            run.safe_failure_message = (
+                _safe_provider_message(outcome.reason) if outcome.reason else None
+            )
+            if outcome.code is not None and _refundable_failure(
+                outcome.code, provider
+            ):
+                # Nothing useful was bought with the user's unit: either
+                # JobPilot's own data was insufficient, or the provider was
+                # never meaningfully reached. Give it back.
+                reservation.refund(db, reason=str(outcome.code))
+            # The provider column names who actually answered. Writing the
+            # configured primary here regardless — as this did — is what made an
+            # Apollo-supplied result read as a PDL result, and an upstream PDL
+            # budget stop read as the final word.
+            run.provider = _final_provider_label(
+                accepted_sources,
+                attempted=providers_attempted,
+                primary=settings.people_primary_provider,
+            )
             run.records_searched = searched
-            run.records_enriched = len(enriched)
+            # Records carrying enriched detail, whichever provider supplied it.
+            run.records_enriched = len(enriched_by_id)
             # Secondary employment verification has its own ledger and budget.
             # Do not fold those credits into the primary discovery run.
             run.provider_credits_used = usage.credits_used
@@ -2888,18 +3681,40 @@ async def discover(
                 else {}
             )
             durable_usage = _durable_usage_summary(db, run.id)
+            # The ledger is the truth; recording the decision here means an
+            # operator never has to infer it. The inspector previously derived
+            # "charged" from `cache_hit`, so a run that reserved a unit and then
+            # refunded it still claimed to have charged one — which is why the
+            # run metadata and the quota row disagreed.
+            quota_decision = reservation.decision
             run.company_context = {
                 **company_context,
+                "user_quota_decision": quota_decision,
+                "providers_attempted": list(providers_attempted),
+                "accepted_candidate_sources": dict(accepted_sources),
                 "provider_request_count": usage.requests,
                 "durable_provider_usage": durable_usage,
                 "provider_bulk_capability_state": getattr(
                     provider, "bulk_capability_state", "unknown"
                 ),
+                "provider_outcomes": dict(sorted(provider_outcomes.items())),
+                "provider_warnings": list(warnings),
+                "finalization_version": PEOPLE_FINALIZATION_VERSION,
+                "display_policy_version": PEOPLE_DISPLAY_POLICY_VERSION,
+                # Only true when a budget is the *whole* story. The UI's
+                # capacity copy is gated on this, never on a budget failure
+                # merely being present somewhere in the chain.
+                "all_providers_budget_blocked": (
+                    not any_displayed
+                    and every_failure_was_a_budget_stop([*failures, *warnings])
+                ),
                 "pipeline_outcomes": {
                     "search": (
                         "partial_failure" if failures else "completed"
                     ),
-                    "enrichment": "completed",
+                    "enrichment": (
+                        "degraded" if warnings else "completed"
+                    ),
                     **_provider_pipeline_outcomes(
                         provider, durable_usage
                     ),
@@ -2941,6 +3756,14 @@ async def discover(
                 started=started,
                 cache="miss",
             )
+            event.providers_attempted = list(providers_attempted)
+            event.provider_outcomes = dict(provider_outcomes)
+            event.accepted_count = sum(displayed.values())
+            event.accepted_sources = dict(accepted_sources)
+            event.final_status = run.status
+            event.final_reason = run.failure_code
+            event.quota_decision = reservation.decision
+            event.provider_calls = provider_calls + usage.requests
         except Exception as exc:
             db.rollback()
             persistence_failure = (
@@ -3023,6 +3846,14 @@ async def discover(
                     # search the user should pay for.
                     reservation.refund(db, reason="internal_error_before_provider_work")
                 db.commit()
+                event.final_status = failed_run.status
+                event.final_reason = failed_run.failure_code
+            event.providers_attempted = list(providers_attempted)
+            event.provider_outcomes = dict(provider_outcomes)
+            event.accepted_sources = dict(accepted_sources)
+            event.accepted_count = sum(displayed.values())
+            event.quota_decision = reservation.decision
+            event.provider_calls = provider_calls
             metric(
                 "people_discovery_provider_errors_total",
                 provider=settings.people_primary_provider,
@@ -3096,6 +3927,23 @@ def recommendations_payload(db: Session, user: User, job_id: int) -> dict:
                 provider=settings.people_primary_provider,
                 circuit=circuit_snapshot.as_label(),
             )
+        # Defence in depth on the read path. A row written under an older, laxer
+        # contract — a masked name, no LinkedIn URL — must not be served just
+        # because it is already in the database. Contract versioning retires the
+        # *run*; this retires the individual record.
+        displayable, suppressed_reasons = is_displayable_record(
+            full_name=person.canonical_full_name,
+            linkedin_url=person.linkedin_url,
+            employment_validation_status=candidate.employment_validation_status,
+        )
+        if not displayable:
+            for reason in suppressed_reasons:
+                metric(
+                    "people_legacy_record_suppressed_total",
+                    reason=reason,
+                    policy_version=ACTIONABLE_CONTACT_POLICY_VERSION,
+                )
+            continue
         email_lookup_allowed = (
             candidate.employment_validation_status
             in {

@@ -169,6 +169,17 @@ class QuotaReservation:
     user_id: int
     quota_date: date
     charged: bool = True
+    # Set when the account is exempt from the allowance. An exempt run has NOT
+    # been charged, and must never claim it was.
+    exempt: bool = False
+
+    @property
+    def decision(self) -> str:
+        """What actually happened to the user's allowance for this run."""
+
+        if self.exempt:
+            return "exempt"
+        return "charged" if self.charged else "refunded"
 
     def refund(self, db: Session, *, reason: str) -> None:
         """Return the unit when no meaningful provider work happened."""

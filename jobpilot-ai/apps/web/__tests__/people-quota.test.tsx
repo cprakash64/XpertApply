@@ -53,7 +53,7 @@ const person = {
   reasons: ["Currently listed at the hiring company."],
   limitations: [],
   last_checked_at: "2026-07-28T12:00:00Z",
-  professional_profile_url: null,
+  professional_profile_url: "https://www.linkedin.com/in/rita-recruiter",
   email_status: "not_requested",
   professional_email: null,
   email_verified_at: null,
@@ -162,8 +162,10 @@ describe("quota in the networking section", () => {
     // Reading the allowance costs nothing, so it is visible before the user
     // spends a search.
     expect(
-      await screen.findByText("12 of 20 people searches remaining today.")
-    ).toBeInTheDocument();
+      screen.queryByText("12 of 20 people searches remaining today.")
+    ).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "About these results" }));
+    expect(screen.getByText(/12 of 20 searches left today/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
@@ -184,7 +186,8 @@ describe("quota in the networking section", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Find people" }));
 
     expect(await screen.findByText("Robin Recruiter")).toBeInTheDocument();
-    expect(await screen.findByText(/11 searches remaining · Resets/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "About these results" }));
+    expect(screen.getByText(/11 of 20 searches left today/)).toBeInTheDocument();
     // One explicit click, one paid request.
     await waitFor(() =>
       expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1)
@@ -206,7 +209,8 @@ describe("quota in the networking section", () => {
     render(<PeopleWhoCanHelp jobId={773} />);
 
     expect(await screen.findByText("Robin Recruiter")).toBeInTheDocument();
-    expect(screen.getByText("0 of 20 people searches remaining today.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About these results" }));
+    expect(screen.getByText(/You have used all 20 people searches for today/)).toBeInTheDocument();
     // Existing results are served from storage without a new search.
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
@@ -271,7 +275,8 @@ describe("quota in the networking section", () => {
     expect(await screen.findByText("Robin Recruiter")).toBeInTheDocument();
 
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
-    expect(screen.getByText(/11 searches remaining/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About these results" }));
+    expect(screen.getByText(/11 of 20 searches left today/)).toBeInTheDocument();
   });
 });
 
@@ -291,7 +296,7 @@ describe("broaden search cost", () => {
     render(<PeopleWhoCanHelp jobId={777} />);
 
     expect(
-      await screen.findByText(/Broaden search uses 1 additional people search/)
+      await screen.findByText(/uses 1 additional people search/)
     ).toBeInTheDocument();
     const section = screen.getByRole("region", { name: /People Who Can Help/i });
     expect(within(section).getByRole("button", { name: "Broaden search" })).toBeInTheDocument();

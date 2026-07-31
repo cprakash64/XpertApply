@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Protocol
@@ -415,7 +416,11 @@ class _HttpProvider:
                 retry_after_seconds=retry_after,
                 safe_metadata=(
                     (
-                        {"error_types": ["validation_response_too_large"]}
+                        {
+                            **_safe_response_shape(response),
+                            "error_types": ["validation_response_too_large"],
+                            "classification": "unknown_validation_error",
+                        }
                         if len(response.content)
                         > settings.people_provider_response_max_bytes
                         else _safe_apollo_validation_metadata(response)
@@ -551,6 +556,9 @@ class ApolloPeopleProvider(_HttpProvider):
         self.enrichment_rejection_reasons: dict[str, str] = {}
         self.enrichment_safe_metrics: dict[str, int] = {}
         self.search_identifier_safe_metrics: dict[str, object] = {}
+        # Rows the last search returned before normalization. The orchestration
+        # layer reports the acceptance funnel from this.
+        self.last_search_raw_count = 0
         self.bulk_capability_state = bulk_capability_state(
             self.provider_name,
             APOLLO_BULK_CAPABILITY_VERSION,
@@ -609,6 +617,7 @@ class ApolloPeopleProvider(_HttpProvider):
                 duration_ms=self.last_duration_ms,
                 code=PeopleErrorCode.INVALID_INPUT,
             )
+        self.last_search_raw_count = len(rows)
         self.search_identifier_safe_metrics = _search_identifier_safe_metrics(rows)
         logger.info(
             "apollo_search_identifier_shape records_with_id=%s "
@@ -698,6 +707,8 @@ class ApolloPeopleProvider(_HttpProvider):
                 _log_safe_apollo_validation(
                     endpoint="/api/v1/people/bulk_match",
                     metadata=exc.safe_metadata,
+                    detail_count=len(batch),
+                    identifier_fields=["id"],
                 )
                 if (
                     exc.safe_metadata.get("error_scope") == "request_level"
@@ -803,18 +814,37 @@ class ApolloPeopleProvider(_HttpProvider):
         self,
         people: list[PersonEnrichmentRequest],
     ) -> list[ProviderPerson]:
+        """The bounded single-person path behind a rejected bulk request.
+
+        Deliberately not a retry loop. Bulk has already been marked unavailable
+        for this account, and at most a few top-ranked candidates are completed
+        individually — repeated calls would only spend credits hiding a contract
+        problem that needs an adapter change.
+        """
+
+        if not settings.people_apollo_single_enrichment_fallback_enabled:
+            self._increment_enrichment_metric("single_enrichment_fallback_disabled")
+            return []
         enriched: list[ProviderPerson] = []
         first_candidate_failure: ProviderUnavailable | None = None
         for request in self._select_complete_person_requests(people):
             try:
                 person = await self.complete_person_by_id(request)
             except ProviderUnavailable as exc:
+                if exc.reason == "provider_schema_error" and exc.http_status == 422:
+                    _log_safe_apollo_validation(
+                        endpoint="/api/v1/people/{id}",
+                        metadata=exc.safe_metadata,
+                        detail_count=1,
+                    )
                 if exc.reason in {
                     "provider_unauthorized",
                     "provider_master_key_required_or_forbidden",
                     "provider_rate_limited",
                     "provider_circuit_open",
                 }:
+                    # Entitlement and auth problems stop the whole fallback:
+                    # every remaining candidate would fail identically.
                     raise
                 self.enrichment_rejection_reasons[
                     request.provider_person_id
@@ -1726,19 +1756,52 @@ def _safe_validation_token(value: object) -> str | None:
 def _safe_apollo_validation_metadata(
     response: httpx.Response,
 ) -> dict[str, object]:
-    fallback = {
+    """Everything safe Apollo told us about why it rejected the request.
+
+    The previous version answered a live 422 with
+    ``error_types=['provider_bulk_validation_failed'], field_paths=[]`` and
+    nothing else, which told an operator only that *something* was wrong. Two
+    bugs caused that: Apollo's common free-text shapes (``error``,
+    ``error_message``, ``message``) were never read, and any error code that
+    arrived without an accompanying field path was thrown away by the
+    ``if field_paths`` guard below.
+
+    Everything extracted here is bounded and token-sanitized, so a provider that
+    echoes a submitted id or a key into its message cannot leak it into a log.
+    """
+
+    shape = _safe_response_shape(response)
+    fallback: dict[str, object] = {
+        **shape,
         "error_types": ["provider_bulk_validation_failed"],
         "field_paths": [],
         "expected_types": [],
         "missing_required": False,
         "error_scope": "request_level",
+        # A body we cannot parse tells us exactly as much as one that says
+        # nothing recognizable, so both report the same classification.
+        "message_code": "unclassified",
     }
     try:
         payload = response.json()
     except ValueError:
+        # Apollo occasionally answers with a proxy's plain-text error page. A
+        # bounded fingerprint of it is still classifiable; the body itself is
+        # never retained.
+        fallback["classification"] = _classify_apollo_rejection(
+            error_types=(),
+            message_code=_apollo_message_code([_text_fingerprint(response)]),
+            status_code=response.status_code,
+        )
         return fallback
     if not isinstance(payload, dict):
+        fallback["classification"] = _classify_apollo_rejection(
+            error_types=(),
+            message_code=None,
+            status_code=response.status_code,
+        )
         return fallback
+
     values = payload.get("detail") or payload.get("errors") or []
     if isinstance(values, dict):
         values = [values]
@@ -1748,7 +1811,12 @@ def _safe_apollo_validation_metadata(
     field_paths: set[str] = set()
     expected_types: set[str] = set()
     missing_required = False
+    free_text: list[str] = []
+
     for item in values[:10]:
+        if isinstance(item, str):
+            free_text.append(item)
+            continue
         if not isinstance(item, dict):
             continue
         for key in ("type", "code", "error_code"):
@@ -1773,6 +1841,22 @@ def _safe_apollo_validation_metadata(
         )
         if token := _safe_validation_token(expected):
             expected_types.add(token)
+        for key in ("msg", "message", "error"):
+            if isinstance(item.get(key), str):
+                free_text.append(item[key])
+
+    # Apollo most often answers a rejected bulk request with a single free-text
+    # field rather than a structured list. Reading it is the difference between
+    # "something was invalid" and "the details parameter must be an array".
+    for key in ("error", "error_message", "message", "errors"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            free_text.append(value)
+    for key in ("error_code", "code", "type"):
+        if token := _safe_validation_token(payload.get(key)):
+            error_types.add(token)
+            missing_required = missing_required or "missing" in token.lower()
+
     error_scope = (
         "record_level"
         if any(
@@ -1781,32 +1865,202 @@ def _safe_apollo_validation_metadata(
         )
         else "request_level"
     )
-    result: dict[str, object] = {
-        "error_types": (
-            sorted(error_types)
-            if field_paths
-            else ["provider_bulk_validation_failed"]
-        ),
+    message_code = _apollo_message_code(free_text)
+    resolved_types = sorted(error_types) or ["provider_bulk_validation_failed"]
+    return {
+        **shape,
+        # Codes are kept whether or not a field path came with them: a cause
+        # without a location is still a cause.
+        "error_types": resolved_types,
         "field_paths": sorted(field_paths),
         "expected_types": sorted(expected_types),
         "missing_required": missing_required,
         "error_scope": error_scope,
+        "message_code": message_code,
+        "classification": _classify_apollo_rejection(
+            error_types=resolved_types,
+            message_code=message_code,
+            status_code=response.status_code,
+        ),
+        "top_level_keys": sorted(
+            token
+            for key in list(payload)[:20]
+            if (token := _safe_validation_token(key))
+        ),
     }
-    return result
+
+
+def _safe_response_shape(response: httpx.Response) -> dict[str, object]:
+    """What the response *looked* like, without keeping any of what it said.
+
+    A live 422 reported only ``message_code=unclassified``, which told an
+    operator nothing about whether Apollo had returned JSON, an HTML error page,
+    or an empty body — three completely different problems. These fields
+    separate them and are all bounded, structural, and free of response content.
+    """
+
+    # A media type keeps its slash and plus; it is a fixed vocabulary, not
+    # provider prose.
+    content_type = re.sub(
+        r"[^A-Za-z0-9/+.-]", "", (response.headers.get("Content-Type") or "").split(";")[0]
+    )[:64]
+    body = response.content or b""
+    body_type = "empty"
+    if body:
+        head = body.lstrip()[:1]
+        body_type = (
+            "object" if head == b"{" else "array" if head == b"[" else "string"
+        )
+    return {
+        "response_content_type": content_type or "unknown",
+        "response_body_type": body_type,
+        "response_length": len(body),
+        # Apollo echoes a correlation id operators can quote in a support
+        # ticket. It identifies the request, never the people in it.
+        "provider_request_id": _safe_validation_token(
+            response.headers.get("x-request-id")
+            or response.headers.get("request-id")
+        )
+        or "none",
+        "http_status": response.status_code,
+    }
+
+
+def _text_fingerprint(response: httpx.Response) -> str:
+    """A bounded, sanitized sample of a non-JSON body, for classification only.
+
+    Letters and spaces only, capped hard. Enough to recognise "master api key
+    required"; not enough to carry an identifier, an address, or a key.
+    """
+
+    try:
+        text = response.text
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    return re.sub(r"[^A-Za-z ]+", " ", text)[:200].lower()
+
+
+# What Apollo actually objected to, as a token an operator can act on. Ordered:
+# the first match wins, so an entitlement problem is never reported as a
+# generic malformed request.
+_APOLLO_REJECTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("master_key_required", ("master", "master_api_key", "master_key")),
+    ("plan_not_supported", ("plan", "not_permitted", "unauthorized_field", "forbidden")),
+    ("credits_exhausted", ("credit", "credits", "quota", "insufficient")),
+    ("endpoint_not_available", ("endpoint", "not_found", "unavailable", "route")),
+    ("invalid_identifier", ("invalid_identifier", "missing_identifier", "invalid_id")),
+    ("invalid_details", ("details", "array_expected", "object_expected", "invalid_details")),
+    ("malformed_request", ("unknown_parameter", "too_many", "empty_request", "malformed")),
+)
+
+
+def _classify_apollo_rejection(
+    *,
+    error_types: Sequence[str],
+    message_code: str | None,
+    status_code: int,
+) -> str:
+    """One allowlisted token naming the cause, or ``unknown_validation_error``."""
+
+    haystack = " ".join(
+        [*(str(value).lower() for value in error_types), (message_code or "").lower()]
+    )
+    if status_code == 402:
+        return "credits_exhausted"
+    if status_code in {403, 401}:
+        return "master_key_required"
+    if status_code == 404:
+        return "endpoint_not_available"
+    for classification, tokens in _APOLLO_REJECTION_RULES:
+        if any(token in haystack for token in tokens):
+            return classification
+    return "unknown_validation_error"
+
+
+# The contract vocabulary an Apollo rejection can be described with. A message
+# is reduced to these tokens rather than kept as prose: the existing safety rule
+# in this codebase is that provider response *content* is never retained, and a
+# free-text field is exactly where a provider might echo a submitted identifier,
+# an address, or a key back at us.
+_APOLLO_MESSAGE_VOCABULARY: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("details", ("details",)),
+    ("array_expected", ("must be an array", "expected an array", "not an array")),
+    ("object_expected", ("must be an object", "expected an object")),
+    ("invalid_identifier", ("invalid id", "invalid identifier", "not a valid id")),
+    ("missing_identifier", ("missing id", "id is required", "required field")),
+    ("too_many", ("too many", "maximum of", "exceeds")),
+    ("empty_request", ("empty", "no records", "at least one")),
+    ("unauthorized_field", ("not permitted", "not allowed", "unauthorized")),
+    ("unknown_parameter", ("unknown parameter", "unrecognized", "unexpected field")),
+    ("rate", ("rate limit", "too many requests")),
+    # Entitlement vocabulary. These are the answers that mean "this account
+    # cannot use this endpoint", which is a completely different action for an
+    # operator than "the request body was wrong".
+    ("master_key", ("master api key", "master key", "masterkey")),
+    ("plan", ("your plan", "plan does not", "plan doesn t", "upgrade")),
+    ("credit", ("credit", "insufficient", "out of credits")),
+    ("endpoint", ("endpoint", "not available", "no longer supported")),
+)
+
+_MAX_MESSAGE_CODE = 120
+
+
+def _apollo_message_code(messages: list[str]) -> str | None:
+    """A bounded, allowlisted code describing what the provider objected to.
+
+    Deliberately NOT the provider's sentence. Operators get an actionable token
+    such as ``details+array_expected``; nothing a provider wrote is stored.
+    ``unclassified`` means Apollo said something outside the known contract
+    vocabulary — itself a useful signal that this adapter needs a look.
+    """
+
+    haystack = " ".join(str(value).lower() for value in messages if value)
+    if not haystack.strip():
+        return None
+    codes = [
+        code
+        for code, phrases in _APOLLO_MESSAGE_VOCABULARY
+        if any(phrase in haystack for phrase in phrases)
+    ]
+    return "+".join(codes)[:_MAX_MESSAGE_CODE] if codes else "unclassified"
 
 
 def _log_safe_apollo_validation(
-    *, endpoint: str, metadata: dict[str, object]
+    *,
+    endpoint: str,
+    metadata: dict[str, object],
+    detail_count: int | None = None,
+    identifier_fields: list[str] | None = None,
 ) -> None:
+    """One actionable line per rejected enrichment request.
+
+    Carries the shape of what we sent (how many details, which identifier
+    fields) and what Apollo objected to — never an identifier, a name, a header,
+    or a raw body.
+    """
+
     logger.warning(
-        "apollo_enrichment_validation endpoint=%s http_status=422 error_types=%s "
-        "field_paths=%s expected_types=%s missing_required=%s error_scope=%s",
+        "apollo_enrichment_validation endpoint=%s http_status=%s detail_count=%s "
+        "identifier_fields=%s error_types=%s field_paths=%s expected_types=%s "
+        "missing_required=%s error_scope=%s message_code=%s classification=%s "
+        "response_content_type=%s response_body_type=%s response_length=%s "
+        "top_level_keys=%s provider_request_id=%s",
         endpoint,
+        metadata.get("http_status", 422),
+        detail_count if detail_count is not None else "unknown",
+        identifier_fields if identifier_fields is not None else ["id"],
         metadata.get("error_types", []),
         metadata.get("field_paths", []),
         metadata.get("expected_types", []),
         bool(metadata.get("missing_required")),
         metadata.get("error_scope", "request_level"),
+        metadata.get("message_code") or "none",
+        metadata.get("classification") or "unknown_validation_error",
+        metadata.get("response_content_type") or "unknown",
+        metadata.get("response_body_type") or "unknown",
+        metadata.get("response_length", 0),
+        metadata.get("top_level_keys", []),
+        metadata.get("provider_request_id") or "none",
     )
 
 

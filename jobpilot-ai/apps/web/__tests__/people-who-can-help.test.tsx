@@ -96,32 +96,32 @@ describe("PeopleWhoCanHelp", () => {
     [
       "provider_unavailable",
       "provider_unauthorized",
-      "People search is temporarily unavailable because the provider connection needs attention."
+      "People search is temporarily unavailable. Please try again later."
     ],
     [
       "provider_configuration_error",
       "provider_forbidden",
-      "People search is temporarily unavailable because the provider connection needs attention."
+      "People search is temporarily unavailable. Please try again later."
     ],
     [
       "provider_unavailable",
       "provider_rate_limited",
-      "The people provider is temporarily rate-limited. Try again after the displayed time."
+      "People search is temporarily unavailable. Try again after the displayed time."
     ],
     [
       "provider_unavailable",
       "provider_timeout",
-      "The people provider is temporarily unavailable."
+      "People search is temporarily unavailable. Please try again later."
     ],
     [
       "provider_unavailable",
       "provider_circuit_open",
-      "The people provider is temporarily unavailable."
+      "People search is temporarily unavailable. Please try again later."
     ],
     [
       "domain_unresolved",
       "company_domain_unresolved",
-      "We could not confidently identify this company in the people provider."
+      "We could not confidently identify this company yet."
     ],
     [
       "user_budget_exhausted",
@@ -132,7 +132,7 @@ describe("PeopleWhoCanHelp", () => {
       // A provider cost stop is never phrased as the user's own limit.
       "provider_budget_exhausted",
       "provider_budget_exceeded",
-      "People search is temporarily unavailable because the provider budget has been reached."
+      "People search is temporarily unavailable because provider capacity has been reached."
     ]
   ])("names the real cause for %s/%s", async (status, availabilityReason, expected) => {
     const unavailable = response({
@@ -172,13 +172,13 @@ describe("PeopleWhoCanHelp", () => {
     vi.stubGlobal("fetch", fetchMock);
     const first = render(<PeopleWhoCanHelp jobId={7596} />);
     expect(
-      await screen.findByText("The people provider returned an unsupported response.")
+      await screen.findByText("People search is temporarily unavailable. Please try again later.")
     ).toBeInTheDocument();
     first.unmount();
     clearPeopleCache();
     render(<PeopleWhoCanHelp jobId={7596} />);
     expect(
-      await screen.findByText("The people provider returned an unsupported response.")
+      await screen.findByText("People search is temporarily unavailable. Please try again later.")
     ).toBeInTheDocument();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -203,7 +203,7 @@ describe("PeopleWhoCanHelp", () => {
       current_title: "Machine Learning Engineer",
       category: "potential_referrer",
       category_label: "Potential referral candidate",
-      professional_profile_url: null
+      professional_profile_url: "https://www.linkedin.com/in/rita-recruiter"
     };
     const initial = response({
       status: "not_started",
@@ -262,7 +262,7 @@ describe("PeopleWhoCanHelp", () => {
           potential_referrers: []
         }
       }),
-      /No reliable recruiting contact met JobPilot’s threshold/
+      "No verified professional profiles were found for this company yet."
     ],
     [
       "provider unavailable",
@@ -275,7 +275,7 @@ describe("PeopleWhoCanHelp", () => {
           potential_referrers: []
         }
       }),
-      /people provider is temporarily unavailable/
+      /People search is temporarily unavailable/
     ]
   ])("renders the %s state without inventing recommendations", async (_label, payload, message) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -339,7 +339,9 @@ describe("PeopleWhoCanHelp", () => {
     render(<PeopleWhoCanHelp jobId={7606} />);
 
     expect(
-      await screen.findByText("No reliable recruiting contact met JobPilot’s threshold.")
+      await screen.findByText(
+        "No verified professional profiles were found for this company yet."
+      )
     ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const button = screen.getByRole("button", { name: "Broaden search" });
@@ -414,15 +416,19 @@ describe("PeopleWhoCanHelp", () => {
     }));
     render(<PeopleWhoCanHelp jobId="7" />);
     expect(await screen.findByRole("heading", { name: "People Who Can Help" })).toBeInTheDocument();
-    expect(await screen.findByText("Beta")).toBeInTheDocument();
-    expect(screen.getByText("Rita Recruiter")).toBeInTheDocument();
+    expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
+    // Beta is disclosed inside "About these results" rather than as a badge.
+    expect(screen.queryByText("Beta")).not.toBeInTheDocument();
     expect(screen.getByText(/responsibility for this opening has not been confirmed/i)).toBeInTheDocument();
-    expect(screen.getByText("No potential manager met JobPilot’s confidence threshold.")).toBeInTheDocument();
-    expect(screen.getByText("No relevant employee met JobPilot’s referral threshold.")).toBeInTheDocument();
-    expect(screen.getByText("Scope: Hiring company only")).toBeInTheDocument();
-    expect(screen.getByText("Location used as a soft signal")).toBeInTheDocument();
-    expect(screen.getByText("Related-company matches were not included")).toBeInTheDocument();
-    expect(screen.getByText("Using current cached search")).toBeInTheDocument();
+    // Empty categories are not rendered at all.
+    expect(screen.queryByText(/No potential manager met/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No relevant employee met/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Potential Hiring Managers" })).not.toBeInTheDocument();
+    // Search-scope metadata is gone from the visible tab.
+    expect(screen.queryByText(/Location used as a/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Related-company matches/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Using current cached search/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Search details")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /LinkedIn/ })).toHaveAttribute(
       "rel", "noopener noreferrer"
     );
@@ -447,10 +453,16 @@ describe("PeopleWhoCanHelp", () => {
       text: async () => JSON.stringify(unsafe)
     }));
     render(<PeopleWhoCanHelp jobId={7} />);
-    await screen.findByText("Rita Recruiter");
+    // A non-LinkedIn host is not a professional profile, so the contact has no
+    // channel a user could open and is not rendered at all. The card with a
+    // dead "No LinkedIn" control is gone: the honest answer is an empty state.
+    expect(
+      await screen.findByText(
+        "No verified professional profiles were found for this company yet."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Rita Recruiter")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /LinkedIn/ })).not.toBeInTheDocument();
-    // An honest disabled affordance replaces the link — never a guessed URL.
-    expect(screen.getByTitle(/never guesses a profile URL/)).toBeInTheDocument();
   });
 
   it("shows employment verification and blocks email lookup when employment conflicts", async () => {
@@ -578,7 +590,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
       current_title: "Machine Learning Engineer",
       category: "potential_referrer",
       category_label: "Potential referral candidate",
-      professional_profile_url: null
+      professional_profile_url: "https://www.linkedin.com/in/rita-recruiter"
     };
     const initial = response({
       status: "not_started",
@@ -652,8 +664,10 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
 
     expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
     expect(screen.getByText("Pat Referrer")).toBeInTheDocument();
-    expect(screen.getByText("1 recruiter · 0 potential managers · 1 referral candidate")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /LinkedIn/ })).toHaveAttribute(
+    expect(screen.queryByText(/potential managers ·/)).not.toBeInTheDocument();
+    // Every rendered contact now carries a LinkedIn action, so there is one
+    // link per card rather than one on the whole panel.
+    expect(screen.getAllByRole("link", { name: /LinkedIn/ })[0]).toHaveAttribute(
       "href",
       "https://www.linkedin.com/in/rita-recruiter"
     );
@@ -847,7 +861,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
 
     expect(
       await screen.findByText(
-        "People search is temporarily unavailable because the provider connection needs attention."
+        "People search is temporarily unavailable. Please try again later."
       )
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
@@ -864,7 +878,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
         potential_hiring_managers: [],
         potential_referrers: []
       },
-      warnings: ["Apollo complete-profile access is unavailable for the configured account."]
+      warnings: ["People search is temporarily unavailable. Please try again later."]
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
@@ -875,7 +889,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
 
     expect(
       await screen.findByText(
-        "Apollo complete-profile access is unavailable for the configured account."
+        "People search is temporarily unavailable. Please try again later."
       )
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry discovery" })).not.toBeInTheDocument();
@@ -920,7 +934,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
           potential_referrers: []
         }
       }),
-      "The people provider is temporarily unavailable."
+      "People search is temporarily unavailable. Please try again later."
     ],
     [
       "no results",
@@ -932,7 +946,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
           potential_referrers: []
         }
       }),
-      "No reliable recruiting contact met JobPilot’s threshold."
+      "No verified professional profiles were found for this company yet."
     ]
   ])("shows the %s state when the section is opened", async (_label, payload, expected) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -998,6 +1012,6 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
     expect(screen.getByText("Manager One")).toBeInTheDocument();
     expect(screen.getByText("Manager Two")).toBeInTheDocument();
     expect(screen.getByText("Referrer One")).toBeInTheDocument();
-    expect(screen.getByText("3 recruiters · 2 potential managers · 1 referral candidate")).toBeInTheDocument();
+    expect(screen.queryByText(/recruiters ·/)).not.toBeInTheDocument();
   });
 });

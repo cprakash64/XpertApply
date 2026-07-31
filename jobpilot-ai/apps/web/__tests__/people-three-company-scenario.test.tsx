@@ -175,7 +175,7 @@ describe("People Who Can Help — three-company provider scenario", () => {
     // Cisco: a request-scoped provider rejection, with no misleading "paused"
     // language and no Retry offered.
     expect(
-      await within(cisco).findByText("We could not complete this search because the provider request was invalid.")
+      await within(cisco).findByText("People search is temporarily unavailable. Please try again later.")
     ).toBeInTheDocument();
     expect(within(cisco).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
 
@@ -184,7 +184,8 @@ describe("People Who Can Help — three-company provider scenario", () => {
 
     // L3Harris still returns its person.
     expect(await within(l3harris).findByText("Alex Example")).toBeInTheDocument();
-    expect(within(l3harris).getByText(/1 recruiter/)).toBeInTheDocument();
+    // Category counts were removed from the tab; the contacts are the summary.
+    expect(within(l3harris).queryByText(/1 recruiter ·/)).not.toBeInTheDocument();
 
     // Exactly one paid request per explicit click, each scoped to its own job.
     await waitFor(() => expect(transport.posts()).toHaveLength(3));
@@ -212,7 +213,7 @@ describe("People Who Can Help — three-company provider scenario", () => {
     renderThreeSections();
 
     const cisco = await findPeopleIn("cisco");
-    await within(cisco).findByText("We could not complete this search because the provider request was invalid.");
+    await within(cisco).findByText("People search is temporarily unavailable. Please try again later.");
 
     // The other two sections are still untouched and still unsearched.
     const hii = screen.getByTestId("hii");
@@ -337,7 +338,7 @@ describe("PDL no-match versus a genuinely invalid request", () => {
     });
     expect(view.state).toBe("empty");
     expect(view.message).toBe(
-      "No strong recruiter, manager, or referral matches were found for this company yet."
+      "No verified professional profiles were found for this company yet."
     );
     // A truthful empty answer must not offer a retry that cannot change it.
     expect(view.canRetry).toBe(false);
@@ -371,7 +372,7 @@ describe("PDL no-match versus a genuinely invalid request", () => {
     });
     expect(view.state).toBe("invalid_request");
     expect(view.message).toBe(
-      "We could not complete this search because the provider request was invalid."
+      "People search is temporarily unavailable. Please try again later."
     );
     expect(view.canRetry).toBe(false);
   });
@@ -388,7 +389,7 @@ describe("PDL no-match versus a genuinely invalid request", () => {
       requested: true
     });
     expect(view.message).toBe(
-      "We could not confidently identify this company in the people provider."
+      "We could not confidently identify this company yet."
     );
   });
 
@@ -431,8 +432,8 @@ describe("PDL no-match versus a genuinely invalid request", () => {
 
     expect(await screen.findByText("Alex Example")).toBeInTheDocument();
     expect(
-      screen.getByText("Some categories did not have strong matches.")
-    ).toBeInTheDocument();
+      screen.queryByText("Some categories did not have strong matches.")
+    ).not.toBeInTheDocument();
   });
 
   it("shows a no-match state without any failure styling or retry", async () => {
@@ -455,7 +456,7 @@ describe("PDL no-match versus a genuinely invalid request", () => {
     render(<PeopleWhoCanHelp jobId={951} />);
 
     const message = await screen.findByText(
-      "No strong recruiter, manager, or referral matches were found for this company yet."
+      "No verified professional profiles were found for this company yet."
     );
     expect(message).toBeInTheDocument();
     // Neutral muted copy, not an alert.

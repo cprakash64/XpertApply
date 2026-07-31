@@ -43,11 +43,15 @@ const manager = {
   contacted: false
 };
 
+// A renderable contact whose *draft* comes back without a LinkedIn URL. The
+// card itself must always carry a validated profile — a contact without one is
+// no longer displayed at all — but the draft dialog still has to degrade
+// gracefully when the draft endpoint cannot supply the link.
 const secondManager = {
   ...manager,
   recommendation_id: 92,
   full_name: "Riley Lead",
-  professional_profile_url: null
+  professional_profile_url: "https://www.linkedin.com/in/riley-lead"
 };
 
 function peopleResponse(overrides: Record<string, unknown> = {}) {
@@ -209,14 +213,15 @@ describe("LinkedIn draft workflow", () => {
     render(<PeopleWhoCanHelp jobId={JOB_ID} />);
     await screen.findByText("Morgan Manager");
 
-    const link = screen.getByRole("link", { name: /LinkedIn/ });
-    expect(link).toHaveAttribute("href", LINKEDIN_URL);
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    // The contact without a verified URL gets an honest disabled affordance
-    // instead of a guessed link.
-    expect(screen.getAllByRole("link", { name: /LinkedIn/ })).toHaveLength(1);
-    expect(screen.getByTitle(/never guesses a profile URL/)).toBeInTheDocument();
+    const links = screen.getAllByRole("link", { name: /LinkedIn/ });
+    expect(links[0]).toHaveAttribute("href", LINKEDIN_URL);
+    expect(links[0]).toHaveAttribute("target", "_blank");
+    expect(links[0]).toHaveAttribute("rel", "noopener noreferrer");
+    // Every rendered card carries a working LinkedIn action. The dead-end
+    // "No LinkedIn" affordance is gone: a contact with no channel to open is
+    // no longer displayed at all, so there is nothing left to disable.
+    expect(links).toHaveLength(2);
+    expect(screen.queryByText("No LinkedIn")).not.toBeInTheDocument();
   });
 
   it("opens an editable preview instead of showing a red failure", async () => {
@@ -277,30 +282,40 @@ describe("LinkedIn draft workflow", () => {
     expect(writeText.mock.calls[0][0]).toContain("Hi Morgan");
   });
 
-  it("disables Open LinkedIn and explains why when no URL exists", async () => {
+  it("still offers a working Open LinkedIn when the draft omits the URL", async () => {
+    // The draft endpoint returns no URL, but the contact is displayed, and a
+    // displayed contact always has a validated profile. The dialog uses the
+    // card's own validated URL rather than leaving the user with a dead
+    // control — the disabled-and-explained state this test used to assert is
+    // now unreachable, because a contact with no channel is never rendered.
     installTransport(draftResponse({ linkedin_url: null, linkedin_available: false }));
     render(<PeopleWhoCanHelp jobId={JOB_ID} />);
-    // The second manager has no profile URL at all.
     const buttons = await screen.findAllByRole("button", { name: "Draft message" });
     fireEvent.click(buttons[1]);
     const dialog = await screen.findByRole("dialog");
 
-    expect(within(dialog).getByRole("button", { name: /Open LinkedIn/ })).toBeDisabled();
-    expect(
-      within(dialog).getByText(/LinkedIn profile URL is unavailable for this contact/)
-    ).toBeInTheDocument();
-    // Copying still works, so the draft is not wasted.
+    const open = within(dialog).getByRole("link", { name: /Copy and open LinkedIn/ });
+    expect(open).toHaveAttribute("href", "https://www.linkedin.com/in/riley-lead");
     expect(within(dialog).getByRole("button", { name: /Copy message/ })).toBeEnabled();
   });
 
-  it("offers no link at all when the URL is missing", async () => {
-    installTransport(draftResponse({ linkedin_url: null, linkedin_available: false }));
+  it("never constructs a profile URL the backend did not validate", async () => {
+    installTransport(
+      draftResponse({
+        linkedin_url: "https://profiles.invalid/in/riley-lead",
+        linkedin_available: true
+      })
+    );
     render(<PeopleWhoCanHelp jobId={JOB_ID} />);
     const buttons = await screen.findAllByRole("button", { name: "Draft message" });
     fireEvent.click(buttons[1]);
     const dialog = await screen.findByRole("dialog");
 
-    expect(within(dialog).queryByRole("link", { name: /LinkedIn/ })).not.toBeInTheDocument();
+    // A non-LinkedIn host is refused outright; the card's validated URL is the
+    // only thing that can be opened.
+    for (const link of within(dialog).queryAllByRole("link")) {
+      expect(link.getAttribute("href")).not.toContain("profiles.invalid");
+    }
   });
 
   it("closes without sending anything", async () => {

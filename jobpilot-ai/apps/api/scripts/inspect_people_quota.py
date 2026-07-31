@@ -97,6 +97,10 @@ def main() -> None:
         print(
             json.dumps(
                 {
+                    # The authenticated identity the runs and the quota row are
+                    # both keyed by — so a mismatch between them is visible
+                    # rather than assumed away.
+                    "user_id": user.id,
                     "user_ref": _safe_reference(user.id),
                     "internal_account": snapshot.is_internal,
                     "quota_date": day.isoformat(),
@@ -128,9 +132,38 @@ def main() -> None:
                             "status": run.status,
                             "provider": run.provider,
                             "cache_hit": bool(run.cache_hit),
-                            # A cache-served run never charges a user unit.
-                            "user_quota_charged": not (
-                                run.cache_hit or run.provider == "cache"
+                            # Read from what the run recorded, never inferred.
+                            # A refunded run used to report charged=true here
+                            # while the ledger correctly showed zero, which is
+                            # how the two came to disagree. "unknown" means the
+                            # run predates this field.
+                            "user_quota_decision": (
+                                "not_charged"
+                                if (run.cache_hit or run.provider == "cache")
+                                else (run.company_context or {}).get(
+                                    "user_quota_decision", "unknown"
+                                )
+                            ),
+                            "providers_attempted": (run.company_context or {}).get(
+                                "providers_attempted", []
+                            ),
+                            # "pdl searched and failed, apollo searched fine and
+                            # could not enrich" is the distinction that a bare
+                            # status could not carry, and the one an operator
+                            # needs to tell a broken account from a broken
+                            # request.
+                            "provider_outcomes": (run.company_context or {}).get(
+                                "provider_outcomes", {}
+                            ),
+                            "failure_code": run.failure_code,
+                            # True only when a budget really was the whole
+                            # story. A run showing budget copy without this is a
+                            # defect, not a spent account.
+                            "all_providers_budget_blocked": (
+                                run.company_context or {}
+                            ).get("all_providers_budget_blocked"),
+                            "finalization_version": (run.company_context or {}).get(
+                                "finalization_version", "unknown"
                             ),
                             "started_at": run.started_at.isoformat()
                             if run.started_at

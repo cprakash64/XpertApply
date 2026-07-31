@@ -228,7 +228,8 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
   await expect(page.getByText("Morgan Manager")).toBeVisible();
   await expect(page.getByText("Pat Referrer")).toBeVisible();
-  await expect(page.getByText("1 recruiter · 1 potential manager · 1 referral candidate")).toBeVisible();
+  // Category counts were removed from the tab; the contacts are the summary.
+  await expect(page.getByText(/1 recruiter · /)).toHaveCount(0);
   expect(peopleRequests.slice(0, 2)).toEqual([
     `GET /jobs/${persistedJobId}/people`,
     `POST /jobs/${persistedJobId}/people/discover`
@@ -367,8 +368,11 @@ test("complete people workflow remains manual, grounded, cached, and user-scoped
   await expect(page.getByText(/Find recruiters and referral candidates/)).toBeVisible();
   await page.getByRole("button", { name: "Find people" }).click();
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
-  await expect(page.getByText("No potential manager met JobPilot’s confidence threshold.")).toBeVisible();
-  await expect(page.getByText("No relevant employee met JobPilot’s referral threshold.")).toBeVisible();
+  // Empty categories are no longer rendered at all.
+  await expect(page.getByText("No potential manager met JobPilot’s confidence threshold.")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toHaveCount(0);
+  await expect(page.getByText("No relevant employee met JobPilot’s referral threshold.")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Potential Referral Candidates" })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Find work email/ }).click();
   await expect(page.getByText(/Verified work email: rita@acme.example/)).toBeVisible();
@@ -492,7 +496,9 @@ test("Toshiba no-result state broadens once and keeps its canonical logo", async
 
   await openNetworking(page, "AI Engineer Intern");
   await page.getByRole("button", { name: "Find people" }).click();
-  await expect(page.getByText("No reliable recruiting contact met JobPilot’s threshold.")).toBeVisible();
+  await expect(
+    page.getByText("No verified professional profiles were found for this company yet.")
+  ).toBeVisible();
   expect(exactSearches).toBe(1);
 
   // A double-click must still buy exactly one broadened search.

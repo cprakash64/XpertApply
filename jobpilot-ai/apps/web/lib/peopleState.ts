@@ -34,29 +34,40 @@ export type PeopleView = {
   cached: boolean;
 };
 
+/**
+ * Four distinct outcomes, and no fifth.
+ *
+ * A live run reported "the provider budget has been reached" for a search the
+ * budget never stopped — an integration defect in a later provider was the real
+ * cause. Two rules follow, and both live here:
+ *
+ * 1. Capacity copy is reserved for the one case where every eligible provider
+ *    really was blocked by a budget. Every other failure gets the neutral
+ *    temporary-unavailability line, because the user can do nothing differently
+ *    in either case and a wrong explanation is worse than none.
+ * 2. No message names a provider. Which vendor answered is an operational
+ *    detail; it is in the logs, and it is not the user's business.
+ */
 export const PEOPLE_MESSAGES = {
   not_loaded: "Find recruiters, hiring-team members, and potential referrals.",
   loading: "Looking for recruiters and referral candidates…",
-  empty:
-    "No strong recruiter, manager, or referral matches were found for this company yet.",
+  empty: "No verified professional profiles were found for this company yet.",
   // Some categories matched and some did not. Quiet, because people are shown.
   partial: "Some categories did not have strong matches.",
-  domain_unresolved:
-    "We could not confidently identify this company in the people provider.",
-  // Reserved for a genuinely malformed request — never for a provider that
-  // answered correctly with zero records.
-  invalid_request:
-    "We could not complete this search because the provider request was invalid.",
+  domain_unresolved: "We could not confidently identify this company yet.",
+  // A request we got wrong. From the user's side it is indistinguishable from
+  // any other temporary integration failure, and it is described as one.
+  invalid_request: "People search is temporarily unavailable. Please try again later.",
   rate_limited:
-    "The people provider is temporarily rate-limited. Try again after the displayed time.",
+    "People search is temporarily unavailable. Try again after the displayed time.",
   // The user's own allowance, counted in deliberate searches.
   budget_exhausted: "You have used all of today's people searches.",
-  // Operational cost control. Never phrased as the user's limit.
+  // Operational capacity. Only shown when every eligible provider was blocked
+  // by a budget — never when a later provider failed for any other reason.
   provider_budget_exhausted:
-    "People search is temporarily unavailable because the provider budget has been reached.",
-  configuration_error:
-    "People search is temporarily unavailable because the provider connection needs attention.",
-  provider_unavailable: "The people provider is temporarily unavailable.",
+    "People search is temporarily unavailable because provider capacity has been reached.",
+  configuration_error: "People search is temporarily unavailable. Please try again later.",
+  provider_unavailable: "People search is temporarily unavailable. Please try again later.",
   retryable_error: "People recommendations could not be loaded. Please try again.",
   disabled_rollout: "People recommendations are currently available to selected beta users.",
   disabled_configuration: "People recommendations are temporarily unavailable.",
@@ -110,7 +121,10 @@ export function peopleActionSummary(data: PeopleResponse | null): PeopleAction {
   if (!data || data.status === "not_started") {
     return { state: "not_searched", label: "Find people", count: 0 };
   }
-  const count = Object.values(data.categories).reduce((total, items) => total + items.length, 0);
+  const count = Object.values(data.categories).reduce(
+    (total, items) => total + renderableContacts(items).length,
+    0
+  );
   if (data.status === "in_progress") {
     return { state: "loading", label: "Finding people…", count };
   }
@@ -137,11 +151,56 @@ export function peopleActionSummary(data: PeopleResponse | null): PeopleAction {
   }
 }
 
+/**
+ * The client half of the actionable-contact policy.
+ *
+ * The backend already refuses to persist or serve a masked or linkless
+ * contact, at three separate layers. This is the fourth, and it exists because
+ * the failure it guards against actually shipped: records written under an
+ * older contract rendered as cards with a greyed-out "No LinkedIn" button and
+ * a surname replaced by block characters. If malformed legacy data ever
+ * reaches this component again, it is dropped here rather than drawn.
+ *
+ * Kept deliberately simple — a name a human could read, and a link they could
+ * open. Anything subtler belongs on the server, where the evidence lives.
+ */
+const MASKED_NAME = /[*#•·…\u2580-\u259F]|\b([a-z])\1{2,}\b/i;
+
+export function isRenderableContact(person: {
+  full_name?: string | null;
+  professional_profile_url?: string | null;
+}): boolean {
+  const name = (person.full_name ?? "").trim();
+  if (!name || MASKED_NAME.test(name)) return false;
+  // Two usable tokens: "Priya R." and "Priya" are not names a user can act on.
+  if (name.split(/\s+/).filter((token) => token.replace(/[^A-Za-z]/g, "").length > 1).length < 2) {
+    return false;
+  }
+  const url = (person.professional_profile_url ?? "").trim();
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      (parsed.hostname === "linkedin.com" || parsed.hostname.endsWith(".linkedin.com")) &&
+      parsed.pathname.startsWith("/in/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function renderableContacts<T extends { full_name?: string | null; professional_profile_url?: string | null }>(
+  items: readonly T[] | undefined
+): T[] {
+  return (items ?? []).filter((item) => isRenderableContact(item));
+}
+
 function hasResults(data: PeopleResponse | null): boolean {
   return Boolean(
     data &&
       data.status !== "disabled" &&
-      Object.values(data.categories).some((items) => items.length > 0)
+      Object.values(data.categories).some((items) => renderableContacts(items).length > 0)
   );
 }
 
@@ -162,14 +221,11 @@ function stateForApiError(error: ApiError): PeopleFailureState {
 }
 
 /**
- * A few reasons deserve wording more specific than their state's default —
- * an unsupported provider response is not something a user can retry away.
+ * One reason deserves wording more specific than its state's default: a run
+ * that found contacts and could not save them is a different promise to the
+ * user than one that found nothing.
  */
 const REASON_MESSAGE_OVERRIDES: Record<string, string> = {
-  provider_schema_error: "The people provider returned an unsupported response.",
-  provider_response_invalid: "The people provider returned an unsupported response.",
-  provider_master_key_required_or_forbidden:
-    "Apollo complete-profile access is unavailable for the configured account.",
   recommendation_commit_failed: PEOPLE_MESSAGES.persistence_error
 };
 

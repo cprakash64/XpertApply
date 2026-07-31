@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Copy,
   ExternalLink,
+  Info,
   Linkedin,
   Loader2,
   Mail,
@@ -24,7 +25,8 @@ import {
   derivePeopleView,
   formatResetTime,
   PEOPLE_MESSAGES,
-  quotaSummary
+  quotaExhaustedMessage,
+  renderableContacts
 } from "@/lib/peopleState";
 import {
   buildMailtoUrl,
@@ -168,7 +170,7 @@ function hasResults(data: PeopleResponse | null): data is PeopleResponse {
   return Boolean(
     data &&
     data.status !== "disabled" &&
-    Object.values(data.categories).some((items) => items.length > 0)
+    Object.values(data.categories).some((items) => renderableContacts(items).length > 0)
   );
 }
 
@@ -418,22 +420,6 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
     loading: loading || discovering,
     requested: Boolean(data && data.status !== "not_started")
   });
-  // Reading the allowance never spends it, so it can be shown at any time.
-  const quota = data?.quota;
-  const resetLabel = formatResetTime(quota?.resets_at);
-  const hasSearched = Boolean(data && data.status !== "not_started");
-  const quotaLine = quota
-    ? hasSearched && quota.daily_remaining > 0 && resetLabel
-      ? `${quota.daily_remaining} searches remaining · Resets ${resetLabel}.`
-      : quotaSummary(quota)
-    : null;
-  const counts = hasResults(data)
-    ? [
-        countLabel(data.categories.likely_recruiters.length, "recruiter"),
-        countLabel(data.categories.potential_hiring_managers.length, "potential manager"),
-        countLabel(data.categories.potential_referrers.length, "referral candidate")
-      ].join(" · ")
-    : "";
   const canDiscover =
     data?.availability_reason !== "not_in_rollout" &&
     data?.status !== "disabled" &&
@@ -449,29 +435,36 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
     data?.status === "no_reliable_matches" &&
     data.search_scope?.broaden_eligible
   );
+  // Nothing displayable, and nothing wrong. Computed from what will actually
+  // render rather than from the status alone: a run can finish "complete" and
+  // still have every contact withheld by the actionable-contact policy, and
+  // saying nothing at all in that case leaves the panel silently blank.
+  //
+  // Both values are read before hasResults() narrows `data`, which is a type
+  // guard and makes `data` unreachable on the false branch.
+  const broadenedSearchCost = data?.quota?.broadened_search_cost ?? 1;
+  const currentStatus = data?.status ?? "";
+  const results = hasResults(data);
+  const showEmptyState =
+    !results &&
+    !discovering &&
+    ["no_reliable_matches", "complete", "partial"].includes(currentStatus);
+  // Only categories that actually returned someone get a heading. A heading
+  // over a sentence explaining an absence is noise the reader did not ask for.
+  const populated = results
+    ? CATEGORY_HEADINGS.filter(([key]) => renderableContacts(data.categories[key]).length > 0)
+    : [];
 
   return (
     <section aria-labelledby={titleId} className="mt-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 id={titleId} className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-              People Who Can Help
-            </h2>
-            {data?.beta ? (
-              <span className="rounded-full border border-line px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
-                Beta
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1.5 max-w-xl text-sm leading-6 text-[var(--text-muted)]">
-            Contacts to research, with the evidence behind each one. Roles are potential matches, not confirmed
-            assignments.
-          </p>
-          {counts ? (
-            <p className="mt-2 text-xs font-medium text-[var(--text-secondary)]">{counts}</p>
-          ) : null}
-          {quotaLine ? <p className="mt-1 text-xs text-[var(--text-muted)]">{quotaLine}</p> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 id={titleId} className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            People Who Can Help
+          </h2>
+          {/* Provenance, scope, freshness and allowance live here — available on
+            * demand, never as a wall of small print above the contacts. */}
+          <AboutTheseResults data={data} />
         </div>
         {canDiscover || canBroaden ? (
           <Button
@@ -491,7 +484,8 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
         ) : null}
       </div>
 
-      <div aria-live="polite" className="mt-4">
+      {/* One concise state, and only when there is something to say. */}
+      <div aria-live="polite" className="mt-3 empty:mt-0">
         {loading && !data ? (
           <p className="text-sm text-[var(--text-muted)]">Checking for saved results…</p>
         ) : null}
@@ -501,7 +495,7 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
         {availableMessage ? <p className="text-sm text-[var(--text-muted)]">{availableMessage}</p> : null}
         {error ? (
           <div>
-            <p role="alert" className="text-sm text-red-700">{error}</p>
+            <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>
             {errorCanRetry ? (
               <Button variant="secondary" className="mt-3" onClick={() => void controller.load(true)}>
                 Retry
@@ -509,41 +503,38 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
             ) : null}
           </div>
         ) : null}
-        {!PEOPLE_FAILURE_STATUSES.includes(data?.status ?? "") ? data?.warnings.map((warning) => (
-          <p key={warning} className="mb-2 text-sm text-amber-800">{warning}</p>
-        )) : null}
-        {data?.status === "not_started" ? (
+        {!PEOPLE_FAILURE_STATUSES.includes(data?.status ?? "") && !discovering
+          ? data?.warnings.map((warning) => (
+              <p key={warning} className="text-sm text-[var(--text-muted)]">{warning}</p>
+            ))
+          : null}
+        {data?.status === "not_started" && !discovering ? (
           <p className="text-sm text-[var(--text-muted)]">
             Find recruiters and referral candidates. Discovery runs only when you choose Find people.
           </p>
         ) : null}
         {view.cached && view.state !== "loading" ? (
-          <p className="mb-2 text-xs text-[var(--text-muted)]">
+          <p className="text-xs text-[var(--text-muted)]">
             Showing previously saved results while the people provider is unavailable.
           </p>
         ) : null}
-        {view.state === "partial" ? (
-          <p className="mb-2 text-xs text-[var(--text-muted)]">{view.message}</p>
-        ) : null}
-        {data?.status === "no_reliable_matches" ? (
+        {/* Nothing displayable. Driven by what will actually render, not by the
+          * status alone: a run can finish "complete" and still have every
+          * contact withheld by the actionable-contact policy, and saying
+          * nothing at all in that case leaves the panel silently blank. */}
+        {showEmptyState ? (
           <div>
-            {/* A truthful empty answer, led by the neutral summary and followed
-             * by what each category actually returned. */}
-            <p className="mb-2 text-sm text-[var(--text-muted)]">{PEOPLE_MESSAGES.empty}</p>
-            <EmptyPeopleCategories />
+            <p className="text-sm text-[var(--text-muted)]">{PEOPLE_MESSAGES.empty}</p>
             {canBroaden ? (
-              <>
-                <p className="mt-3 text-xs text-[var(--text-muted)]">
-                  Broaden search is optional and bounded. It may include broader titles or
-                  evidence-backed related-company matches.
-                </p>
-                <p className="mt-1 text-xs font-medium text-[var(--text-secondary)]">
-                  Broaden search uses {quota?.broadened_search_cost ?? 1} additional people search.
-                </p>
-              </>
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
+                A broader search may include wider titles or evidence-backed related-company matches, and uses{" "}
+                {broadenedSearchCost} additional people search.
+              </p>
             ) : null}
           </div>
         ) : null}
+        {/* Every enabled provider is unavailable. One sentence, no provider
+          * names, no credit accounting. */}
         {data && PEOPLE_FAILURE_STATUSES.includes(data.status) ? (
           <p className="text-sm text-[var(--text-muted)]">
             {providerFailureMessage(data)}
@@ -551,73 +542,33 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
         ) : null}
       </div>
 
-      {/* Full transparency about how the search was run, one click away instead
-        * of six lines of small print above the results. */}
-      {data?.search_scope && data.status !== "disabled" ? (
-        <details className="mt-4 text-xs text-[var(--text-muted)]">
-          <summary className="focus-ring w-fit cursor-pointer rounded list-none font-medium marker:content-[''] hover:text-[var(--text-secondary)]">
-            Search details
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-          <span>Scope: {data.search_scope.company_scope}</span>
-          <span>Location used as a {data.search_scope.location_filter} signal</span>
-          {checkedDate(data.generated_at) ? <span>Last checked: {checkedDate(data.generated_at)}</span> : null}
-          <span>
-            {data.search_scope.parent_company_matches_included
-              ? "Related-company matches were considered"
-              : "Related-company matches were not included"}
-          </span>
-          {data.search_scope.exact_company_search_completed ? (
-            <span>Exact-company search completed</span>
-          ) : null}
-          {data.search_scope.broaden_attempted ? (
-            <span>Controlled broader search completed</span>
-          ) : null}
-          <span>{data.search_scope.refresh_eligible ? "Refresh available" : "Using current cached search"}</span>
-          </div>
-        </details>
-      ) : null}
-
-      {hasResults(data) ? (
-        <div className="mt-6 space-y-7">
-          {CATEGORY_HEADINGS.map(([key, heading]) => {
-            const people = data.categories[key];
-            return (
-              <section key={key} aria-labelledby={`${titleId}-${key}`}>
-                <h3
-                  id={`${titleId}-${key}`}
-                  className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]"
-                >
-                  {heading}
-                </h3>
-                {/* One column: categories usually hold one to three people, and
-                  * a two-column grid left ragged half-empty rows. */}
-                {people.length ? (
-                  <div className="mt-3 grid gap-3">
-                    {people.map((person) => (
-                      <PersonCard
-                        key={person.recommendation_id}
-                        person={person}
-                        busy={controller.actionId === person.recommendation_id}
-                        emailEnabled={data.controls.email_discovery}
-                        outreachEnabled={data.controls.outreach_drafting}
-                        onAction={controller.personAction}
-                        onDraft={controller.draftOutreach}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-2 text-sm text-[var(--text-muted)]">
-                    {key === "likely_recruiters"
-                      ? "No reliable recruiting contact met JobPilot’s threshold."
-                      : key === "potential_hiring_managers"
-                        ? "No potential manager met JobPilot’s confidence threshold."
-                        : "No relevant employee met JobPilot’s referral threshold."}
-                  </p>
-                )}
-              </section>
-            );
-          })}
+      {results ? (
+        <div className="mt-5 space-y-7">
+          {populated.map(([key, heading]) => (
+            <section key={key} aria-labelledby={`${titleId}-${key}`}>
+              <h3
+                id={`${titleId}-${key}`}
+                className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]"
+              >
+                {heading}
+              </h3>
+              {/* One column: categories usually hold one to three people, and
+                * a two-column grid left ragged half-empty rows. */}
+              <div className="mt-3 grid gap-3">
+                {renderableContacts(data.categories[key]).map((person) => (
+                  <PersonCard
+                    key={person.recommendation_id}
+                    person={person}
+                    busy={controller.actionId === person.recommendation_id}
+                    emailEnabled={data.controls.email_discovery}
+                    outreachEnabled={data.controls.outreach_drafting}
+                    onAction={controller.personAction}
+                    onDraft={controller.draftOutreach}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       ) : null}
 
@@ -632,24 +583,68 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
   );
 }
 
+/**
+ * How the results were produced, behind one small control.
+ *
+ * Ordinary users get contacts; the people who need scope, freshness and their
+ * remaining allowance can open this. It never names a provider, a credit count,
+ * or a cache state — that detail belongs in operator diagnostics.
+ */
+function AboutTheseResults({ data }: { data: PeopleResponse | null }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  // Reading the allowance costs nothing, so this is available before a search
+  // too — it is just never the first thing on the tab.
+  if (!data || data.status === "disabled") {
+    return null;
+  }
+  const scope = data.search_scope;
+  const checked = checkedDate(data.generated_at);
+  const quota = data.quota;
+  const remaining = quota
+    ? quota.daily_remaining > 0
+      ? `${quota.daily_remaining} of ${quota.daily_limit} searches left today${
+          formatResetTime(quota.resets_at) ? ` · resets ${formatResetTime(quota.resets_at)}` : ""
+        }`
+      : quotaExhaustedMessage(quota)
+    : null;
 
-function EmptyPeopleCategories() {
   return (
-    <div className="grid gap-2 text-sm text-[var(--text-muted)]">
-      <p>No reliable recruiting contact met JobPilot’s threshold.</p>
-      <p>No potential hiring manager met JobPilot’s threshold.</p>
-      <p>No relevant employee met JobPilot’s referral threshold.</p>
-    </div>
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-label="About these results"
+        title="About these results"
+        onClick={() => setOpen((current) => !current)}
+        className="focus-ring inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-panel hover:text-[var(--text-secondary)]"
+      >
+        <Info className="h-3.5 w-3.5" aria-hidden />
+      </button>
+      {open ? (
+        <div
+          id={panelId}
+          role="group"
+          aria-label="About these results"
+          className="absolute left-0 top-8 z-20 w-[19rem] rounded-xl border border-line bg-white p-3.5 text-xs leading-5 text-[var(--text-muted)] shadow-card"
+        >
+          <p className="text-[var(--text-secondary)]">
+            Contacts found at the hiring company from professional data sources. Roles are potential matches, not
+            confirmed assignments, and employment is not independently verified.
+          </p>
+          {data.beta ? <p className="mt-2">This feature is in beta.</p> : null}
+          <ul className="mt-2.5 grid gap-1">
+            {scope ? <li>Searched: {scope.company_scope.toLowerCase()}</li> : null}
+            {checked ? <li>Last checked {checked}</li> : null}
+            {remaining ? <li>{remaining}</li> : null}
+          </ul>
+        </div>
+      ) : null}
+    </span>
   );
 }
 
-
-/**
- * One contact, at a glance: who they are, why they are here, and the two ways
- * to reach them. Everything else that used to live on this card — bookkeeping
- * buttons, a stack of amber caveats, three evidence bullets — either moved into
- * one quiet line or left.
- */
 function PersonCard({
   person,
   busy,
@@ -747,14 +742,7 @@ function PersonCard({
             <Linkedin className="h-4 w-4" aria-hidden /> LinkedIn
             <ExternalLink className="h-3 w-3 opacity-60" aria-hidden />
           </a>
-        ) : (
-          <span
-            className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded-lg border border-line/70 px-3 text-sm text-[var(--text-muted)] opacity-70"
-            title="JobPilot never guesses a profile URL. None was verified for this contact."
-          >
-            <Linkedin className="h-4 w-4" aria-hidden /> No LinkedIn
-          </span>
-        )}
+        ) : null}
 
         {verifiedEmail ? (
           <button

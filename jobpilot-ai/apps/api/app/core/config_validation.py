@@ -289,7 +289,333 @@ def _check_people_discovery_configuration(settings) -> list[Finding]:
                 "must cover the configured category result limits",
             )
         )
+    findings.extend(_check_people_provider_waterfall(settings))
     findings.extend(_check_people_resilience_configuration(settings))
+    return findings
+
+
+def _check_people_provider_waterfall(settings) -> list[Finding]:
+    """The fallback chain must be well-formed and every enabled hop must be funded.
+
+    A provider that is switched on but unfunded is the worst of the three
+    states: it is not disabled (so an operator believes there is redundancy) and
+    it is not available (so the waterfall skips it), which is exactly how an
+    exhausted PDL budget reached users as "People search is unavailable" while a
+    keyed Apollo account sat idle behind it. Zero budget on an *enabled* provider
+    is therefore a configuration error, not a quiet default.
+    """
+
+    from app.people.provider_registry import KNOWN_PROVIDERS, normalize_provider_order
+
+    findings: list[Finding] = []
+    try:
+        order = normalize_provider_order(getattr(settings, "people_provider_order", []))
+    except ValueError as exc:
+        # Reached only when a caller built Settings without the field validator.
+        return [Finding("PEOPLE_PROVIDER_ORDER", str(exc))]
+
+    if not order:
+        findings.append(
+            Finding("PEOPLE_PROVIDER_ORDER", "must list at least one provider")
+        )
+    if "mock" in order:
+        findings.append(
+            Finding("PEOPLE_PROVIDER_ORDER", "must not include the mock provider")
+        )
+    primary = str(getattr(settings, "people_primary_provider", "")).strip().lower()
+    if primary and order and order[0] != primary:
+        findings.append(
+            Finding(
+                "PEOPLE_PROVIDER_ORDER",
+                f"must start with PEOPLE_PRIMARY_PROVIDER ({primary}); "
+                f"it starts with {order[0]}",
+            )
+        )
+    if primary and primary in KNOWN_PROVIDERS and order and primary not in order:
+        findings.append(
+            Finding(
+                "PEOPLE_PROVIDER_ORDER",
+                f"must contain the primary provider ({primary})",
+            )
+        )
+
+    call_ceiling = int(_configured_int(settings, "people_provider_max_calls_per_discovery"))
+    if call_ceiling <= 0:
+        findings.append(
+            Finding(
+                "PEOPLE_PROVIDER_MAX_CALLS_PER_DISCOVERY",
+                "must be a positive ceiling on provider calls",
+            )
+        )
+    if all(
+        int(_configured_int(settings, attribute)) <= 0
+        for attribute in (
+            "people_coverage_min_recruiters",
+            "people_coverage_min_managers",
+            "people_coverage_min_referrers",
+        )
+    ):
+        findings.append(
+            Finding(
+                "PEOPLE_COVERAGE_MIN_RECRUITERS",
+                "at least one coverage target must be positive, or the "
+                "waterfall stops before calling any provider",
+            )
+        )
+
+    findings.extend(_check_apollo_provider(settings, order=order, call_ceiling=call_ceiling))
+    findings.extend(_check_openai_web_provider(settings, order=order))
+    findings.extend(_check_brightdata_provider(settings, order=order))
+    return findings
+
+
+def collect_people_provider_findings(settings) -> list[Finding]:
+    """Every provider configuration problem, together, for the operator script.
+
+    Deliberately the same function the startup check uses. An operator running
+    the dry-run inspector and a deployment running startup validation must never
+    be told different things about the same configuration.
+    """
+
+    return _check_people_provider_waterfall(settings)
+
+
+def _check_brightdata_provider(settings, *, order: list[str]) -> list[Finding]:
+    """Bright Data's gates, reported all at once rather than one deploy at a time.
+
+    Verification (collect a known profile URL) and discovery (find profiles
+    matching a query) are separate Bright Data datasets, so they are validated
+    separately: a deployment can legitimately run verification-only while the
+    discovery contract is still being confirmed.
+    """
+
+    listed = "brightdata" in order
+    enabled = bool(getattr(settings, "people_brightdata_discovery_enabled", False))
+    if not (listed or enabled):
+        return []
+
+    findings: list[Finding] = []
+    where = (
+        "is listed in PEOPLE_PROVIDER_ORDER"
+        if listed
+        else "is enabled by PEOPLE_BRIGHTDATA_DISCOVERY_ENABLED"
+    )
+    if listed and not enabled:
+        findings.append(
+            Finding(
+                "PEOPLE_BRIGHTDATA_DISCOVERY_ENABLED",
+                "must be true while brightdata is listed in PEOPLE_PROVIDER_ORDER, "
+                "or the waterfall will skip it on every discovery",
+            )
+        )
+    if not (getattr(settings, "brightdata_api_token", None) or "").strip():
+        findings.append(
+            Finding("BRIGHTDATA_API_TOKEN", f"is missing while Bright Data {where}")
+        )
+    if not (getattr(settings, "people_brightdata_dataset_id", None) or "").strip():
+        findings.append(
+            Finding(
+                "PEOPLE_BRIGHTDATA_DATASET_ID",
+                f"is missing while Bright Data {where}. This is the "
+                "collect-by-URL dataset used to verify a known profile.",
+            )
+        )
+    if not (
+        getattr(settings, "people_brightdata_discovery_dataset_id", None) or ""
+    ).strip():
+        findings.append(
+            Finding(
+                "PEOPLE_BRIGHTDATA_DISCOVERY_DATASET_ID",
+                f"is missing while Bright Data {where}, so discovery cannot run. "
+                "Bright Data's people-discovery input schema is account-specific "
+                "and unpublished; supply the discovery dataset id and confirm the "
+                "query shape before relying on discovery.",
+            )
+        )
+    for setting, attribute in (
+        ("PEOPLE_BRIGHTDATA_DAILY_RECORD_BUDGET", "people_brightdata_daily_record_budget"),
+        (
+            "PEOPLE_BRIGHTDATA_PER_USER_DAILY_LIMIT",
+            "people_brightdata_per_user_daily_limit",
+        ),
+        (
+            "PEOPLE_BRIGHTDATA_MAX_RECORDS_PER_DISCOVERY",
+            "people_brightdata_max_records_per_discovery",
+        ),
+    ):
+        if int(_configured_int(settings, attribute)) <= 0:
+            findings.append(
+                Finding(
+                    setting,
+                    f"is 0 while Bright Data {where}. Set a positive value, or "
+                    "remove brightdata from PEOPLE_PROVIDER_ORDER.",
+                )
+            )
+    for setting, attribute in (
+        ("PEOPLE_BRIGHTDATA_TIMEOUT_SECONDS", "people_brightdata_timeout_seconds"),
+        (
+            "PEOPLE_BRIGHTDATA_POLL_INTERVAL_SECONDS",
+            "people_brightdata_poll_interval_seconds",
+        ),
+        ("PEOPLE_BRIGHTDATA_MAX_POLL_SECONDS", "people_brightdata_max_poll_seconds"),
+    ):
+        if _configured_float(settings, attribute) <= 0:
+            findings.append(
+                Finding(setting, f"must be a positive number while Bright Data {where}")
+            )
+    poll = _configured_float(settings, "people_brightdata_poll_interval_seconds")
+    ceiling = _configured_float(settings, "people_brightdata_max_poll_seconds")
+    if poll > 0 and ceiling > 0 and poll > ceiling:
+        findings.append(
+            Finding(
+                "PEOPLE_BRIGHTDATA_POLL_INTERVAL_SECONDS",
+                f"({poll}s) exceeds PEOPLE_BRIGHTDATA_MAX_POLL_SECONDS ({ceiling}s), "
+                "so no snapshot could ever be polled even once",
+            )
+        )
+    return findings
+
+
+def _apollo_is_intended(settings, *, order: list[str]) -> bool:
+    """Whether this deployment means to use Apollo for discovery.
+
+    Deliberately excludes PEOPLE_APOLLO_DIAGNOSTIC_ENABLED: that flag is an
+    internal probe of the Apollo account, not a statement that Apollo should
+    answer user-facing searches, and conflating the two would demand a discovery
+    budget from deployments that only run diagnostics.
+    """
+
+    return "apollo" in order or bool(
+        getattr(settings, "people_apollo_discovery_enabled", False)
+    )
+
+
+def _check_apollo_provider(
+    settings, *, order: list[str], call_ceiling: int
+) -> list[Finding]:
+    if not _apollo_is_intended(settings, order=order):
+        # Nobody asked for Apollo: zero budgets are correct and mean "off".
+        return []
+
+    listed = "apollo" in order
+    where = (
+        "is listed in PEOPLE_PROVIDER_ORDER"
+        if listed
+        else "is enabled by PEOPLE_APOLLO_DISCOVERY_ENABLED"
+    )
+    remedy = (
+        "Set a positive value, or remove apollo from PEOPLE_PROVIDER_ORDER."
+        if listed
+        else "Set a positive value, or set PEOPLE_APOLLO_DISCOVERY_ENABLED=false."
+    )
+
+    findings: list[Finding] = []
+    if not (getattr(settings, "apollo_api_key", None) or "").strip():
+        findings.append(
+            Finding("APOLLO_API_KEY", f"is missing while Apollo {where}")
+        )
+    if listed and not bool(getattr(settings, "people_apollo_discovery_enabled", False)):
+        findings.append(
+            Finding(
+                "PEOPLE_APOLLO_DISCOVERY_ENABLED",
+                "must be true while apollo is listed in PEOPLE_PROVIDER_ORDER, "
+                "or the waterfall will skip it on every discovery",
+            )
+        )
+
+    # Every remaining check reports independently so one deploy surfaces the
+    # complete list rather than one problem at a time.
+    for setting, attribute in (
+        ("PEOPLE_APOLLO_DAILY_CREDIT_BUDGET", "people_apollo_daily_credit_budget"),
+        ("PEOPLE_APOLLO_PER_USER_DAILY_LIMIT", "people_apollo_per_user_daily_limit"),
+        (
+            "PEOPLE_APOLLO_MAX_ENRICHMENTS_PER_DISCOVERY",
+            "people_apollo_max_enrichments_per_discovery",
+        ),
+        ("PEOPLE_APOLLO_RECRUITER_RESULTS", "people_apollo_recruiter_results"),
+        ("PEOPLE_APOLLO_MANAGER_RESULTS", "people_apollo_manager_results"),
+        ("PEOPLE_APOLLO_REFERRAL_RESULTS", "people_apollo_referral_results"),
+    ):
+        if int(_configured_int(settings, attribute)) <= 0:
+            findings.append(
+                Finding(
+                    setting,
+                    f"is 0 while Apollo {where}. {remedy}",
+                )
+            )
+
+    # Apollo needs at least one search call plus one enrichment call to be
+    # reachable at all; a ceiling the primary can exhaust on its own makes the
+    # fallback decorative.
+    if 0 < call_ceiling < 2:
+        findings.append(
+            Finding(
+                "PEOPLE_PROVIDER_MAX_CALLS_PER_DISCOVERY",
+                f"is {call_ceiling}, which leaves no room for an Apollo search "
+                f"while Apollo {where}",
+            )
+        )
+    return findings
+
+
+def _check_openai_web_provider(settings, *, order: list[str]) -> list[Finding]:
+    # Unlike Apollo, the public-web fallback is only validated when explicitly
+    # enabled: listing it in the order while disabled is a documented way to
+    # stage the rollout.
+    if not bool(getattr(settings, "people_openai_web_discovery_enabled", False)):
+        return []
+
+    findings: list[Finding] = []
+    if "openai_web" not in order:
+        findings.append(
+            Finding(
+                "PEOPLE_PROVIDER_ORDER",
+                "must include openai_web while "
+                "PEOPLE_OPENAI_WEB_DISCOVERY_ENABLED is true",
+            )
+        )
+    if not (getattr(settings, "openai_api_key", None) or "").strip():
+        findings.append(
+            Finding(
+                "OPENAI_API_KEY",
+                "is missing while public-web people discovery is enabled",
+            )
+        )
+    if not str(getattr(settings, "people_openai_web_model", "") or "").strip():
+        findings.append(
+            Finding(
+                "PEOPLE_OPENAI_WEB_MODEL",
+                "must name a model while public-web people discovery is enabled",
+            )
+        )
+    confidence = _configured_float(settings, "people_openai_web_min_confidence")
+    if not 0.5 <= confidence <= 1:
+        findings.append(
+            Finding(
+                "PEOPLE_OPENAI_WEB_MIN_CONFIDENCE",
+                "must be between 0.5 and 1.0 for an unverified public-web source",
+            )
+        )
+    for setting, attribute in (
+        (
+            "PEOPLE_OPENAI_WEB_MAX_SEARCHES_PER_DISCOVERY",
+            "people_openai_web_max_searches_per_discovery",
+        ),
+        ("PEOPLE_OPENAI_WEB_MAX_CANDIDATES", "people_openai_web_max_candidates"),
+        ("PEOPLE_OPENAI_WEB_DAILY_CALL_BUDGET", "people_openai_web_daily_call_budget"),
+        (
+            "PEOPLE_OPENAI_WEB_PER_USER_DAILY_LIMIT",
+            "people_openai_web_per_user_daily_limit",
+        ),
+        ("PEOPLE_OPENAI_WEB_CACHE_TTL_SECONDS", "people_openai_web_cache_ttl_seconds"),
+    ):
+        if int(_configured_int(settings, attribute)) <= 0:
+            findings.append(
+                Finding(
+                    setting,
+                    "must be positive while public-web people discovery is enabled",
+                )
+            )
     return findings
 
 

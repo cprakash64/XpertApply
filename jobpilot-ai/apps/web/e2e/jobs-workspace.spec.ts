@@ -270,7 +270,10 @@ test("the whole card opens a master-detail workspace with manual networking", as
   // 5. Networking reads stored state only; nothing paid runs unasked.
   await page.getByRole("tab", { name: "Networking" }).click();
   await expect(page.getByRole("heading", { name: "People Who Can Help" })).toBeVisible();
-  await expect(page.getByText("12 of 20 people searches remaining today.")).toBeVisible();
+  // The allowance moved behind "About these results"; the tab shows contacts.
+  await expect(page.getByText("12 of 20 people searches remaining today.")).toHaveCount(0);
+  await page.getByRole("button", { name: "About these results" }).click();
+  await expect(page.getByText(/12 of 20 searches left today/)).toBeVisible();
   expect(peopleRequests).toEqual(["GET /jobs/2/people"]);
 
   await page.getByRole("button", { name: "Find people" }).click();

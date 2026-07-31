@@ -110,9 +110,14 @@ def _job(db: Session, *, company: str, domain: str, external_id: str) -> JobPost
 
 
 def _person(domain: str, title: str, role: str, sub_role: str, levels: list[str]) -> dict:
+    slug = f"{domain}-{title}".replace(" ", "-").replace(".", "-").lower()
     return {
         "id": f"pdl-{domain}-{title}".replace(" ", "-"),
         "full_name": f"Sample {title}",
+        # A quota test still needs displayable contacts: without a validated
+        # profile URL the actionable-contact policy withholds every record and
+        # the quota assertions would be measuring an empty result.
+        "linkedin_url": f"https://www.linkedin.com/in/{slug}",
         "job_title": title,
         "job_company_name": domain.split(".")[0].title(),
         "job_company_website": domain,
@@ -173,6 +178,12 @@ class _Transport:
                 **_person(domain, template[0], template[1], template[2], template[3]),
                 "id": f"pdl-{domain}-{template[0]}-{index}".replace(" ", "-"),
                 "full_name": f"Sample {template[0]} {index}",
+                "linkedin_url": (
+                    "https://www.linkedin.com/in/"
+                    + f"{domain}-{template[0]}-{index}".replace(" ", "-")
+                    .replace(".", "-")
+                    .lower()
+                ),
             }
             for index in range(self.records_per_search)
         ]

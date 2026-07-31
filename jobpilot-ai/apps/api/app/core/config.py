@@ -2,7 +2,7 @@ import json
 import os
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,8 +23,66 @@ except ModuleNotFoundError:
             super().__init__(**env_values)
 
 
+# List settings this project documents as accepting a comma-separated value.
+# pydantic-settings would otherwise JSON-decode them inside the environment
+# source and raise an opaque SettingsError before any field validator could run.
+_CSV_TOLERANT_LIST_FIELDS = frozenset(
+    {
+        "cors_origins",
+        "job_source_companies",
+        "job_discovery_source_packs",
+        "people_internal_emails",
+        "people_beta_user_ids",
+        "people_provider_order",
+    }
+)
+
+
+def _tolerate_csv(source):
+    """Let documented CSV lists reach the field validator on an existing source.
+
+    The source instances are wrapped rather than rebuilt so every option the
+    caller configured — including a runtime ``_env_file`` override — is
+    preserved. Only the fields listed above are affected, and only when the
+    value is not already JSON, so ``["pdl","apollo"]`` keeps its exact meaning.
+    """
+
+    original = source.decode_complex_value
+
+    def decode_complex_value(field_name, field, value, _original=original):
+        if (
+            field_name in _CSV_TOLERANT_LIST_FIELDS
+            and isinstance(value, str)
+            and not value.strip().startswith(("[", "{"))
+        ):
+            return value
+        return _original(field_name, field, value)
+
+    try:
+        source.decode_complex_value = decode_complex_value
+    except (AttributeError, TypeError):  # pragma: no cover - defensive
+        pass
+    return source
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        return (
+            init_settings,
+            _tolerate_csv(env_settings),
+            _tolerate_csv(dotenv_settings),
+            file_secret_settings,
+        )
 
     database_url: str = "sqlite:///./jobpilot.db"
     redis_url: str = "redis://localhost:6379/0"
@@ -98,6 +156,27 @@ class Settings(BaseSettings):
     people_internal_emails: list[str] = []
     people_beta_user_ids: list[str] = []
     people_primary_provider: str = "pdl"
+    # --- Provider waterfall ---------------------------------------------------
+    # Ordered discovery providers. The first entry is the primary; the rest are
+    # tried only when the one before it leaves a category gap AND its failure is
+    # fallback-eligible. Unknown names, duplicates and empty entries are rejected
+    # when the setting is loaded.
+    #
+    # The default lists only PDL, because a provider in this list must also be
+    # enabled and funded — a default that named Apollo would fail its own
+    # startup validation on every deployment that had not bought Apollo credits.
+    people_provider_order: list[str] = ["pdl"]
+    people_provider_fallback_on_no_match: bool = True
+    people_provider_fallback_on_budget_exhausted: bool = True
+    # A hard ceiling on paid provider calls for one discovery, across every
+    # provider in the chain. Cost control that does not depend on any single
+    # provider's own accounting being correct.
+    people_provider_max_calls_per_discovery: int = 12
+    # Coverage that ends the waterfall. Reaching all three stops the chain, so a
+    # good PDL answer never pays for an Apollo search.
+    people_coverage_min_recruiters: int = 2
+    people_coverage_min_managers: int = 1
+    people_coverage_min_referrers: int = 2
     # Apollo is retained for explicit internal diagnostics only. Normal
     # discovery cannot select it unless both gates are enabled.
     people_apollo_discovery_enabled: bool = False
@@ -115,6 +194,53 @@ class Settings(BaseSettings):
     people_employment_verification_max_recruiters: int = 1
     people_employment_verification_max_managers: int = 1
     people_employment_verification_max_referrers: int = 1
+    # Apollo carries its own budget so a spent PDL allowance never silently
+    # spends Apollo's, and vice versa.
+    people_apollo_daily_credit_budget: int = 0
+    people_apollo_per_user_daily_limit: int = 0
+    people_apollo_recruiter_results: int = 4
+    people_apollo_manager_results: int = 4
+    people_apollo_referral_results: int = 6
+    people_apollo_max_enrichments_per_discovery: int = 6
+    # --- Bright Data (primary professional-profile discovery/verification) ----
+    # Off by default and non-billable until an operator supplies a token, a
+    # dataset id, and a budget. Two dataset ids because Bright Data models
+    # "collect these profile URLs" and "discover profiles matching a query" as
+    # genuinely different datasets; the verification one is documented
+    # (LinkedIn people profiles), the discovery one is account-specific.
+    people_brightdata_discovery_enabled: bool = False
+    brightdata_api_token: str | None = None
+    # Collect-by-URL dataset used to verify a known LinkedIn profile.
+    people_brightdata_dataset_id: str | None = None
+    # Discovery dataset. Empty means discovery is unavailable and the step
+    # reports invalid_configuration rather than guessing a contract.
+    people_brightdata_discovery_dataset_id: str | None = None
+    people_brightdata_daily_record_budget: int = 0
+    people_brightdata_per_user_daily_limit: int = 0
+    people_brightdata_max_records_per_discovery: int = 12
+    people_brightdata_timeout_seconds: float = 30.0
+    people_brightdata_poll_interval_seconds: float = 3.0
+    # A hard wall on an async snapshot. Bright Data collection is minutes-scale
+    # in the worst case and a user request must never wait on it indefinitely.
+    people_brightdata_max_poll_seconds: float = 45.0
+    # --- OpenAI public-web fallback ------------------------------------------
+    # Not a people database. A bounded, citation-required last resort that is
+    # off by default and never treated as verified employment evidence.
+    people_openai_web_discovery_enabled: bool = False
+    people_openai_web_max_searches_per_discovery: int = 3
+    # Public-web evidence carries a higher bar than a paid structured provider:
+    # it is the only source whose "current employment" is inferred from pages
+    # rather than asserted by a data contract.
+    people_openai_web_min_confidence: float = 0.90
+    people_openai_web_max_candidates: int = 4
+    people_openai_web_daily_call_budget: int = 0
+    people_openai_web_per_user_daily_limit: int = 0
+    people_openai_web_model: str = "gpt-5.6-terra"
+    people_openai_web_timeout_seconds: float = 30.0
+    # Public-web evidence is cached briefly: it is the slowest and least
+    # authoritative provider, so repeating its searches for the same company
+    # buys nothing. A short TTL keeps a stale sighting from outliving its truth.
+    people_openai_web_cache_ttl_seconds: int = 86_400
     apollo_api_key: str | None = None
     hunter_api_key: str | None = None
     pdl_api_key: str | None = None
@@ -145,6 +271,11 @@ class Settings(BaseSettings):
     people_apollo_bulk_capability_enabled: bool = True
     people_apollo_bulk_rejection_threshold: int = 2
     people_apollo_bulk_capability_ttl_seconds: int = 3600
+    # Whether a bulk enrichment Apollo rejected may be retried, once, as a
+    # bounded number of single-person completions. Turning this off leaves the
+    # search results intact without contact channels, which is the safe answer
+    # for an account whose plan does not include the endpoint at all.
+    people_apollo_single_enrichment_fallback_enabled: bool = True
     people_apollo_complete_person_max_recruiters: int = 1
     people_apollo_complete_person_max_managers: int = 1
     people_apollo_complete_person_max_referrers: int = 1
@@ -157,6 +288,11 @@ class Settings(BaseSettings):
     people_min_manager_relevance: float = 60.0
     people_min_referrer_relevance: float = 60.0
     people_min_data_confidence: float = 0.5
+    # The core product rule, as a switch. A contact with no validated LinkedIn
+    # profile has no channel the user can actually open, so it is not a contact.
+    # Turning this off is an internal-evaluation affordance, never a product
+    # decision.
+    people_require_linkedin_for_display: bool = True
     people_recruiter_enrichment_reserve: int = 3
     people_manager_enrichment_reserve: int = 3
     people_referrer_enrichment_reserve: int = 2
@@ -203,6 +339,32 @@ class Settings(BaseSettings):
     # Hard ceiling on provider calls for one discovery, across all categories
     # and strategies, so relaxation can never multiply spend without bound.
     people_pdl_max_provider_calls_per_discovery: int = 8
+
+    @field_validator("people_provider_order", mode="before")
+    @classmethod
+    def parse_provider_order(cls, value: object, info: ValidationInfo) -> list[str]:
+        """Accept a JSON array or a comma-separated list, normalized identically.
+
+        Delegates to the waterfall's parser so the settings model, the startup
+        checks, and the runtime chain share one definition of a valid order. A
+        malformed order raises here, at load time, with a message naming the
+        cause — the previous behaviour was an opaque Pydantic SettingsError.
+        """
+
+        from app.people.provider_registry import normalize_provider_order
+
+        order = normalize_provider_order(value)
+        # app_env is declared before this field, so the already-validated value
+        # is available here; the environment is only a fallback.
+        app_env = str(
+            (info.data or {}).get("app_env") or os.getenv("APP_ENV", "development")
+        ).strip().lower()
+        if "mock" in order and app_env not in {"test", "development"}:
+            raise ValueError(
+                "PEOPLE_PROVIDER_ORDER may not include the mock provider outside "
+                "test and development environments."
+            )
+        return order
 
     @field_validator(
         "cors_origins",

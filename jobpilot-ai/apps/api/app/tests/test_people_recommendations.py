@@ -1754,13 +1754,37 @@ def test_apollo_422_without_safe_field_path_uses_request_level_reason() -> None:
         "expected_types": [],
         "missing_required": False,
         "error_scope": "request_level",
+        # Classified, not retained: the fixture's prose matches no known
+        # contract phrase, so nothing of it survives.
+        "message_code": "unclassified",
+        "classification": "unknown_validation_error",
+        # The shape of the answer, which is what a live 422 reporting only
+        # "unclassified" left an operator unable to see.
+        "response_content_type": "application/json",
+        "response_body_type": "object",
+        "response_length": len(response.content),
+        "top_level_keys": ["message"],
+        "provider_request_id": "none",
+        "http_status": 422,
     }
+    # A key name is structure; the sentence it held is not.
+    assert "Private response content" not in str(metadata)
     unparseable = httpx.Response(
         422,
         request=response.request,
         text="not-json and not retained",
     )
-    assert providers._safe_apollo_validation_metadata(unparseable) == metadata
+    unparseable_metadata = providers._safe_apollo_validation_metadata(unparseable)
+    # Neither body says anything the contract vocabulary recognises, so both
+    # classify the same way and neither retains a word of what was returned.
+    assert unparseable_metadata["message_code"] == metadata["message_code"]
+    assert unparseable_metadata["error_types"] == metadata["error_types"]
+    assert unparseable_metadata["error_scope"] == metadata["error_scope"]
+    assert "not retained" not in str(unparseable_metadata)
+    # A plain-text body and a JSON one are genuinely different problems, and the
+    # shape fields are what let an operator tell them apart at all.
+    assert unparseable_metadata["response_body_type"] == "string"
+    assert metadata["response_body_type"] == "object"
 
 
 def test_apollo_enrichment_requires_id_correlation_and_preserves_request_order(
@@ -2123,8 +2147,13 @@ def test_discovery_persists_conflicting_employer_suppression_diagnostics(
         candidate.employment_validation_status
         == "conflicting_current_employment"
     )
+    # Employment validation names the conflict; the actionable-contact policy
+    # independently refuses to display anyone whose current employer is in
+    # dispute. Both reasons are recorded — an operator reading the suppression
+    # should see that two independent rules agreed.
     assert candidate.recommendation_limitations == [
-        "current_employment_conflict"
+        "current_employment_conflict",
+        "conflicting_employment",
     ]
     assert service._fresh_candidates(db, job.id, user.id) == []
 
@@ -2520,6 +2549,11 @@ def _persist_recommendation(
         current_company_domain="acme.example",
         current_title="Senior Technical Recruiter",
         normalized_title="senior technical recruiter",
+        # A persisted recommendation is by definition an actionable contact:
+        # the actionable-contact policy is applied on the read path too, so a
+        # fixture without a validated profile URL would never be served.
+        linkedin_url="https://www.linkedin.com/in/rita-recruiter",
+        linkedin_url_normalized="linkedin.com/in/rita-recruiter",
         employment_last_verified_at=datetime.now(UTC),
         employment_revalidation_required=revalidation_required,
         employment_conflict_detected_at=(
@@ -3376,7 +3410,7 @@ def test_bulk_422_successful_single_fallback_persists_normally(
         async def request(self, method: str, url: str, **_kwargs):
             person = {
                 "id": identifier,
-                "name": "Private Person",
+                "name": "Parker Prospect",
                 "title": "Technical Recruiter",
                 "linkedin_url": "https://www.linkedin.com/in/private-person",
                 "organization": {
@@ -3989,16 +4023,17 @@ def test_pdl_primary_discovery_persists_categories_without_apollo_or_hunter(
             "potential_referrers",
         )
     } == {
+        # Only the recruiter carries a real linkedin.com/in/ profile. The
+        # manager and the referrer were returned with a non-LinkedIn URL, so
+        # under the actionable-contact policy they have no channel a user could
+        # open and are withheld rather than rendered as dead-end cards.
         "likely_recruiters": 1,
-        "potential_hiring_managers": 1,
-        "potential_referrers": 1,
+        "potential_hiring_managers": 0,
+        "potential_referrers": 0,
     }
     assert discovered.json()["categories"]["likely_recruiters"][0][
         "professional_profile_url"
     ] == "https://www.linkedin.com/in/synthetic-person"
-    assert discovered.json()["categories"]["potential_hiring_managers"][0][
-        "professional_profile_url"
-    ] is None
     # One company-identity resolution plus one search per category.
     assert len(provider_calls) == calls_after_discovery == 4
     assert provider_calls[0] == (
@@ -4052,7 +4087,19 @@ def test_pdl_primary_discovery_persists_categories_without_apollo_or_hunter(
         assert category_diagnostics["raw_search_result_count"] == 1
         assert category_diagnostics["normalized_profile_count"] == 1
         assert category_diagnostics["exact_company_current_profiles"] == 1
-        assert category_diagnostics["accepted"] == 1
+        # Every category found and validated one current employee. Only the
+        # recruiter's profile URL was a real LinkedIn one, so only the recruiter
+        # is displayable — and the diagnostics say so per category rather than
+        # reporting a search that never happened.
+        expected_accepted = 1 if category == "likely_recruiter" else 0
+        assert category_diagnostics["accepted"] == expected_accepted
+        if not expected_accepted:
+            assert (
+                category_diagnostics["rejection_reason_counts"][
+                    "missing_linkedin_url"
+                ]
+                == 1
+            )
     rendered_logs = caplog.text
     assert all(value not in rendered_logs for value in private_ids.values())
     assert "Synthetic Technical Recruiter" not in rendered_logs

@@ -57,6 +57,28 @@ METRICS = frozenset(
         "people_discovery_cache_hit_total",
         "people_discovery_coalesced_waiter_total",
         "people_quota_remaining",
+        # Provider waterfall. These are what tell an operator that a fallback
+        # carried a discovery, and which provider actually answered.
+        "people_provider_attempts_total",
+        "people_provider_fallbacks_total",
+        "people_provider_success_total",
+        "people_provider_no_match_total",
+        "people_provider_budget_exhausted_total",
+        "people_candidates_by_provider_total",
+        "people_candidates_deduplicated_total",
+        "people_discovery_coverage",
+        "people_openai_web_candidates_rejected_total",
+        # Bright Data. Records, not requests, are the unit of cost.
+        "people_brightdata_records_returned",
+        # The actionable-contact gate. These are the numbers that answer
+        # "why does this company show one contact instead of six?".
+        "people_contacts_evaluated_total",
+        "people_contacts_accepted_total",
+        "people_contacts_rejected_total",
+        "people_masked_name_rejected_total",
+        "people_missing_linkedin_rejected_total",
+        "people_ambiguous_identity_rejected_total",
+        "people_legacy_record_suppressed_total",
     }
 )
 _DIMENSIONS = frozenset(
@@ -72,6 +94,16 @@ _DIMENSIONS = frozenset(
         "channel",
         "stage",
         "generation_path",
+        # Waterfall dimensions. All low-cardinality and free of personal data:
+        # a provider name, an outcome, a reason code, and coverage counts.
+        "outcome",
+        "reason",
+        "recruiters",
+        "managers",
+        "referrers",
+        # Where in the pipeline a decision was taken. Low-cardinality by
+        # construction: a fixed set of stage names, never a company or a person.
+        "policy_version",
     }
 )
 
