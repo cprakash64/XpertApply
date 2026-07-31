@@ -90,7 +90,9 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
     current_title: "Director of Machine Learning",
     category: "potential_hiring_manager",
     category_label: "Potential hiring manager",
-    professional_profile_url: null
+    // A displayed contact must carry a validated profile URL: the actionable-
+    // contact policy withholds anyone the user could not actually open.
+    professional_profile_url: "https://www.linkedin.com/in/morgan-manager"
   };
   const referrer = {
     ...recruiter,
@@ -99,7 +101,9 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
     current_title: "Machine Learning Engineer",
     category: "potential_referrer",
     category_label: "Potential referral candidate",
-    professional_profile_url: null
+    // A displayed contact must carry a validated profile URL: the actionable-
+    // contact policy withholds anyone the user could not actually open.
+    professional_profile_url: "https://www.linkedin.com/in/pat-referrer"
   };
   const job = {
     id: persistedJobId,

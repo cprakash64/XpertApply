@@ -40,7 +40,13 @@ from app.people.actionable import (
     evaluate_actionable_contact,
     is_displayable_record,
 )
-from app.people.brightdata import BRIGHTDATA_PROFILE_STRATEGY_VERSION
+from app.people.brightdata import (
+    BRIGHTDATA_PROFILE_STRATEGY_VERSION,
+    BrightDataPeopleProvider,
+)
+from app.people.brightdata import (
+    discovery_configuration_gap as brightdata_discovery_gap,
+)
 from app.people.circuit import CircuitSnapshot, circuit_state
 from app.people.coalescing import (
     provider_search_coalescer,
@@ -99,6 +105,7 @@ from app.people.schemas import (
     PeopleSearchQuery,
     PersonEnrichmentRequest,
     ProviderPerson,
+    ProviderUsage,
     WorkEmailRequest,
 )
 from app.people.scoring import (
@@ -130,8 +137,6 @@ from app.people.waterfall import (
     ProviderStep,
     ProviderStepResult,
     SkipReason,
-    WaterfallResult,
-    categories_below_target,
     configured_provider_order,
     run_waterfall,
 )
@@ -2030,6 +2035,479 @@ def _provider_budget_state(
     return None
 
 
+class _PDLStep:
+    """People Data Labs, as an ordinary step in the chain.
+
+    This used to be an inline block at the top of :func:`discover` that ran
+    before the waterfall was consulted at all — which is why "PDL is the
+    primary" was a structural assumption rather than a configuration choice.
+    Extracting it means the order in ``PEOPLE_PROVIDER_ORDER`` is the only thing
+    that decides who runs first, and PDL can sit last like any other provider.
+
+    Its behaviour is deliberately unchanged: the same company-identity
+    resolution, the same per-category coalesced search, the same budget gate,
+    the same diagnostics. Only its position in the chain is now configurable.
+    """
+
+    name = "pdl"
+    # PDL's enrich_people is a lookup into the profiles its own search already
+    # returned, and the main pipeline relies on it to attach the full record.
+    candidates_pre_enriched = False
+
+    def __init__(
+        self,
+        db: Session,
+        *,
+        user: User,
+        job_id: int,
+        run: PeopleDiscoveryRun,
+        profile: JobPeopleSearchProfile,
+        diagnostics: dict[str, dict],
+        company_context: dict[str, object],
+        strategy: DiscoveryStrategy,
+    ) -> None:
+        self._db = db
+        self._user = user
+        self._job_id = job_id
+        self._run = run
+        self._profile = profile
+        self._diagnostics = diagnostics
+        self._company_context = company_context
+        self._strategy = strategy
+        self.provider: object | None = None
+        self.company_identity: object | None = None
+        # Whether PDL's Person Search returned full profiles directly, which
+        # changes how many enrichment slots the caller reserves.
+        self.direct_profiles = False
+        self.records_searched = 0
+
+    def availability(self) -> ProviderAvailability:
+        """Only the gates the provider factory does not already enforce.
+
+        Deliberately narrow. ``get_people_provider()`` already refuses an
+        unconfigured or disabled provider, the per-category budget check runs
+        inside :meth:`run`, and the HTTP layer enforces the circuit on every
+        call. Re-checking the credential here as well would gate out a
+        legitimately injected mock provider, and would report a skip for a
+        provider the factory was perfectly willing to build.
+        """
+
+        if not settings.people_pdl_discovery_enabled:
+            return ProviderAvailability.blocked("pdl", SkipReason.DISABLED)
+        snapshot = circuit_state(
+            provider="pdl",
+            account_fingerprint=provider_account_fingerprint(settings.pdl_api_key),
+            operation="people_search",
+        )
+        if snapshot.open_kinds:
+            return ProviderAvailability.blocked("pdl", SkipReason.CIRCUIT_OPEN)
+        return ProviderAvailability.ok("pdl")
+
+    def gate(self, categories: tuple[PeopleCategory, ...]) -> None:
+        self.availability().raise_if_blocked()
+
+    async def run(
+        self, categories: tuple[PeopleCategory, ...], call_budget: int
+    ) -> ProviderStepResult:
+        # Ask the shared factory first: it is the single place that knows about
+        # the mock provider, and it is what tests inject through. It is keyed on
+        # PEOPLE_PRIMARY_PROVIDER, which no longer means "runs first" — with a
+        # configurable chain the primary can be Bright Data while PDL still runs
+        # last — so when it cannot build anything, this step builds its own PDL
+        # client rather than reporting a failure that is really a naming
+        # mismatch.
+        try:
+            provider = get_people_provider()
+        except ProviderUnavailable:
+            provider = PDLPeopleProvider()
+        self.provider = provider
+        _configure_provider_usage(
+            provider,
+            db=self._db,
+            user_id=self._user.id,
+            job_id=self._job_id,
+            discovery_run_id=self._run.id,
+            adapter_version=str(self._company_context["provider_adapter_version"]),
+        )
+        profile = self._profile
+        diagnostics = self._diagnostics
+        found: dict[PeopleCategory, list[ProviderPerson]] = {
+            category: [] for category in _PEOPLE_CATEGORIES
+        }
+        no_match: set[str] = set()
+        failure: str | None = None
+        calls = 0
+        raw_total = 0
+
+        queries_by_category = {
+            category: (
+                build_category_search_queries(profile, category)
+                if self._strategy == "exact"
+                else build_broadened_search_queries(profile, category)
+            )
+            for category in categories
+        }
+        category_search = bool(
+            self._strategy == "exact"
+            and hasattr(provider, "search_people_category")
+        )
+        # Resolve the employer to a stable PDL company id before searching
+        # anyone. Searching by display name alone depends on the job feed and
+        # the provider spelling the company identically, which is what left
+        # Toshiba Global Commerce and Vanderbilt Health with nothing.
+        if category_search and hasattr(provider, "resolve_company"):
+            try:
+                self.company_identity = await provider.resolve_company(
+                    raw_name=profile.company_raw_name or profile.company_name,
+                    normalized_name=profile.company_normalized_name,
+                    aliases=tuple(profile.company_aliases),
+                    verified_domain=profile.company_domain,
+                )
+                calls += 1
+            except ProviderUnavailable as exc:
+                failure = exc.reason
+                _log_provider_failure(exc, self._run.id)
+                self.company_identity = None
+            if self.company_identity is not None:
+                self._company_context.update(self.company_identity.safe_summary())
+            # No verified company evidence at all. Searching anyway would return
+            # strangers who merely work somewhere similarly named, so nothing is
+            # searched and no credit is spent. Distinct from "we searched and
+            # nobody matched".
+            if not (
+                (self.company_identity is not None and self.company_identity.searchable)
+                or profile.company_domain
+            ):
+                metric(
+                    "people_domain_resolution_total",
+                    result="unresolved",
+                    source=profile.company_evidence_source,
+                )
+                return ProviderStepResult(
+                    candidates=found,
+                    calls=calls,
+                    failure_reason="company_domain_unresolved",
+                    outcome=ProviderOutcome.SEARCH_FAILED.value,
+                )
+
+        self.direct_profiles = category_search
+        remaining_records = settings.people_pdl_max_results_per_discovery
+        category_limits = {
+            "likely_recruiter": settings.people_pdl_recruiter_results,
+            "potential_hiring_manager": settings.people_pdl_manager_results,
+            "potential_referrer": settings.people_pdl_referral_results,
+        }
+        for category in categories:
+            if calls >= call_budget:
+                break
+            rows: list[ProviderPerson] = []
+            queries = queries_by_category[category]
+            for query in queries:
+                diagnostics[category]["search_queries"].append(
+                    {
+                        "title_group": query.title_group,
+                        "titles": query.titles,
+                        "company_match_kind": query.company_match_kind,
+                    }
+                )
+                diagnostics[category]["title_groups"].append(query.title_group)
+                diagnostics[category]["seniorities_used"].extend(query.seniorities)
+                if query.company_match_kind == "related":
+                    diagnostics[category]["related_company_search_used"] = True
+
+            if category_search:
+                call_limit = max(
+                    0, min(category_limits[category], remaining_records)
+                )
+                if call_limit and _pdl_budget_allows_call(
+                    self._db, self._user.id, call_limit
+                ):
+                    diagnostics[category]["query_executed"] = True
+                    diagnostics[category]["provider_call_count"] = 1
+                    calls += 1
+                    try:
+                        rows = await _coalesced_search(
+                            provider,
+                            profile=profile,
+                            category=category,
+                            queries=queries,
+                            limit=call_limit,
+                            adapter_version=str(
+                                self._company_context["provider_adapter_version"]
+                            ),
+                            company=self.company_identity,
+                        )
+                        if not rows and _searched_the_provider(provider, queries):
+                            # The provider answered; nobody matched. A result,
+                            # never a rejected request.
+                            no_match.add(category)
+                            metric(
+                                "people_no_match_total",
+                                provider="pdl",
+                                category=category,
+                            )
+                    except ProviderUnavailable as exc:
+                        failure = failure or exc.reason
+                        _log_provider_failure(exc, self._run.id)
+                    raw_count = int(
+                        getattr(provider, "last_search_raw_count", len(rows))
+                    )
+                    normalized = int(
+                        getattr(provider, "last_search_normalized_count", len(rows))
+                    )
+                    diagnostics[category]["raw_search_result_count"] = raw_count
+                    diagnostics[category]["normalized_profile_count"] = normalized
+                    self.records_searched += normalized
+                    raw_total += raw_count
+                    remaining_records -= raw_count
+                elif call_limit:
+                    # A spent provider budget is its own operational state, not
+                    # a provider failure, and must never move the circuit.
+                    failure = failure or "provider_budget_exceeded"
+                    metric(
+                        "people_budget_rejections_total",
+                        provider="pdl",
+                        status="provider_budget",
+                        category=category,
+                    )
+                    diagnostics[category]["rejection_reason_counts"][
+                        "provider_budget_insufficient"
+                    ] = 1
+            else:
+                for query in queries:
+                    if calls >= call_budget:
+                        break
+                    calls += 1
+                    try:
+                        rows.extend(await provider.search_people(query))
+                    except ProviderUnavailable as exc:
+                        failure = failure or exc.reason
+                        _log_provider_failure(exc, self._run.id)
+                    diagnostics[category]["query_executed"] = True
+                    diagnostics[category]["provider_call_count"] += 1
+                # A generic search has no server-side category filter, so the
+                # same record comes back for every category. Assign each person
+                # to the category their title actually supports; leaving one
+                # person in all three would let cross-category deduplication
+                # collapse the whole result into a single bucket.
+                rows = [
+                    person
+                    for person in rows
+                    if _title_category_affinity(person.current_title) == category
+                ]
+                self.records_searched += len(rows)
+                raw_total += len(rows)
+                diagnostics[category]["raw_search_result_count"] += len(rows)
+                diagnostics[category]["normalized_profile_count"] += len(rows)
+
+            found[category] = deduplicate(rows)
+            diagnostics[category]["unique_candidate_count"] = len(found[category])
+            duplicates = max(0, len(rows) - len(found[category]))
+            if duplicates:
+                diagnostics[category]["rejection_reason_counts"][
+                    "duplicate_person"
+                ] = duplicates
+                diagnostics[category]["deduplicated_into_another_identity"] += duplicates
+            if not rows:
+                diagnostics[category]["rejection_reason_counts"][
+                    "no_search_results"
+                ] = 1
+            metric(
+                "people_discovery_candidates_found",
+                len(found[category]),
+                provider="pdl",
+                category=category,
+                scoring_version=SCORING_VERSION,
+            )
+
+        accepted = sum(len(rows) for rows in found.values())
+        return ProviderStepResult(
+            candidates=found,
+            calls=calls,
+            raw_count=raw_total,
+            no_match_categories=no_match,
+            failure_reason=failure,
+            stage_counts={
+                "search_results_received": raw_total,
+                "search_candidates_normalized": self.records_searched,
+                "candidates_accepted": accepted,
+            },
+            outcome=_provider_step_outcome(
+                searched=any(
+                    diagnostics[category]["query_executed"] for category in categories
+                ),
+                failure=failure,
+                accepted=accepted,
+                enrichment_failed=False,
+            ),
+        )
+
+
+class _BrightDataStep:
+    """Bright Data professional-profile discovery, gated on a known contract.
+
+    Bright Data is the intended primary: it is the only configured provider that
+    returns a complete name *and* the profile URL in one record, which is
+    exactly what the actionable-contact policy requires and what Apollo's
+    masked, linkless People Search could never satisfy.
+
+    Discovery reports ``INVALID_CONFIGURATION`` until a discovery dataset id is
+    supplied, because Bright Data's people-discovery input schema is
+    account-specific and unpublished. That is a deliberate refusal to guess a
+    paid provider's request shape, not a missing feature — the async lifecycle
+    behind it is implemented and tested.
+    """
+
+    name = "brightdata"
+    # Bright Data returns complete profile records; there is no second
+    # enrichment call to make.
+    candidates_pre_enriched = True
+
+    def __init__(
+        self,
+        db: Session,
+        *,
+        user: User,
+        job_id: int,
+        run: PeopleDiscoveryRun,
+        profile: JobPeopleSearchProfile,
+    ) -> None:
+        self._db = db
+        self._user = user
+        self._job_id = job_id
+        self._run = run
+        self._profile = profile
+        self.provider: BrightDataPeopleProvider | None = None
+
+    def availability(self) -> ProviderAvailability:
+        if not settings.people_brightdata_discovery_enabled:
+            return ProviderAvailability.blocked("brightdata", SkipReason.DISABLED)
+        if not (settings.brightdata_api_token or "").strip():
+            return ProviderAvailability.blocked(
+                "brightdata", SkipReason.MISSING_CREDENTIALS
+            )
+        gap = brightdata_discovery_gap()
+        if gap is not None:
+            return ProviderAvailability.blocked(
+                "brightdata", SkipReason.INVALID_CONFIGURATION, gap
+            )
+        if not (self._profile.company_domain or self._profile.company_name):
+            return ProviderAvailability.blocked(
+                "brightdata", SkipReason.COMPANY_UNRESOLVED
+            )
+        blocked = _provider_budget_state(
+            self._db,
+            provider="brightdata",
+            user_id=self._user.id,
+            global_budget=settings.people_brightdata_daily_record_budget,
+            per_user_budget=settings.people_brightdata_per_user_daily_limit,
+        )
+        if blocked:
+            return ProviderAvailability.blocked("brightdata", blocked)
+        snapshot = circuit_state(
+            provider="brightdata",
+            account_fingerprint=provider_account_fingerprint(
+                settings.brightdata_api_token
+            ),
+            operation="people_search",
+        )
+        if snapshot.open_kinds:
+            return ProviderAvailability.blocked("brightdata", SkipReason.CIRCUIT_OPEN)
+        return ProviderAvailability.ok("brightdata")
+
+    def gate(self, categories: tuple[PeopleCategory, ...]) -> None:
+        self.availability().raise_if_blocked()
+
+    async def run(
+        self, categories: tuple[PeopleCategory, ...], call_budget: int
+    ) -> ProviderStepResult:
+        provider = BrightDataPeopleProvider()
+        self.provider = provider
+        found: dict[PeopleCategory, list[ProviderPerson]] = {
+            category: [] for category in _PEOPLE_CATEGORIES
+        }
+        counts: dict[str, int] = defaultdict(int)
+        no_match: set[str] = set()
+        failure: str | None = None
+        warnings: list[str] = []
+        calls = 0
+        raw_total = 0
+
+        # Only the categories still missing. A category the chain already
+        # covered is never re-bought.
+        for category in categories:
+            if calls >= call_budget:
+                break
+            queries = build_category_search_queries(self._profile, category)
+            if not queries:
+                continue
+            outcome = await provider.discover(
+                _brightdata_inputs(self._profile, queries[0]),
+                discover_by="keyword",
+                company_name=self._profile.company_name,
+                company_aliases=tuple(self._profile.company_aliases),
+                company_domain=self._profile.company_domain,
+                categories=(category,),
+            )
+            calls += max(1, outcome.calls)
+            raw_total += outcome.records_returned
+            counts["search_results_received"] += outcome.records_returned
+            counts["search_candidates_normalized"] += len(outcome.candidates)
+            for reason, count in outcome.rejected.items():
+                counts[f"rejected_{reason}"] += count
+            if outcome.failure_reason:
+                failure = failure or outcome.failure_reason
+                warnings.extend(outcome.warnings)
+                break
+            if not outcome.candidates:
+                no_match.add(category)
+                continue
+            found[category] = deduplicate(outcome.candidates)
+
+        accepted = sum(len(rows) for rows in found.values())
+        counts["candidates_accepted"] = accepted
+        logger.info(
+            "brightdata_candidate_funnel discovery_run_id=%s %s",
+            self._run.id,
+            " ".join(f"{key}={counts[key]}" for key in sorted(counts)),
+        )
+        return ProviderStepResult(
+            candidates=found,
+            calls=calls,
+            raw_count=raw_total,
+            no_match_categories=no_match,
+            failure_reason=failure,
+            warnings=warnings,
+            stage_counts=dict(counts),
+            outcome=_provider_step_outcome(
+                searched=calls > 0 and failure is None,
+                failure=failure,
+                accepted=accepted,
+                enrichment_failed=False,
+            ),
+        )
+
+
+def _brightdata_inputs(
+    profile: JobPeopleSearchProfile, query: PeopleSearchQuery
+) -> list[dict[str, object]]:
+    """Keyword-discovery inputs, built only from fields Bright Data documents.
+
+    ``discover_by=keyword`` is the one published discovery mode that can carry a
+    company plus a role, so the keyword is the canonical employer name and the
+    category's strongest title. No undocumented field name is invented here; if
+    an account's discovery dataset expects a different shape, the operator
+    supplies the dataset id and this is the shape to confirm first.
+    """
+
+    titles = query.titles[:3] or [query.title_group]
+    return [
+        {"keyword": f"{profile.company_name} {title}".strip()}
+        for title in titles
+        if title
+    ]
+
+
 class _ApolloFallbackStep:
     """Apollo People Search, then enrichment for the few survivors.
 
@@ -2046,6 +2524,10 @@ class _ApolloFallbackStep:
     """
 
     name = "apollo"
+    # Apollo runs its own bulk/single enrichment inside the step. Asking the
+    # orchestrator to enrich again would repeat a paid call and, when it
+    # failed, discard the very candidates the step took care to preserve.
+    candidates_pre_enriched = True
 
     def __init__(
         self,
@@ -2061,7 +2543,9 @@ class _ApolloFallbackStep:
         self._job_id = job_id
         self._run = run
         self._profile = profile
-        self._provider: ApolloPeopleProvider | None = None
+        # Public, because the orchestrator collects each step's provider for
+        # enrichment routing, usage totals and capability reporting.
+        self.provider: ApolloPeopleProvider | None = None
 
     def availability(self) -> ProviderAvailability:
         """Every gate, as a typed answer rather than a generic unavailability."""
@@ -2116,7 +2600,7 @@ class _ApolloFallbackStep:
         self, categories: tuple[PeopleCategory, ...], call_budget: int
     ) -> ProviderStepResult:
         provider = ApolloPeopleProvider()
-        self._provider = provider
+        self.provider = provider
         _configure_provider_usage(
             provider,
             db=self._db,
@@ -2313,6 +2797,9 @@ class _PublicWebFallbackStep:
     """Optional, bounded public-web discovery. Never authoritative."""
 
     name = "openai_web"
+    # Public-web candidates arrive complete and citation-backed, or not at
+    # all. There is nothing to enrich.
+    candidates_pre_enriched = True
 
     def __init__(
         self,
@@ -2425,95 +2912,121 @@ def _final_provider_label(
     return (attempted[0] if attempted else primary)[:40]
 
 
-async def _run_provider_fallbacks(
+class _NullProvider:
+    """Stands in when no provider object exists, so callers need no None checks."""
+
+    strategy_calls: list = []
+
+
+def _first_provider(providers: list[object]) -> object:
+    return providers[0] if providers else _NullProvider()
+
+
+def _first_attr(providers: list[object], attribute: str, default: object) -> object:
+    """The first provider that actually carries this attribute.
+
+    Bulk-capability and enrichment metrics are adapter-specific; with a
+    configurable chain there is no longer one provider guaranteed to have them.
+    """
+
+    for item in providers:
+        value = getattr(item, attribute, None)
+        if value:
+            return value
+    return default
+
+
+def _enrichment_rejection_lookup(enrichment_providers: dict[str, object]):
+    """Per-identifier rejection reasons, across whichever providers enriched."""
+
+    def lookup(provider_person_id: str) -> str | None:
+        for item in enrichment_providers.values():
+            reader = getattr(item, "enrichment_rejection_reason", None)
+            if callable(reader) and (reason := reader(provider_person_id)):
+                return reason
+        return None
+
+    return lookup
+
+
+async def _combined_usage(providers: list[object]) -> ProviderUsage:
+    """Credits and requests summed across every provider that ran.
+
+    Each provider still meters itself against its own budget; this is only the
+    run-level total the discovery row records.
+    """
+
+    credits = 0
+    requests = 0
+    names: list[str] = []
+    for item in providers:
+        getter = getattr(item, "get_usage", None)
+        if not callable(getter):
+            continue
+        usage = await getter()
+        credits += int(usage.credits_used)
+        requests += int(usage.requests)
+        if usage.provider not in names:
+            names.append(usage.provider)
+    return ProviderUsage(
+        provider="+".join(names) if names else settings.people_primary_provider,
+        credits_used=credits,
+        requests=requests,
+    )
+
+
+def _build_provider_steps(
     db: Session,
     *,
     user: User,
     job_id: int,
     run: PeopleDiscoveryRun,
     profile: JobPeopleSearchProfile,
-    categories: dict[PeopleCategory, list[ProviderPerson]],
-    primary_failures: list[str],
-    primary_no_match: set[str],
     diagnostics: dict[str, dict],
-    company_identity: object | None,
-) -> WaterfallResult | None:
-    """Offer the categories the primary left short to the rest of the chain.
+    company_context: dict[str, object],
+    strategy: DiscoveryStrategy,
+) -> tuple[list[ProviderStep], dict[str, object]]:
+    """Build one step per configured provider, in PEOPLE_PROVIDER_ORDER.
 
-    Returns ``None`` when no fallback provider is configured after the primary,
-    so the caller keeps the primary's results untouched.
+    There is no "primary" any more. Discovery used to run PDL inline before the
+    waterfall was consulted, so PDL was first by construction and no
+    configuration could change that. Now the order is the only thing that
+    decides, which is what lets the chain be
+    ``brightdata -> openai_web -> pdl``.
     """
 
-    order = configured_provider_order()
-    primary = str(settings.people_primary_provider).strip().lower()
-    followers = [name for name in order if name != primary]
-    if not followers:
-        return None
-
-    target = CoverageTarget.from_settings()
-    gaps = categories_below_target(categories, target)
-    if not gaps:
-        return None
-
-    # A request-scoped primary failure (unresolved company, invalid input) means
-    # no other provider can help either.
-    for reason in primary_failures:
-        if code_for_reason(reason) in {
-            PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED,
-            PeopleErrorCode.INVALID_INPUT,
-            PeopleErrorCode.USER_BUDGET_EXHAUSTED,
-            PeopleErrorCode.REQUEST_CANCELLED,
-        }:
-            return None
-    if not settings.people_provider_fallback_on_no_match and not primary_failures:
-        return None
-
     steps: list[ProviderStep] = []
-    web_step: _PublicWebFallbackStep | None = None
-    for name in followers:
-        if name == "apollo":
-            steps.append(
-                _ApolloFallbackStep(
-                    db, user=user, job_id=job_id, run=run, profile=profile
-                )
+    by_name: dict[str, object] = {}
+    for name in configured_provider_order():
+        if name in {"pdl", "mock"}:
+            step: object = _PDLStep(
+                db,
+                user=user,
+                job_id=job_id,
+                run=run,
+                profile=profile,
+                diagnostics=diagnostics,
+                company_context=company_context,
+                strategy=strategy,
+            )
+        elif name == "brightdata":
+            step = _BrightDataStep(
+                db, user=user, job_id=job_id, run=run, profile=profile
+            )
+        elif name == "apollo":
+            step = _ApolloFallbackStep(
+                db, user=user, job_id=job_id, run=run, profile=profile
             )
         elif name == "openai_web":
-            web_step = _PublicWebFallbackStep(
-                db, user=user, profile=profile, run=run
-            )
-            steps.append(web_step)
-    if not steps:
-        return None
-
-    _log_unavailable_providers(steps, run.id)
-    result = await run_waterfall(
-        steps,
-        seed=categories,
-        target=target,
-        discovery_run_id=run.id,
-    )
-    # Diagnostics stay per-category and provider-labelled so an operator can see
-    # which hop produced which people without any of it reaching the UI.
-    for attempt in result.attempts:
-        for category in attempt.categories:
-            entry = diagnostics.setdefault(category, {})
-            entry.setdefault("provider_fallbacks", []).append(attempt.safe_summary())
-    if web_step is not None and web_step.rejected:
-        for category in gaps:
-            diagnostics.setdefault(category, {})[
-                "public_web_rejections"
-            ] = dict(web_step.rejected)
-    logger.info(
-        "people_waterfall job_id=%s discovery_run_id=%s providers=%s coverage=%s "
-        "calls=%s duplicates=%s",
-        job_id,
-        run.id,
-        ",".join(result.providers_attempted) or "none",
-        result.coverage(),
-        result.total_calls,
-        result.duplicates_dropped,
-    )
-    return result
+            step = _PublicWebFallbackStep(db, user=user, profile=profile, run=run)
+        else:  # pragma: no cover - the registry rejects unknown names at load
+            continue
+        # A step keeps its configured name so the waterfall, the metrics and
+        # the order all agree even when one class serves two names.
+        step.name = name  # type: ignore[attr-defined]
+        steps.append(step)  # type: ignore[arg-type]
+        by_name[name] = step
+    return steps, by_name
 
 
 async def discover(
@@ -2749,7 +3262,6 @@ async def _discover_once(
         db.commit()
         metric("people_user_discoveries_total", provider=settings.people_primary_provider)
         profile = extract_job_people_profile(job, db)
-        provider = get_people_provider()
         company_context = {
             "canonical_company_name": profile.company_name,
             "canonical_company_domain": profile.company_domain,
@@ -2783,16 +3295,8 @@ async def _discover_once(
         db.add(run)
         db.commit()
         event.discovery_run_id = run.id
-        _configure_provider_usage(
-            provider,
-            db=db,
-            user_id=user.id,
-            job_id=job_id,
-            discovery_run_id=run.id,
-            adapter_version=str(
-                company_context["provider_adapter_version"]
-            ),
-        )
+        # Usage recording is configured per provider inside each step, because
+        # each one meters against its own budget and its own ledger rows.
         categories: dict[PeopleCategory, list[ProviderPerson]] = {}
         diagnostics: dict[str, dict] = {
             category: {
@@ -2855,7 +3359,7 @@ async def _discover_once(
         accepted_sources: dict[str, int] = {}
         # Every provider that actually ran, in order. Starts with the primary,
         # which is attempted before the waterfall is consulted.
-        providers_attempted: list[str] = [settings.people_primary_provider]
+        providers_attempted: list[str] = []
         # Typed outcome per provider, for the finalization event.
         provider_outcomes: dict[str, str] = {}
         provider_calls = 0
@@ -2863,248 +3367,66 @@ async def _discover_once(
         pdl_company_identity = None
         pipeline_stage = "search"
         try:
-            exact_queries = {
-                category: (
-                    build_category_search_queries(profile, category)
-                    if strategy == "exact"
-                    else build_broadened_search_queries(profile, category)
-                )
-                for category in _PEOPLE_CATEGORIES
-            }
-            category_pdl_search = bool(
-                strategy == "exact"
-                and settings.people_primary_provider == "pdl"
-                and hasattr(provider, "search_people_category")
-            )
-            # Resolve the employer to a stable PDL company id before searching
-            # anyone. Searching by display name alone depends on the job feed
-            # and the provider spelling the company identically, which is what
-            # left Toshiba Global Commerce and Vanderbilt Health with nothing.
-            if category_pdl_search and hasattr(provider, "resolve_company"):
-                try:
-                    pdl_company_identity = await provider.resolve_company(
-                        raw_name=profile.company_raw_name or profile.company_name,
-                        normalized_name=profile.company_normalized_name,
-                        aliases=tuple(profile.company_aliases),
-                        verified_domain=profile.company_domain,
-                    )
-                except ProviderUnavailable as exc:
-                    failures.append(exc.reason)
-                    _log_provider_failure(exc, run.id)
-                    pdl_company_identity = None
-                if pdl_company_identity is not None:
-                    company_context.update(pdl_company_identity.safe_summary())
-                # No verified company evidence at all — no PDL company id and no
-                # verified domain. Searching anyway would return strangers who
-                # merely work somewhere similarly named, so nothing is searched
-                # and no credit is spent. This is distinct from "we searched and
-                # nobody matched".
-                company_unresolved = not (
-                    (pdl_company_identity is not None and pdl_company_identity.searchable)
-                    or profile.company_domain
-                )
-                if company_unresolved:
-                    failures.append("company_domain_unresolved")
-                    metric(
-                        "people_domain_resolution_total",
-                        result="unresolved",
-                        source=profile.company_evidence_source,
-                    )
-                    category_pdl_search = False
-            total_pdl_remaining = (
-                settings.people_pdl_max_results_per_discovery
-            )
-            category_limits = {
-                "likely_recruiter": settings.people_pdl_recruiter_results,
-                "potential_hiring_manager": settings.people_pdl_manager_results,
-                "potential_referrer": settings.people_pdl_referral_results,
-            }
-            for category in _PEOPLE_CATEGORIES:
-                category_rows: list[ProviderPerson] = []
-                queries = exact_queries[category]
-                if category_pdl_search:
-                    for query in queries:
-                        diagnostics[category]["search_queries"].append({
-                            "title_group": query.title_group,
-                            "titles": query.titles,
-                            "company_match_kind": query.company_match_kind,
-                        })
-                        diagnostics[category]["title_groups"].append(
-                            query.title_group
-                        )
-                        diagnostics[category]["seniorities_used"].extend(
-                            query.seniorities
-                        )
-                    call_limit = max(
-                        0,
-                        min(
-                            category_limits[category],
-                            total_pdl_remaining,
-                        ),
-                    )
-                    if call_limit and _pdl_budget_allows_call(
-                        db,
-                        user.id,
-                        call_limit,
-                    ):
-                        diagnostics[category]["query_executed"] = True
-                        diagnostics[category]["provider_call_count"] = 1
-                        try:
-                            category_rows = await _coalesced_search(
-                                provider,
-                                profile=profile,
-                                category=category,
-                                queries=queries,
-                                limit=call_limit,
-                                adapter_version=str(
-                                    company_context["provider_adapter_version"]
-                                ),
-                                company=pdl_company_identity,
-                            )
-                            if not category_rows and _searched_the_provider(
-                                provider, queries
-                            ):
-                                # The provider answered; nobody matched. That is
-                                # a result, and must never be reported as a
-                                # rejected request. An empty *query set* is not
-                                # an answer and must not land here.
-                                no_match_categories.add(category)
-                                metric(
-                                    "people_no_match_total",
-                                    provider=settings.people_primary_provider,
-                                    category=category,
-                                )
-                        except ProviderUnavailable as exc:
-                            failures.append(exc.reason)
-                            _log_provider_failure(exc, run.id)
-                        raw_count = int(
-                            getattr(
-                                provider,
-                                "last_search_raw_count",
-                                len(category_rows),
-                            )
-                        )
-                        normalized_count = int(
-                            getattr(
-                                provider,
-                                "last_search_normalized_count",
-                                len(category_rows),
-                            )
-                        )
-                        diagnostics[category][
-                            "raw_search_result_count"
-                        ] = raw_count
-                        diagnostics[category][
-                            "normalized_profile_count"
-                        ] = normalized_count
-                        searched += normalized_count
-                        total_pdl_remaining -= raw_count
-                    elif call_limit:
-                        # A spent provider budget is its own operational state,
-                        # not a provider failure, and it must never move the
-                        # circuit.
-                        failures.append("provider_budget_exceeded")
-                        metric(
-                            "people_budget_rejections_total",
-                            provider=settings.people_primary_provider,
-                            status="provider_budget",
-                            category=category,
-                        )
-                        diagnostics[category]["rejection_reason_counts"][
-                            "provider_budget_insufficient"
-                        ] = 1
-                for query in queries:
-                    if category_pdl_search:
-                        continue
-                    diagnostics[category]["search_queries"].append({
-                        "title_group": query.title_group,
-                        "titles": query.titles,
-                        "company_match_kind": query.company_match_kind,
-                    })
-                    diagnostics[category]["title_groups"].append(query.title_group)
-                    diagnostics[category]["seniorities_used"].extend(query.seniorities)
-                    if query.company_match_kind == "related":
-                        diagnostics[category]["related_company_search_used"] = True
-                    try:
-                        rows = await provider.search_people(query)
-                    except ProviderUnavailable as exc:
-                        failures.append(exc.reason)
-                        _log_provider_failure(exc, run.id)
-                        rows = []
-                    category_rows.extend(rows)
-                    searched += len(rows)
-                    diagnostics[category]["raw_search_result_count"] += len(rows)
-                    diagnostics[category]["normalized_profile_count"] += len(rows)
-                    diagnostics[category]["query_executed"] = True
-                    diagnostics[category]["provider_call_count"] += 1
-                categories[category] = deduplicate(category_rows)
-                diagnostics[category]["unique_candidate_count"] = len(categories[category])
-                duplicate_count = max(
-                    0,
-                    len(category_rows)
-                    - diagnostics[category]["unique_candidate_count"],
-                )
-                if duplicate_count:
-                    diagnostics[category]["rejection_reason_counts"]["duplicate_person"] = duplicate_count
-                    diagnostics[category][
-                        "deduplicated_into_another_identity"
-                    ] += duplicate_count
-                if not category_rows:
-                    diagnostics[category]["rejection_reason_counts"]["no_search_results"] = 1
-                metric(
-                    "people_discovery_candidates_found",
-                    len(categories[category]),
-                    provider=settings.people_primary_provider,
-                    category=category,
-                    scoring_version=SCORING_VERSION,
-                )
-            pipeline_stage = "fallback"
-            provider_calls += sum(
-                int(diagnostics[category]["provider_call_count"])
-                for category in _PEOPLE_CATEGORIES
-            )
-            provider_outcomes[settings.people_primary_provider] = (
-                _provider_step_outcome(
-                    searched=any(
-                        diagnostics[category]["query_executed"]
-                        for category in _PEOPLE_CATEGORIES
-                    ),
-                    failure=_dominant_failure(failures),
-                    accepted=sum(len(rows) for rows in categories.values()),
-                    enrichment_failed=False,
-                )
-            )
-            # The primary provider has had its turn. Anything it left short is
-            # offered to the rest of the configured chain — Apollo, then the
-            # optional public-web fallback — for those categories only. A spent
-            # PDL budget stops PDL, not the product.
-            waterfall_result = await _run_provider_fallbacks(
+            # One orchestrator, every provider, in configured order. There is no
+            # inline primary any more: PEOPLE_PROVIDER_ORDER alone decides who
+            # runs, in what order, and the waterfall stops the moment coverage
+            # is met — so a good Bright Data answer never pays for a PDL search.
+            steps, steps_by_name = _build_provider_steps(
                 db,
                 user=user,
                 job_id=job_id,
                 run=run,
                 profile=profile,
-                categories=categories,
-                primary_failures=failures,
-                primary_no_match=no_match_categories,
                 diagnostics=diagnostics,
-                company_identity=pdl_company_identity,
+                company_context=company_context,
+                strategy=strategy,
             )
-            if waterfall_result is not None:
-                categories = waterfall_result.candidates
-                failures.extend(waterfall_result.failures)
-                warnings.extend(waterfall_result.warnings)
-                # A follower that answered with nobody is a truthful result and
-                # must reach the finalizer: it is what stops an earlier
-                # provider's budget stop from speaking for a provider that was
-                # never blocked at all.
-                no_match_categories |= waterfall_result.no_match_categories
-                provider_outcomes.update(waterfall_result.provider_outcomes)
-                provider_calls += waterfall_result.total_calls
-                company_context["provider_waterfall"] = waterfall_result.safe_summary()
-                for name in waterfall_result.providers_attempted:
-                    if name not in providers_attempted:
-                        providers_attempted.append(name)
+            _log_unavailable_providers(steps, run.id)
+            waterfall_result = await run_waterfall(
+                steps,
+                target=CoverageTarget.from_settings(),
+                discovery_run_id=run.id,
+            )
+            categories = waterfall_result.candidates
+            failures.extend(waterfall_result.failures)
+            warnings.extend(waterfall_result.warnings)
+            no_match_categories |= waterfall_result.no_match_categories
+            provider_outcomes.update(waterfall_result.provider_outcomes)
+            provider_calls += waterfall_result.total_calls
+            providers_attempted = list(waterfall_result.providers_attempted)
+            company_context["provider_waterfall"] = waterfall_result.safe_summary()
+            for attempt in waterfall_result.attempts:
+                for category in attempt.categories:
+                    diagnostics.setdefault(category, {}).setdefault(
+                        "provider_attempts", []
+                    ).append(attempt.safe_summary())
+
+            pdl_step = steps_by_name.get("pdl") or steps_by_name.get("mock")
+            pdl_company_identity = getattr(pdl_step, "company_identity", None)
+            searched = int(getattr(pdl_step, "records_searched", 0))
+            pdl_direct_profiles = bool(getattr(pdl_step, "direct_profiles", False))
+            # Enrichment belongs to whichever provider produced the candidate.
+            # Routing every candidate through one "primary" provider is what
+            # silently erased Apollo's people: PDL answers enrichment from its
+            # own search cache and had never seen an Apollo id.
+            enrichment_providers = {
+                name: step.provider
+                for name, step in steps_by_name.items()
+                if getattr(step, "provider", None) is not None
+                and hasattr(step.provider, "enrich_people")
+                and not getattr(step, "candidates_pre_enriched", False)
+            }
+            step_providers = [
+                step.provider
+                for step in steps_by_name.values()
+                if getattr(step, "provider", None) is not None
+            ]
+            web_step = steps_by_name.get("openai_web")
+            if web_step is not None and getattr(web_step, "rejected", None):
+                for category in _PEOPLE_CATEGORIES:
+                    diagnostics.setdefault(category, {})["public_web_rejections"] = dict(
+                        web_step.rejected
+                    )
 
             pipeline_stage = "enrichment"
 
@@ -3146,10 +3468,9 @@ async def _discover_once(
                     diagnostics[category][
                         "assigned_to_stronger_category"
                     ] += weaker_assignments
-            complete_person_only = getattr(
-                provider, "bulk_capability_state", "unknown"
+            complete_person_only = _first_attr(
+                step_providers, "bulk_capability_state", "unknown"
             ) in {"temporarily_rejected", "account_not_supported"}
-            pdl_direct_profiles = category_pdl_search
             enrich_targets = allocate_enrichment_targets(
                 assigned_by_category,
                 total=(
@@ -3205,48 +3526,55 @@ async def _discover_once(
             )
             for _score, category, _person, _school, _employer in enrich_targets:
                 diagnostics[category]["selected_for_enrichment"] += 1
-            # Only the primary provider's own records can be enriched by the
-            # primary provider. A fallback provider's people arrive already
-            # complete — its step ran its own search *and* its own enrichment —
-            # and their identifiers belong to a different namespace entirely.
+            # Enrichment is routed back to whichever provider produced the
+            # candidate. Sending every candidate to one "primary" provider is
+            # what silently erased Apollo's people: PDL answers enrichment from
+            # its own search cache and had never seen an Apollo id, so every
+            # Apollo contact was dropped as an "enrichment miss".
             #
-            # Passing them here is what erased the live Apollo results: PDL's
-            # enrich_people answers from its own search cache, found nothing
-            # under an Apollo id, and every Apollo contact was dropped as an
-            # "enrichment miss" before the run had a chance to display one.
-            primary_name = str(settings.people_primary_provider).strip().lower()
-            primary_targets = [
-                item for item in enrich_targets if item[2].provider == primary_name
-            ]
+            # A provider with no enrichment step — Bright Data, the public web —
+            # returns complete records already, so its candidates are carried
+            # through untouched.
+            targets_by_provider: dict[str, list] = defaultdict(list)
+            for item in enrich_targets:
+                targets_by_provider[item[2].provider].append(item)
             carried_targets = [
-                item for item in enrich_targets if item[2].provider != primary_name
+                item
+                for name, items in targets_by_provider.items()
+                if name not in enrichment_providers
+                for item in items
             ]
-            unique_enrichment_requests = list(
-                dict.fromkeys(
-                    item[2].provider_person_id for item in primary_targets
+            enriched = []
+            unique_enrichment_requests: list[str] = []
+            for name, items in targets_by_provider.items():
+                enricher = enrichment_providers.get(name)
+                if enricher is None:
+                    continue
+                unique_enrichment_requests.extend(
+                    dict.fromkeys(item[2].provider_person_id for item in items)
                 )
-            )
-            try:
-                enriched = await provider.enrich_people(
-                    [
-                        PersonEnrichmentRequest(
-                            provider_person_id=person.provider_person_id,
-                            category=category,
-                            rank_score=score,
+                try:
+                    enriched.extend(
+                        await enricher.enrich_people(
+                            [
+                                PersonEnrichmentRequest(
+                                    provider_person_id=person.provider_person_id,
+                                    category=category,
+                                    rank_score=score,
+                                )
+                                for score, category, person, _school, _employer
+                                in items
+                            ]
                         )
-                        for score, category, person, _school, _employer
-                        in primary_targets
-                    ]
-                )
-            except ProviderUnavailable as exc:
-                failures.append(exc.reason)
-                _log_provider_failure(exc, run.id)
-                enriched = []
-                metric(
-                    "people_discovery_provider_errors_total",
-                    provider=settings.people_primary_provider,
-                    status="enrichment_failed",
-                )
+                    )
+                except ProviderUnavailable as exc:
+                    failures.append(exc.reason)
+                    _log_provider_failure(exc, run.id)
+                    metric(
+                        "people_discovery_provider_errors_total",
+                        provider=name,
+                        status="enrichment_failed",
+                    )
             pipeline_stage = "employment_validation"
             metric(
                 "people_enrichment_requests_total",
@@ -3263,9 +3591,7 @@ async def _discover_once(
                 enriched_by_id.setdefault(
                     (person.provider, person.provider_person_id), person
                 )
-            rejection_reason_for = getattr(
-                provider, "enrichment_rejection_reason", lambda _value: None
-            )
+            rejection_reason_for = _enrichment_rejection_lookup(enrichment_providers)
             for _score, category, initial, _school, _employer in enrich_targets:
                 key = (
                     "enrichment_matches"
@@ -3624,7 +3950,7 @@ async def _discover_once(
                     scoring_version=SCORING_VERSION,
                 )
                 pipeline_stage = "employment_validation"
-            usage = await provider.get_usage()
+            usage = await _combined_usage(step_providers)
             run = db.get(PeopleDiscoveryRun, run.id)
             any_displayed = any(displayed.values())
             # ONE decision, for the whole chain, in one place. Every branch that
@@ -3643,7 +3969,7 @@ async def _discover_once(
                 _safe_provider_message(outcome.reason) if outcome.reason else None
             )
             if outcome.code is not None and _refundable_failure(
-                outcome.code, provider
+                outcome.code, _first_provider(step_providers)
             ):
                 # Nothing useful was bought with the user's unit: either
                 # JobPilot's own data was insufficient, or the provider was
@@ -3694,8 +4020,8 @@ async def _discover_once(
                 "accepted_candidate_sources": dict(accepted_sources),
                 "provider_request_count": usage.requests,
                 "durable_provider_usage": durable_usage,
-                "provider_bulk_capability_state": getattr(
-                    provider, "bulk_capability_state", "unknown"
+                "provider_bulk_capability_state": _first_attr(
+                    step_providers, "bulk_capability_state", "unknown"
                 ),
                 "provider_outcomes": dict(sorted(provider_outcomes.items())),
                 "provider_warnings": list(warnings),
@@ -3716,18 +4042,18 @@ async def _discover_once(
                         "degraded" if warnings else "completed"
                     ),
                     **_provider_pipeline_outcomes(
-                        provider, durable_usage
+                        _first_provider(step_providers), durable_usage
                     ),
                     "employment_validation": dict(
                         sorted(employment_outcomes.items())
                     ),
                     "persistence": "completed",
                 },
-                "provider_enrichment_safe_metrics": getattr(
-                    provider, "enrichment_safe_metrics", {}
+                "provider_enrichment_safe_metrics": _first_attr(
+                    step_providers, "enrichment_safe_metrics", {}
                 ),
-                "provider_search_identifier_safe_metrics": getattr(
-                    provider, "search_identifier_safe_metrics", {}
+                "provider_search_identifier_safe_metrics": _first_attr(
+                    step_providers, "search_identifier_safe_metrics", {}
                 ),
                 **provider_error_context,
             }
@@ -3777,6 +4103,7 @@ async def _discover_once(
                     }
                 )
             )
+            step_providers = locals().get("step_providers") or []
             failed_run = db.get(PeopleDiscoveryRun, run.id)
             if failed_run:
                 completed_at = _now()
@@ -3801,8 +4128,8 @@ async def _discover_once(
                 failed_run.company_context = {
                     **(failed_run.company_context or {}),
                     "durable_provider_usage": durable_usage,
-                    "provider_bulk_capability_state": getattr(
-                        provider, "bulk_capability_state", "unknown"
+                    "provider_bulk_capability_state": _first_attr(
+                        step_providers, "bulk_capability_state", "unknown"
                     ),
                     "pipeline_outcomes": {
                         "search": (
@@ -3821,7 +4148,7 @@ async def _discover_once(
                             else "failed"
                         ),
                         **_provider_pipeline_outcomes(
-                            provider, durable_usage
+                            _first_provider(step_providers), durable_usage
                         ),
                         "employment_validation": dict(
                             sorted(employment_outcomes.items())
@@ -3841,7 +4168,7 @@ async def _discover_once(
                 failed_run.records_searched = searched
                 failed_run.records_enriched = len(enriched)
                 failed_run.completed_at = completed_at
-                if not _provider_work_started(provider):
+                if not any(_provider_work_started(item) for item in step_providers):
                     # An internal failure before any provider call is not a
                     # search the user should pay for.
                     reservation.refund(db, reason="internal_error_before_provider_work")

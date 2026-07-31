@@ -522,6 +522,7 @@ def test_apollo_adapter_version_refreshes_cached_schema_error(
     db.add_all([job, user])
     db.flush()
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
     monkeypatch.setattr(
         service, "APOLLO_ENRICHMENT_ADAPTER_VERSION", "apollo-enrichment-v2"
     )
@@ -2299,6 +2300,7 @@ def test_provider_budget_block_is_non_retryable_and_not_persisted(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
     user = User(email="budget-block@example.com", hashed_password=hash_password("password123"))
     job = _job()
     db.add_all([user, job])
@@ -2372,6 +2374,7 @@ def test_provider_schema_error_reopen_and_refresh_are_read_only(
     from app.people import service
 
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
     user = User(
         email="schema-cache@example.com",
         hashed_password=hash_password("password123"),
@@ -2526,6 +2529,23 @@ def test_transient_provider_error_requires_explicit_retry_after_timestamp(
 
     assert retried.status_code == 200
     assert provider.requests == 1
+
+
+
+def _enable_apollo_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let Apollo actually run in a test that means to exercise it.
+
+    Apollo is now an ordinary gated step rather than an ungated inline primary,
+    so naming it as the primary provider is no longer enough on its own — it
+    also has to be enabled, entitled and funded, exactly as it would be in a
+    real deployment.
+    """
+
+    monkeypatch.setattr(settings, "people_provider_order", ["apollo"])
+    monkeypatch.setattr(settings, "people_apollo_discovery_enabled", True)
+    monkeypatch.setattr(settings, "apollo_api_key", "synthetic-test-key")
+    monkeypatch.setattr(settings, "people_apollo_daily_credit_budget", 100)
+    monkeypatch.setattr(settings, "people_apollo_per_user_daily_limit", 50)
 
 
 def _persist_recommendation(
@@ -3245,6 +3265,7 @@ def test_unknown_reconciled_usage_is_not_zero_and_counts_against_budget(
     from app.people import service
 
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
     user = User(
         email="reconciled-budget@example.com",
         hashed_password=hash_password("password123"),
@@ -3412,17 +3433,21 @@ def test_bulk_422_successful_single_fallback_persists_normally(
                 "id": identifier,
                 "name": "Parker Prospect",
                 "title": "Technical Recruiter",
-                "linkedin_url": "https://www.linkedin.com/in/private-person",
+                "linkedin_url": "https://www.linkedin.com/in/parker-prospect",
                 "organization": {
                     "name": "Acme AI",
                     "primary_domain": "acme.example",
                 },
             }
             if url.endswith("/api_search"):
+                # Apollo People Search withholds the profile URL — which is
+                # precisely why enrichment is attempted at all, and why the
+                # bulk rejection below has to fall through to the single-person
+                # path before this contact can be displayed.
                 return httpx.Response(
                     200,
                     request=httpx.Request(method, url),
-                    json={"people": [person]},
+                    json={"people": [{k: v for k, v in person.items() if k != "linkedin_url"}]},
                 )
             if url.endswith("/bulk_match"):
                 return httpx.Response(
@@ -3450,8 +3475,15 @@ def test_bulk_422_successful_single_fallback_persists_normally(
     )
     monkeypatch.setattr(settings, "people_recommendations_enabled", True)
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
+    monkeypatch.setattr(settings, "people_provider_order", ["apollo"])
     monkeypatch.setattr(settings, "people_apollo_discovery_enabled", True)
     monkeypatch.setattr(settings, "people_apollo_diagnostic_enabled", True)
+    # Apollo is now an ordinary gated step rather than an ungated inline
+    # primary, so a paid provider with no budget is skipped — correctly. The
+    # budgets below are what let this test reach Apollo at all.
+    monkeypatch.setattr(settings, "people_apollo_daily_credit_budget", 100)
+    monkeypatch.setattr(settings, "people_apollo_per_user_daily_limit", 50)
     monkeypatch.setattr(settings, "people_rollout_mode", "internal")
     monkeypatch.setattr(
         settings,
@@ -3741,6 +3773,7 @@ def test_normal_discovery_cannot_select_apollo_without_diagnostic_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "people_primary_provider", "apollo")
+    _enable_apollo_step(monkeypatch)
     monkeypatch.setattr(settings, "people_apollo_discovery_enabled", False)
     monkeypatch.setattr(settings, "people_apollo_diagnostic_enabled", False)
     monkeypatch.setattr(settings, "people_rollout_mode", "internal")

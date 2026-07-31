@@ -42,7 +42,9 @@ const manager = {
   current_title: "Director of Data Platform",
   category: "potential_hiring_manager",
   category_label: "Potential hiring manager",
-  professional_profile_url: null
+  // A displayed contact must carry a validated profile URL: the actionable-
+  // contact policy withholds anyone the user could not actually open.
+  professional_profile_url: "https://www.linkedin.com/in/morgan-manager"
 };
 
 function daysAgo(days: number) {

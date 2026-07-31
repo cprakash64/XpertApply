@@ -321,18 +321,29 @@ class ProviderStepResult:
 
 
 def configured_provider_order() -> list[str]:
-    """The runtime chain. Already normalized by settings validation."""
+    """The runtime chain, in the order providers will actually be tried.
+
+    Now that there is no inline "primary" stage, this list is the *only* thing
+    that decides who runs and when — so PEOPLE_PRIMARY_PROVIDER has to be
+    reconciled with it here rather than being silently ignored. A primary that
+    is not listed is prepended: it was configured as the provider to try first,
+    and dropping it would quietly disable a provider an operator asked for.
+    Startup validation separately reports the mismatch so the configuration
+    still gets fixed.
+    """
 
     order = [
         name
         for name in normalize_provider_order(settings.people_provider_order)
         if name in KNOWN_PROVIDERS
     ]
+    primary = str(settings.people_primary_provider).strip().lower()
     if not order:
         # A missing order must not disable the product; fall back to the primary
         # provider alone.
-        primary = str(settings.people_primary_provider).strip().lower()
-        order = [primary] if primary in KNOWN_PROVIDERS else ["pdl"]
+        return [primary] if primary in KNOWN_PROVIDERS else ["pdl"]
+    if primary in KNOWN_PROVIDERS and primary not in order:
+        return [primary, *order]
     return order
 
 
