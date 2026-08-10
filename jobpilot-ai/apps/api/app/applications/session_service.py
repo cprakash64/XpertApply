@@ -19,14 +19,20 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.applications.answer_vault_service import build_safe_answers
-from app.applications.session_refresh import current_profile_revision
 from app.applications.ats import detect_ats_from_url
 from app.applications.fixture_guard import guard_against_dev_fixture
+from app.applications.mark_applied import (
+    AppliedSource,
+    MarkAppliedResult,
+    mark_application_applied,
+    record_application_opened,
+)
 from app.applications.preparation import (
     database_unavailable,
     invalid_application_url,
     profile_incomplete,
 )
+from app.applications.session_refresh import current_profile_revision
 from app.applications.url_validation import InvalidApplicationURL, validate_official_url
 from app.core.session_tokens import (
     create_launch_token,
@@ -42,13 +48,13 @@ from app.models.entities import (
     ApplicationAuditLog,
     ApplicationSession,
     ApplicationSessionStatus,
-    ApplicationStatus,
-    ApplicationTracker,
+    Award,
     DocumentType,
     Education,
     Experience,
     GeneratedDocument,
     JobPosting,
+    Project,
     User,
     UserProfile,
 )
@@ -57,6 +63,22 @@ from app.services.documents import profile_payload, public_dict
 logger = logging.getLogger("jobpilot.applications")
 
 SESSION_TTL_MINUTES = 30
+
+# How long an idle session survives, and the hard ceiling on total lifetime.
+#
+# A fixed 30-minute TTL measured from creation was the reason a legitimate
+# application reported "Your session is no longer valid": the real path is
+# listing -> Apply -> employer login -> (find credentials / reset password /
+# complete email verification) -> application form, and that routinely takes
+# longer than 30 minutes of genuine, active work. Nothing refreshed the
+# deadline, so the session expired underneath the user mid-application.
+#
+# The window now SLIDES on authenticated activity instead, which is what the
+# user experiences as "I am still working on this". It is not unlimited: an
+# absolute cap from creation still applies, so an abandoned or stolen session
+# cannot be kept alive forever by polling.
+SESSION_IDLE_TTL_MINUTES = 30
+SESSION_ABSOLUTE_TTL_HOURS = 8
 
 # Statuses a client may set via PATCH. Terminal states go through dedicated,
 # audited endpoints (/complete, /cancel) and expiry is server-managed.
@@ -174,6 +196,12 @@ async def create_application_session(db: Session, user: User, job: JobPosting) -
         reused.generated_answers = _replace_written_answers(
             reused.generated_answers or [], written_answers
         )
+        # A reusable session must not freeze an older structured-profile
+        # snapshot. Projects/awards/links may have been added after the first
+        # prepare action; keeping the old snapshot made the extension report
+        # zero repeater candidates even though the database profile was nonzero.
+        reused.profile_snapshot = _json_safe(_profile_snapshot(db, user))
+        reused.profile_revision = current_profile_revision(db, user.id)
         raw_launch_token = create_launch_token(reused.id, user.id)
         reused.launch_token_hash = hash_token(raw_launch_token)
         reused.launch_token_used = False
@@ -213,7 +241,7 @@ async def create_application_session(db: Session, user: User, job: JobPosting) -
         profile_revision=current_profile_revision(db, user.id),
         warnings=warnings,
         launch_token_hash=None,
-        expires_at=datetime.now(UTC) + timedelta(minutes=SESSION_TTL_MINUTES),
+        expires_at=datetime.now(UTC) + timedelta(minutes=SESSION_IDLE_TTL_MINUTES),
     )
     try:
         db.add(session)
@@ -308,45 +336,121 @@ def apply_status(db: Session, session: ApplicationSession, new_status: Applicati
     if new_status not in PATCHABLE_STATUSES:
         raise SessionError(f"Status '{new_status.value}' cannot be set directly.")
     session.status = new_status
-    log_action(db, session.id, ApplicationActionType.status_changed, status=new_status.value, source=source)
-    db.commit()
-
-
-def complete_session(db: Session, session: ApplicationSession, *, confirmed: bool, source: str) -> None:
-    """Mark an application complete. Only ever on explicit user confirmation —
-    JobPilot never infers submission on its own."""
-    if not confirmed:
-        raise SessionError("Completion requires explicit user confirmation.")
-    session.status = ApplicationSessionStatus.completed
-    session.completed_at = datetime.now(UTC)
-    tracker = db.get(ApplicationTracker, session.tracker_id) if session.tracker_id else None
-    if tracker is None:
-        tracker = db.scalar(
-            select(ApplicationTracker).where(
-                (ApplicationTracker.user_id == session.user_id)
-                & (ApplicationTracker.job_id == session.job_id)
-            )
-        )
-    if tracker is None:
-        tracker = ApplicationTracker(
+    if new_status == ApplicationSessionStatus.opened:
+        # Opening the employer application is recorded, and recorded ONLY as
+        # having been opened. This deliberately cannot reach ``applied``: the
+        # user has not submitted anything yet, and most opened applications are
+        # never submitted. ``record_application_opened`` writes ``opened_at``
+        # and the URL, leaving status and ``applied_at`` untouched.
+        record_application_opened(
+            db,
             user_id=session.user_id,
             job_id=session.job_id,
-            status=ApplicationStatus.applied,
+            application_url=session.source_url,
         )
-        db.add(tracker)
-        db.flush()
-    tracker.status = ApplicationStatus.applied
-    tracker.applied_at = tracker.applied_at or datetime.now(UTC)
-    session.tracker_id = tracker.id
+    log_action(db, session.id, ApplicationActionType.page_opened
+               if new_status == ApplicationSessionStatus.opened
+               else ApplicationActionType.status_changed,
+               status=new_status.value, source=source)
+    db.commit()
+
+
+def complete_session(
+    db: Session,
+    session: ApplicationSession,
+    *,
+    confirmed: bool,
+    source: str,
+    applied_source: AppliedSource = AppliedSource.user_confirmed,
+    submitted_at: datetime | None = None,
+    submission_reference: str | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> MarkAppliedResult:
+    """Close an apply session as submitted and move the job into the Tracker.
+
+    Only ever on confirmed submission — an explicit user confirmation, or an
+    extension/auto-apply event that already established the evidence. JobPilot
+    never infers submission on its own.
+
+    The application record itself is written by
+    :func:`app.applications.mark_applied.mark_application_applied`, which owns
+    every ``applied`` transition. This function only supplies the session's
+    (server-derived) user and job and links the resulting record back."""
+    if not confirmed:
+        raise SessionError("Completion requires explicit user confirmation.")
+
+    result = mark_application_applied(
+        db,
+        user_id=session.user_id,
+        job_id=session.job_id,
+        source=applied_source,
+        submitted_at=submitted_at,
+        submission_reference=submission_reference,
+        application_url=session.source_url,
+        metadata=evidence,
+    )
+
+    session.status = ApplicationSessionStatus.completed
+    session.completed_at = datetime.now(UTC)
+    session.tracker_id = result.tracker.id
     log_action(db, session.id, ApplicationActionType.application_completed, source=source,
                metadata={"job_snapshot": session.job_snapshot.get("title") if session.job_snapshot else None})
+    # One commit for the session close AND the application record: a crash
+    # between them cannot leave a completed session with no Tracker entry.
     db.commit()
+    return result
 
 
 def cancel_session(db: Session, session: ApplicationSession, *, source: str) -> None:
     session.status = ApplicationSessionStatus.cancelled
     log_action(db, session.id, ApplicationActionType.application_cancelled, source=source)
     db.commit()
+
+
+def touch_session(db: Session, session: ApplicationSession) -> bool:
+    """Slide an active session's expiry forward on legitimate activity.
+
+    Called from the authenticated session-access path, so only a caller that has
+    already proven it holds this session's token (or the owner's) can extend it.
+
+    Two bounds keep this from becoming "sessions never expire":
+      * the new deadline is only ever ``now + idle TTL`` — a session nobody
+        touches still dies on the original schedule;
+      * ``created_at + absolute TTL`` is a hard ceiling that no amount of
+        activity can push past.
+
+    Returns whether the deadline actually moved (so the caller can avoid a
+    pointless write on every request).
+    """
+    if session.status in {
+        ApplicationSessionStatus.completed,
+        ApplicationSessionStatus.cancelled,
+        ApplicationSessionStatus.expired,
+    }:
+        return False
+
+    now = datetime.now(UTC)
+    created = _as_utc(session.created_at) or now
+    ceiling = created + timedelta(hours=SESSION_ABSOLUTE_TTL_HOURS)
+    if now >= ceiling:
+        return False
+
+    proposed = min(now + timedelta(minutes=SESSION_IDLE_TTL_MINUTES), ceiling)
+    current = _as_utc(session.expires_at)
+    # Only ever extend, and only by a meaningful amount — a write on every
+    # keystroke-level request would be pure database churn.
+    if current is not None and proposed - current < timedelta(minutes=1):
+        return False
+
+    session.expires_at = proposed
+    return True
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite drops tzinfo on round-trip; compare everything in UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def is_expired(session: ApplicationSession) -> bool:
@@ -463,6 +567,13 @@ def _profile_snapshot(db: Session, user: User) -> dict[str, Any]:
     )
     education = list(db.scalars(select(Education).where(Education.user_id == user.id)).all())
     education.sort(key=lambda item: str(item.end_date or item.start_date or ""), reverse=True)
+    projects = list(db.scalars(select(Project).where(Project.user_id == user.id)).all())
+    awards = list(db.scalars(select(Award).where(Award.user_id == user.id)).all())
+    professional_links = [
+        value
+        for value in [profile.linkedin_url, profile.github_url, profile.portfolio_url]
+        if isinstance(value, str) and value.startswith("https://")
+    ]
     return {
         "email": user.email,
         "full_name": profile.full_name,
@@ -477,6 +588,9 @@ def _profile_snapshot(db: Session, user: User) -> dict[str, Any]:
         ),
         "skills": profile.skills or [],
         "target_roles": profile.target_roles or [],
+        "linkedin_url": profile.linkedin_url,
+        "github_url": profile.github_url,
+        "portfolio_url": profile.portfolio_url,
         "phone_country_iso2": profile.phone_country_iso2,
         # Keep every record structured. The extension uses these arrays to
         # expand repeated Employment/Education blocks without collapsing every
@@ -489,6 +603,21 @@ def _profile_snapshot(db: Session, user: User) -> dict[str, Any]:
                 "start_date": item.start_date,
                 "end_date": item.end_date,
                 "currently_working": bool(item.currently_working),
+                # The user's own reviewed accomplishment lines. An employer's
+                # Experience row has a Description box that had no source at
+                # all before this, so it could only ever be left blank. These
+                # are facts the user entered and reviewed — nothing here is
+                # generated, and no resume text is sent to the page.
+                "bullets": [
+                    line.strip()
+                    for line in (item.bullets or [])
+                    if isinstance(line, str) and line.strip()
+                ],
+                "technologies": [
+                    tech.strip()
+                    for tech in (item.technologies or [])
+                    if isinstance(tech, str) and tech.strip()
+                ],
             }
             for item in experiences
             if item.company or item.title
@@ -507,6 +636,58 @@ def _profile_snapshot(db: Session, user: User) -> dict[str, Any]:
             for item in education
             if item.school
         ],
+        # User-saved structured records, not resume text. The extension may use
+        # these after an ATS resume parse to populate optional repeatable
+        # sections without inventing facts or reparsing the PDF in-page.
+        "projects": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "description": item.description,
+                "bullets": item.bullets or [],
+                "technologies": item.technologies or [],
+                "links": item.links or [],
+                "start_date": item.start_date,
+                "end_date": item.end_date,
+                "source": "confirmed_profile",
+                "verified": True,
+            }
+            for item in projects
+            if item.name
+        ],
+        "awards": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "issuer": item.issuer,
+                "date": item.date,
+                "description": item.description,
+                "source": "confirmed_profile",
+                "verified": True,
+            }
+            for item in awards
+            if item.name
+        ],
+        # Counts let the redacted extension diagnostic prove whether candidate
+        # loss happened before or after the application-session API boundary.
+        # Languages remain zero until the profile has an explicit structured
+        # language/proficiency model. Tailored resume content is deliberately
+        # not counted as reviewed extraction.
+        "structured_candidate_counts": {
+            "projects": sum(1 for item in projects if item.name),
+            "awards": sum(1 for item in awards if item.name),
+            "languages": 0,
+            "professional_links": len(professional_links),
+            "work_samples": sum(
+                1
+                for value in [profile.github_url, profile.portfolio_url]
+                if isinstance(value, str) and value.startswith("https://")
+            ),
+            "self_introduction_source_facts": len(profile.skills or [])
+            + len(profile.target_roles or [])
+            + sum(1 for item in projects if item.name),
+            "reviewed_resume_extraction": 0,
+        },
     }
 
 

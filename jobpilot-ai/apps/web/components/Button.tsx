@@ -7,6 +7,9 @@ export function Button({
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "danger";
+  /** React 19 passes `ref` as an ordinary prop; declaring it lets callers that
+   * need to move focus here (e.g. a dialog's default action) do so. */
+  ref?: React.Ref<HTMLButtonElement>;
 }) {
   return (
     <button

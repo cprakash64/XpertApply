@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
@@ -14,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  CheckCircle2,
   Download,
   ExternalLink,
   FileText,
@@ -63,7 +65,8 @@ const TRACKER_LABELS: Record<TrackerStatus, string> = {
   applied: "Applied",
   interview: "Interview",
   offer: "Offer",
-  rejected: "Closed"
+  rejected: "Closed",
+  withdrawn: "Withdrawn"
 };
 
 export function JobDetailPanel({
@@ -78,6 +81,7 @@ export function JobDetailPanel({
   onClose,
   onSave,
   onApply,
+  onMarkApplied,
   onGenerate,
   onPreviewDocument,
   onPrevious,
@@ -95,6 +99,8 @@ export function JobDetailPanel({
   onClose: () => void;
   onSave: () => void;
   onApply: () => void;
+  /** Opens the explicit "did you submit?" confirmation. Never fires on its own. */
+  onMarkApplied: () => void;
   onGenerate: (type: DocType) => void;
   onPreviewDocument: (doc: GeneratedDocument) => void;
   onPrevious: (() => void) | null;
@@ -102,11 +108,26 @@ export function JobDetailPanel({
   position: string | null;
 }) {
   if (loading && !job) {
+    // A skeleton with the real shape of the panel, not a bare line of text.
+    // On a cold load this is the whole right-hand side of the workspace; a
+    // single sentence there is what made the page read as broken.
     return (
       <DetailShell onClose={onClose}>
-        <p className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading this job…
-        </p>
+        <div data-testid="job-detail-skeleton" aria-busy="true" className="animate-pulse">
+          <p className="sr-only">Loading this job…</p>
+          <div className="h-4 w-32 rounded bg-line" />
+          <div className="mt-4 h-8 w-3/4 rounded bg-line" />
+          <div className="mt-3 h-4 w-1/2 rounded bg-line" />
+          <div className="mt-6 flex gap-2.5">
+            <div className="h-11 w-44 rounded-lg bg-line" />
+            <div className="h-11 w-36 rounded-lg bg-line" />
+          </div>
+          <div className="mt-8 space-y-2.5">
+            {[0, 1, 2, 3, 4, 5].map((row) => (
+              <div key={row} className={`h-3.5 rounded bg-line ${row % 3 === 2 ? "w-2/3" : "w-full"}`} />
+            ))}
+          </div>
+        </div>
       </DetailShell>
     );
   }
@@ -144,6 +165,7 @@ export function JobDetailPanel({
         onClose={onClose}
         onSave={onSave}
         onApply={onApply}
+        onMarkApplied={onMarkApplied}
         onPrevious={onPrevious}
         onNext={onNext}
         position={position}
@@ -229,6 +251,7 @@ function DetailHeader({
   onClose,
   onSave,
   onApply,
+  onMarkApplied,
   onPrevious,
   onNext,
   position,
@@ -242,12 +265,18 @@ function DetailHeader({
   onClose: () => void;
   onSave: () => void;
   onApply: () => void;
+  onMarkApplied: () => void;
   onPrevious: (() => void) | null;
   onNext: (() => void) | null;
   position: string | null;
   tab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
 }) {
+  // Already submitted (or further along) — there is nothing left to confirm.
+  const alreadySubmitted =
+    trackerStatus !== null &&
+    ["applied", "interview", "offer", "rejected"].includes(trackerStatus);
+
   return (
     <header className="shrink-0 border-b border-line bg-[var(--background)]">
       <div className="mx-auto w-full max-w-[820px] px-6 pt-3 sm:px-9">
@@ -320,6 +349,23 @@ function DetailHeader({
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           <div className="hidden flex-wrap items-center gap-2.5 lg:flex">
             <AssistedApplyButton url={job.application_url} onApply={onApply} size="lg" />
+            {/* The manual fallback for when the extension cannot prove the
+              * submission. Opening it only asks a question — the job moves to
+              * the Tracker after the user answers yes and the backend confirms. */}
+            {!alreadySubmitted && (
+              <button
+                type="button"
+                onClick={onMarkApplied}
+                data-testid="mark-applied-action"
+                /* Starts with the visible text so voice control can activate it
+                 * by what the user can see (WCAG 2.5.3), then disambiguates
+                 * which job for screen-reader users. */
+                aria-label={`Mark as applied: ${job.title} at ${job.company}`}
+                className="mark-applied-action inline-flex h-11 items-center gap-2 rounded-lg px-4 text-sm font-medium"
+              >
+                <CheckCircle2 className="h-4 w-4" aria-hidden /> Mark as applied
+              </button>
+            )}
             <button
               type="button"
               onClick={onSave}
@@ -600,12 +646,12 @@ function OverviewTab({
                   </button>
                 )}
                 {suggestion.action === "profile" && (
-                  <a
+                  <Link
                     href="/profile"
                     className="focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-pine hover:underline"
                   >
                     Update your profile <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-                  </a>
+                  </Link>
                 )}
               </li>
             ))}
@@ -617,7 +663,7 @@ function OverviewTab({
         <Section title="What is working for you">
           <p className="text-sm leading-6 text-[var(--text-muted)]">
             No match detail was produced for this role yet. Refresh your matches, or add target roles and skills
-            to your <a className="font-medium text-pine underline" href="/profile">profile</a> for a fuller
+            to your <Link className="font-medium text-pine underline" href="/profile">profile</Link> for a fuller
             explanation.
           </p>
         </Section>

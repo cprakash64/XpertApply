@@ -1,8 +1,9 @@
-import { api } from "@/lib/api";
+import { API_URL, api } from "@/lib/api";
 
 /** A prepared assisted-apply session as returned by the backend. */
 export type ApplicationSessionView = {
   session_id: number;
+  authenticated_user_id?: number;
   status: string;
   official_application_url: string;
   ats_type: string | null;
@@ -91,7 +92,10 @@ function pingOnce(timeoutMs: number): Promise<ExtensionInfo | null> {
       }
     };
     window.addEventListener("message", onMessage);
-    window.postMessage({ source: WEB_SOURCE, type: MSG_PING } satisfies ExtMessage, window.location.origin);
+    window.postMessage(
+      { source: WEB_SOURCE, type: MSG_PING, apiBase: API_URL } satisfies ExtMessage,
+      window.location.origin
+    );
     window.setTimeout(() => finish(null), timeoutMs);
   });
 }
@@ -136,7 +140,9 @@ function launchPayload(requestId: string, launchToken: string, session: Applicat
     sessionId: session.session_id,
     jobId: session.job.id,
     officialUrl: session.official_application_url,
-    atsType: session.ats_type
+    atsType: session.ats_type,
+    webApiBase: API_URL,
+    webAuthenticatedUserId: session.authenticated_user_id ?? null
   };
 }
 

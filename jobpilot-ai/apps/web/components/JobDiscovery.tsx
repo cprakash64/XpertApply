@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Loader2, RefreshCw, Search, X } from "lucide-react";
 import {
   api,
@@ -24,7 +25,9 @@ import {
 } from "@/components/jobs/documents";
 import { JobDetailPanel, useEscapeToClose, type DetailTab } from "@/components/jobs/JobDetailPanel";
 import { JobsFilterBar } from "@/components/jobs/JobsFilterBar";
+import { MarkAppliedDialog } from "@/components/jobs/MarkAppliedDialog";
 import { dateValue, daysAgo } from "@/components/jobs/format";
+import { APPLIED_TOAST, confirmApplied, nextSelectionAfterRemoval } from "@/lib/markApplied";
 
 /**
  * The Jobs workspace.
@@ -41,6 +44,16 @@ export function JobDiscovery() {
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [listLoaded, setListLoaded] = useState(false);
+  // The FIRST jobs request is a distinct state from "the list is empty".
+  //
+  // Root cause of the reported blank/broken workspace on a cold hard refresh:
+  // `listLoaded` gated only the detail pane, so while the very first request
+  // was still in flight the list rendered its terminal empty state — "0 jobs
+  // for you / No jobs match the current filters" in the workspace, and "Click
+  // Find fresh jobs" in the list view. On a warm reload that window is too
+  // short to see, which is exactly why a second refresh appeared to "fix" it.
+  // Nothing here may render a terminal state until the first response lands.
+  const [listError, setListError] = useState("");
   const [profileComplete, setProfileComplete] = useState(true);
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -92,9 +105,15 @@ export function JobDiscovery() {
         if (!active) return;
         setJobs(result.jobs);
         setProfileComplete(result.profile_complete);
+        setListError("");
       } catch (loadError) {
         if (active) {
-          setError(loadError instanceof Error ? loadError.message : "Could not load jobs.");
+          // Recorded separately from the generic action error so the workspace
+          // can render a retryable list-level error instead of an empty list
+          // that looks like "no jobs matched".
+          setListError(
+            loadError instanceof Error ? loadError.message : "Could not load jobs."
+          );
         }
       } finally {
         if (active) {
@@ -109,6 +128,25 @@ export function JobDiscovery() {
   }, [query.postedWithin]);
 
   const dateRefreshing = loadedWindow !== query.postedWithin;
+
+  // Re-read the list from the server. Used after an action changes what the
+  // server would return — notably a confirmed application, which the backend
+  // now excludes from discovery for this user.
+  const refreshJobs = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await api<JobsResponse>(`/jobs?posted_within_days=${query.postedWithin}`);
+      setJobs(result.jobs);
+      setProfileComplete(result.profile_complete);
+      setListError("");
+      return true;
+    } catch {
+      // Silent by design: this runs after a confirmed application, where the
+      // optimistic state already reflects the change and the next load
+      // reconciles. The caller decides whether a failure is worth surfacing —
+      // `reloadJobs` (explicit "Try again") does surface it.
+      return false;
+    }
+  }, [query.postedWithin]);
 
   // Saved/applied state comes from the user's own ledger, so a card can show it
   // without every card asking for it.
@@ -164,6 +202,22 @@ export function JobDiscovery() {
       clearTimeout(timer);
     };
   }, [hasPendingScores, query.postedWithin, jobs]);
+
+  /**
+   * The one explicit state the workspace is in. Every branch below renders from
+   * this, so there is no path where an async state paints an empty shell.
+   *
+   * `bootstrapping` is the state the cold-refresh defect lived in: it is NOT
+   * `empty`, and must never render an empty state or a "no results" message.
+   */
+  const workspaceState: "bootstrapping" | "error" | "empty" | "loaded" = !listLoaded
+    ? "bootstrapping"
+    : listError
+      ? "error"
+      : jobs.length === 0
+        ? "empty"
+        : "loaded";
+  const bootstrapping = workspaceState === "bootstrapping";
 
   const filtered = useMemo(() => {
     // Filtering "posted within N days" is inherently time-dependent.
@@ -364,6 +418,98 @@ export function JobDiscovery() {
     [jobById]
   );
 
+  // --- Confirmed application → Tracker ------------------------------------ //
+  // Opening the employer site never reaches this. Only an explicit user
+  // confirmation (this dialog) or an extension-confirmed submission does.
+  // The job's own details are held here rather than looked up from `jobs`,
+  // because the optimistic removal takes it out of that list while the request
+  // is still in flight — a lookup would unmount the dialog mid-submit.
+  const [markApplied, setMarkApplied] = useState<{
+    id: number;
+    title: string;
+    company: string;
+  } | null>(null);
+  const [markingApplied, setMarkingApplied] = useState(false);
+  const [markAppliedError, setMarkAppliedError] = useState("");
+  // A ref, not state, so a double-click cannot slip a second request through
+  // before React re-renders with the disabled button.
+  const markingRef = useRef(false);
+
+  const confirmMarkApplied = useCallback(async () => {
+    const jobId = markApplied?.id ?? null;
+    if (jobId === null || markingRef.current) {
+      return;
+    }
+    markingRef.current = true;
+    setMarkingApplied(true);
+    setMarkAppliedError("");
+
+    // Everything needed to put the workspace back exactly as it was.
+    const previousJobs = jobs;
+    const previousTracker = tracker;
+    const previousSelection = selectedId;
+    const nextSelection = nextSelectionAfterRemoval(filtered, jobId);
+
+    // Optimistic: the card goes immediately, and the selection moves with it so
+    // the detail pane is never left rendering a job that is no longer listed.
+    setJobs((current) => current.filter((entry) => entry.id !== jobId));
+    setTracker((current) => ({ ...current, [jobId]: "applied" }));
+    if (previousSelection === jobId) {
+      if (nextSelection === null) {
+        // No job left to show: close to an intentional empty state and drop
+        // ?job= from the URL, rather than leaving a dangling selection.
+        closeJob();
+      } else {
+        selectJob(nextSelection);
+        setTabState({ jobId: nextSelection, tab: "overview" });
+      }
+    }
+
+    try {
+      await confirmApplied(jobId);
+      setMarkApplied(null);
+      setError("");
+      setMessage(APPLIED_TOAST);
+      // Reconcile with the server: the optimistic state was a prediction, and
+      // the server list is the answer. This is also what makes the removal
+      // survive a refresh — the job is filtered out server-side now.
+      await Promise.all([refreshJobs(), loadTracker()]);
+    } catch (confirmError) {
+      // The transaction did not succeed, so nothing may look as if it did:
+      // both caches and the selection go back.
+      setJobs(previousJobs);
+      setTracker(previousTracker);
+      if (previousSelection !== null) {
+        selectJob(previousSelection);
+      }
+      setMarkAppliedError(
+        confirmError instanceof ApiError && confirmError.message
+          ? confirmError.message
+          : "Could not mark this application as applied. Please try again."
+      );
+    } finally {
+      markingRef.current = false;
+      setMarkingApplied(false);
+    }
+  }, [markApplied, jobs, tracker, selectedId, filtered, closeJob, selectJob, refreshJobs, loadTracker]);
+
+  const cancelMarkApplied = useCallback(() => {
+    // Cancelling changes nothing at all: no request, no list change, no status.
+    if (markingRef.current) return;
+    setMarkApplied(null);
+    setMarkAppliedError("");
+  }, []);
+
+  const openMarkApplied = useCallback(
+    (jobId: number) => {
+      const job = jobById(jobId);
+      if (!job) return;
+      setMarkAppliedError("");
+      setMarkApplied({ id: job.id, title: job.title, company: job.company });
+    },
+    [jobById]
+  );
+
   const saveJob = useCallback(async (jobId: number) => {
     try {
       const result = await api<{ tracker: { status: TrackerStatus } }>(`/jobs/${jobId}/save`, { method: "POST" });
@@ -386,13 +532,32 @@ export function JobDiscovery() {
   );
 
   const applyJob = applyJobId === null ? null : jobById(applyJobId);
-  const modalOpen = Boolean(applyJob || docModal || generating);
+  const modalOpen = Boolean(applyJob || docModal || generating || markApplied);
   useEscapeToClose(detailOpen && !modalOpen, closeJob);
 
   const busy = discovering || refreshing;
   const onFilterChange = useCallback((patch: Partial<JobsQuery>) => setQuery(patch, "replace"), [setQuery]);
 
-  const resultSummary = `${filtered.length} job${filtered.length === 1 ? "" : "s"} for you`;
+  // A count is only truthful once a response has actually landed. While
+  // bootstrapping "0 jobs for you" is false, and after a failed request it is
+  // equally false — the answer is unknown, not zero.
+  const resultSummary = bootstrapping
+    ? "Loading jobs…"
+    : workspaceState === "error"
+      ? "Jobs unavailable"
+      : `${filtered.length} job${filtered.length === 1 ? "" : "s"} for you`;
+
+  /** Explicit "Try again" from the error state. Returns to `bootstrapping`
+   * (skeleton) rather than leaving the failed empty list on screen. */
+  const reloadJobs = useCallback(() => {
+    setListLoaded(false);
+    setListError("");
+    void (async () => {
+      const ok = await refreshJobs();
+      if (!ok) setListError("Could not load jobs.");
+      setListLoaded(true);
+    })();
+  }, [refreshJobs]);
 
   const modals = (
     <>
@@ -406,10 +571,28 @@ export function JobDiscovery() {
           jobTitle={applyJob.title}
           company={applyJob.company}
           officialUrl={applyJob.application_url}
+          onMarkApplied={() => {
+            setApplyJobId(null);
+            openMarkApplied(applyJob.id);
+          }}
           onClose={() => {
             setApplyJobId(null);
+            // Closing the apply modal deliberately does NOT mark anything
+            // applied — it only re-reads the ledger, which an extension
+            // confirmation may have updated in the meantime.
             void loadTracker();
+            void refreshJobs();
           }}
+        />
+      )}
+      {markApplied && (
+        <MarkAppliedDialog
+          jobTitle={markApplied.title}
+          company={markApplied.company}
+          submitting={markingApplied}
+          error={markAppliedError}
+          onConfirm={() => void confirmMarkApplied()}
+          onCancel={cancelMarkApplied}
         />
       )}
     </>
@@ -424,6 +607,18 @@ export function JobDiscovery() {
         <p role="status" aria-live="polite" className="sr-only">
           {selectedJob ? `Showing ${selectedJob.title} at ${selectedJob.company}` : "Loading job details"}
         </p>
+        {/* Confirmations that happen inside the workspace (notably moving a job
+          * to the Tracker) need to be visible HERE — the list view's message
+          * strip is not rendered while a job is open. */}
+        {message && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="shrink-0 border-b border-line bg-[var(--success-surface)] px-5 py-2 text-sm text-[var(--accent)]"
+          >
+            {message}
+          </div>
+        )}
         <div className="flex min-h-0 flex-1">
           <aside
             aria-label="Job results"
@@ -457,6 +652,8 @@ export function JobDiscovery() {
               jobs={filtered}
               selectedId={selectedId}
               tracker={tracker}
+              state={workspaceState}
+              onRetry={reloadJobs}
               onSelect={(jobId) => openJob(jobId)}
             />
           </aside>
@@ -475,6 +672,7 @@ export function JobDiscovery() {
               onClose={closeJob}
               onSave={() => selectedJob && void saveJob(selectedJob.id)}
               onApply={() => selectedJob && setApplyJobId(selectedJob.id)}
+              onMarkApplied={() => selectedJob && openMarkApplied(selectedJob.id)}
               onGenerate={(type) => selectedJob && void generateDocument(selectedJob.id, type)}
               onPreviewDocument={(doc) =>
                 selectedJob && setDocModal({ doc, subtitle: `${selectedJob.title} · ${selectedJob.company}` })
@@ -526,7 +724,7 @@ export function JobDiscovery() {
         <div className="mt-5 rounded-xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-sm text-[var(--warning)]">
           <p className="font-semibold">Complete your profile to discover better jobs.</p>
           <p className="mt-1 leading-6">
-            Add target roles and skills on your <a className="font-medium text-pine underline" href="/profile">profile</a> so we can
+            Add target roles and skills on your <Link className="font-medium text-pine underline" href="/profile">profile</Link> so we can
             match jobs to you. You can still run a basic search with what you have.
           </p>
         </div>
@@ -565,16 +763,47 @@ export function JobDiscovery() {
       </div>
 
       <div className="mt-3.5 grid gap-3">
-        {filtered.map((job) => (
-          <JobCard
-            key={job.id}
-            job={job}
-            generating={generating?.jobId === job.id ? generating.type : null}
-            trackerStatus={tracker[job.id] ?? null}
-            actions={cardActions}
-          />
-        ))}
-        {filtered.length === 0 && (
+        {/* Bootstrapping renders a skeleton, never an empty state: telling the
+          * user "no jobs matched" before the first response has landed is the
+          * cold-refresh defect, and it is indistinguishable from a broken page. */}
+        {bootstrapping &&
+          [0, 1, 2].map((row) => (
+            <div
+              key={row}
+              data-testid="job-card-skeleton"
+              aria-hidden="true"
+              className="animate-pulse rounded-2xl border border-line bg-white p-5"
+            >
+              <div className="h-3.5 w-28 rounded bg-line" />
+              <div className="mt-3 h-5 w-2/3 rounded bg-line" />
+              <div className="mt-3 h-3.5 w-1/2 rounded bg-line" />
+            </div>
+          ))}
+
+        {!bootstrapping &&
+          filtered.map((job) => (
+            <JobCard
+              key={job.id}
+              job={job}
+              generating={generating?.jobId === job.id ? generating.type : null}
+              trackerStatus={tracker[job.id] ?? null}
+              actions={cardActions}
+            />
+          ))}
+
+        {workspaceState === "error" && (
+          <div className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-6 py-10 text-center">
+            <p className="text-sm font-medium text-[var(--danger)]">We couldn’t load your jobs.</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-[var(--text-muted)]">
+              This is usually temporary. Your saved and applied jobs are unaffected.
+            </p>
+            <Button className="mt-4" variant="secondary" type="button" onClick={reloadJobs}>
+              <RefreshCw className="h-4 w-4" /> Try again
+            </Button>
+          </div>
+        )}
+
+        {!bootstrapping && workspaceState !== "error" && filtered.length === 0 && (
           <div className="rounded-2xl border border-line bg-white px-6 py-14 text-center">
             <p className="mx-auto max-w-sm text-sm leading-6 text-[var(--text-muted)]">
               {!profileComplete
@@ -595,11 +824,15 @@ function CompactJobList({
   jobs,
   selectedId,
   tracker,
+  state,
+  onRetry,
   onSelect
 }: {
   jobs: Job[];
   selectedId: number | null;
   tracker: Record<number, TrackerStatus>;
+  state: "bootstrapping" | "error" | "empty" | "loaded";
+  onRetry: () => void;
   onSelect: (jobId: number) => void;
 }) {
   const container = useRef<HTMLUListElement>(null);
@@ -612,6 +845,29 @@ function CompactJobList({
       selected.scrollIntoView({ block: "nearest" });
     }
   }, [selectedId]);
+
+  // The first request in flight is NOT "no results". Rendering skeleton rows
+  // here is what keeps the cold-refresh workspace structurally correct instead
+  // of showing an empty rail with a false "no jobs match" message.
+  if (state === "bootstrapping") {
+    return (
+      <ul
+        aria-busy="true"
+        aria-label="Loading jobs"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-3"
+      >
+        {[0, 1, 2, 3, 4].map((row) => (
+          <li key={row} data-testid="compact-job-skeleton" className="px-1 py-1.5">
+            <div className="animate-pulse rounded-lg border border-line bg-panel/40 p-3">
+              <div className="h-3 w-1/3 rounded bg-line" />
+              <div className="mt-2 h-3.5 w-4/5 rounded bg-line" />
+              <div className="mt-2 h-3 w-1/2 rounded bg-line" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <ul
@@ -627,7 +883,19 @@ function CompactJobList({
           onSelect={onSelect}
         />
       ))}
-      {jobs.length === 0 && (
+      {state === "error" && jobs.length === 0 && (
+        <li className="px-3 py-6 text-sm text-[var(--text-muted)]">
+          <p className="text-[var(--danger)]">Could not load jobs.</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="focus-ring mt-2 inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-panel"
+          >
+            Try again
+          </button>
+        </li>
+      )}
+      {state !== "error" && jobs.length === 0 && (
         <li className="px-3 py-6 text-sm text-[var(--text-muted)]">No jobs match the current filters.</li>
       )}
     </ul>

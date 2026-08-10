@@ -294,6 +294,9 @@ def test_refreshed_answers_contain_every_required_autofill_key(db: Session) -> N
     for required in [
         "first_name", "last_name", "email",
         "phone_country_iso2", "phone_country", "phone_national",
-        "city", "linkedin_url", "work_authorization_us",
+        # work_authorization_us is deliberately absent: a legal answer is only
+        # emitted from an explicitly confirmed vault record, never derived from
+        # the profile's immigration-status vocabulary.
+        "city", "linkedin_url",
     ]:
         assert required in keys, f"missing {required} after refresh"

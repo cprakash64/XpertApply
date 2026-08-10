@@ -67,11 +67,6 @@ def derive_profile_answers(
         e164=profile.get("phone_e164"),
         legacy_phone=profile.get("phone"),
     )
-    work_authorization = _work_authorization_us(profile.get("work_authorization"))
-    has_work_authorization = _has_explicit_work_authorization(
-        profile.get("work_authorization")
-    )
-
     candidates: list[tuple[str, Any, bool]] = [
         # (canonical_key, value, requires_review)
         ("full_name", full_name, False),
@@ -98,18 +93,19 @@ def derive_profile_answers(
         ("current_company", current.get("company"), False),
         ("current_title", current.get("title"), False),
         ("preferred_workplace", profile.get("remote_preference"), False),
-        # These are explicit saved Profile selections, not inferred facts.
-        ("work_authorization_us", work_authorization, False),
-        (
-            "sponsorship_required_now",
-            _bool_str(profile.get("requires_sponsorship")) if has_work_authorization else "",
-            False,
-        ),
-        (
-            "sponsorship_required_future",
-            _bool_str(profile.get("requires_sponsorship")) if has_work_authorization else "",
-            False,
-        ),
+        # Work authorization and sponsorship are DELIBERATELY absent here.
+        #
+        # They used to be derived from UserProfile.work_authorization — a
+        # general immigration/status vocabulary — which meant `student_visa`
+        # and `opt_cpt` produced "Yes" for "authorized to work WITHOUT
+        # RESTRICTION". OPT is restricted (field of study, employer timing,
+        # duration), so that was a false legal statement on a real application.
+        # `requires_sponsorship` was worse: a non-nullable bool defaulting to
+        # False, so "never answered" was indistinguishable from an explicit No.
+        #
+        # These three keys now come exclusively from an explicitly confirmed
+        # ApplicationAnswer record (see legal_answers_from_vault). No profile
+        # field, resume parse, or status vocabulary may originate them.
         ("willing_to_relocate", _bool_str(profile.get("open_to_relocation")), False),
         # Explicit global application preferences supplied by the user.
         ("contact_current_employer", "Yes", False),
@@ -132,11 +128,10 @@ def derive_profile_answers(
                 "confidence": 0.9 if requires_review else 0.97,
                 "sensitive": False,
                 "requires_review": requires_review,
-                "verified": key in {
-                    "work_authorization_us",
-                    "sponsorship_required_now",
-                    "sponsorship_required_future",
-                },
+                # Derived profile facts are never "verified" — that word means
+                # the user explicitly confirmed this exact answer. Legal keys
+                # are not derived here at all any more.
+                "verified": False,
             }
         )
     return answers
@@ -238,6 +233,59 @@ def _name_answers_and_unresolved(profile: dict[str, Any]) -> tuple[list[dict], l
     return [], unresolved
 
 
+# --------------------------------------------------------------------------- #
+# Legal answers: the ONLY path that may produce one
+# --------------------------------------------------------------------------- #
+LEGAL_ANSWER_KEYS: frozenset[str] = frozenset(
+    {"work_authorization_us", "sponsorship_required_now", "sponsorship_required_future"}
+)
+
+#: Sources that represent the user answering THIS question. Anything else — a
+#: resume parse, an inferred profile field, an unconfirmed prior application —
+#: is not the user's legal statement and is rejected even when it looks
+#: confident.
+ALLOWED_LEGAL_SOURCES: frozenset[str] = frozenset(
+    {
+        "explicit_profile",
+        "user_confirmed_application",
+        "user_confirmed_saved",
+        "verified_answer_vault",
+    }
+)
+
+#: Bumped whenever the rules below change, so answers cached by an older, more
+#: permissive contract can never be replayed.
+ANSWER_VAULT_CONTRACT_VERSION = 3
+
+
+def legal_answer_state(row: ApplicationAnswer | None) -> str:
+    """Why a legal key is (not) auto-fillable. Low-cardinality; never the value.
+
+    Returns one of: explicit_verified, missing, unverified, source_not_allowed,
+    auto_fill_disabled, invalid_type.
+    """
+    if row is None:
+        return "missing"
+    value = _clean(row.value)
+    if not value:
+        return "missing"
+    if row.source not in ALLOWED_LEGAL_SOURCES:
+        return "source_not_allowed"
+    if not row.is_user_verified:
+        return "unverified"
+    if not row.allow_auto_fill:
+        return "auto_fill_disabled"
+    # A legal answer is a yes/no statement; anything else is not a valid answer
+    # to the question the employer asked.
+    if value.strip().lower() not in {"yes", "no", "true", "false"}:
+        return "invalid_type"
+    if row.last_verified_at is None:
+        # Confirmation without a timestamp cannot be shown to the user or
+        # audited, so it does not count as confirmed.
+        return "unverified"
+    return "explicit_verified"
+
+
 def build_safe_answers(
     db: Session,
     user: User,
@@ -298,9 +346,31 @@ def build_safe_answers(
     safe: dict[str, dict] = dict(derived)
     unresolved: list[dict] = list(name_unresolved)
 
+    # A legal key with no vault row at all is unanswered, not absent: the
+    # employer will ask it, so it must reach the user's review list rather than
+    # silently going missing.
+    for key in sorted(LEGAL_ANSWER_KEYS):
+        if key not in saved:
+            unresolved.append(_unresolved_from_key(key, saved=None, reason_code="missing"))
+
     for key, row in saved.items():
         if key in structured_name_keys:
             # The structured profile name is authoritative; skip the legacy row.
+            continue
+        if key in LEGAL_ANSWER_KEYS:
+            # The one path that may emit a legal answer. Anything short of an
+            # explicitly confirmed, verified, auto-fill-enabled yes/no leaves
+            # the question for the user — including a row whose value is
+            # present but whose source or confirmation cannot be trusted.
+            state = legal_answer_state(row)
+            if state == "explicit_verified":
+                answer = _answer_from_row(row, sensitive=True)
+                answer["requires_review"] = False
+                answer["verified"] = True
+                safe[key] = answer
+            else:
+                safe.pop(key, None)
+                unresolved.append(_unresolved_from_key(key, saved=row, reason_code=state))
             continue
         if is_sensitive_key(key):
             # A sensitive answer is only auto-fillable when explicitly verified
@@ -593,10 +663,15 @@ def _answer_from_row(row: ApplicationAnswer, *, sensitive: bool) -> dict:
     }
 
 
-def _unresolved_from_key(key: str, *, saved: ApplicationAnswer | None) -> dict:
+def _unresolved_from_key(
+    key: str, *, saved: ApplicationAnswer | None, reason_code: str | None = None
+) -> dict:
     return {
         "canonical_key": key,
         "reason": sensitive_reason(key),
+        # A low-cardinality machine code explaining WHY this is unresolved.
+        # Never the answer itself.
+        "reason_code": reason_code,
         "sensitive": True,
         "has_saved_value": bool(saved and _clean(saved.value)),
         "action": "answer_on_employer_page",
@@ -773,35 +848,6 @@ def _bool_str(value: Any) -> str:
     if value is None:
         return ""
     return "Yes" if bool(value) else "No"
-
-
-def _has_explicit_work_authorization(value: Any) -> bool:
-    """Whether the profile contains a user choice rather than the UI default."""
-    return _clean(value).lower() not in {"", "prefer_not_to_say"}
-
-
-def _work_authorization_us(value: Any) -> str:
-    """Translate the Profile vocabulary to the binary U.S. employer question.
-
-    Ambiguous choices intentionally remain blank. In particular, ``other`` and
-    ``prefer_not_to_say`` must never be coerced to either side of a legal
-    authorization question.
-    """
-    status = _clean(value).lower()
-    if status in {
-        "authorized_us",
-        "need_sponsorship_future",
-        "student_visa",
-        "opt_cpt",
-    }:
-        return "Yes"
-    if status in {
-        "authorized_other_country",
-        "need_sponsorship_now",
-        "not_authorized",
-    }:
-        return "No"
-    return ""
 
 
 def _clean(value: Any) -> str:

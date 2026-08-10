@@ -8,4 +8,10 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["app/tests"]
 pythonpath = ["."]
+markers = [
+    # Tests that run real Alembic migrations against a throwaway PostgreSQL
+    # database. They self-skip when no server is reachable, so the default
+    # SQLite-only run is unaffected.
+    "migration: requires a reachable PostgreSQL server",
+]
 

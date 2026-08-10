@@ -6,7 +6,9 @@ import {
   CalendarDays,
   CheckCircle2,
   ExternalLink,
+  FileText,
   Loader2,
+  Mail,
   MapPin,
   Search,
   Trophy
@@ -14,6 +16,7 @@ import {
 import Link from "next/link";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { api, type Job } from "@/lib/api";
+import { invalidateDashboardSummary } from "@/lib/dashboardSummary";
 
 export type TrackerStatus =
   | "saved"
@@ -22,7 +25,10 @@ export type TrackerStatus =
   | "applied"
   | "interview"
   | "offer"
-  | "rejected";
+  | "rejected"
+  | "withdrawn";
+
+export type TrackerDocument = { id: number; title: string | null; created_at: string | null };
 
 export type TrackerApplication = {
   id: number;
@@ -30,6 +36,13 @@ export type TrackerApplication = {
   status: TrackerStatus;
   notes?: string | null;
   applied_at?: string | null;
+  /** How the submission was confirmed — see AppliedSource on the backend. */
+  applied_source?: "extension_confirmed" | "auto_apply_confirmed" | "user_confirmed" | null;
+  submission_reference?: string | null;
+  opened_at?: string | null;
+  application_url?: string | null;
+  /** The tailored documents that were prepared for this application, if any. */
+  documents?: { resume: TrackerDocument | null; cover_letter: TrackerDocument | null };
   created_at?: string | null;
   updated_at?: string | null;
   job: Pick<
@@ -57,6 +70,13 @@ const STATUS_OPTIONS: { value: TrackerStatus; label: string }[] = [
   { value: "offer", label: "Offer / selected" },
   { value: "rejected", label: "Rejected" }
 ];
+
+/** Plain-language provenance, so "why is this in my Tracker?" has an answer. */
+const APPLIED_SOURCE_LABEL: Record<string, string> = {
+  extension_confirmed: "Confirmed by the JobPilot extension",
+  auto_apply_confirmed: "Confirmed by assisted apply",
+  user_confirmed: "You marked this as applied"
+};
 
 const FILTERS: { value: TrackerFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -103,6 +123,9 @@ export function TrackerClient() {
         method: "PUT",
         body: JSON.stringify({ status })
       });
+      // A status move re-buckets this application on the Dashboard, so the
+      // cached summary is no longer accurate.
+      invalidateDashboardSummary();
       setApplications((current) =>
         current.map((row) =>
           row.id === application.id
@@ -316,6 +339,34 @@ function ApplicationCard({
                 </span>
               )}
               {fitScore != null && <span>{Math.round(fitScore)}% fit</span>}
+            </div>
+            {/* What was actually prepared and how the submission was confirmed.
+              * These come from the one application record, so the Tracker never
+              * needs a second copy of the job. */}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
+              {application.applied_source && (
+                <span>{APPLIED_SOURCE_LABEL[application.applied_source]}</span>
+              )}
+              {application.documents?.resume && (
+                <span className="inline-flex items-center gap-1">
+                  <FileText className="h-3 w-3" /> Tailored resume
+                </span>
+              )}
+              {application.documents?.cover_letter && (
+                <span className="inline-flex items-center gap-1">
+                  <Mail className="h-3 w-3" /> Cover letter
+                </span>
+              )}
+              {application.application_url && (
+                <a
+                  className="inline-flex items-center gap-1 font-medium text-pine underline"
+                  href={application.application_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink className="h-3 w-3" /> Application
+                </a>
+              )}
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Check, Download, ExternalLink, FileText, Loader2, Mail, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/Button";
 import {
@@ -100,12 +101,17 @@ export function AutoApplyModal({
   jobTitle,
   company,
   officialUrl,
+  onMarkApplied,
   onClose
 }: {
   jobId: number;
   jobTitle: string;
   company: string;
   officialUrl: string;
+  /** Hands off to the explicit confirmation dialog. Offered only AFTER the user
+   * has actually opened the employer application, and never invoked
+   * automatically — returning from a tab is not evidence of a submission. */
+  onMarkApplied: () => void;
   onClose: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("preparing");
@@ -260,9 +266,9 @@ export function AutoApplyModal({
               <p className="font-semibold">We couldn’t prepare your application.</p>
               <p className="mt-1">{error.message}</p>
               {error.profileLink && (
-                <a href="/profile" className="mt-2 inline-flex items-center gap-1 font-medium text-pine underline">
+                <Link href="/profile" className="mt-2 inline-flex items-center gap-1 font-medium text-pine underline">
                   <ExternalLink className="h-3.5 w-3.5" /> Go to your profile
-                </a>
+                </Link>
               )}
               <p className="mt-2 text-xs text-[var(--text-muted)]">
                 {error.retryable
@@ -352,6 +358,29 @@ export function AutoApplyModal({
                   <p className="font-medium">Could not open the application automatically.</p>
                   <p className="mt-1">{launchError.message}</p>
                   <p className="mt-1 font-mono text-[11px]">{launchError.code}</p>
+                </div>
+              )}
+
+              {phase === "opened" && (
+                <div className="rounded-2xl border border-line bg-[var(--glass-surface)] p-4">
+                  <p className="text-sm font-medium text-[var(--text-secondary)]">
+                    Finished applying on the employer’s site?
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                    If the JobPilot extension confirms your submission, this happens automatically. If it
+                    can’t, tell us here and we’ll move this job to your Tracker.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onMarkApplied}
+                    data-testid="mark-applied-action"
+                    /* Visible text first, so voice control can activate it by
+                     * what is on screen (WCAG 2.5.3). */
+                    aria-label={`Mark as applied: ${jobTitle} at ${company}`}
+                    className="mark-applied-action mt-3 inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm font-medium"
+                  >
+                    <Check className="h-4 w-4" aria-hidden /> Mark as applied
+                  </button>
                 </div>
               )}
 

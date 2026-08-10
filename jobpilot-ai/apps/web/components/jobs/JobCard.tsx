@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useId, useSyncExternalStore } from "react";
+import Link from "next/link";
 import {
   Banknote,
   Bookmark,
@@ -161,9 +162,9 @@ export const JobCard = memo(function JobCard({
               {scoreDisplay.kind === "calculating" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{scoreDisplay.helper}</span>
               {scoreDisplay.kind === "profile_incomplete" && (
-                <a href="/profile" className="font-medium text-pine underline" onClick={stop}>
+                <Link href="/profile" className="font-medium text-pine underline" onClick={stop}>
                   Complete profile
-                </a>
+                </Link>
               )}
             </p>
           ) : null}

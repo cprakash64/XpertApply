@@ -1,12 +1,18 @@
 import logging
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.applications.eligibility_service import (
+    FIELD_TO_CANONICAL,
+    read_eligibility,
+    set_eligibility_answer,
+)
 from app.ai.provider import ai_provider
 from app.core.audit import record_audit
 from app.db.session import get_db
@@ -850,3 +856,53 @@ def delete_demographics(user: User = Depends(get_current_user), db: Session = De
     db.execute(delete(SensitiveDemographics).where(SensitiveDemographics.user_id == user.id))
     record_audit(db, user.id, "demographics_deleted")
     db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Application eligibility: the three legal answers, owned by the user
+# --------------------------------------------------------------------------- #
+class EligibilityAnswerIn(BaseModel):
+    """What the user chose — and nothing else.
+
+    Provenance (source, verified, confirmation time, version) is deliberately
+    absent: those are consequences the server derives from an authenticated
+    action, and accepting them from a browser would let a page mint a trusted
+    legal answer.
+    """
+
+    field: str
+    answer: Literal["yes", "no", "answer_each_time"]
+
+
+@router.get("/application-eligibility")
+def get_application_eligibility(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict:
+    """Display-safe state of the three legal answers for the SIGNED-IN user.
+
+    The user id comes from the token, never from the request, so there is no
+    parameter through which one account could read another's answers.
+    """
+    return {"answers": read_eligibility(db, user.id)}
+
+
+@router.put("/application-eligibility")
+def put_application_eligibility(
+    payload: EligibilityAnswerIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if payload.field not in FIELD_TO_CANONICAL:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown eligibility field"
+        )
+    try:
+        result = set_eligibility_answer(db, user.id, payload.field, payload.answer)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    # Audited as an event; the answer VALUE is never recorded in the audit trail.
+    record_audit(db, user.id, "application_eligibility_updated", {"field": payload.field})
+    db.commit()
+    return {"answers": read_eligibility(db, user.id), "updated": result["field"]}

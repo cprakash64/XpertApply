@@ -16,8 +16,8 @@ from app.applications.url_validation import is_valid_official_url, validate_offi
 from app.core.session_tokens import create_launch_token, hash_token
 from app.db.base import Base
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 @pytest.fixture()
@@ -268,12 +268,18 @@ def test_session_read_refreshes_structured_employment_and_education(client: Test
                 {"school": "Mesa Community College", "degree": "Associate of Science", "major": "Engineering", "end_date": "2021-05-01"},
             ],
             "experience": [
-                {"company": "VeoTrex", "title": "Software Engineer", "currently_working": True, "bullets": [], "technologies": []},
+                {
+                    "company": "VeoTrex",
+                    "title": "Software Engineer",
+                    "currently_working": True,
+                    "bullets": ["Built the evaluation harness", "Halved regression triage time"],
+                    "technologies": ["Python"],
+                },
                 {"company": "Earlier Co", "title": "Developer", "currently_working": False, "bullets": [], "technologies": []},
             ],
-            "projects": [],
+            "projects": [{"name": "Compiler Lab", "description": "Built a parser", "links": ["https://example.test/compiler"]}],
             "certifications": [],
-            "awards": [],
+            "awards": [{"name": "Research Award", "issuer": "ASU", "date": "2025-04-01"}],
         },
     )
     assert updated.status_code == 200, updated.text
@@ -285,10 +291,43 @@ def test_session_read_refreshes_structured_employment_and_education(client: Test
         "VeoTrex",
         "Earlier Co",
     ]
+    # The Description box on an employer's Experience row has no other source.
+    # These are the user's own reviewed lines, not generated prose.
+    assert session["profile"]["experience"][0]["bullets"] == [
+        "Built the evaluation harness",
+        "Halved regression triage time",
+    ]
+    assert session["profile"]["experience"][0]["technologies"] == ["Python"]
+    assert session["profile"]["experience"][1]["bullets"] == []
     assert [item["school"] for item in session["profile"]["education"]] == [
         "Arizona State University",
         "Mesa Community College",
     ]
+    project = session["profile"]["projects"][0]
+    assert isinstance(project["id"], int)
+    assert {key: value for key, value in project.items() if key != "id"} == {
+        "name": "Compiler Lab",
+        "description": "Built a parser",
+        "bullets": [],
+        "technologies": [],
+        "links": ["https://example.test/compiler"],
+        "start_date": None,
+        "end_date": None,
+        "source": "confirmed_profile",
+        "verified": True,
+    }
+    assert session["profile"]["awards"][0]["name"] == "Research Award"
+    assert isinstance(session["profile"]["awards"][0]["id"], int)
+    assert session["profile"]["linkedin_url"] == "https://linkedin.com/in/cp"
+    assert session["profile"]["structured_candidate_counts"] == {
+        "projects": 1,
+        "awards": 1,
+        "languages": 0,
+        "professional_links": 1,
+        "work_samples": 0,
+        "self_introduction_source_facts": 5,
+        "reviewed_resume_extraction": 0,
+    }
 
 
 def test_session_not_accessible_to_other_user(client: TestClient) -> None:

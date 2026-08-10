@@ -10,6 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.applications.mark_applied import (
+    DISCOVERY_HIDDEN_STATUSES,
+    AppliedSource,
+    ApplicationJobNotFound,
+    mark_application_applied,
+    serialize_application,
+)
+from app.applications.observability import metric
 from app.core.config import settings
 from app.db.session import get_db
 from app.documents.cover_letter_generation_service import generate_cover_letter
@@ -48,6 +56,7 @@ from app.models.entities import (
     User,
     UserProfile,
 )
+from app.schemas.applications import ConfirmAppliedIn
 from app.schemas.jobs import (
     ApplicationTrackerIn,
     DiscoverJobsIn,
@@ -238,18 +247,17 @@ def _list_payload(
         for match in db.scalars(select(JobMatch).where(JobMatch.user_id == user.id)).all()
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
-    hidden_tracker_statuses = [
-        ApplicationStatus.applying,
-        ApplicationStatus.applied,
-        ApplicationStatus.interview,
-        ApplicationStatus.rejected,
-        ApplicationStatus.offer,
-    ]
+    # One indexed query (ix_tracker_user_status) returns every job this user has
+    # already dealt with, as a set. The per-job check below is then a hash
+    # lookup — no per-row application query, so adding this exclusion does not
+    # turn the list into an N+1. The set is scoped to THIS user: the same job
+    # stays fully discoverable for everyone else, and the JobPosting row is
+    # never deleted or deactivated.
     tracked_job_ids = set(
         db.scalars(
             select(ApplicationTracker.job_id).where(
                 (ApplicationTracker.user_id == user.id)
-                & (ApplicationTracker.status.in_(hidden_tracker_statuses))
+                & (ApplicationTracker.status.in_(tuple(DISCOVERY_HIDDEN_STATUSES)))
             )
         ).all()
     )
@@ -257,11 +265,20 @@ def _list_payload(
     cards: list[dict] = []
     # Debug counts of why fresh jobs were excluded (shown only in dev on the UI).
     counts = {"fresh": 0, "excluded_location": 0, "excluded_seniority": 0, "excluded_role": 0, "excluded_other": 0, "eligible": 0}
+    # Counted, then emitted once per request. A metric per filtered row would
+    # put one log line per applied job on every Jobs load.
+    filtered_as_applied = 0
     for job in jobs:
         if _is_demo_posting(job, sources.get(job.source_id)):
             continue  # never surface fake/demo/placeholder jobs, even if in the DB
         if job.id in tracked_job_ids:
-            continue  # applying/applied jobs live only in the tracker
+            # Applied (and later-lifecycle) jobs live only in the Tracker. This
+            # runs server-side on every list, so the job cannot come back after
+            # a refresh, a new session, a re-login, or provider rediscovery —
+            # rediscovery updates the JobPosting row, which this filter does not
+            # consult.
+            filtered_as_applied += 1
+            continue
         if not _passes_freshness(job.posted_at, cutoff, include_unknown):
             continue
         counts["fresh"] += 1
@@ -299,6 +316,9 @@ def _list_payload(
     )
     for card in cards:
         card.pop("_posted_key", None)
+
+    if filtered_as_applied:
+        metric("applied_job_filtered_from_discovery", filtered_as_applied)
 
     return {
         "profile_complete": _profile_complete(profile),
@@ -483,6 +503,66 @@ SUBMITTED_APPLICATION_STATUSES = (
 )
 
 
+@router.post("/{job_id}/applications/confirm-applied")
+def confirm_applied(
+    job_id: int,
+    payload: ConfirmAppliedIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The user's explicit "Mark as applied" — the manual confirmation path.
+
+    Used when the extension cannot prove the submission (no extension, an
+    unsupported ATS, or an ambiguous outcome). Requires an explicit
+    ``confirmed`` flag so a stray or replayed request cannot move a job into the
+    Tracker on its own.
+
+    Ownership and job identity are derived server-side: the user is the bearer
+    token's subject and the job is the path parameter, validated to exist. The
+    body cannot name an owner, a status, a resume, or a different job.
+
+    Safe under double-click, two open tabs, and an extension confirmation
+    racing a manual one — every one of those converges on the same application
+    record, and a repeat returns the existing record with
+    ``already_applied: true`` instead of failing.
+    """
+    if not payload.confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Marking an application as applied requires explicit confirmation.",
+        )
+    job = db.get(JobPosting, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    try:
+        result = mark_application_applied(
+            db,
+            user_id=user.id,
+            job_id=job_id,
+            source=AppliedSource.user_confirmed,
+            submitted_at=payload.submitted_at,
+            application_url=job.application_url or job.source_url,
+        )
+        db.commit()
+    except ApplicationJobNotFound as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
+    except Exception:
+        # Never leave a half-written application record behind; the frontend
+        # rolls its optimistic update back off this failure.
+        db.rollback()
+        raise
+
+    db.refresh(result.tracker)
+    return {
+        "application": serialize_application(result.tracker),
+        "created": result.created,
+        "already_applied": result.already_applied,
+        "job_id": job_id,
+    }
+
+
 def _tracker_payload(
     db: Session,
     user_id: int,
@@ -504,6 +584,7 @@ def _tracker_payload(
         for match in db.scalars(select(JobMatch).where(JobMatch.user_id == user_id)).all()
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
+    documents = _tracker_documents(db, user_id, [tracker.job_id for tracker, _ in rows])
     return {
         "applications": [
             {
@@ -512,9 +593,16 @@ def _tracker_payload(
                 "status": tracker.status.value,
                 "notes": tracker.notes,
                 "applied_at": tracker.applied_at,
+                # Provenance of the confirmation that created this record, so
+                # the Tracker can show HOW an application was confirmed.
+                "applied_source": tracker.applied_source,
+                "submission_reference": tracker.submission_reference,
+                "opened_at": tracker.opened_at,
+                "application_url": tracker.last_application_url or job.application_url,
                 "follow_up_date": tracker.follow_up_date,
                 "created_at": tracker.created_at,
                 "updated_at": tracker.updated_at,
+                "documents": documents.get(tracker.job_id, {"resume": None, "cover_letter": None}),
                 "job": _tracker_job_payload(
                     job,
                     matches.get(job.id),
@@ -524,6 +612,36 @@ def _tracker_payload(
             for tracker, job in rows
         ]
     }
+
+
+def _tracker_documents(
+    db: Session, user_id: int, job_ids: list[int]
+) -> dict[int, dict[str, dict | None]]:
+    """Latest tailored resume + cover letter per job, in ONE query.
+
+    Looking these up per application row is the obvious N+1 in this endpoint —
+    a user with 80 tracked applications would issue 160 document queries per
+    Tracker load. One ordered pass and a dict keyed by (job, type) gives the
+    same answer."""
+    if not job_ids:
+        return {}
+    rows = db.scalars(
+        select(GeneratedDocument)
+        .where(
+            (GeneratedDocument.user_id == user_id)
+            & (GeneratedDocument.job_id.in_(job_ids))
+            & (GeneratedDocument.type.in_((DocumentType.resume, DocumentType.cover_letter)))
+        )
+        .order_by(GeneratedDocument.created_at.asc(), GeneratedDocument.id.asc())
+    ).all()
+    result: dict[int, dict[str, dict | None]] = {
+        job_id: {"resume": None, "cover_letter": None} for job_id in job_ids
+    }
+    for row in rows:
+        key = "resume" if row.type == DocumentType.resume else "cover_letter"
+        # Ascending order means the last write wins — the most recent document.
+        result[row.job_id][key] = {"id": row.id, "title": row.title, "created_at": row.created_at}
+    return result
 
 
 @router.get("/tracker/all")
@@ -828,38 +946,56 @@ def upsert_tracker(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if db.get(JobPosting, job_id) is None:
+    job = db.get(JobPosting, job_id)
+    if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    try:
+        status_value = ApplicationStatus(payload.status)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown application status"
+        ) from exc
+
+    if status_value == ApplicationStatus.applied:
+        # There is exactly one way to become ``applied``. Setting the status
+        # directly here would be a second one, with its own drift-prone rules
+        # for applied_at and provenance — so this delegates instead. A user
+        # choosing "Applied" from the Tracker dropdown is a user confirmation.
+        result = mark_application_applied(
+            db,
+            user_id=user.id,
+            job_id=job_id,
+            source=AppliedSource.user_confirmed,
+            application_url=job.application_url or job.source_url,
+        )
+        tracker = result.tracker
+        if payload.notes is not None:
+            tracker.notes = payload.notes
+        db.commit()
+        db.refresh(tracker)
+        return {"tracker": serialize_application(tracker)}
+
     tracker = db.scalar(
         select(ApplicationTracker).where(
             (ApplicationTracker.user_id == user.id) & (ApplicationTracker.job_id == job_id)
         )
     )
-    status_value = ApplicationStatus(payload.status)
     if tracker is None:
         tracker = ApplicationTracker(user_id=user.id, job_id=job_id, status=status_value)
         db.add(tracker)
     tracker.status = status_value
     tracker.notes = payload.notes
-    completed_application_statuses = {
-        ApplicationStatus.applied,
+    # A downstream outcome implies the application was submitted at some point.
+    # Only ever fills a MISSING date — it never overwrites the real submission
+    # date recorded by the confirmation that created the record.
+    downstream_of_applied = {
         ApplicationStatus.interview,
         ApplicationStatus.rejected,
         ApplicationStatus.offer,
+        ApplicationStatus.withdrawn,
     }
-    if status_value in completed_application_statuses and tracker.applied_at is None:
+    if status_value in downstream_of_applied and tracker.applied_at is None:
         tracker.applied_at = datetime.now(UTC)
     db.commit()
     db.refresh(tracker)
-    return {
-        "tracker": {
-            "id": tracker.id,
-            "job_id": tracker.job_id,
-            "status": tracker.status.value,
-            "notes": tracker.notes,
-            "applied_at": tracker.applied_at,
-            "follow_up_date": tracker.follow_up_date,
-            "created_at": tracker.created_at,
-            "updated_at": tracker.updated_at,
-        }
-    }
+    return {"tracker": serialize_application(tracker)}

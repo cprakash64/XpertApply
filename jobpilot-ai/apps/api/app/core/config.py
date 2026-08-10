@@ -66,6 +66,10 @@ def _tolerate_csv(source):
 
 
 class Settings(BaseSettings):
+    # How long an explicitly confirmed legal application answer stays
+    # trustworthy before the user is asked to reconfirm it. Circumstances
+    # change; a confirmation from years ago is not evidence about today.
+    legal_answer_reconfirmation_days: int = 365
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @classmethod

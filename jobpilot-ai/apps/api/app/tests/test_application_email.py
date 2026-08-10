@@ -146,37 +146,72 @@ def test_a_complete_profile_produces_every_required_autofill_key(db: Session) ->
     for required in [
         "first_name", "last_name", "email",
         "phone_country_iso2", "phone_country", "phone_national",
-        "city", "linkedin_url", "work_authorization_us", "sponsorship_required_future",
+        "city", "linkedin_url",
     ]:
         assert required in keys, f"missing required autofill key: {required}"
 
+    # Legal answers are deliberately NOT here. They may only come from an
+    # explicitly confirmed vault record, never from the profile's general
+    # work-authorization vocabulary.
+    for legal in ["work_authorization_us", "sponsorship_required_now", "sponsorship_required_future"]:
+        assert legal not in keys, f"legal answer must not be derived: {legal}"
 
-def test_profile_work_authorization_is_binary_verified_and_omitted_when_unset(
-    db: Session,
-) -> None:
+
+def test_immigration_status_never_produces_a_legal_answer(db: Session) -> None:
+    """The defect this replaces: ``student_visa`` and ``opt_cpt`` were mapped to
+    "Yes" for "authorized to work WITHOUT RESTRICTION". OPT is restricted, so
+    that put a false legal statement on real applications.
+
+    No value of the profile's status vocabulary — not even one whose answer
+    would happen to be correct — may originate a legal answer now.
+    """
+    for status in [
+        "authorized_us", "citizen", "permanent_resident", "student_visa",
+        "opt_cpt", "work_visa", "need_sponsorship_now", "need_sponsorship_future",
+        "not_authorized", "authorized_other_country", "prefer_not_to_say", "",
+    ]:
+        user = _profile(
+            db,
+            account_email=f"{status or 'blank'}@mailbox.test-domain.co",
+            application_email=f"{status or 'blank'}@mailbox.test-domain.co",
+            application_email_confirmed=True,
+            work_authorization=status,
+            requires_sponsorship=False,
+        )
+        answers, unresolved = build_safe_answers(db, user)
+        keys = {answer["canonical_key"] for answer in answers}
+        for legal in [
+            "work_authorization_us", "sponsorship_required_now", "sponsorship_required_future"
+        ]:
+            assert legal not in keys, f"{status!r} derived a legal answer for {legal}"
+
+        # …and the user is asked instead of being answered for.
+        unresolved_keys = {item["canonical_key"] for item in unresolved}
+        assert "work_authorization_us" in unresolved_keys
+
+
+def test_requires_sponsorship_default_false_is_not_an_explicit_no(db: Session) -> None:
+    """``requires_sponsorship`` used to be NOT NULL DEFAULT false, so a user who
+    never answered was indistinguishable from one who said No. The default must
+    never reach an employer as an answer."""
     user = _profile(
         db,
-        account_email="candidate@mailbox.test-domain.co",
-        application_email="candidate@mailbox.test-domain.co",
+        account_email="default@mailbox.test-domain.co",
+        application_email="default@mailbox.test-domain.co",
         application_email_confirmed=True,
         work_authorization="authorized_us",
         requires_sponsorship=False,
     )
-    answers, _ = build_safe_answers(db, user)
+    answers, unresolved = build_safe_answers(db, user)
     by_key = {answer["canonical_key"]: answer for answer in answers}
-    assert by_key["work_authorization_us"]["value"] == "Yes"
-    assert by_key["work_authorization_us"]["verified"] is True
-    assert by_key["work_authorization_us"]["requires_review"] is False
-    assert by_key["sponsorship_required_future"]["value"] == "No"
-
-    profile = db.scalar(select(E.UserProfile).where(E.UserProfile.user_id == user.id))
-    profile.work_authorization = "prefer_not_to_say"
-    db.flush()
-    answers, _ = build_safe_answers(db, user)
-    keys = {answer["canonical_key"] for answer in answers}
-    assert "work_authorization_us" not in keys
-    assert "sponsorship_required_now" not in keys
-    assert "sponsorship_required_future" not in keys
+    assert "sponsorship_required_now" not in by_key
+    assert "sponsorship_required_future" not in by_key
+    reasons = {
+        item["canonical_key"]: item.get("reason_code")
+        for item in unresolved
+        if item["canonical_key"].startswith("sponsorship_")
+    }
+    assert reasons.get("sponsorship_required_now") == "missing"
 
 
 def test_preferred_first_name_is_never_the_middle_name(db: Session) -> None:

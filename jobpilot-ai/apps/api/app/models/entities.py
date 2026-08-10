@@ -42,6 +42,15 @@ class DocumentFormat(StrEnum):
 
 
 class ApplicationStatus(StrEnum):
+    """The user's lifecycle for one job. This is the ONLY application status
+    vocabulary; ``ApplicationSessionStatus`` below describes a single assisted
+    apply *run*, not the application itself.
+
+    ``applied`` is reached only through
+    :func:`app.applications.mark_applied.mark_application_applied` — a confirmed
+    ATS submission, a confirmed auto-apply submission, or an explicit user
+    confirmation. Opening the employer page never reaches it."""
+
     saved = "saved"
     ready_to_apply = "ready_to_apply"
     applied = "applied"
@@ -49,6 +58,7 @@ class ApplicationStatus(StrEnum):
     rejected = "rejected"
     offer = "offer"
     applying = "applying"  # assisted auto-apply in progress (not yet submitted)
+    withdrawn = "withdrawn"  # user pulled out after applying; stays out of discovery
 
 
 class ApplicationSessionStatus(StrEnum):
@@ -184,7 +194,14 @@ class UserProfile(Base):
     github_url: Mapped[str | None] = mapped_column(String(500))
     portfolio_url: Mapped[str | None] = mapped_column(String(500))
     work_authorization: Mapped[str | None] = mapped_column(String(120))
-    requires_sponsorship: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Nullable on purpose: NULL means "the user has not answered". The old
+    # non-nullable default=False made an unanswered profile indistinguishable
+    # from an explicit "No", which is not a distinction you can recover later.
+    #
+    # DEPRECATED for application autofill. Job matching/eligibility/scoring may
+    # still read it as a search preference, but no employer-application answer
+    # may originate here — see applications/answer_vault_service.py.
+    requires_sponsorship: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     open_to_relocation: Mapped[bool] = mapped_column(Boolean, default=False)
     target_roles: Mapped[list] = mapped_column(JsonType, default=list)
     target_levels: Mapped[list] = mapped_column(JsonType, default=list)
@@ -779,14 +796,39 @@ class GeneratedDocument(Base):
 
 
 class ApplicationTracker(Base):
+    """The user's application record for one job — the single source of truth for
+    "have I applied to this?".
+
+    ``uq_tracker_user_job`` is the idempotency key: one (user, job) can only ever
+    have one application record, so a double-clicked confirmation, an extension
+    retry, and a second browser tab all converge on the same row instead of
+    creating duplicate tracker cards.
+    """
+
     __tablename__ = "application_tracker"
-    __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_tracker_user_job"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_id", name="uq_tracker_user_job"),
+        # Discovery excludes a user's applied/withdrawn jobs on every Jobs load.
+        # Without this the exclusion set is a full per-user scan of the ledger.
+        Index("ix_tracker_user_status", "user_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("job_postings.id", ondelete="CASCADE"), index=True)
     status: Mapped[ApplicationStatus] = mapped_column(Enum(ApplicationStatus), default=ApplicationStatus.saved)
     applied_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    # Which confirmation moved this record to ``applied``: one of
+    # app.applications.mark_applied.AppliedSource. NULL for records that were
+    # never confirmed (saved / ready_to_apply / applying).
+    applied_source: Mapped[str | None] = mapped_column(String(40))
+    # Opaque ATS/auto-apply receipt for the confirmed submission (a confirmation
+    # number or reference id). Never a URL with credentials and never PII.
+    submission_reference: Mapped[str | None] = mapped_column(String(200))
+    # Set when the user OPENS the employer application. Deliberately separate
+    # from ``applied_at``: opening is not applying.
+    opened_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    last_application_url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     follow_up_date: Mapped[DateValue | None] = mapped_column(Date)
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -837,6 +879,14 @@ class ApplicationSession(Base):
         ForeignKey("generated_documents.id", ondelete="SET NULL")
     )
     generated_answers: Mapped[list] = mapped_column(JsonType, default=list)
+    # Answers the user gave for THIS application only, keyed by canonical key.
+    #
+    # Deliberately a separate column from ``generated_answers``: that one is
+    # rebuilt wholesale whenever the profile snapshot goes stale
+    # (session_refresh.py), which would silently discard an override the user
+    # had just given. Living on the session row, an override expires with the
+    # session and never reaches the reusable ApplicationAnswer vault.
+    application_overrides: Mapped[dict] = mapped_column(JsonType, default=dict)
     unresolved_questions: Mapped[list] = mapped_column(JsonType, default=list)
     warnings: Mapped[list] = mapped_column(JsonType, default=list)
     # One-time launch handoff: we store only the SHA-256 of the launch token and

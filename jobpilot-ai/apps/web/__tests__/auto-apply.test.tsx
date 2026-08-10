@@ -74,6 +74,7 @@ function renderModal(overrides: Partial<Record<string, unknown>> = {}) {
       jobTitle: "Backend Engineer",
       company: "Acme",
       officialUrl: OFFICIAL_URL,
+      onMarkApplied: () => {},
       onClose: () => {},
       ...overrides
     })

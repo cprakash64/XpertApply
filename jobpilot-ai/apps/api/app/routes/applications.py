@@ -25,6 +25,12 @@ from app.applications.session_refresh import refresh_if_stale, refresh_session_a
 from app.applications import option_mapping_service
 from app.applications import preparation
 from app.applications.canonical import CANONICAL_KEYS, is_sensitive_key
+from app.applications.mark_applied import (
+    AppliedSource,
+    ApplicationJobNotFound,
+    serialize_application,
+)
+from app.applications.observability import metric
 from app.applications.preparation import PreparationError
 from app.applications.session_service import (
     SessionError,
@@ -36,6 +42,7 @@ from app.applications.session_service import (
     expire,
     is_expired,
     log_action,
+    touch_session,
 )
 from app.core.security import decode_access_token
 from app.core.session_tokens import decode_scoped_token
@@ -52,6 +59,18 @@ from app.models.entities import (
     User,
     UserProfile,
 )
+from app.applications.answer_resolution_service import (
+    OptionIn,
+    QuestionIn,
+    resolve_questions,
+)
+from app.applications.question_registry import REGISTRY_VERSION
+from app.applications.session_overrides import (
+    OverrideRejected,
+    list_overrides,
+    set_override,
+)
+from app.applications.answer_vault_service import ANSWER_VAULT_CONTRACT_VERSION
 from app.schemas.applications import (
     MapOptionIn,
     AnswerUpsertIn,
@@ -59,10 +78,13 @@ from app.schemas.applications import (
     CompleteSessionIn,
     CreateSessionIn,
     ExchangeTokenIn,
+    ApplicationOverrideIn,
+    ResolveQuestionsIn,
     SessionAnswerUpsertIn,
     SessionEventIn,
     SessionNameConfirmIn,
     StatusPatchIn,
+    SubmissionConfirmedIn,
 )
 
 logger = logging.getLogger("jobpilot.applications")
@@ -116,6 +138,15 @@ def _resolve_session(
         ApplicationSessionStatus.expired,
     }:
         expire(db, session)
+        return session
+
+    # The credential has been verified above, so this request is legitimate
+    # activity on a live session: slide its idle deadline forward. Without this
+    # a real application — listing, Apply, employer login, verification, form —
+    # could outlast a fixed TTL and fail mid-flight with "your session is no
+    # longer valid". Bounded by an absolute ceiling inside touch_session.
+    if touch_session(db, session):
+        db.commit()
     return session
 
 
@@ -460,6 +491,104 @@ def post_event(
     return {"ok": True}
 
 
+@router.put("/{session_id}/answers/override/{canonical_key}")
+def set_application_override(
+    canonical_key: str,
+    payload: ApplicationOverrideIn,
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Answer one question for THIS application only.
+
+    Ownership comes from ``session_access``, so the user, the job and the
+    session are all derived — there is no field in which a caller could name
+    someone else's. The stored answer is scoped to this session, expires with
+    it, and never reaches the reusable answer vault: making it reusable is a
+    separate, explicit action.
+    """
+    if is_expired(session):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Application session has expired")
+
+    try:
+        result = set_override(session, canonical_key, payload.value)
+    except OverrideRejected as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.reason
+        ) from exc
+
+    log_action(
+        db, session.id, "application_answer_override", field_key=canonical_key,
+        source="user", status="confirmed_for_application",
+    )
+    db.commit()
+    return result
+
+
+@router.get("/{session_id}/answers/override")
+def get_application_overrides(
+    session: ApplicationSession = Depends(session_access),
+) -> dict:
+    """Which questions the user has answered for this application. Values are
+    deliberately omitted — the employer control shows the answer, not us."""
+    return {"overrides": list_overrides(session)}
+
+
+@router.post("/{session_id}/resolve-questions")
+def resolve_application_questions(
+    payload: ResolveQuestionsIn,
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Resolve a batch of employer questions against the user's saved answers.
+
+    Ownership comes from ``session_access`` (a session-scoped token or the
+    owner's own token), so the user and the job are derived from the session —
+    never from the request body. A caller cannot resolve against someone else's
+    answers by naming a different user or job, because there is no field in
+    which to name one.
+
+    The response returns an OPTION REFERENCE, not an answer value: the extension
+    learns which of the options it already reported to click, and a legal answer
+    never travels back down to the page as a value.
+    """
+    _rate_limit(f"resolve:{session.user_id}", limit=60, window_seconds=60)
+
+    questions = [
+        QuestionIn(
+            field_ref=item.field_ref,
+            question=item.question,
+            section=item.section,
+            control_type=item.control_type,
+            required=item.required,
+            locale=item.locale,
+            options=[OptionIn(option_ref=o.option_ref, label=o.label) for o in item.options],
+            raw_label=item.raw_label,
+            accessible_name=item.accessible_name,
+            nearby_text=item.nearby_text,
+            field_name=item.field_name,
+            field_id=item.field_id,
+            placeholder=item.placeholder,
+            aria_role=item.aria_role,
+        )
+        for item in payload.questions
+    ]
+    results = resolve_questions(
+        db,
+        user_id=session.user_id,
+        job_id=session.job_id,
+        questions=questions,
+        # An application-scoped answer outranks the reusable one for THIS
+        # session only. Passing it here is what makes "use once" actually fill.
+        overrides=session.application_overrides or {},
+    )
+    return {
+        "request_schema_version": payload.schema_version,
+        "registry_version": REGISTRY_VERSION,
+        "answer_contract_version": ANSWER_VAULT_CONTRACT_VERSION,
+        "results": [result.as_dict() for result in results],
+    }
+
+
 @router.post("/{session_id}/map-option")
 async def map_dropdown_option(
     payload: MapOptionIn,
@@ -571,6 +700,110 @@ def complete(
     return _serialize_session(db, session)
 
 
+# Evidence the server accepts as proof that an ATS actually took the submission.
+# A closed set, checked here rather than trusted from the client: every entry
+# describes something the ATS itself did *after* accepting the application.
+#
+# Deliberately NOT acceptable, because each of these happens constantly on
+# applications that were never submitted: the submit button being clicked or
+# disabled, the form disappearing, a bare URL change, or a timeout after
+# clicking.
+EVIDENCE_TYPES = frozenset({"success_page", "success_response", "success_message"})
+
+#: Which confirmation sources may arrive over a session-scoped token. The user's
+#: own "Mark as applied" is NOT one of them — that path requires the user's main
+#: token and lives on the jobs router.
+_SESSION_CONFIRMATION_SOURCES = {
+    "extension_confirmed": AppliedSource.extension_confirmed,
+    "auto_apply_confirmed": AppliedSource.auto_apply_confirmed,
+}
+
+
+@router.post("/{session_id}/submission-confirmed")
+def confirm_submission(
+    payload: SubmissionConfirmedIn,
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record a CONFIRMED ATS submission and move the job into the Tracker.
+
+    The only automated path to ``applied``. Authenticated with the same
+    session-scoped token the extension already holds, so:
+
+    * the user is ``session.user_id`` — never a value from the request body;
+    * the job is ``session.job_id`` — the extension cannot name a different one;
+    * ``session_access`` has already proven the token is bound to *this*
+      session, so an event carrying another user's session id is rejected with
+      403 before reaching here.
+
+    Idempotent by construction: retries and duplicate success events resolve to
+    the same application record via ``uq_tracker_user_job``, and a repeat is
+    reported as ``duplicate`` rather than failing.
+    """
+    ats = (payload.ats or session.ats_type or "unknown")[:40]
+
+    if payload.evidence_type not in EVIDENCE_TYPES:
+        # Weak or unknown evidence is refused outright. The extension is
+        # expected to fall back to asking the user (see manual_confirmation_required).
+        metric(
+            "extension_submission_confirmation_total",
+            ats=ats,
+            evidence_type="rejected",
+            outcome="insufficient_evidence",
+        )
+        logger.info(
+            "apply.session.submission_rejected session=%s user=%s reason=insufficient_evidence",
+            session.id, session.user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Submission confirmation requires verified ATS success evidence.",
+        )
+
+    applied_source = _SESSION_CONFIRMATION_SOURCES.get(payload.confirmation_source)
+    if applied_source is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported confirmation source for a session token.",
+        )
+
+    try:
+        result = complete_session(
+            db,
+            session,
+            confirmed=True,
+            source="extension",
+            applied_source=applied_source,
+            submitted_at=payload.submission_timestamp,
+            submission_reference=payload.submission_reference,
+            evidence={
+                "ats": ats,
+                "evidence_type": payload.evidence_type,
+                "submission_reference": payload.submission_reference,
+            },
+        )
+    except ApplicationJobNotFound as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
+    except SessionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    metric(
+        "extension_submission_confirmation_total",
+        ats=ats,
+        evidence_type=payload.evidence_type,
+        outcome="duplicate" if result.already_applied else "confirmed",
+    )
+    return {
+        "ok": True,
+        "application": serialize_application(result.tracker),
+        "created": result.created,
+        "already_applied": result.already_applied,
+        "job_id": session.job_id,
+    }
+
+
 @router.post("/{session_id}/cancel")
 def cancel(
     session: ApplicationSession = Depends(session_access),
@@ -674,6 +907,9 @@ def _serialize_session(db: Session, session: ApplicationSession) -> dict[str, An
     job = session.job_snapshot or {}
     return {
         "session_id": session.id,
+        # Lets the web and extension diagnostics prove they are authenticated
+        # as the same account without exposing email or any profile data.
+        "authenticated_user_id": session.user_id,
         "status": session.status.value,
         "official_application_url": session.source_url,
         "ats_type": session.ats_type,
