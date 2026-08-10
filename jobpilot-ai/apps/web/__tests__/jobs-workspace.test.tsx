@@ -278,7 +278,10 @@ describe("Jobs workspace", () => {
     expect(sidebar().className).toContain("w-14");
     // Branding and navigation stay reachable, with accessible names.
     expect(within(sidebar()).getByLabelText("JobPilot AI home")).toBeInTheDocument();
-    expect(within(sidebar()).getByRole("link", { name: "Jobs" })).toHaveAttribute("aria-current", "page");
+    expect(within(sidebar()).getByRole("link", { name: "Find Jobs" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
     expect(within(sidebar()).getByRole("link", { name: "Settings" })).toBeInTheDocument();
 
     await userEvent.click(within(sidebar()).getByRole("button", { name: "Expand sidebar" }));

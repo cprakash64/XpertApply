@@ -17,6 +17,7 @@ from app.ai.provider import ai_provider
 from app.core.audit import record_audit
 from app.db.session import get_db
 from app.documents.resume_compaction_service import looks_like_fragment
+from app.profile.completeness import build_completeness
 from app.profile.names import compose_full_name
 from app.profile.phone import parse_phone
 from app.models.entities import (
@@ -25,6 +26,7 @@ from app.models.entities import (
     Education,
     Experience,
     Project,
+    Publication,
     SensitiveDemographics,
     User,
     UserProfile,
@@ -71,6 +73,40 @@ PROFILE_IMPORT_SECTIONS = {
 }
 
 
+def _additional_links(raw: Any) -> list[dict[str, str]]:
+    """Display-safe view of the open-ended links list.
+
+    Rows written before migration 0030 hold NULL, and the column is JSON, so
+    nothing guarantees its shape years from now. Anything that is not a
+    ``{label, url}`` pair with both present is dropped rather than handed to a
+    client that would render it.
+    """
+    if not isinstance(raw, list):
+        return []
+    links: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label")
+        url = item.get("url")
+        if isinstance(label, str) and isinstance(url, str) and label.strip() and url.strip():
+            links.append({"label": label.strip(), "url": url.strip()})
+    return links
+
+
+def _publication_columns(item: Any) -> dict[str, Any]:
+    """Model kwargs for one publication.
+
+    `HttpUrl` is a rich object, not a string, so it is rendered before it
+    reaches the column. Everything else passes through exactly as the user
+    typed it — no citation lookup, no author inference.
+    """
+    values = item.model_dump()
+    url = values.get("url")
+    values["url"] = str(url) if url is not None else None
+    return values
+
+
 def serialize_profile(profile: UserProfile | None) -> dict[str, Any] | None:
     if profile is None:
         return None
@@ -104,6 +140,11 @@ def serialize_profile(profile: UserProfile | None) -> dict[str, Any] | None:
         "linkedin_url": profile.linkedin_url,
         "github_url": profile.github_url,
         "portfolio_url": profile.portfolio_url,
+        "x_url": profile.x_url,
+        # Always a list, never null: a legacy row predates the column, and a
+        # client that has to special-case null for "no links" will eventually
+        # forget to.
+        "additional_links": _additional_links(profile.additional_links),
         "work_authorization": profile.work_authorization,
         "work_authorization_status": profile.work_authorization,
         "requires_sponsorship": profile.requires_sponsorship,
@@ -136,6 +177,9 @@ def career_payload(user_id: int, db: Session) -> dict[str, list[dict[str, Any]]]
         "projects": serialize_records(db.scalars(select(Project).where(Project.user_id == user_id)).all()),
         "certifications": serialize_records(db.scalars(select(Certification).where(Certification.user_id == user_id)).all()),
         "awards": serialize_records(db.scalars(select(Award).where(Award.user_id == user_id)).all()),
+        "publications": serialize_records(
+            db.scalars(select(Publication).where(Publication.user_id == user_id)).all()
+        ),
     }
 
 
@@ -143,6 +187,22 @@ def career_payload(user_id: int, db: Session) -> dict[str, list[dict[str, Any]]]
 def get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
     return {"profile": serialize_profile(profile)}
+
+
+@router.get("/completeness")
+def get_profile_completeness(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict:
+    """Profile completion and autofill readiness for the signed-in user.
+
+    A separate endpoint rather than extra keys on ``GET /profile`` because the
+    scores need the career tables, and ``GET /profile`` is on the extension's
+    hot path — its response shape and cost both stay exactly as they were.
+
+    Returns percentages and the *names* of what is missing. It never returns an
+    EEO/demographic answer, and readiness does not depend on one.
+    """
+    return build_completeness(db, user.id)
 
 
 def _apply_imported_name(profile: UserProfile, basic: Any, *, overwrite: bool) -> None:
@@ -346,13 +406,19 @@ def replace_career(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    for model in [Education, Experience, Project, Certification, Award]:
+    for model in [Education, Experience, Project, Certification, Award, Publication]:
         db.execute(delete(model).where(model.user_id == user.id))
     db.add_all([Education(user_id=user.id, **item.model_dump()) for item in payload.education])
     db.add_all([Experience(user_id=user.id, **item.model_dump()) for item in payload.experience])
     db.add_all([Project(user_id=user.id, **item.model_dump()) for item in payload.projects])
     db.add_all([Certification(user_id=user.id, **item.model_dump()) for item in payload.certifications])
     db.add_all([Award(user_id=user.id, **item.model_dump()) for item in payload.awards])
+    db.add_all(
+        [
+            Publication(user_id=user.id, **_publication_columns(item))
+            for item in payload.publications
+        ]
+    )
     db.commit()
     _enqueue_profile_rescore(user.id)  # experience/education/projects affect scoring
     return career_payload(user.id, db)

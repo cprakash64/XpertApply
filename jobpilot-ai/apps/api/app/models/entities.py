@@ -193,6 +193,10 @@ class UserProfile(Base):
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     github_url: Mapped[str | None] = mapped_column(String(500))
     portfolio_url: Mapped[str | None] = mapped_column(String(500))
+    x_url: Mapped[str | None] = mapped_column(String(500))
+    #: Open-ended professional links as [{"label", "url"}] — Google Scholar,
+    #: Kaggle, a personal blog. NULL for every profile written before 0030.
+    additional_links: Mapped[list | None] = mapped_column(JsonType)
     work_authorization: Mapped[str | None] = mapped_column(String(120))
     # Nullable on purpose: NULL means "the user has not answered". The old
     # non-nullable default=False made an unanswered profile indistinguishable
@@ -298,6 +302,34 @@ class Project(Base):
     links: Mapped[list] = mapped_column(JsonType, default=list)
     start_date: Mapped[DateValue | None] = mapped_column(Date)
     end_date: Mapped[DateValue | None] = mapped_column(Date)
+
+
+class Publication(Base):
+    """A paper, article, or other published work.
+
+    Follows the same shape as the other career tables: owned by a user, cascade
+    deleted with them, and replaced wholesale by ``PUT /profile/career`` rather
+    than patched. ``authors`` is a JSON list of plain strings, matching how
+    Experience stores bullets and Project stores technologies — a relational
+    author table would buy nothing here, since these authors are free text the
+    user copied off their own paper, not entities the product reasons about.
+
+    Nothing is auto-populated. The user's own name is never injected into
+    ``authors``, and no citation metadata is fetched or inferred.
+    """
+
+    __tablename__ = "publications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    #: Journal, conference, preprint server, or publisher — "IEEE", "arXiv".
+    venue: Mapped[str | None] = mapped_column(String(200))
+    authors: Mapped[list] = mapped_column(JsonType, default=list)
+    publication_date: Mapped[DateValue | None] = mapped_column(Date)
+    url: Mapped[str | None] = mapped_column(String(500))
+    doi: Mapped[str | None] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text)
 
 
 class Certification(Base):

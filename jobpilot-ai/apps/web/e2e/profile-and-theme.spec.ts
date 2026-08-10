@@ -66,7 +66,7 @@ test.describe("Profile wizard", () => {
     const email = await signUp(page);
     await login(page, email);
 
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await expect(page.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
@@ -80,7 +80,7 @@ test.describe("Profile wizard", () => {
   test("Basic info exposes every required field", async ({ page }) => {
     const email = await signUp(page);
     await login(page, email);
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
 
     for (const label of [
@@ -98,7 +98,7 @@ test.describe("Profile wizard", () => {
   test("null structured fields render as empty inputs, not 'null'", async ({ page }) => {
     const email = await signUp(page);
     await login(page, email);
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
 
     for (const label of [/First name/, /Middle name/, /Last name/]) {
@@ -109,7 +109,7 @@ test.describe("Profile wizard", () => {
   test("structured name and phone survive save and reload", async ({ page }) => {
     const email = await signUp(page);
     await login(page, email);
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
 
     await page.getByLabel(/First name/).first().fill("Chandra");
@@ -121,6 +121,8 @@ test.describe("Profile wizard", () => {
     await expect(page.getByText(/profile saved/i)).toBeVisible({ timeout: 10000 });
 
     await page.reload();
+    // /profile becomes the overview once the profile has content, so the
+    // wizard is reached through its own route from here on.
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
     await expect(page.getByLabel(/First name/).first()).toHaveValue("Chandra");
     await expect(page.getByLabel(/Middle name/).first()).toHaveValue("Prakash");
@@ -152,7 +154,7 @@ test.describe("Profile wizard", () => {
       }
     );
 
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
     await page.getByLabel(/First name/).first().fill("Ada");
     await page.getByLabel(/Last name/).first().fill("Lovelace");
@@ -168,7 +170,7 @@ test.describe("Profile wizard", () => {
     await login(page, email);
 
     await stubProfileApi500(page);
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
 
     await expect(page.getByTestId("section-error")).toBeVisible();
     // The wizard chrome survives — this is not the global boundary.
@@ -182,9 +184,17 @@ test.describe("Profile wizard", () => {
 // EEO
 // --------------------------------------------------------------------------- //
 test.describe("Optional EEO", () => {
+  // The voluntary demographic questions are no longer a career-wizard step.
+  // They live with the other application-time answers.
+  // The voluntary demographic questions have their own page: off the career
+  // wizard, and no longer inlined in the Application-preferences editor, so an
+  // optional private form is never something you scroll past on the way to
+  // something else.
   async function openEeoStep(page: Page): Promise<void> {
-    await page.goto(`${BASE}/profile`);
-    await page.getByRole("button", { name: "9. Optional EEO" }).click();
+    await page.goto(`${BASE}/profile/eeo`);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Optional demographic information" })
+    ).toBeVisible();
   }
 
   test("gender identity offers identities, never Yes/No", async ({ page }) => {
@@ -301,7 +311,7 @@ test.describe("System light/dark theme", () => {
     await page.emulateMedia({ colorScheme: "dark" });
     const email = await signUp(page);
     await login(page, email);
-    await page.goto(`${BASE}/profile`);
+    await page.goto(`${BASE}/profile/edit`);
     await page.getByRole("button", { name: /2\.\s*Basic info/i }).click();
 
     const input = page.getByLabel(/First name/).first();
@@ -328,6 +338,12 @@ test.describe("System light/dark theme", () => {
     expect(Math.abs(luminance(color) - luminance(bg))).toBeGreaterThan(0.3);
   });
 
+  // Six full-page captures (3 routes x 2 themes), each preceded by a settle
+  // wait. That is legitimately slower than the 30s default — and the Profile
+  // page grew taller when Certifications & Awards and the application-answer
+  // summary were added. This is an artifact-capture test with no assertions to
+  // weaken; it just needs room to finish.
+  test.setTimeout(120_000);
   test("screenshots for review in both themes", async ({ page }, testInfo) => {
     const email = await signUp(page);
     await login(page, email);

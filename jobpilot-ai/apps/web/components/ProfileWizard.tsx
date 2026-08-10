@@ -11,7 +11,6 @@ import {
   X
 } from "lucide-react";
 import { Button } from "@/components/Button";
-import { DemographicsForm } from "@/components/DemographicsForm";
 import {
   ImportProfilePreview,
   type EditableImportDraft,
@@ -21,6 +20,31 @@ import {
 import { api, ApiError } from "@/lib/api";
 import { validateApplicationEmail } from "@/lib/emailValidation";
 import { composeFullName } from "@/lib/names";
+import {
+  cleanEducation,
+  cleanExperience,
+  cleanProject,
+  emptyCareer,
+  normalizeAwardList,
+  normalizeCertificationList,
+  normalizeEducationList,
+  normalizeExperienceList,
+  normalizeProjectList,
+  normalizePublicationList,
+  type CareerForm,
+  type EducationRecord,
+  type ExperienceRecord,
+  type ProjectRecord
+} from "@/lib/careerRecords";
+import { isValidOptionalUrl } from "@/lib/profileUrls";
+import { WIZARD_STEPS } from "@/lib/profileSections";
+import {
+  locationQuickOptions,
+  roleGroups,
+  skillSuggestions,
+  targetLevelOptions,
+  workAuthorizationOptions
+} from "@/lib/profileCatalog";
 import { SectionError, toSectionError, type SectionErrorInfo } from "@/components/SectionError";
 import {
   emptyProfile,
@@ -39,195 +63,9 @@ const steps = [
   "Projects",
   "Skills",
   "Links",
-  "Optional EEO",
   "Review"
 ];
 
-const workAuthorizationOptions = [
-  ["authorized_us", "Authorized to work in the United States"],
-  ["authorized_other_country", "Authorized to work in another country"],
-  ["need_sponsorship_now", "Need sponsorship now"],
-  ["need_sponsorship_future", "Need sponsorship in the future"],
-  ["student_visa", "Student visa / OPT / CPT"],
-  ["opt_cpt", "OPT / CPT"],
-  ["not_authorized", "Not currently authorized"],
-  ["prefer_not_to_say", "Prefer not to say"],
-  ["other", "Other"]
-] as const;
-
-const sponsorshipSuggested = new Set([
-  "need_sponsorship_now",
-  "need_sponsorship_future",
-  "student_visa",
-  "opt_cpt"
-]);
-
-const roleGroups = [
-  {
-    label: "Software & Engineering",
-    options: [
-      "Software Engineer",
-      "Backend Engineer",
-      "Frontend Engineer",
-      "Full Stack Engineer",
-      "Mobile Developer",
-      "iOS Developer",
-      "Android Developer",
-      "DevOps Engineer",
-      "Site Reliability Engineer",
-      "Cloud Engineer",
-      "Platform Engineer",
-      "QA Engineer",
-      "Automation Engineer",
-      "Security Engineer",
-      "Embedded Software Engineer",
-      "Firmware Engineer",
-      "Systems Engineer"
-    ]
-  },
-  {
-    label: "AI/Data",
-    options: [
-      "AI Engineer",
-      "Machine Learning Engineer",
-      "MLOps Engineer",
-      "Data Scientist",
-      "Data Analyst",
-      "Data Engineer",
-      "Business Intelligence Analyst",
-      "Research Engineer",
-      "NLP Engineer",
-      "Computer Vision Engineer",
-      "Applied Scientist"
-    ]
-  },
-  {
-    label: "Product/Design",
-    options: [
-      "Product Manager",
-      "Associate Product Manager",
-      "Product Analyst",
-      "UX Designer",
-      "UI Designer",
-      "UX Researcher"
-    ]
-  },
-  {
-    label: "Business/Operations",
-    options: [
-      "Business Analyst",
-      "Operations Analyst",
-      "Strategy Analyst",
-      "Project Coordinator",
-      "Program Manager",
-      "Technical Program Manager",
-      "Customer Success Manager",
-      "Sales Development Representative",
-      "Marketing Analyst",
-      "Growth Analyst"
-    ]
-  },
-  {
-    label: "Mechanical/Hardware",
-    options: [
-      "Mechanical Engineer",
-      "Manufacturing Engineer",
-      "Industrial Engineer",
-      "Electrical Engineer",
-      "Hardware Engineer",
-      "Robotics Engineer",
-      "CAD Designer"
-    ]
-  }
-];
-
-const targetLevelOptions = [
-  "Internship",
-  "Co-op",
-  "New Grad",
-  "Entry Level",
-  "Junior",
-  "Associate",
-  "Mid Level",
-  "Senior",
-  "Staff",
-  "Principal",
-  "Manager",
-  "Director",
-  "0-1 years",
-  "1-3 years",
-  "3-5 years",
-  "5-10 years",
-  "10+ years"
-];
-
-const locationQuickOptions = [
-  "Remote",
-  "United States",
-  "Phoenix, AZ",
-  "Tempe, AZ",
-  "San Francisco, CA",
-  "San Jose, CA",
-  "Seattle, WA",
-  "New York, NY",
-  "Austin, TX",
-  "Dallas, TX",
-  "Chicago, IL",
-  "Boston, MA",
-  "Atlanta, GA",
-  "Los Angeles, CA",
-  "Washington, DC"
-];
-
-const skillSuggestions: Record<string, string[]> = {
-  "Software Engineer": ["Python", "JavaScript", "TypeScript", "React", "Node.js", "SQL", "Git"],
-  "Backend Engineer": ["Python", "FastAPI", "Django", "Flask", "PostgreSQL", "Redis", "Docker"],
-  "AI Engineer": ["Python", "PyTorch", "TensorFlow", "LangChain", "OpenAI API", "RAG", "Vector Databases"],
-  "Data Analyst": ["SQL", "Excel", "Tableau", "Power BI", "Python", "Pandas"]
-};
-
-type EducationRecord = {
-  school: string;
-  degree: string;
-  major: string;
-  minor: string;
-  start_date: string;
-  end_date: string;
-  gpa: string;
-  gpa_scale: string;
-  honors: string[];
-  coursework: string[];
-};
-
-type ExperienceRecord = {
-  company: string;
-  title: string;
-  location: string;
-  start_date: string;
-  end_date: string;
-  currently_working: boolean;
-  bullets: string[];
-  technologies: string[];
-  measurable_impact: string[];
-};
-
-type ProjectRecord = {
-  name: string;
-  description: string;
-  bullets: string[];
-  technologies: string[];
-  links: string[];
-  start_date: string;
-  end_date: string;
-};
-
-type CareerForm = {
-  education: EducationRecord[];
-  experience: ExperienceRecord[];
-  projects: ProjectRecord[];
-  certifications: unknown[];
-  awards: unknown[];
-};
 
 type ImportApplyResponse = {
   profile: (Partial<ProfileForm> & {
@@ -262,15 +100,6 @@ type ImportDraft = {
 };
 
 
-const emptyCareer: CareerForm = {
-  education: [],
-  experience: [],
-  projects: [],
-  certifications: [],
-  awards: []
-};
-
-
 /** Turn a FastAPI 422 validation body into per-field messages.
  *
  * FastAPI reports `detail: [{loc: ["body", "field"], msg}]`. Anything that is
@@ -301,8 +130,17 @@ function fieldErrorsFromApi(error: unknown): Record<string, string> {
   return result;
 }
 
-export function ProfileWizard() {
-  const [step, setStep] = useState(0);
+export function ProfileWizard({
+  /**
+   * Which section to open on. The Profile overview's Edit actions route to a
+   * focused editor, which is this same wizard opened at one step — the editors
+   * themselves are unchanged, so there is only ever one set of profile forms.
+   */
+  initialStep = 0
+}: {
+  initialStep?: number;
+} = {}) {
+  const [step, setStep] = useState(initialStep);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -376,8 +214,9 @@ export function ProfileWizard() {
           education: normalizeEducationList(careerResult.education ?? []),
           experience: normalizeExperienceList(careerResult.experience ?? []),
           projects: normalizeProjectList(careerResult.projects ?? []),
-          certifications: careerResult.certifications ?? [],
-          awards: careerResult.awards ?? []
+          certifications: normalizeCertificationList(careerResult.certifications ?? []),
+          awards: normalizeAwardList(careerResult.awards ?? []),
+          publications: normalizePublicationList(careerResult.publications ?? [])
         });
       } catch (loadError) {
         if (mounted) {
@@ -402,12 +241,16 @@ export function ProfileWizard() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  /**
+   * Work-authorization status is a search/matching preference only.
+   *
+   * It deliberately does NOT touch `requires_sponsorship` any more. Deriving a
+   * sponsorship answer from an immigration status is visa inference, and the
+   * sponsorship question is a legal statement the user has to make themselves —
+   * "on OPT" does not answer "will you require sponsorship in the future?".
+   */
   function updateWorkAuthorization(value: string) {
-    setForm((current) => ({
-      ...current,
-      work_authorization: value,
-      requires_sponsorship: sponsorshipSuggested.has(value) ? true : current.requires_sponsorship
-    }));
+    setForm((current) => ({ ...current, work_authorization: value }));
   }
 
   async function save() {
@@ -415,12 +258,12 @@ export function ProfileWizard() {
     setError("");
     if (!form.first_name.trim() || !form.last_name.trim()) {
       setError("First and last name are required.");
-      setStep(1);
+      setStep(WIZARD_STEPS.personal);
       return;
     }
     if (![form.linkedin_url, form.github_url, form.portfolio_url].every(isValidOptionalUrl)) {
       setError("Links must start with http:// or https://.");
-      setStep(7);
+      setStep(WIZARD_STEPS.links);
       return;
     }
     setSaving(true);
@@ -451,20 +294,10 @@ export function ProfileWizard() {
           experience: career.experience.map(cleanExperience),
           projects: career.projects.map(cleanProject),
           certifications: career.certifications,
-          awards: career.awards
+          awards: career.awards,
+          publications: career.publications
         })
       });
-      if (form.workday_password.trim()) {
-        await api("/profile/workday-credentials", {
-          method: "PUT",
-          body: JSON.stringify({ password: form.workday_password })
-        });
-        setForm((current) => ({
-          ...current,
-          workday_password: "",
-          workday_password_configured: true
-        }));
-      }
       setMessage("Profile saved.");
     } catch (saveError) {
       // Field-level validation (422) is shown against the offending fields
@@ -473,28 +306,12 @@ export function ProfileWizard() {
       if (Object.keys(perField).length > 0) {
         setFieldErrors(perField);
         setError("Some fields need attention before this can be saved.");
-        setStep(1);
+        setStep(WIZARD_STEPS.personal);
       } else {
         setError(saveError instanceof Error ? saveError.message : "Could not save profile.");
       }
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function removeWorkdayPassword() {
-    setError("");
-    setMessage("");
-    try {
-      await api("/profile/workday-credentials", { method: "DELETE" });
-      setForm((current) => ({
-        ...current,
-        workday_password: "",
-        workday_password_configured: false
-      }));
-      setMessage("Stored Workday password removed.");
-    } catch (removeError) {
-      setError(removeError instanceof Error ? removeError.message : "Could not remove the Workday password.");
     }
   }
 
@@ -552,7 +369,7 @@ export function ProfileWizard() {
       setCareer(careerFromResponse(result.career));
       setImportOpen(false);
       setImportDraft(null);
-      setStep(9);
+      setStep(WIZARD_STEPS.review);
       setMessage(mode === "all" ? "Imported profile saved successfully." : "Selected imported sections saved successfully.");
     } catch (applyError) {
       setImportApplyError(applyError instanceof Error ? applyError.message : "Could not save imported profile.");
@@ -659,26 +476,9 @@ export function ProfileWizard() {
                 error={fieldErrors.application_email ?? validateApplicationEmail(form.application_email) ?? undefined}
                 hint="This email will be used on job applications. It can be different from your JobPilot login email."
               />
-              <div>
-                <Field
-                  label="Workday account password (optional)"
-                  type="password"
-                  value={form.workday_password}
-                  onChange={(value) => update("workday_password", value)}
-                  hint={form.workday_password_configured
-                    ? "A password is stored encrypted. Enter a new value to replace it; JobPilot never displays it again."
-                    : "Used with your application email when a Workday employer requires account creation. Stored encrypted and never returned to the browser UI."}
-                />
-                {form.workday_password_configured && (
-                  <button
-                    type="button"
-                    className="focus-ring mt-2 text-xs font-medium text-[var(--danger)] underline"
-                    onClick={removeWorkdayPassword}
-                  >
-                    Remove stored Workday password
-                  </button>
-                )}
-              </div>
+              {/* Employer-portal passwords are NOT career profile data. They
+                * are managed in Settings → Application accounts, where the
+                * stored value is only ever reported as present or absent. */}
               <label>
                 <span className="text-sm font-medium">Phone country</span>
                 <select
@@ -826,10 +626,6 @@ export function ProfileWizard() {
           )}
 
           {!loadError && step === 8 && (
-            <DemographicsForm />
-          )}
-
-          {!loadError && step === 9 && (
             <div className="grid gap-4">
               <ReviewBlock title="Profile" data={form} />
               <ReviewBlock title="Career" data={career} />
@@ -1495,8 +1291,9 @@ function careerFromResponse(careerResult: Partial<CareerForm>): CareerForm {
     education: normalizeEducationList(careerResult.education ?? []),
     experience: normalizeExperienceList(careerResult.experience ?? []),
     projects: normalizeProjectList(careerResult.projects ?? []),
-    certifications: careerResult.certifications ?? [],
-    awards: careerResult.awards ?? []
+    certifications: normalizeCertificationList(careerResult.certifications ?? []),
+    awards: normalizeAwardList(careerResult.awards ?? []),
+    publications: normalizePublicationList(careerResult.publications ?? [])
   };
 }
 
@@ -1510,94 +1307,4 @@ function unique(values: string[]) {
 
 function mergeLists(current: string[], incoming: string[]) {
   return unique([...current, ...incoming.map(String).map((item) => item.trim())]);
-}
-
-function isValidOptionalUrl(value: string) {
-  return !value || value.startsWith("http://") || value.startsWith("https://");
-}
-
-function cleanDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
-}
-
-function normalizeDate(value: unknown) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-}
-
-function normalizeEducationList(records: unknown[]): EducationRecord[] {
-  return records.map((record) => {
-    const item = record as Partial<EducationRecord>;
-    return {
-      school: item.school ?? "",
-      degree: item.degree ?? "",
-      major: item.major ?? "",
-      minor: item.minor ?? "",
-      start_date: normalizeDate(item.start_date),
-      end_date: normalizeDate(item.end_date),
-      gpa: item.gpa ?? "",
-      gpa_scale: item.gpa_scale ?? "4.0",
-      honors: item.honors ?? [],
-      coursework: item.coursework ?? []
-    };
-  });
-}
-
-function normalizeExperienceList(records: unknown[]): ExperienceRecord[] {
-  return records.map((record) => {
-    const item = record as Partial<ExperienceRecord>;
-    return {
-      company: item.company ?? "",
-      title: item.title ?? "",
-      location: item.location ?? "",
-      start_date: normalizeDate(item.start_date),
-      end_date: normalizeDate(item.end_date),
-      currently_working: Boolean(item.currently_working),
-      bullets: item.bullets ?? [],
-      technologies: item.technologies ?? [],
-      measurable_impact: item.measurable_impact ?? []
-    };
-  });
-}
-
-function normalizeProjectList(records: unknown[]): ProjectRecord[] {
-  return records.map((record) => {
-    const item = record as Partial<ProjectRecord>;
-    return {
-      name: item.name ?? "",
-      description: item.description ?? "",
-      bullets: item.bullets ?? [],
-      technologies: item.technologies ?? [],
-      links: item.links ?? [],
-      start_date: normalizeDate(item.start_date),
-      end_date: normalizeDate(item.end_date)
-    };
-  });
-}
-
-function cleanEducation(record: EducationRecord) {
-  return {
-    ...record,
-    school: record.school || "Untitled school",
-    start_date: cleanDate(record.start_date),
-    end_date: cleanDate(record.end_date)
-  };
-}
-
-function cleanExperience(record: ExperienceRecord) {
-  return {
-    ...record,
-    company: record.company || "Untitled company",
-    title: record.title || "Untitled role",
-    start_date: cleanDate(record.start_date),
-    end_date: cleanDate(record.end_date)
-  };
-}
-
-function cleanProject(record: ProjectRecord) {
-  return {
-    ...record,
-    name: record.name || "Untitled project",
-    start_date: cleanDate(record.start_date),
-    end_date: cleanDate(record.end_date)
-  };
 }

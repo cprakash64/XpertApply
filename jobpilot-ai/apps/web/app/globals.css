@@ -35,6 +35,22 @@
   --text-secondary: #33403a;
   --text-muted: #5d675f;
 
+  /* Placeholder fill for loading skeletons. Sits between the page and the
+   * surface so a skeleton reads as "content pending" rather than as a control. */
+  --skeleton: #e7eae3;
+
+  /* LinkedIn brand. A vendor colour, not a theme colour: it identifies one
+   * specific outbound action and must never be reused for anything else.
+   * Held as a token so components stay free of hard-coded hex. */
+  --linkedin: #0A66C2;
+  --linkedin-surface: rgba(10, 102, 194, 0.08);
+
+  /* Email action. Deliberately NOT a Gmail logo: mailto opens whatever
+   * client the user configured — Apple Mail, Outlook, Thunderbird — so the
+   * icon stays generic and only the colour signals "email". */
+  --email-action: #EA4335;
+  --email-action-surface: rgba(234, 67, 53, 0.08);
+
   /* Lines */
   --border: #d8ddd2;
   --border-strong: #b6bfb4;
@@ -83,6 +99,15 @@
     --text-primary: #eef1ed;
     --text-secondary: #c3cbc5;
     --text-muted: #98a29b;
+
+    --skeleton: #2b3136;
+
+    /* Brand hue is fixed; lightened for contrast on a dark surface. */
+    --linkedin: #5ea9f0;
+    --linkedin-surface: rgba(94, 169, 240, 0.12);
+    /* Lightened for contrast on a dark surface. */
+    --email-action: #f4796b;
+    --email-action-surface: rgba(244, 121, 107, 0.14);
 
     --border: #333a3d;
     --border-strong: #4a5357;
@@ -268,6 +293,43 @@ input[type="radio"] {
   overscroll-behavior: none;
 }
 
+/* "Mark as applied" — the positive confirmation that moves a job to the Tracker.
+ *
+ * Green, because it is the one affirmative outcome in the apply flow, and shared
+ * so every place the action appears (the job detail panel and the assisted
+ * application modal) looks and behaves identically. It is deliberately a tinted
+ * SECONDARY treatment rather than a solid fill: the primary apply/reopen button
+ * next to it must stay the dominant action.
+ *
+ * Built from the existing --success tokens, so it follows light/dark like every
+ * other status colour instead of hard-coding a hex value. */
+.mark-applied-action {
+  border: 1px solid var(--success-border);
+  background: var(--success-surface);
+  color: var(--success);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.mark-applied-action:hover:not(:disabled) {
+  background: var(--success);
+  border-color: var(--success);
+  /* Always the paired foreground, so contrast holds in both schemes. */
+  color: var(--accent-foreground);
+}
+
+.mark-applied-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.mark-applied-action:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 /* A strip that scrolls sideways without advertising it — used by the job tab
  * bar on narrow screens, where a full scrollbar under four tabs is louder than
  * the tabs themselves. The strip stays keyboard- and swipe-scrollable. */
@@ -304,4 +366,20 @@ input[type="radio"] {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/*
+ * Stretches a link over its nearest positioned ancestor so a whole card is
+ * clickable while remaining ONE link in the accessibility tree — rather than a
+ * div with an onClick, which no keyboard or screen reader can reach.
+ *
+ * Anything inside the card that must stay independently clickable (an outbound
+ * profile link, a credential URL) raises itself above this overlay with
+ * `relative z-10`; the overlay sits at z-0 of the card's own stacking context.
+ */
+.stretched-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
 }

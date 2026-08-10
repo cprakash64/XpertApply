@@ -39,6 +39,19 @@ def _normalize_list(value: Any) -> list[str]:
     return []
 
 
+class AdditionalLinkIn(BaseModel):
+    """One user-supplied professional link.
+
+    The label is free text (Google Scholar, Kaggle, "my blog") and is length-
+    capped rather than enumerated — restricting it to a known list is exactly
+    the limitation this field exists to remove. `HttpUrl` on the url is what
+    rejects `javascript:` and other script-capable schemes at the boundary.
+    """
+
+    label: str = Field(min_length=1, max_length=60)
+    url: HttpUrl
+
+
 class UserProfileIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -64,6 +77,8 @@ class UserProfileIn(BaseModel):
     linkedin_url: HttpUrl | None = None
     github_url: HttpUrl | None = None
     portfolio_url: HttpUrl | None = None
+    x_url: HttpUrl | None = None
+    additional_links: list[AdditionalLinkIn] = Field(default_factory=list, max_length=20)
     work_authorization: str | None = Field(
         default=None,
         validation_alias=AliasChoices("work_authorization", "work_authorization_status"),
@@ -280,12 +295,32 @@ class AwardIn(BaseModel):
     description: str | None = None
 
 
+class PublicationIn(BaseModel):
+    """One published work.
+
+    `HttpUrl` on ``url`` is what rejects `javascript:` and other script-capable
+    schemes at the boundary. The DOI is kept as plain text rather than being
+    resolved to a URL: it is an identifier, and turning it into a link is a
+    rendering decision, not a storage one. Nothing here is fetched or inferred —
+    every field is exactly what the user typed.
+    """
+
+    title: str = Field(min_length=1, max_length=300)
+    venue: str | None = Field(default=None, max_length=200)
+    authors: list[str] = Field(default_factory=list, max_length=50)
+    publication_date: Date | None = None
+    url: HttpUrl | None = None
+    doi: str | None = Field(default=None, max_length=120)
+    description: str | None = None
+
+
 class CareerProfileIn(BaseModel):
     education: list[EducationIn] = Field(default_factory=list)
     experience: list[ExperienceIn] = Field(default_factory=list)
     projects: list[ProjectIn] = Field(default_factory=list)
     certifications: list[CertificationIn] = Field(default_factory=list)
     awards: list[AwardIn] = Field(default_factory=list)
+    publications: list[PublicationIn] = Field(default_factory=list)
 
 
 class ProfileImportIn(BaseModel):

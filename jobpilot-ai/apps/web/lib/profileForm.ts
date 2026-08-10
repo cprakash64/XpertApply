@@ -23,8 +23,12 @@
  */
 
 import { composeFullName } from "@/lib/names";
+import { interpretStoredLocations } from "@/lib/locations";
 
 export type RemotePreference = "everything" | "remote" | "hybrid" | "onsite";
+
+/** One user-supplied professional link. */
+export type ProfileLink = { label: string; url: string };
 
 export type ProfileForm = {
   // Structured identity — the source of truth. `full_name` is derived.
@@ -54,6 +58,9 @@ export type ProfileForm = {
   linkedin_url: string;
   github_url: string;
   portfolio_url: string;
+  x_url: string;
+  /** Open-ended professional links (Google Scholar, Kaggle, a blog). */
+  additional_links: ProfileLink[];
   // Work eligibility
   work_authorization: string;
   requires_sponsorship: boolean;
@@ -97,6 +104,8 @@ export const emptyProfile: ProfileForm = {
   linkedin_url: "",
   github_url: "",
   portfolio_url: "",
+  x_url: "",
+  additional_links: [],
   work_authorization: "prefer_not_to_say",
   requires_sponsorship: false,
   open_to_relocation: false,
@@ -115,6 +124,17 @@ export function str(value: unknown, fallback = ""): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return fallback;
+}
+
+/** Wire -> ProfileLink[], tolerant of null and of any malformed entry. */
+function linkList(value: unknown): ProfileLink[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = (item ?? {}) as Record<string, unknown>;
+    const label = str(record.label).trim();
+    const url = str(record.url).trim();
+    return label && url ? [{ label, url }] : [];
+  });
 }
 
 function strList(value: unknown): string[] {
@@ -178,6 +198,8 @@ export function normalizeProfile(profile: ProfileWire | null | undefined, email 
     linkedin_url: str(profile.linkedin_url),
     github_url: str(profile.github_url),
     portfolio_url: str(profile.portfolio_url),
+    x_url: str(profile.x_url),
+    additional_links: linkList(profile.additional_links),
 
     work_authorization: str(profile.work_authorization_status) || str(profile.work_authorization) || "prefer_not_to_say",
     requires_sponsorship: Boolean(profile.requires_sponsorship),
@@ -185,9 +207,34 @@ export function normalizeProfile(profile: ProfileWire | null | undefined, email 
 
     target_roles: strList(profile.target_roles),
     target_levels: strList(profile.target_levels),
-    preferred_locations: strList(profile.preferred_locations),
-    remote_preference: remotePreference(profile.work_preference, profile.remote_preference),
+    ...locationPreferences(
+      strList(profile.preferred_locations),
+      remotePreference(profile.work_preference, profile.remote_preference)
+    ),
     skills: strList(profile.skills)
+  };
+}
+
+/**
+ * Split the two preferences that older profiles conflated.
+ *
+ * "Remote" used to be selectable as a *location*, which meant WHERE and HOW the
+ * user wants to work were stored in the same list. Reading a legacy row now
+ * moves that signal to `remote_preference` and drops the token from the
+ * locations, so the UI shows each concept exactly once.
+ *
+ * This is interpretation, not a write: the profile is only rewritten if and
+ * when the user saves the section themselves. An explicitly chosen workplace is
+ * never overridden — see `interpretStoredLocations`.
+ */
+function locationPreferences(
+  locations: string[],
+  workplace: RemotePreference
+): { preferred_locations: string[]; remote_preference: RemotePreference } {
+  const interpreted = interpretStoredLocations(locations, workplace);
+  return {
+    preferred_locations: interpreted.locations,
+    remote_preference: interpreted.workplace
   };
 }
 
@@ -209,6 +256,12 @@ export function profileToWire(form: ProfileForm): Record<string, unknown> {
     linkedin_url: form.linkedin_url || null,
     github_url: form.github_url || null,
     portfolio_url: form.portfolio_url || null,
+    x_url: form.x_url || null,
+    // Blank rows are the natural state of a half-filled "add another link"
+    // form; they are dropped here rather than rejected by the API.
+    additional_links: form.additional_links.filter(
+      (link) => link.label.trim() !== "" && link.url.trim() !== ""
+    ),
     work_authorization: form.work_authorization,
     work_authorization_status: form.work_authorization,
     requires_sponsorship: form.requires_sponsorship,

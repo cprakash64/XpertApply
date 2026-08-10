@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BriefcaseBusiness,
+  ClipboardList,
   FileText,
   Gauge,
   PanelLeftClose,
@@ -13,11 +14,22 @@ import {
   UserRound
 } from "lucide-react";
 
+/**
+ * Primary navigation, ordered by how a job search actually flows: see where you
+ * stand, find roles, prepare materials, track what you sent, then maintain the
+ * profile behind all of it.
+ *
+ * Every entry points at a route that exists. "Networking" is deliberately
+ * absent: the people/referral features are a tab inside the Jobs workspace, not
+ * a standalone page, and adding a sidebar entry for it would be a link to a
+ * 404. It belongs here once it has its own route.
+ */
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
-  { href: "/profile", label: "Profile", icon: UserRound },
-  { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/tracker", label: "Tracker", icon: FileText }
+  { href: "/jobs", label: "Find Jobs", icon: BriefcaseBusiness },
+  { href: "/resume", label: "My Resumes", icon: FileText },
+  { href: "/tracker", label: "Applications", icon: ClipboardList },
+  { href: "/profile", label: "My Profile", icon: UserRound }
 ];
 
 const settingsItem = { href: "/settings", label: "Settings", icon: Settings };

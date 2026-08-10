@@ -115,13 +115,26 @@ describe("ProfileWizard", () => {
     expect(screen.getByLabelText("Preference")).toHaveValue("everything");
   });
 
-  it("keeps the single EEO editor inside the Profile wizard", async () => {
+  it("no longer carries the EEO questions as a career-profile step", async () => {
+    // The voluntary demographic questions moved to Application preferences.
+    // The career wizard must not offer them as a step, and must not render the
+    // demographics form at all.
     mockProfileFetch();
     render(React.createElement(ProfileWizard));
 
-    await userEvent.click(screen.getByRole("button", { name: "9. Optional EEO" }));
-    expect(await screen.findByRole("group", { name: "Gender identity" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: /I consent/i })).toBeInTheDocument();
+    await screen.findByRole("button", { name: "1. Import" });
+    expect(screen.queryByRole("button", { name: /Optional EEO/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Gender identity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /I consent/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps Review as the final step after EEO was removed", async () => {
+    mockProfileFetch();
+    render(React.createElement(ProfileWizard));
+
+    // Review shifted from 10 to 9; a stale index would render a blank panel.
+    await userEvent.click(await screen.findByRole("button", { name: "9. Review" }));
+    expect(screen.queryByRole("button", { name: "10. Review" })).not.toBeInTheDocument();
   });
 
   it("supports target role, level, and location chips", async () => {
