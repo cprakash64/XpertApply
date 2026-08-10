@@ -239,7 +239,12 @@ export type PeopleResponse = {
     broaden_eligible?: boolean;
     broaden_attempted?: boolean;
   };
-  controls: { email_discovery: boolean; outreach_drafting: boolean };
+  controls: {
+    email_discovery: boolean;
+    outreach_drafting: boolean;
+    /** Availability hint only; the endpoint re-checks the flag itself. */
+    outreach_ai_improvement?: boolean;
+  };
 };
 
 export type ProfileFilters = {

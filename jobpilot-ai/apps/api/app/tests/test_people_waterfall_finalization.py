@@ -210,7 +210,15 @@ def test_an_exempt_account_is_labelled_exempt_not_charged():
     "reason,expected_code",
     [
         ("provider_budget_exceeded", PeopleErrorCode.PROVIDER_BUDGET_EXHAUSTED),
-        ("provider_schema_error", PeopleErrorCode.INVALID_INPUT),
+        # A response this adapter cannot read is the *provider's* contract
+        # breaking, not our request being malformed. These were the same code
+        # until it was found that the conflation silently disqualified a PDL
+        # contract break from Apollo fallback, because INVALID_INPUT is (still,
+        # correctly) in _NEVER_FALLBACK.
+        ("provider_schema_error", PeopleErrorCode.PROVIDER_CONTRACT_ERROR),
+        ("provider_response_invalid", PeopleErrorCode.PROVIDER_CONTRACT_ERROR),
+        # Our own bad request stays INVALID_INPUT, and still must not fall back.
+        ("provider_request_invalid", PeopleErrorCode.INVALID_INPUT),
     ],
 )
 def test_failure_reasons_keep_their_typed_codes(reason, expected_code):

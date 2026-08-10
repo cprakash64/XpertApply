@@ -55,7 +55,10 @@ from app.people.schemas import (
     WorkEmailRequest,
     WorkEmailResult,
 )
-from app.people.security import safe_profile_url
+from app.people.security import (
+    canonical_profile_url,
+    profile_url_from_provider_username,
+)
 
 logger = logging.getLogger("jobpilot.people.provider")
 
@@ -63,7 +66,12 @@ APOLLO_ENRICHMENT_STRATEGY_VERSION = (
     "apollo-enrichment-v4-complete-person"
 )
 APOLLO_ENRICHMENT_ADAPTER_VERSION = APOLLO_ENRICHMENT_STRATEGY_VERSION
-PDL_DISCOVERY_STRATEGY_VERSION = "pdl-category-search-v2"
+# v3: PDL profile URLs are canonicalized before validation. Under v2 every PDL
+# record normalized to no LinkedIn URL and was rejected as unactionable, so a v2
+# run that stored "nobody matched" recorded an adapter defect, not an answer
+# about the company. Feeding this into PEOPLE_SEARCH_CONTRACT_VERSION retires
+# those runs instead of replaying them at users as verified-empty.
+PDL_DISCOVERY_STRATEGY_VERSION = "pdl-category-search-v3"
 # Bulk request compatibility did not change with the Complete Person rollout.
 # Keep its account-scoped rejection state on the existing key so a strategy
 # fingerprint change cannot accidentally re-enable a known-rejected operation.
@@ -2088,9 +2096,10 @@ def _normalize_apollo(
     identifier = _apollo_person_id(row, identifier_kind=identifier_kind)
     if not all((name, title, company, identifier)):
         return None
-    linkedin_url = row.get("linkedin_url")
-    if isinstance(linkedin_url, str) and linkedin_url.startswith("http://"):
-        linkedin_url = f"https://{linkedin_url.removeprefix('http://')}"
+    # Apollo returns legacy ``http://`` profile URLs. Canonicalized through the
+    # same helper as every other provider so one definition governs what a
+    # usable profile reference is.
+    linkedin_url = canonical_profile_url(row.get("linkedin_url"))
     observed_at = datetime.now(UTC)
     is_complete_person = identifier_kind == "complete_person"
     employment_verified = _provider_datetime(
@@ -2138,8 +2147,8 @@ def _normalize_apollo(
         current_title=title, department=str(row.get("departments", [""])[0] if row.get("departments") else "") or None,
         seniority=str(row.get("seniority") or "") or None,
         location=", ".join(str(row.get(k)) for k in ("city", "state", "country") if row.get(k)) or None,
-        linkedin_url=safe_profile_url(linkedin_url),
-        source_profile_url=safe_profile_url(linkedin_url),
+        linkedin_url=linkedin_url,
+        source_profile_url=linkedin_url,
         source_last_updated_at=employment_updated,
         provider_record_observed_at=record_observed,
         provider_employment_updated_at=employment_updated,
@@ -2179,6 +2188,14 @@ def _normalize_pdl(row: object) -> ProviderPerson | None:
     identifier = str(row.get("id") or "").strip()
     if not all((name, title, company, identifier)):
         return None
+    # PDL returns ``linkedin_url`` without a scheme ("linkedin.com/in/<slug>"),
+    # and ``linkedin_username`` as the bare slug. Canonicalize before validating,
+    # and fall back to the provider's own slug only when it gave no URL.
+    profile_url = canonical_profile_url(row.get("linkedin_url"))
+    profile_url_source = "provider_url"
+    if profile_url is None:
+        profile_url = profile_url_from_provider_username(row.get("linkedin_username"))
+        profile_url_source = "provider_username" if profile_url else "none"
     observed_at = datetime.now(UTC)
     employment_updated = _provider_datetime(row.get("job_last_changed"))
     provider_verified = _provider_datetime(row.get("job_last_verified"))
@@ -2231,8 +2248,8 @@ def _normalize_pdl(row: object) -> ProviderPerson | None:
         current_title=title, department=str(row.get("job_title_role") or "") or None,
         seniority=str(row.get("job_title_levels", [""])[0] if row.get("job_title_levels") else "") or None,
         location=str(row.get("location_name") or "") or None,
-        linkedin_url=safe_profile_url(row.get("linkedin_url")),
-        source_profile_url=safe_profile_url(row.get("linkedin_url")),
+        linkedin_url=profile_url,
+        source_profile_url=profile_url,
         source_last_updated_at=employment_updated,
         provider_record_observed_at=observed_at,
         provider_employment_updated_at=employment_updated,
@@ -2268,8 +2285,14 @@ def _normalize_pdl(row: object) -> ProviderPerson | None:
             "employment_start_date": employment_start,
             "employment_end_date": employment_end,
             "conflicting_current_employment": conflicting_current_role,
+            "linkedin_url_source": profile_url_source,
         },
-        field_provenance={"name": "pdl", "title": "pdl", "company": "pdl"},
+        field_provenance={
+            "name": "pdl",
+            "title": "pdl",
+            "company": "pdl",
+            "linkedin_url": f"pdl:{profile_url_source}",
+        },
     )
 
 

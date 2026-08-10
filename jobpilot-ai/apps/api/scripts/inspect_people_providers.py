@@ -31,7 +31,7 @@ from app.people.actionable import (
 )
 from app.people.brightdata import (
     BRIGHTDATA_PROFILE_STRATEGY_VERSION,
-    discovery_configuration_gap,
+    verification_configuration_gap,
 )
 from app.people.circuit import circuit_state
 from app.people.provider_registry import KNOWN_PROVIDERS
@@ -89,7 +89,7 @@ def _budget(db: Any, *, provider: str, user_id: int | None) -> dict[str, Any]:
 
 def _enabled(provider: str) -> bool:
     return {
-        "brightdata": settings.people_brightdata_discovery_enabled,
+        "brightdata": settings.people_brightdata_verification_enabled,
         "openai_web": settings.people_openai_web_discovery_enabled,
         "pdl": settings.people_pdl_discovery_enabled,
         "apollo": settings.people_apollo_discovery_enabled,
@@ -115,8 +115,7 @@ def _skip_reason(provider: str, order: list[str], budget: dict[str, Any]) -> str
     if not (_api_key(provider) or "").strip():
         return "missing_credentials"
     if provider == "brightdata":
-        gap = discovery_configuration_gap()
-        if gap:
+        if verification_configuration_gap():
             return "invalid_configuration"
     if budget["daily_budget"] <= 0 and budget["per_user_daily_limit"] <= 0:
         return "invalid_configuration"
@@ -166,12 +165,15 @@ def inspect(provider_filter: str | None, user_ref: str | None) -> dict[str, Any]
         entry["skip_reason"] = _skip_reason(name, order, budget)
         entry["eligible"] = entry["skip_reason"] is None
         if name == "brightdata":
+            entry["role"] = "profile_verification_only"
             entry["dataset_id"] = _credential(settings.people_brightdata_dataset_id)
-            entry["discovery_dataset_id"] = _credential(
-                settings.people_brightdata_discovery_dataset_id
-            )
-            entry["discovery_configuration_gap"] = discovery_configuration_gap()
+            entry["verification_configuration_gap"] = verification_configuration_gap()
             entry["strategy_version"] = BRIGHTDATA_PROFILE_STRATEGY_VERSION
+            entry["note"] = (
+                "Verifies profiles other providers discovered. Company/title "
+                "discovery is unavailable until an official contract or an "
+                "Employee Data API integration exists."
+            )
         if name == "apollo":
             entry["note"] = (
                 "Retained for internal evaluation only. Requires confirmed "

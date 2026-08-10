@@ -69,6 +69,7 @@ from app.people.schemas import (
     WorkEmailResult,
 )
 from app.people.scoring import (
+    SCORING_VERSION,
     candidate_rejection_reasons,
     confidence,
     explanations,
@@ -202,7 +203,10 @@ def test_versioned_title_ontology_role_family_regressions(
 
 
 def test_title_ontology_normalizes_semantic_variants() -> None:
-    assert normalize_title("Sr. Software Development Mgr") == "senior software engineering manager"
+    # Curated morphology folds the discipline onto the role noun, so
+    # "Software Development", "Software Engineering" and "Software Engineer"
+    # all reach one comparison key (title ontology v3).
+    assert normalize_title("Sr. Software Development Mgr") == "senior software engineer manager"
     assert title_similarity("Campus Talent Partner", ["University Recruiter"]) >= 0.5
     assert title_similarity("Agentic AI Engineering Manager", ["Applied AI Manager"]) >= 0.6
 
@@ -2594,7 +2598,7 @@ def _persist_recommendation(
         employment_validation_checked_at=datetime.now(UTC),
         recommendation_reasons=["Exact current company confirmed."],
         recommendation_limitations=[],
-        scoring_version="people-v2:people-title-v2",
+        scoring_version=SCORING_VERSION,
         expires_at=datetime.now(UTC) + timedelta(days=7),
     )
     db.add(candidate)
@@ -2838,7 +2842,13 @@ def test_lowercase_display_names_are_corrected_without_rewriting_mixed_case(
         "Rita Recruiter"
     )
     assert service._display_name("iPhone McTest") == "iPhone McTest"
-    assert service._display_name("single") == "single"
+    # A lone lowercase token IS a name here — "natalie" reached recipients as
+    # "Hi natalie,". Mixed-case spellings are still left untouched (above).
+    assert service._display_name("single") == "Single"
+    assert service._display_name("o'brien") == "O'Brien"
+    assert service._first_name("chandra prakash Pandey") == "Chandra"
+    # An unusable name yields a plain greeting rather than a guess.
+    assert service._first_name("R") is None
 
 
 def test_grounded_drafts_differ_by_category_and_respect_linkedin_limit(
@@ -2864,7 +2874,7 @@ def test_grounded_drafts_differ_by_category_and_respect_linkedin_limit(
         employment_validation_checked_at=datetime.now(UTC),
         recommendation_reasons=[],
         recommendation_limitations=[],
-        scoring_version="people-v2:people-title-v2",
+        scoring_version=SCORING_VERSION,
         expires_at=datetime.now(UTC) + timedelta(days=7),
     )
     referrer_candidate = JobPeopleCandidate(
@@ -2879,7 +2889,7 @@ def test_grounded_drafts_differ_by_category_and_respect_linkedin_limit(
         employment_validation_checked_at=datetime.now(UTC),
         recommendation_reasons=[],
         recommendation_limitations=[],
-        scoring_version="people-v2:people-title-v2",
+        scoring_version=SCORING_VERSION,
         expires_at=datetime.now(UTC) + timedelta(days=7),
     )
     db.add_all([manager_candidate, referrer_candidate])
@@ -2934,8 +2944,35 @@ def test_grounded_drafts_differ_by_category_and_respect_linkedin_limit(
     assert "recruiting team" in recruiter_draft["body"]
     assert "engineering function" in manager_draft["body"]
     assert "perspective" in referrer_draft["body"]
-    assert 90 <= len(recruiter_draft["body"].split()) <= 150
-    assert 60 <= len(manager_draft["body"].split()) <= 110
+    # Concision is the product goal, so the floor tracks it downward as filler
+    # is removed rather than forcing padding back in. Two reductions landed
+    # here: the awkward "If you handle this area" ask, and a whole fourth
+    # paragraph that restated the ask already made. The result is 47 words -
+    # greeting, relevance, one question, close - and the upper bound, which is
+    # the one that actually guards against rambling, is unchanged.
+    assert 40 <= len(recruiter_draft["body"].split()) <= 150
+    # The removed filler must not creep back.
+    for banned in (
+        "clearest, most relevant summary",
+        "broad introduction",
+        "clarify any relevant experience",
+        "If you handle this area",
+        "I hope this message finds you well",
+    ):
+        assert banned not in recruiter_draft["body"]
+    # 35-65 words is the LinkedIn target. The old floor of 60 was calibrated
+    # while a category preamble padded every message; removing that filler
+    # legitimately shortened this draft to ~45. Upper bound unchanged.
+    assert 35 <= len(manager_draft["body"].split()) <= 110
+    # The filler lived in TWO builders (email and LinkedIn) and only the email
+    # one was removed the first time, which is why it kept reappearing. Guard
+    # every category so a third recurrence fails here.
+    for draft_body in (
+        recruiter_draft["body"], manager_draft["body"], referrer_draft["body"]
+    ):
+        assert "easy for the recruiting team" not in draft_body
+        assert "I want to give the recruiting team" not in draft_body
+        assert "broad introduction" not in draft_body
     assert len(referrer_draft["body"]) <= 300
     assert recruiter_draft["assumptions"] == []
     assert manager_draft["assumptions"] == []
@@ -4072,8 +4109,14 @@ def test_pdl_primary_discovery_persists_categories_without_apollo_or_hunter(
     assert provider_calls[0] == (
         "https://api.peopledatalabs.com/v5/company/enrich"
     )
-    assert provider_sizes == [4, 4, 8]
-    assert sum(provider_sizes) == 16
+    assert provider_sizes == [2, 4, 4]
+    # The per-discovery ceiling is the actual bill. Pinned so a future
+    # per-category tweak cannot quietly raise it.
+    assert sum(provider_sizes) <= settings.people_pdl_max_results_per_discovery
+    # PDL bills one credit per profile RETURNED, so this sum is the direct
+    # cost of one uncached discovery. Reduced from 16 to 9 once the title
+    # ontology and referral scoring stopped discarding paid-for records.
+    assert sum(provider_sizes) == 10
     assert all(
         url == "https://api.peopledatalabs.com/v5/person/search"
         for url in provider_calls[1:]

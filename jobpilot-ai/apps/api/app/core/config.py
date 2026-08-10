@@ -185,6 +185,14 @@ class Settings(BaseSettings):
     people_email_discovery_enabled: bool = False
     people_pdl_fallback_enabled: bool = False
     people_outreach_drafting_enabled: bool = False
+    # OpenAI refinement of an already-built deterministic draft. Off by
+    # default, and gated on an explicit user action even when on: the card
+    # prefetches drafts on hover/focus, so an unconditional model call here
+    # would bill a request for pointing at a link.
+    people_outreach_ai_enabled: bool = False
+    people_outreach_ai_timeout_seconds: float = 20.0
+    people_outreach_ai_per_user_daily_limit: int = 20
+    people_outreach_ai_daily_budget: int = 200
     people_network_matching_enabled: bool = False
     people_employment_secondary_verification_enabled: bool = False
     people_employment_comparison_mode: bool = False
@@ -202,19 +210,18 @@ class Settings(BaseSettings):
     people_apollo_manager_results: int = 4
     people_apollo_referral_results: int = 6
     people_apollo_max_enrichments_per_discovery: int = 6
-    # --- Bright Data (primary professional-profile discovery/verification) ----
+    # --- Bright Data (professional-profile VERIFICATION) ----------------------
     # Off by default and non-billable until an operator supplies a token, a
-    # dataset id, and a budget. Two dataset ids because Bright Data models
-    # "collect these profile URLs" and "discover profiles matching a query" as
-    # genuinely different datasets; the verification one is documented
-    # (LinkedIn people profiles), the discovery one is account-specific.
-    people_brightdata_discovery_enabled: bool = False
+    # dataset id, and a budget.
+    #
+    # Verification only. Bright Data confirms a LinkedIn profile that another
+    # provider discovered; it does not search for people by company and title,
+    # because that request shape is not published and will not be guessed. See
+    # app/people/brightdata.py.
+    people_brightdata_verification_enabled: bool = False
     brightdata_api_token: str | None = None
-    # Collect-by-URL dataset used to verify a known LinkedIn profile.
+    # The documented LinkedIn people-profiles collect-by-URL dataset.
     people_brightdata_dataset_id: str | None = None
-    # Discovery dataset. Empty means discovery is unavailable and the step
-    # reports invalid_configuration rather than guessing a contract.
-    people_brightdata_discovery_dataset_id: str | None = None
     people_brightdata_daily_record_budget: int = 0
     people_brightdata_per_user_daily_limit: int = 0
     people_brightdata_max_records_per_discovery: int = 12
@@ -248,10 +255,35 @@ class Settings(BaseSettings):
     people_result_ttl_days: int = 30
     people_pdl_result_ttl_days: int = 30
     people_pdl_results_per_query: int = 20
-    people_pdl_recruiter_results: int = 4
+    # PDL Person Search bills one credit per profile *returned*, so these are
+    # the direct cost of one uncached discovery — not the HTTP call count.
+    #
+    # Reduced from 4/4/8 (=16) to 2/4/4 (=10), chosen by benchmark rather than
+    # by argument. See docs/people-quality-and-cost-benchmark.md.
+    #
+    # Measured over 9 job archetypes through the real gate chain:
+    #
+    #   4/4/8  144 records   recruiters 18  managers 17  referrals 24
+    #   2/3/5   90 records   recruiters 18  managers 14  referrals 23
+    #   2/3/4   81 records   recruiters 18  managers 14  referrals 23
+    #   2/4/4   90 records   recruiters 18  managers 17  referrals 23
+    #
+    # Dropping the manager fetch to 3 cost three displayed managers across the
+    # set; restoring it to 4 recovers all of them for one extra record per job.
+    # The referral fetch stays at 4 because 5 measured identically — the fifth
+    # ranked record was consistently unusable — though that is a property of the
+    # fixture ordering, not an observation about live provider output.
+    #
+    # A single shared manager+referral pool was also measured and REJECTED: with
+    # display precedence putting managers first, referral coverage collapsed
+    # from 24 to 3 and seven category slots were left structurally unfillable.
+    people_pdl_recruiter_results: int = 2
     people_pdl_manager_results: int = 4
-    people_pdl_referral_results: int = 8
-    people_pdl_max_results_per_discovery: int = 16
+    people_pdl_referral_results: int = 4
+    # Hard per-discovery ceiling. Enforced independently of the per-category
+    # numbers so that a future top-up or relaxation tier cannot quietly raise
+    # the bill: _PDLStep decrements remaining_records against this.
+    people_pdl_max_results_per_discovery: int = 10
     people_pdl_daily_credit_budget: int = 0
     people_pdl_per_user_daily_limit: int = 0
     people_employment_freshness_days: int = 180

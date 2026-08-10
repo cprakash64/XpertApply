@@ -6,6 +6,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.entities import User
 from app.people.feature_flags import recommendations_availability, recommendations_enabled
+from app.people.outreach_improve import improve_outreach_draft
 from app.people.schemas import FeedbackRequest, OutreachDraftRequest
 from app.people.service import (
     diagnostics_payload,
@@ -38,7 +39,7 @@ def get_people(
         return {
             "status": "disabled", "availability_reason": availability, "beta": False,
             "categories": {"likely_recruiters": [], "potential_hiring_managers": [], "potential_referrers": []},
-            "warnings": [], "controls": {"email_discovery": False, "outreach_drafting": False},
+            "warnings": [], "controls": {"email_discovery": False, "outreach_drafting": False, "outreach_ai_improvement": False},
         }
     return recommendations_payload(db, user, job_id)
 
@@ -83,6 +84,22 @@ def draft_outreach(
 ) -> dict:
     _require_enabled(user)
     return outreach_draft(db, user, job_id, recommendation_id, request)
+
+
+@router.post("/{recommendation_id}/outreach-draft/improve")
+async def improve_outreach(
+    job_id: int, recommendation_id: int, request: OutreachDraftRequest,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
+    """Explicit, user-initiated AI refinement.
+
+    Deliberately separate from the deterministic draft route above, which the
+    card prefetches on hover and focus — routing generation through that call
+    would spend an OpenAI request every time a user pointed at a link.
+    """
+
+    _require_enabled(user)
+    return await improve_outreach_draft(db, user, job_id, recommendation_id, request)
 
 
 @router.post("/{recommendation_id}/feedback")

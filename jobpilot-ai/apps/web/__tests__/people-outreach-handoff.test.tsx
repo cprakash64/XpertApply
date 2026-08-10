@@ -540,3 +540,72 @@ describe("Outreach failure states", () => {
     ).toBe(false);
   });
 });
+
+/**
+ * The card's LinkedIn action must open the profile and hand the user a message
+ * to paste — from one click, without the two racing each other.
+ *
+ * The failure mode being designed out: requesting the draft *inside* the click
+ * handler. A browser only treats tab-opening as user-initiated while the
+ * handler runs synchronously, so awaiting a request first is exactly how the
+ * new tab gets blocked. The draft is therefore prefetched on hover/focus and
+ * the click only copies an already-resolved string.
+ */
+describe("card LinkedIn copy-and-open", () => {
+  async function linkedInLink() {
+    render(<PeopleWhoCanHelp jobId={JOB_ID} />);
+    const links = await screen.findAllByRole("link", { name: /LinkedIn/ });
+    return links[0];
+  }
+
+  it("keeps a real anchor to the verified profile", async () => {
+    installTransport();
+    const link = await linkedInLink();
+    expect(link).toHaveAttribute("href", LINKEDIN_URL);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link.getAttribute("aria-label")).toMatch(/open .* on linkedin and copy outreach message/i);
+  });
+
+  it("copies the short LinkedIn body, never the email body", async () => {
+    const fetchMock = installTransport(
+      draftResponse({ body: "LONG EMAIL BODY", linkedin_body: "SHORT LINKEDIN BODY" })
+    );
+    const writeText = stubClipboard();
+    const link = await linkedInLink();
+
+    // Hover prefetches; the click then awaits nothing. The wait here stands in
+    // for the human latency between pointing at a link and pressing it.
+    fireEvent.mouseEnter(link);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => String(input).includes("/outreach-draft"))
+      ).toHaveLength(1)
+    );
+    fireEvent.click(link);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("SHORT LINKEDIN BODY"));
+    expect(writeText).not.toHaveBeenCalledWith("LONG EMAIL BODY");
+    expect(await screen.findByText("Message copied — paste it into LinkedIn.")).toBeInTheDocument();
+  });
+
+
+
+  it("still opens LinkedIn when the clipboard is denied", async () => {
+    installTransport(draftResponse({ linkedin_body: "SHORT" }));
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { ...globalThis.navigator, clipboard: { writeText } });
+    const link = await linkedInLink();
+    fireEvent.mouseEnter(link);
+    await waitFor(() => expect(writeText).not.toHaveBeenCalled());
+
+    const notPrevented = fireEvent.click(link);
+    // fireEvent returns false only when preventDefault was called. Navigation
+    // must never be cancelled because copying failed.
+    expect(notPrevented).toBe(true);
+    expect(
+      await screen.findByText("LinkedIn opened. Copy the draft message manually.")
+    ).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", LINKEDIN_URL);
+  });
+
+});

@@ -1,26 +1,25 @@
-"""Bright Data adapter: professional-profile verification, and (gated) discovery.
+"""Bright Data: profile **verification**, on its documented collect-by-URL API.
 
-Contract verified against Bright Data's official documentation, not assumed:
+Contract verified against Bright Data's official documentation:
 
 * Auth — ``Authorization: Bearer <token>``.
-* **Verify a known profile** — ``POST /datasets/v3/scrape?dataset_id=…&format=json``
-  with a JSON array of ``{"url": …}``. Synchronous, documented at up to 20 URLs
-  and 10–30 s. This is the path JobPilot uses on the request path.
-* **Discover profiles** — ``POST /datasets/v3/trigger?dataset_id=…&type=discover_new
-  &discover_by=…`` returns ``{"snapshot_id": "s_…"}``; poll
-  ``GET /datasets/v3/progress/{snapshot_id}`` for ``starting|running|ready|failed``;
-  download ``GET /datasets/v3/snapshot/{snapshot_id}?format=json``.
+* Verify — ``POST /datasets/v3/scrape?dataset_id=…&format=json`` with a JSON
+  array of ``{"url": …}``. Synchronous, documented at up to 20 URLs and 10–30 s.
+* Returned fields — ``name, url, position, current_company{name,link}, city,
+  country_code, experience, education``.
 
-**Why discovery is gated off.** The lifecycle above is documented; the *input
-schema for LinkedIn people discovery by company + title + location is not*. The
-published ``discover_by`` vocabulary is ``keyword | location | category_url |
-best_sellers_url``, and no official page documents the input field names for a
-people search, nor the discovery dataset id, nor the per-record charge for a
-discovery job. Rather than invent an adapter against a guessed contract, the
-discovery step reports :class:`SkipReason.INVALID_CONFIGURATION` with a message
-naming exactly what an operator must supply. The lifecycle code below is real,
-tested against mocks, and becomes live the moment a discovery dataset id is
-configured.
+**There is no discovery here, deliberately.** An earlier revision built a
+``type=discover_new&discover_by=keyword`` request whose input shape was guessed:
+Bright Data publishes ``keyword|location|category_url|best_sellers_url`` as the
+discovery vocabulary but does not document the input field names for a people
+search by company and title, nor the discovery dataset id, nor the per-record
+charge. That guessed request has been removed rather than left dormant — an
+unverified request to a paid provider is not something to keep lying around.
+
+Discovery is OpenAI's job now (public web search, citation-required), and Bright
+Data's job is to confirm what OpenAI found against the real profile before any
+of it reaches a user. Company/title discovery stays unavailable until either an
+official contract for it or an Employee Data API integration exists.
 
 Nothing in this module scrapes anything itself, holds a LinkedIn credential, or
 retains a raw provider record.
@@ -28,7 +27,6 @@ retains a raw provider record.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -38,7 +36,7 @@ from app.core.config import settings
 from app.people.actionable import company_key
 from app.people.errors import PeopleErrorCode
 from app.people.observability import metric
-from app.people.schemas import PeopleCategory, ProviderPerson
+from app.people.schemas import ProviderPerson
 from app.people.security import safe_profile_url
 
 logger = logging.getLogger("jobpilot.people.brightdata")
@@ -49,14 +47,6 @@ BRIGHTDATA_PROFILE_STRATEGY_VERSION = "brightdata-profile-discovery-v1"
 _API_ROOT = "https://api.brightdata.com/datasets/v3"
 # Documented ceiling for the synchronous /scrape endpoint.
 _MAX_SYNC_URLS = 20
-
-# Snapshot states. Bright Data documents starting/running/ready/failed; the
-# scrapers surface also reports collecting/digesting, so both vocabularies are
-# accepted rather than treated as an unknown response.
-_PENDING_STATES = frozenset({"starting", "running", "collecting", "digesting", "pending"})
-_READY_STATES = frozenset({"ready"})
-_FAILED_STATES = frozenset({"failed", "canceled", "cancelled", "error"})
-
 
 @dataclass
 class BrightDataOutcome:
@@ -80,30 +70,21 @@ def configured_for_verification() -> bool:
     )
 
 
-def configured_for_discovery() -> bool:
-    return bool(
-        configured_for_verification()
-        and (settings.people_brightdata_discovery_dataset_id or "").strip()
-    )
+def verification_configuration_gap() -> str | None:
+    """What an operator must still supply before verification can run.
 
-
-def discovery_configuration_gap() -> str | None:
-    """What an operator must still supply before discovery can run at all.
-
-    Returned verbatim as the typed skip detail, so "why did Bright Data not
-    run?" is answerable from one log line rather than from this docstring.
+    Returned verbatim as the typed skip detail, so "why was nothing verified?"
+    is answerable from one log line.
     """
 
+    if not settings.people_brightdata_verification_enabled:
+        return "PEOPLE_BRIGHTDATA_VERIFICATION_ENABLED is false"
     if not (settings.brightdata_api_token or "").strip():
         return "BRIGHTDATA_API_TOKEN is not set"
     if not (settings.people_brightdata_dataset_id or "").strip():
-        return "PEOPLE_BRIGHTDATA_DATASET_ID is not set"
-    if not (settings.people_brightdata_discovery_dataset_id or "").strip():
         return (
-            "PEOPLE_BRIGHTDATA_DISCOVERY_DATASET_ID is not set. Bright Data's "
-            "people-discovery input schema is account-specific and is not "
-            "published; supply the discovery dataset id and confirm the query "
-            "shape before enabling discovery"
+            "PEOPLE_BRIGHTDATA_DATASET_ID is not set. This is the LinkedIn "
+            "people-profiles collect-by-URL dataset used to verify a profile."
         )
     if int(settings.people_brightdata_max_records_per_discovery) <= 0:
         return "PEOPLE_BRIGHTDATA_MAX_RECORDS_PER_DISCOVERY is 0"
@@ -263,149 +244,119 @@ class BrightDataPeopleProvider:
                 outcome.candidates.append(person)
         return outcome
 
-    # ------------------------------------------------------------------
-    # Discovery: real lifecycle, gated until the input contract is known
-    # ------------------------------------------------------------------
+@dataclass
+class VerificationResult:
+    """What Bright Data could confirm about one candidate, and what it could not."""
 
-    async def discover(
-        self,
-        inputs: list[dict[str, object]],
-        *,
-        discover_by: str,
-        company_name: str,
-        company_aliases: tuple[str, ...] = (),
-        company_domain: str | None = None,
-        categories: tuple[PeopleCategory, ...] = (),
-    ) -> BrightDataOutcome:
-        """Trigger an async discovery snapshot, poll it, and normalize results.
+    confirmed: list[ProviderPerson] = field(default_factory=list)
+    rejected: dict[str, int] = field(default_factory=dict)
+    failure_reason: str | None = None
+    records_returned: int = 0
+    calls: int = 0
 
-        Bounded on both axes: ``limit_per_input`` caps records (and therefore
-        cost), and ``people_brightdata_max_poll_seconds`` caps the wait. A user
-        request never waits on an unbounded collection job.
-        """
+    def reject(self, reason: str) -> None:
+        self.rejected[reason] = self.rejected.get(reason, 0) + 1
 
-        outcome = BrightDataOutcome()
-        gap = discovery_configuration_gap()
-        if gap is not None:
-            outcome.failure_reason = "provider_not_configured"
-            outcome.warnings.append("discovery_not_configured")
-            return outcome
-        if not inputs:
-            return outcome
 
-        max_records = max(1, int(settings.people_brightdata_max_records_per_discovery))
-        try:
-            triggered = await self._request(
-                "POST",
-                f"{_API_ROOT}/trigger",
-                params={
-                    "dataset_id": (
-                        settings.people_brightdata_discovery_dataset_id or ""
-                    ).strip(),
-                    "type": "discover_new",
-                    "discover_by": discover_by,
-                    "limit_per_input": max_records,
-                    "format": "json",
-                },
-                json_body=inputs,
-            )
-        except BrightDataUnavailable as exc:
-            outcome.failure_reason = exc.reason
-            _log_failure(exc, operation="discover_trigger")
-            return outcome
-        outcome.calls = 1
+async def verify_candidates(
+    candidates: list[ProviderPerson],
+    *,
+    company_name: str,
+    company_aliases: tuple[str, ...] = (),
+    company_domain: str | None = None,
+    provider: BrightDataPeopleProvider | None = None,
+) -> VerificationResult:
+    """Confirm discovered profiles against the real LinkedIn record.
 
-        snapshot_id = (
-            str(triggered.get("snapshot_id") or "").strip()
-            if isinstance(triggered, dict)
-            else ""
-        )
-        if not snapshot_id:
-            outcome.failure_reason = "provider_response_invalid"
-            return outcome
+    OpenAI's public-web step finds a *cited* profile URL; it cannot confirm that
+    the person still works there today, and it is not a data contract. This is
+    the step that turns a sighting into evidence: Bright Data fetches each URL
+    and the fields it returns — name, current employer, current title — replace
+    whatever the discovering provider claimed.
 
-        try:
-            rows = await self._await_snapshot(snapshot_id)
-        except BrightDataUnavailable as exc:
-            outcome.failure_reason = exc.reason
-            _log_failure(exc, operation="discover_snapshot")
-            return outcome
-        outcome.calls += 1
+    A candidate survives only when Bright Data confirms it. Anything the fetch
+    does not cover is dropped with a typed reason, because "we could not check"
+    and "we checked and it is true" must never look the same to a user.
+    """
 
-        rows = rows[:max_records]
-        outcome.records_returned = len(rows)
-        self.last_records_returned = len(rows)
-        metric(
-            "people_brightdata_records_returned",
-            len(rows),
-            provider=PROVIDER_NAME,
-            stage="discover",
-        )
-        for row in rows:
-            person = normalize_brightdata_profile(
-                row,
-                company_name=company_name,
-                company_aliases=company_aliases,
-                company_domain=company_domain,
-                outcome=outcome,
-            )
-            if person is not None:
-                outcome.candidates.append(person)
-        return outcome
+    result = VerificationResult()
+    if not candidates:
+        return result
+    gap = verification_configuration_gap()
+    if gap is not None:
+        result.failure_reason = "provider_not_configured"
+        return result
 
-    async def _await_snapshot(self, snapshot_id: str) -> list[dict]:
-        """Poll until ready, failed, or the wall clock says stop."""
+    client = provider or BrightDataPeopleProvider()
+    by_url: dict[str, ProviderPerson] = {}
+    for candidate in candidates:
+        url = safe_profile_url(candidate.linkedin_url)
+        if url is None:
+            # Never verifiable, and never displayable: a discovered candidate
+            # with no valid profile URL is dropped before a record is spent.
+            result.reject("unverifiable_missing_linkedin_url")
+            continue
+        by_url.setdefault(url, candidate)
 
-        # Only guards against a zero/negative setting; startup validation
-        # already requires a positive one. A 1.0s floor here would have
-        # silently overridden every configured ceiling below a second.
-        ceiling = max(0.001, float(settings.people_brightdata_max_poll_seconds))
-        deadline = time.monotonic() + ceiling
-        interval = max(0.001, float(settings.people_brightdata_poll_interval_seconds))
-        # Two independent bounds. The wall clock protects the user's request;
-        # the count protects against a provider that answers instantly and
-        # forever, where a time-only bound would spin.
-        max_polls = max(1, int(ceiling / interval) + 1)
-        polls = 0
-        while True:
-            progress = await self._request(
-                "GET", f"{_API_ROOT}/progress/{snapshot_id}"
-            )
-            polls += 1
-            status = (
-                str(progress.get("status") or "").strip().lower()
-                if isinstance(progress, dict)
-                else ""
-            )
-            if status in _READY_STATES:
-                break
-            if status in _FAILED_STATES:
-                raise BrightDataUnavailable(
-                    "provider_unavailable", code=PeopleErrorCode.PROVIDER_SERVER_ERROR
-                )
-            if status not in _PENDING_STATES:
-                raise BrightDataUnavailable(
-                    "provider_response_invalid", code=PeopleErrorCode.INVALID_INPUT
-                )
-            if polls >= max_polls or time.monotonic() + interval >= deadline:
-                # A collection that outlives the request budget is abandoned,
-                # not waited on. The snapshot keeps running on Bright Data's
-                # side; JobPilot simply does not hold a user request open for it.
-                logger.info(
-                    "brightdata_snapshot_abandoned polls=%s reason=poll_deadline",
-                    polls,
-                )
-                raise BrightDataUnavailable(
-                    "provider_timeout", code=PeopleErrorCode.PROVIDER_TIMEOUT
-                )
-            await asyncio.sleep(interval)
+    outcome = await client.verify_profiles(
+        list(by_url),
+        company_name=company_name,
+        company_aliases=company_aliases,
+        company_domain=company_domain,
+    )
+    result.calls = outcome.calls
+    result.records_returned = outcome.records_returned
+    for reason, count in outcome.rejected.items():
+        result.rejected[reason] = result.rejected.get(reason, 0) + count
+    if outcome.failure_reason:
+        result.failure_reason = outcome.failure_reason
+        return result
 
-        payload = await self._request(
-            "GET",
-            f"{_API_ROOT}/snapshot/{snapshot_id}",
-            params={"format": "json"},
-        )
-        return _rows_from(payload)
+    verified_by_url = {
+        safe_profile_url(person.linkedin_url): person
+        for person in outcome.candidates
+        if person.linkedin_url
+    }
+    for url, discovered in by_url.items():
+        confirmed = verified_by_url.get(url)
+        if confirmed is None:
+            # Bright Data returned nothing usable for this URL. The profile may
+            # be gone, private, or never have matched — either way it is not
+            # confirmed, so it is not shown.
+            result.reject("verification_no_record")
+            continue
+        if not confirmed.current_company_domain:
+            # normalize_brightdata_profile only attaches the verified domain on
+            # an exact employer-name match, so an empty domain means the real
+            # profile does not say what the discovering provider said.
+            result.reject("verification_company_mismatch")
+            continue
+        result.confirmed.append(_merged(discovered, confirmed))
+    return result
+
+
+def _merged(discovered: ProviderPerson, confirmed: ProviderPerson) -> ProviderPerson:
+    """Bright Data's record wins on every field it actually returned.
+
+    The discovering provider keeps only its provenance — which sources it cited
+    — because that is the one thing Bright Data cannot tell us and the one thing
+    an operator needs to audit a public-web sighting.
+    """
+
+    merged = confirmed.model_copy(deep=True)
+    citations = discovered.evidence.get("supporting_sources")
+    merged.evidence = {
+        **merged.evidence,
+        "discovered_by": discovered.provider,
+        "verified_by": PROVIDER_NAME,
+        "verification_strategy": BRIGHTDATA_PROFILE_STRATEGY_VERSION,
+        **({"supporting_sources": citations} if citations else {}),
+    }
+    merged.field_provenance = {
+        **merged.field_provenance,
+        "linkedin_url": f"{discovered.provider}->{PROVIDER_NAME}",
+    }
+    return merged
 
 
 class BrightDataUnavailable(RuntimeError):

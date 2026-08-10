@@ -10,14 +10,15 @@ The contract exercised below is the one published in Bright Data's docs:
 * ``GET  /datasets/v3/progress/{snapshot_id}`` → starting|running|ready|failed
 * ``GET  /datasets/v3/snapshot/{snapshot_id}?format=json``
 
-Discovery stays gated because the *input schema* for a people search by company
-and title is account-specific and unpublished. That gate is itself tested: an
-unconfigured deployment must report a typed configuration problem, never guess.
+There is no discovery here. Bright Data's people-search-by-company-and-title
+input shape is not published, so that request was removed rather than guessed;
+Bright Data's job is to confirm a profile some other provider discovered.
 """
 
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from datetime import UTC, datetime
 
 import httpx
@@ -27,11 +28,12 @@ from app.core.config import settings
 from app.people.brightdata import (
     BrightDataOutcome,
     BrightDataPeopleProvider,
-    configured_for_discovery,
     configured_for_verification,
-    discovery_configuration_gap,
     normalize_brightdata_profile,
+    verification_configuration_gap,
+    verify_candidates,
 )
+from app.people.schemas import ProviderPerson
 
 COMPANY = "Northwind Robotics"
 DOMAIN = "northwindrobotics.example"
@@ -78,7 +80,7 @@ def _json(payload: object, status: int = 200) -> httpx.Response:
 def _configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "brightdata_api_token", "bd-test-token-not-a-secret")
     monkeypatch.setattr(settings, "people_brightdata_dataset_id", "gd_test_profiles")
-    monkeypatch.setattr(settings, "people_brightdata_discovery_dataset_id", None)
+    monkeypatch.setattr(settings, "people_brightdata_verification_enabled", True)
     monkeypatch.setattr(settings, "people_brightdata_max_records_per_discovery", 5)
     monkeypatch.setattr(settings, "people_brightdata_poll_interval_seconds", 0.001)
     monkeypatch.setattr(settings, "people_brightdata_max_poll_seconds", 1.0)
@@ -284,160 +286,6 @@ def test_a_timeout_is_typed_as_a_timeout_not_as_an_outage():
 
 
 # --------------------------------------------------------------------------
-# Discovery: gated, then the real lifecycle
-# --------------------------------------------------------------------------
-
-
-def test_discovery_is_unavailable_until_its_dataset_is_configured():
-    assert configured_for_verification() is True
-    assert configured_for_discovery() is False
-    gap = discovery_configuration_gap()
-    assert "PEOPLE_BRIGHTDATA_DISCOVERY_DATASET_ID" in gap
-    # The gap names what is missing rather than implying the provider is broken.
-    assert "not published" in gap
-
-
-def test_an_unconfigured_discovery_never_calls_the_provider():
-    transport = _Transport([])
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover(
-            [{"keyword": "x"}], discover_by="keyword", company_name=COMPANY
-        )
-    )
-
-    assert outcome.failure_reason == "provider_not_configured"
-    assert "discovery_not_configured" in outcome.warnings
-    assert transport.calls == []
-
-
-def test_the_documented_trigger_poll_download_lifecycle(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_test_discovery"
-    )
-    monkeypatch.setattr(settings, "people_brightdata_daily_record_budget", 100)
-    transport = _Transport(
-        [
-            _json({"snapshot_id": "s_abc123"}),
-            _json({"snapshot_id": "s_abc123", "status": "running"}),
-            _json({"snapshot_id": "s_abc123", "status": "ready"}),
-            _json([_row()]),
-        ]
-    )
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover(
-            [{"keyword": f"{COMPANY} technical recruiter"}],
-            discover_by="keyword",
-            company_name=COMPANY,
-            company_domain=DOMAIN,
-        )
-    )
-
-    trigger = transport.calls[0]
-    assert trigger[1] == "https://api.brightdata.com/datasets/v3/trigger"
-    assert trigger[2]["type"] == "discover_new"
-    assert trigger[2]["discover_by"] == "keyword"
-    # limit_per_input is the cost ceiling, not a nicety.
-    assert trigger[2]["limit_per_input"] == 5
-    assert transport.calls[1][1].endswith("/progress/s_abc123")
-    assert transport.calls[3][1].endswith("/snapshot/s_abc123")
-    assert len(outcome.candidates) == 1
-
-
-def test_a_failed_snapshot_is_reported_not_polled_forever(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_test_discovery"
-    )
-    transport = _Transport(
-        [_json({"snapshot_id": "s_x"}), _json({"snapshot_id": "s_x", "status": "failed"})]
-    )
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover([{"keyword": "x"}], discover_by="keyword", company_name=COMPANY)
-    )
-
-    assert outcome.failure_reason == "provider_unavailable"
-
-
-def test_a_slow_snapshot_is_abandoned_at_the_deadline(monkeypatch: pytest.MonkeyPatch):
-    """A user request must never wait on an unbounded collection job."""
-
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_test_discovery"
-    )
-    monkeypatch.setattr(settings, "people_brightdata_poll_interval_seconds", 0.01)
-    monkeypatch.setattr(settings, "people_brightdata_max_poll_seconds", 0.02)
-    transport = _Transport(
-        [_json({"snapshot_id": "s_x"})]
-        + [_json({"snapshot_id": "s_x", "status": "running"}) for _ in range(50)]
-    )
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover([{"keyword": "x"}], discover_by="keyword", company_name=COMPANY)
-    )
-
-    assert outcome.failure_reason == "provider_timeout"
-    # Bounded by poll count as well as by wall clock, so the ceiling holds even
-    # when the provider answers instantly: one trigger plus at most
-    # ceiling/interval polls, not the 50 the transport was willing to serve.
-    assert len(transport.calls) == 3
-
-
-def test_an_unrecognised_snapshot_state_is_a_response_defect(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_test_discovery"
-    )
-    transport = _Transport(
-        [_json({"snapshot_id": "s_x"}), _json({"snapshot_id": "s_x", "status": "wat"})]
-    )
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover([{"keyword": "x"}], discover_by="keyword", company_name=COMPANY)
-    )
-
-    assert outcome.failure_reason == "provider_response_invalid"
-
-
-def test_discovery_results_are_capped_by_the_record_budget(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_test_discovery"
-    )
-    monkeypatch.setattr(settings, "people_brightdata_max_records_per_discovery", 2)
-    transport = _Transport(
-        [
-            _json({"snapshot_id": "s_x"}),
-            _json({"snapshot_id": "s_x", "status": "ready"}),
-            _json([_row(url=f"https://www.linkedin.com/in/p{i}") for i in range(9)]),
-        ]
-    )
-    provider = BrightDataPeopleProvider(client=transport)
-
-    outcome = asyncio.run(
-        provider.discover(
-            [{"keyword": "x"}],
-            discover_by="keyword",
-            company_name=COMPANY,
-            company_domain=DOMAIN,
-        )
-    )
-
-    assert outcome.records_returned == 2
-    assert len(outcome.candidates) == 2
-
-
-# --------------------------------------------------------------------------
 # Safety
 # --------------------------------------------------------------------------
 
@@ -478,3 +326,159 @@ def test_a_record_observed_now_is_timestamped_now():
         _row(), company_name=COMPANY, company_domain=DOMAIN
     )
     assert person.provider_record_observed_at >= before
+
+
+# --------------------------------------------------------------------------
+# Verification of discovered candidates
+# --------------------------------------------------------------------------
+
+
+def _discovered(url: str = PROFILE_URL, *, name: str = "Priya Raghavan") -> ProviderPerson:
+    """What OpenAI's public-web step produces: a sighting with a cited URL."""
+
+    return ProviderPerson(
+        provider="openai_web",
+        provider_person_id=url,
+        full_name=name,
+        current_company_name=COMPANY,
+        current_company_domain=DOMAIN,
+        current_title="Recruiter",
+        linkedin_url=url,
+        evidence={"supporting_sources": ["https://example.com/newsroom"]},
+    )
+
+
+def test_a_discovered_candidate_is_replaced_by_the_verified_record():
+    transport = _Transport([_json([_row()])])
+    provider = BrightDataPeopleProvider(client=transport)
+
+    result = asyncio.run(
+        verify_candidates(
+            [_discovered()],
+            company_name=COMPANY,
+            company_domain=DOMAIN,
+            provider=provider,
+        )
+    )
+
+    assert len(result.confirmed) == 1
+    person = result.confirmed[0]
+    # Bright Data's record wins on every field it returned.
+    assert person.provider == "brightdata"
+    assert person.current_title == "Senior Technical Recruiter"
+    assert person.current_company_domain == DOMAIN
+    # The discovering provider keeps only what Bright Data cannot supply.
+    assert person.evidence["discovered_by"] == "openai_web"
+    assert person.evidence["verified_by"] == "brightdata"
+    assert person.evidence["supporting_sources"] == ["https://example.com/newsroom"]
+
+
+def test_a_profile_bright_data_cannot_return_is_not_displayed():
+    transport = _Transport([_json([])])
+    provider = BrightDataPeopleProvider(client=transport)
+
+    result = asyncio.run(
+        verify_candidates(
+            [_discovered()],
+            company_name=COMPANY,
+            company_domain=DOMAIN,
+            provider=provider,
+        )
+    )
+
+    assert result.confirmed == []
+    assert result.rejected["verification_no_record"] == 1
+
+
+def test_a_profile_that_no_longer_shows_the_hiring_company_is_rejected():
+    """The failure verification exists to catch: they left."""
+
+    transport = _Transport([_json([_row(current_company={"name": "Someone Else Inc"})])])
+    provider = BrightDataPeopleProvider(client=transport)
+
+    result = asyncio.run(
+        verify_candidates(
+            [_discovered()],
+            company_name=COMPANY,
+            company_domain=DOMAIN,
+            provider=provider,
+        )
+    )
+
+    assert result.confirmed == []
+    assert result.rejected["verification_company_mismatch"] == 1
+
+
+def test_a_candidate_without_a_valid_url_is_dropped_before_a_record_is_spent():
+    transport = _Transport([])
+    provider = BrightDataPeopleProvider(client=transport)
+
+    result = asyncio.run(
+        verify_candidates(
+            [_discovered("https://profiles.invalid/in/priya")],
+            company_name=COMPANY,
+            company_domain=DOMAIN,
+            provider=provider,
+        )
+    )
+
+    assert result.confirmed == []
+    assert result.rejected["unverifiable_missing_linkedin_url"] == 1
+    assert transport.calls == []
+
+
+def test_verification_reports_its_own_unavailability_rather_than_passing_through(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An unverified sighting must never be displayed as though it were checked."""
+
+    monkeypatch.setattr(settings, "people_brightdata_verification_enabled", False)
+    transport = _Transport([])
+    provider = BrightDataPeopleProvider(client=transport)
+
+    result = asyncio.run(
+        verify_candidates(
+            [_discovered()],
+            company_name=COMPANY,
+            company_domain=DOMAIN,
+            provider=provider,
+        )
+    )
+
+    assert result.confirmed == []
+    assert result.failure_reason == "provider_not_configured"
+    assert transport.calls == []
+
+
+def test_verification_configuration_reports_exactly_what_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    assert configured_for_verification() is True
+    assert verification_configuration_gap() is None
+    monkeypatch.setattr(settings, "people_brightdata_dataset_id", None)
+    assert "PEOPLE_BRIGHTDATA_DATASET_ID" in verification_configuration_gap()
+
+
+def test_the_guessed_company_and_title_discovery_request_is_gone():
+    """It was removed, not disabled.
+
+    An unverified request shape aimed at a paid provider is not something to
+    keep dormant in the codebase: the next person to read it cannot tell that
+    it was never confirmed.
+    """
+
+    import app.people.brightdata as module
+    import app.people.service as service
+
+    assert not hasattr(module.BrightDataPeopleProvider, "discover")
+    assert not hasattr(service, "_brightdata_inputs")
+    assert not hasattr(service, "_BrightDataStep")
+    # The trigger endpoint and the guessed parameters are gone from the code.
+    # The module docstring still explains why, which is the point.
+    source = pathlib.Path(module.__file__).read_text()
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("#")
+    )
+    body = code.split('"""', 2)[-1]
+    for gone in ("datasets/v3/trigger", "discover_by", "limit_per_input", "snapshot_id"):
+        assert gone not in body, gone

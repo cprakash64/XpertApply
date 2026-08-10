@@ -79,6 +79,30 @@ METRICS = frozenset(
         "people_missing_linkedin_rejected_total",
         "people_ambiguous_identity_rejected_total",
         "people_legacy_record_suppressed_total",
+        "people_profiles_verified_total",
+        # Funnel *ratios*. The raw counters above were all present and correct
+        # while the PDL adapter silently rejected 100% of candidates; only a
+        # ratio distinguishes an integration defect from a company that
+        # genuinely has no matching employees. Basis points, because this
+        # transport carries one integer value.
+        "people_funnel_acceptance_ratio_bp",
+        "people_funnel_profile_url_rejection_ratio_bp",
+        "people_funnel_health_total",
+        # Whether a shared-background comparison could run for this user at all.
+        # Distinguishes "checked, no overlap" from "never checked", which is the
+        # distinction that decides referral-candidate scoring.
+        "people_relationship_signals_available_total",
+        # Explicit "Improve with AI". Counts and reason codes only — never a
+        # name, company, job title, message body, email or profile URL.
+        "people_outreach_ai_requested_total",
+        "people_outreach_ai_completed_total",
+        "people_outreach_ai_validation_total",
+        "people_outreach_ai_fallback_total",
+        "people_outreach_ai_generation_duration",
+        "people_outreach_ai_output_length",
+        "people_outreach_ai_generation_path_total",
+        "people_outreach_ai_coalesced_total",
+        "people_outreach_ai_cache_hit_total",
     }
 )
 _DIMENSIONS = frozenset(

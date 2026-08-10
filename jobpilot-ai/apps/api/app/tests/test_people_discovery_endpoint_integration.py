@@ -36,7 +36,8 @@ from app.models.entities import (
     UserJobPeopleRecommendation,
     UserProfile,
 )
-from app.people import circuit, pdl_company, providers
+from app.people import circuit, pdl_company, providers, service
+from app.people.brightdata import VerificationResult
 from app.people.openai_web import OpenAIWebPeopleProvider, WebDiscoveryOutcome
 from app.people.quota import quota_day
 from app.people.schemas import ProviderPerson
@@ -546,6 +547,14 @@ def test_an_openai_web_candidate_outranks_an_earlier_budget_stop(
         )
 
     monkeypatch.setattr(OpenAIWebPeopleProvider, "discover", _discover)
+
+    # A public-web sighting is only displayable once Bright Data has confirmed
+    # the profile. This test is about finalizer parity, not verification, so
+    # the verifier is stubbed to confirm what it was given.
+    async def _verify(candidates, **_kwargs):
+        return VerificationResult(confirmed=list(candidates))
+
+    monkeypatch.setattr(service, "verify_candidates", _verify)
     _transport(monkeypatch, _Transport(search_rows=[]))
     headers = _auth(client, email="openaiweb@example.com")
     job_id = _job("northwind-openai")

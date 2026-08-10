@@ -97,6 +97,7 @@ FINAL_FAILURE_PRECEDENCE: tuple[PeopleErrorCode, ...] = (
     PeopleErrorCode.AUTHENTICATION_FAILED,
     PeopleErrorCode.AUTHORIZATION_FAILED,
     PeopleErrorCode.INVALID_INPUT,
+    PeopleErrorCode.PROVIDER_CONTRACT_ERROR,
     PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED,
     PeopleErrorCode.RATE_LIMITED,
     PeopleErrorCode.PROVIDER_SERVER_ERROR,
@@ -125,6 +126,14 @@ STATUS_FOR_CODE: dict[PeopleErrorCode, str] = {
     # defect: a provider that answered a valid query with zero records is
     # handled as an empty result, not as a rejection.
     PeopleErrorCode.INVALID_INPUT: "invalid_request",
+    # Deliberately the same terminal status as INVALID_INPUT. The two are now
+    # distinct *codes* so that fallback eligibility and metrics can tell a
+    # provider-side contract break from our own bad request — but they are
+    # indistinguishable to a user (same copy, same absence of a retry), and
+    # giving them different statuses would change UI behaviour for no benefit.
+    # The precise cause stays visible to operators via availability_reason
+    # (provider_schema_error / provider_response_invalid) and the typed code.
+    PeopleErrorCode.PROVIDER_CONTRACT_ERROR: "invalid_request",
     PeopleErrorCode.USER_BUDGET_EXHAUSTED: "user_budget_exhausted",
     PeopleErrorCode.PROVIDER_BUDGET_EXHAUSTED: "provider_budget_exhausted",
     PeopleErrorCode.AUTHENTICATION_FAILED: "provider_configuration_error",

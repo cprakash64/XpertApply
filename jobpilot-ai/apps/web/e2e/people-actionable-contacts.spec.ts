@@ -28,12 +28,12 @@ const CONTACT = {
   confidence: "high",
   current_employment_confidence: 0.95,
   employment_validation_status: "confirmed_exact_company_verified",
-  employment_last_verified_at: "2026-07-25T12:00:00Z",
+  employment_last_verified_at: daysAgo(1),
   employment_warning: null,
   email_lookup_allowed: true,
   reasons: ["Currently listed at the hiring company."],
   limitations: [],
-  last_checked_at: "2026-07-25T12:00:00Z",
+  last_checked_at: daysAgo(1),
   professional_profile_url: "https://www.linkedin.com/in/priya-raghavan",
   email_status: "not_requested",
   professional_email: null,
@@ -62,6 +62,20 @@ const OFF_PLATFORM = {
   professional_profile_url: "https://profiles.invalid/in/ravi-menon"
 };
 
+/**
+ * Fixture dates must be relative to now.
+ *
+ * These were hardcoded ("2026-07-25T12:00:00Z"), which passed when written and
+ * then silently started failing once more than seven days had elapsed: the Jobs
+ * list defaults to "Posted within: past 7 days" and filtered the seeded job out
+ * client-side, so the job card never appeared and every test that opens
+ * Networking timed out. The page and the People feature were both fine — the
+ * fixture had simply aged out. jobs-workspace.spec.ts already does this.
+ */
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 const JOB = {
   id: JOB_ID,
   title: "Senior Backend Engineer",
@@ -73,8 +87,8 @@ const JOB = {
   workplace_type: "remote",
   employment_type: "full-time",
   seniority_level: "senior",
-  posted_at: "2026-07-25T12:00:00Z",
-  discovered_at: "2026-07-25T12:00:00Z",
+  posted_at: daysAgo(1),
+  discovered_at: daysAgo(1),
   application_url: "https://job-boards.greenhouse.io/nw/jobs/1",
   source_url: "https://job-boards.greenhouse.io/nw/jobs/1",
   description_clean: "Build backend services.",

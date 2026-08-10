@@ -144,6 +144,16 @@ def role_family_for(title: str, description: str = "") -> str | None:
 def expand_titles(job_title: str, role_family: str | None) -> tuple[list[str], list[str], list[str]]:
     base = re.sub(r"\b(senior|sr\.?|junior|jr\.?|staff|lead|principal)\b", "", job_title, flags=re.I)
     base = re.sub(r"\b(intern(ship)?|new grad(uate)?)\b", "", base, flags=re.I)
+    # Posting artefacts, not job titles: an intake year, a requisition id, or a
+    # trailing parenthetical. Nobody's title is "Software Engineering
+    # Internship 2027", and leaving those tokens in poisons every title
+    # similarity computed against this job — a plain "Senior Software Engineer"
+    # at the same company scored 0.39 against it, under the 0.42 floor, and was
+    # rejected as role-irrelevant.
+    base = re.sub(r"\([^)]*\)", " ", base)
+    base = re.sub(r"\b(19|20)\d{2}\b", " ", base)
+    base = re.sub(r"\b(req|requisition|job)\s*#?\s*\d+\b", " ", base, flags=re.I)
+    base = re.sub(r"[-–—,|]+\s*$", " ", base)
     base = re.sub(r"\s+", " ", base).strip()
     recruiters = [
         title
@@ -153,7 +163,9 @@ def expand_titles(job_title: str, role_family: str | None) -> tuple[list[str], l
     managers = [
         title for group in manager_title_groups(role_family, base) for title in group.titles
     ]
-    team = team_titles(role_family, job_title)
+    # The cleaned base, not the raw posting title: team titles are matched
+    # against what employees actually call themselves.
+    team = team_titles(role_family, base or job_title)
     return list(dict.fromkeys(recruiters)), list(dict.fromkeys(managers)), list(dict.fromkeys(team))
 
 

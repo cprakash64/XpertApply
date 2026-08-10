@@ -383,6 +383,20 @@ export function derivePeopleView({
         retryAfterSeconds: null,
         cached
       };
+    // The stored result was produced under a retired search contract, so it is
+    // no longer an answer about this company — it is an absence of one. Falling
+    // through to `default` reported it as a verified empty result, which is the
+    // exact claim this module exists to stop the panel from making. The backend
+    // already offers "Refresh people" for this status; peopleActionSummary
+    // likewise treats it as never-searched, and these two must not disagree.
+    case "stale":
+      return {
+        state: "not_loaded",
+        message: PEOPLE_MESSAGES.not_loaded,
+        canRetry: false,
+        retryAfterSeconds: null,
+        cached: false
+      };
     case "invalid_request":
       return {
         state: "invalid_request",

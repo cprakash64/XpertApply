@@ -432,7 +432,33 @@ describe("PeopleWhoCanHelp", () => {
     expect(screen.getByRole("link", { name: /LinkedIn/ })).toHaveAttribute(
       "rel", "noopener noreferrer"
     );
+    // LinkedIn brand colour must live on the anchor itself. A wrapper never
+    // receives :hover or :focus-visible, so styling one would silently do
+    // nothing for both mouse and keyboard users.
+    const profileLink = screen.getByRole("link", { name: /LinkedIn/ });
+    // The token resolves to #0A66C2 (see --linkedin in app/globals.css); the
+    // component references the token so the theme guard stays satisfied.
+    for (const state of ["hover:text-", "hover:border-", "focus-visible:text-", "focus-visible:border-"]) {
+      expect(profileLink.className).toContain(`${state}[var(--linkedin)]`);
+    }
+    // Neutral until interacted with — the default state stays dark-theme.
+    expect(profileLink.className).toContain("text-[var(--text-secondary)]");
+    // The accessible name identifies the person, not just the network.
+    expect(profileLink).toHaveAttribute("aria-label", expect.stringContaining("Rita Recruiter"));
     expect(screen.getByRole("button", { name: /Find work email/ })).toBeInTheDocument();
+    // The email action gets its own brand-red interaction state, on the button
+    // itself so keyboard focus receives it. The icon stays a generic Mail glyph
+    // on purpose: mailto opens whichever client the user configured, so a Gmail
+    // logo would be a lie for Outlook and Apple Mail users.
+    const emailButton = screen.getByRole("button", { name: /Find work email/ });
+    for (const state of [
+      "hover:text-", "hover:border-", "focus-visible:text-", "focus-visible:border-"
+    ]) {
+      expect(emailButton.className).toContain(`${state}[var(--email-action)]`);
+    }
+    expect(emailButton.className).toContain("text-[var(--text-secondary)]");
+    // The two brand treatments must stay distinct.
+    expect(emailButton.className).not.toContain("var(--linkedin)");
     expect(screen.getByRole("button", { name: "Draft message" })).toBeInTheDocument();
   });
 

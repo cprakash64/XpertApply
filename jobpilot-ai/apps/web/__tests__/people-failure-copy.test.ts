@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PEOPLE_MESSAGES, derivePeopleView } from "@/lib/peopleState";
+import { PEOPLE_MESSAGES, derivePeopleView, peopleActionSummary } from "@/lib/peopleState";
 import type { PeopleResponse } from "@/lib/api";
 
 /**
@@ -111,6 +111,25 @@ describe("People failure copy", () => {
     } as Partial<PeopleResponse>);
     expect(result.message).toContain("20 people searches");
     expect(result.message).not.toContain("capacity");
+  });
+
+  /**
+   * A retired search contract means the stored result is no longer an answer
+   * about this company. Reporting it as a verified empty result is the one
+   * claim this module exists to prevent — and it is the claim users saw while
+   * the PDL adapter was dropping every candidate it normalized.
+   */
+  it("treats a retired-contract result as unsearched, not as nobody found", () => {
+    const result = view({ status: "stale" });
+    expect(result.state).toBe("not_loaded");
+    expect(result.message).not.toBe(PEOPLE_MESSAGES.empty);
+    expect(result.message).not.toMatch(/no verified professional profiles/i);
+  });
+
+  it("agrees with the job-card summary about a retired-contract result", () => {
+    // Two derivations of the same fact must not contradict each other.
+    expect(peopleActionSummary(payload({ status: "stale" })).state).toBe("not_searched");
+    expect(view({ status: "stale" }).state).toBe("not_loaded");
   });
 
   it("never names a provider in any user-facing message", () => {

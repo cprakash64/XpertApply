@@ -25,6 +25,12 @@ class PeopleErrorCode(StrEnum):
     """Every way a people search can fail to produce provider results."""
 
     INVALID_INPUT = "INVALID_INPUT"
+    # The provider answered, but not in a shape this adapter can read. Distinct
+    # from INVALID_INPUT, which blames *our* request: a response we cannot parse
+    # is the provider's contract breaking, and another provider can plausibly
+    # answer the same question. Conflating the two meant a PDL contract break
+    # was recorded as our own bad request and silently blocked Apollo fallback.
+    PROVIDER_CONTRACT_ERROR = "PROVIDER_CONTRACT_ERROR"
     COMPANY_DOMAIN_UNRESOLVED = "COMPANY_DOMAIN_UNRESOLVED"
     NO_RESULTS = "NO_RESULTS"
     AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
@@ -47,6 +53,10 @@ CircuitKind = str  # "transient" | "configuration" | "budget"
 _CIRCUIT_SCOPE: dict[PeopleErrorCode, CircuitKind | None] = {
     # Request-scoped. One malformed company must not pause the product.
     PeopleErrorCode.INVALID_INPUT: None,
+    # Request-scoped on purpose: a contract break must not trip a circuit and
+    # turn one bad response into a retry storm, but it must not pause the
+    # product either. Fallback is what carries the request.
+    PeopleErrorCode.PROVIDER_CONTRACT_ERROR: None,
     PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED: None,
     PeopleErrorCode.NO_RESULTS: None,
     PeopleErrorCode.REQUEST_CANCELLED: None,
@@ -79,6 +89,16 @@ _FALLBACK_ELIGIBLE: frozenset[PeopleErrorCode] = frozenset(
         PeopleErrorCode.PROVIDER_TIMEOUT,
         PeopleErrorCode.PROVIDER_SERVER_ERROR,
         PeopleErrorCode.NETWORK_ERROR,
+        # A revoked key, an expired plan, or a grant the account does not have
+        # stops *that* provider permanently — retrying cannot fix it, which is
+        # why these still open the configuration circuit. But they say nothing
+        # about whether a second, healthy, fully-credentialed provider can
+        # answer. Excluding them meant one bad PDL credential took the whole
+        # feature down while Apollo sat idle and working.
+        PeopleErrorCode.AUTHENTICATION_FAILED,
+        PeopleErrorCode.AUTHORIZATION_FAILED,
+        # Likewise: the provider broke its contract, not the question.
+        PeopleErrorCode.PROVIDER_CONTRACT_ERROR,
     }
 )
 
@@ -112,8 +132,9 @@ _REASON_TO_CODE: dict[str, PeopleErrorCode] = {
         PeopleErrorCode.AUTHENTICATION_FAILED
     ),
     "provider_request_invalid": PeopleErrorCode.INVALID_INPUT,
-    "provider_response_invalid": PeopleErrorCode.INVALID_INPUT,
-    "provider_schema_error": PeopleErrorCode.INVALID_INPUT,
+    # Provider-side contract breaks, not request defects.
+    "provider_response_invalid": PeopleErrorCode.PROVIDER_CONTRACT_ERROR,
+    "provider_schema_error": PeopleErrorCode.PROVIDER_CONTRACT_ERROR,
     # A 404 that is not the provider's documented "no records" envelope: the
     # route or API version is wrong. Request-scoped so a deploy mistake cannot
     # pause the provider, but named distinctly so it is visible in logs.
@@ -129,6 +150,7 @@ _REASON_TO_CODE: dict[str, PeopleErrorCode] = {
 # The reverse direction, used when a typed code needs a persisted reason.
 _CODE_TO_REASON: dict[PeopleErrorCode, str] = {
     PeopleErrorCode.INVALID_INPUT: "provider_request_invalid",
+    PeopleErrorCode.PROVIDER_CONTRACT_ERROR: "provider_schema_error",
     PeopleErrorCode.COMPANY_DOMAIN_UNRESOLVED: "company_domain_unresolved",
     PeopleErrorCode.NO_RESULTS: "no_results",
     PeopleErrorCode.AUTHENTICATION_FAILED: "provider_unauthorized",

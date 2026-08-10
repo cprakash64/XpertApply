@@ -42,10 +42,8 @@ from app.people.actionable import (
 )
 from app.people.brightdata import (
     BRIGHTDATA_PROFILE_STRATEGY_VERSION,
-    BrightDataPeopleProvider,
-)
-from app.people.brightdata import (
-    discovery_configuration_gap as brightdata_discovery_gap,
+    verification_configuration_gap,
+    verify_candidates,
 )
 from app.people.circuit import CircuitSnapshot, circuit_state
 from app.people.coalescing import (
@@ -71,6 +69,7 @@ from app.people.finalization import (
     every_failure_was_a_budget_stop,
 )
 from app.people.finalization import dominant_failure as _dominant_failure
+from app.people.funnel_health import FunnelCounts, emit_funnel_health
 from app.people.intelligence import extract_job_people_profile
 from app.people.observability import metric
 from app.people.openai_web import OPENAI_IDENTITY_VERSION, OpenAIWebPeopleProvider
@@ -715,11 +714,153 @@ def _normalized_linkedin(value: str | None) -> str | None:
     return safe_profile_url(value)
 
 
+def _name_token(token: str) -> str:
+    """Capitalize one name token, but only when it carries no casing of its own.
+
+    A token that is already mixed-case is left exactly as written: "McDonald",
+    "O'Brien", "van der Berg" and "d'Angelo" are how those people spell their
+    names, and "correcting" them is worse than leaving a lowercase token alone.
+    """
+
+    if not token or not token.islower():
+        return token
+    # Capitalize across internal punctuation so "o'brien" -> "O'Brien" and
+    # "anne-marie" -> "Anne-Marie".
+    result = token
+    for separator in ("'", "’", "-"):
+        # Upper-case the leading letter only. ``str.capitalize`` lower-cases the
+        # remainder, so a later separator pass would undo an earlier one and
+        # turn "O'Brien" back into "O'brien".
+        result = separator.join(
+            part[:1].upper() + part[1:] for part in result.split(separator)
+        )
+    return result
+
+
+def _linkedin_message(
+    *,
+    first_name: str | None,
+    short_title: str,
+    company: str,
+    qualifications: list[str],
+    category: str,
+    person_title: str | None,
+    shared_line: str,
+    user_first_name: str,
+) -> str:
+    """The LinkedIn variant of an outreach draft: one paragraph, 35-65 words.
+
+    Built from the same verified fields as the email. It claims nothing the
+    email does not: no requisition ownership, no relationship that structured
+    evidence has not already established, and no referral request.
+    """
+
+    greeting = f"Hi {first_name} —" if first_name else "Hi —"
+    opening = f" I’m applying for the {short_title} role at {company}."
+    relevance = (
+        f" My background in {_join_naturally(qualifications)} is closely related."
+        if qualifications
+        else ""
+    )
+    # Only evidence the deterministic engine already verified for the email.
+    shared = f" {shared_line.strip()}" if shared_line.strip() else ""
+    if category == "likely_recruiter":
+        ask = (
+            f" Since you work in recruiting at {company}, is there anything the "
+            "team is prioritizing most for this opening?"
+        )
+    elif category == "potential_hiring_manager":
+        ask = (
+            " I’d appreciate any perspective you can share about what the team "
+            "values most for this position."
+        )
+    else:
+        role_note = (
+            f" I noticed your work as {person_title}."
+            if person_title and not shared
+            else ""
+        )
+        ask = (
+            f"{role_note} I’d appreciate any perspective you can share about the "
+            "team or company."
+        )
+    sign_off = f" Thanks, {user_first_name}" if user_first_name else " Thanks"
+    return f"{greeting}{opening}{relevance}{shared}{ask}{sign_off}".strip()
+
+
+def _join_naturally(items: list[str]) -> str:
+    """"a", "a and b", "a, b, and c" — never a bare comma-joined keyword list."""
+
+    values = [item for item in items if item]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]} and {values[1]}"
+    return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+
+# Posting artifacts that carry no meaning in a subject line. Specialization is
+# never stripped — "DevX", "Machine Learning" and "Trust and Safety" are what
+# the role actually is.
+_TITLE_ARTIFACT = re.compile(
+    r"\s*[\(\[][^)\]]*(?:req(?:uisition)?|job\s*id|#\s*\d|20\d\d|remote|hybrid|"
+    r"onsite|contract|full[\s-]?time|part[\s-]?time)[^)\]]*[\)\]]",
+    re.IGNORECASE,
+)
+_TITLE_REQ_CODE = re.compile(r"\s*[-–—]?\s*\b(?:req|jr|r)[-#]?\d{3,}\b", re.IGNORECASE)
+
+
+def outreach_job_title(title: str, *, max_length: int = 45) -> str:
+    """A job title fit for a subject line. Never mutates the stored title.
+
+    Trims requisition codes, intake years and posting qualifiers. A long nested
+    expansion — "Staff Software Engineer, DevX (Developer Infrastructure)" — is
+    reduced to its leading clause only when the full form is too long for a
+    subject, so the specialization ("DevX") survives.
+    """
+
+    cleaned = _TITLE_ARTIFACT.sub("", (title or "").strip())
+    cleaned = _TITLE_REQ_CODE.sub("", cleaned).strip(" -–—,")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if len(cleaned) <= max_length:
+        return cleaned or (title or "").strip()
+    # Drop a trailing parenthetical expansion before touching the name itself.
+    without_paren = re.sub(r"\s*\([^)]*\)\s*$", "", cleaned).strip()
+    if without_paren and len(without_paren) <= max_length:
+        return without_paren
+    return (without_paren or cleaned)[:max_length].rstrip(" ,-–—")
+
+
 def _display_name(value: str) -> str:
+    """A name fit to appear in a greeting or a signature.
+
+    Previously this only acted when the *entire* string was lowercase and had at
+    least two words, so the two shapes that actually reach it were both missed:
+    a single lowercase token ("natalie") and a partially-corrected name
+    ("chandra prakash Pandey"). Both rendered verbatim into outreach — "Hi
+    natalie," is the first thing the recipient reads.
+    """
+
     stripped = value.strip()
-    if re.fullmatch(r"[a-z]+(?: [a-z]+)+", stripped):
-        return " ".join(part.capitalize() for part in stripped.split())
-    return stripped
+    if not stripped:
+        return stripped
+    return " ".join(_name_token(token) for token in stripped.split())
+
+
+def _first_name(full_name: str) -> str | None:
+    """The recipient's first name, or ``None`` when it cannot be trusted.
+
+    A greeting is the most visible text in the message, so a malformed or
+    masked record falls back to a plain "Hi," rather than guessing.
+    """
+
+    for token in (full_name or "").strip().split():
+        letters = re.sub(r"[^A-Za-z]", "", token)
+        if len(letters) >= 2:
+            return _name_token(token)
+    return None
 
 
 def _same_identity(left: ProviderPerson, right: ProviderPerson) -> bool:
@@ -740,6 +881,26 @@ def deduplicate(people: list[ProviderPerson]) -> list[ProviderPerson]:
         if not any(_same_identity(person, existing) for existing in result):
             result.append(person)
     return result
+
+
+def _relationship_signals_available(db: Session, user_id: int) -> bool:
+    """Can a shared-background comparison produce a signal for this user at all?
+
+    False when the feature is off, or when the user has stored neither
+    education nor employment history — in both cases ``_shared_evidence`` can
+    only ever return ``(None, None)``, and scoring must not read that as
+    "checked, found nothing".
+    """
+
+    if not settings.people_network_matching_enabled:
+        return False
+    has_education = db.scalar(
+        select(Education.id).where(Education.user_id == user_id).limit(1)
+    )
+    has_experience = db.scalar(
+        select(Experience.id).where(Experience.user_id == user_id).limit(1)
+    )
+    return bool(has_education or has_experience)
 
 
 def _shared_evidence(
@@ -2343,171 +2504,6 @@ class _PDLStep:
         )
 
 
-class _BrightDataStep:
-    """Bright Data professional-profile discovery, gated on a known contract.
-
-    Bright Data is the intended primary: it is the only configured provider that
-    returns a complete name *and* the profile URL in one record, which is
-    exactly what the actionable-contact policy requires and what Apollo's
-    masked, linkless People Search could never satisfy.
-
-    Discovery reports ``INVALID_CONFIGURATION`` until a discovery dataset id is
-    supplied, because Bright Data's people-discovery input schema is
-    account-specific and unpublished. That is a deliberate refusal to guess a
-    paid provider's request shape, not a missing feature — the async lifecycle
-    behind it is implemented and tested.
-    """
-
-    name = "brightdata"
-    # Bright Data returns complete profile records; there is no second
-    # enrichment call to make.
-    candidates_pre_enriched = True
-
-    def __init__(
-        self,
-        db: Session,
-        *,
-        user: User,
-        job_id: int,
-        run: PeopleDiscoveryRun,
-        profile: JobPeopleSearchProfile,
-    ) -> None:
-        self._db = db
-        self._user = user
-        self._job_id = job_id
-        self._run = run
-        self._profile = profile
-        self.provider: BrightDataPeopleProvider | None = None
-
-    def availability(self) -> ProviderAvailability:
-        if not settings.people_brightdata_discovery_enabled:
-            return ProviderAvailability.blocked("brightdata", SkipReason.DISABLED)
-        if not (settings.brightdata_api_token or "").strip():
-            return ProviderAvailability.blocked(
-                "brightdata", SkipReason.MISSING_CREDENTIALS
-            )
-        gap = brightdata_discovery_gap()
-        if gap is not None:
-            return ProviderAvailability.blocked(
-                "brightdata", SkipReason.INVALID_CONFIGURATION, gap
-            )
-        if not (self._profile.company_domain or self._profile.company_name):
-            return ProviderAvailability.blocked(
-                "brightdata", SkipReason.COMPANY_UNRESOLVED
-            )
-        blocked = _provider_budget_state(
-            self._db,
-            provider="brightdata",
-            user_id=self._user.id,
-            global_budget=settings.people_brightdata_daily_record_budget,
-            per_user_budget=settings.people_brightdata_per_user_daily_limit,
-        )
-        if blocked:
-            return ProviderAvailability.blocked("brightdata", blocked)
-        snapshot = circuit_state(
-            provider="brightdata",
-            account_fingerprint=provider_account_fingerprint(
-                settings.brightdata_api_token
-            ),
-            operation="people_search",
-        )
-        if snapshot.open_kinds:
-            return ProviderAvailability.blocked("brightdata", SkipReason.CIRCUIT_OPEN)
-        return ProviderAvailability.ok("brightdata")
-
-    def gate(self, categories: tuple[PeopleCategory, ...]) -> None:
-        self.availability().raise_if_blocked()
-
-    async def run(
-        self, categories: tuple[PeopleCategory, ...], call_budget: int
-    ) -> ProviderStepResult:
-        provider = BrightDataPeopleProvider()
-        self.provider = provider
-        found: dict[PeopleCategory, list[ProviderPerson]] = {
-            category: [] for category in _PEOPLE_CATEGORIES
-        }
-        counts: dict[str, int] = defaultdict(int)
-        no_match: set[str] = set()
-        failure: str | None = None
-        warnings: list[str] = []
-        calls = 0
-        raw_total = 0
-
-        # Only the categories still missing. A category the chain already
-        # covered is never re-bought.
-        for category in categories:
-            if calls >= call_budget:
-                break
-            queries = build_category_search_queries(self._profile, category)
-            if not queries:
-                continue
-            outcome = await provider.discover(
-                _brightdata_inputs(self._profile, queries[0]),
-                discover_by="keyword",
-                company_name=self._profile.company_name,
-                company_aliases=tuple(self._profile.company_aliases),
-                company_domain=self._profile.company_domain,
-                categories=(category,),
-            )
-            calls += max(1, outcome.calls)
-            raw_total += outcome.records_returned
-            counts["search_results_received"] += outcome.records_returned
-            counts["search_candidates_normalized"] += len(outcome.candidates)
-            for reason, count in outcome.rejected.items():
-                counts[f"rejected_{reason}"] += count
-            if outcome.failure_reason:
-                failure = failure or outcome.failure_reason
-                warnings.extend(outcome.warnings)
-                break
-            if not outcome.candidates:
-                no_match.add(category)
-                continue
-            found[category] = deduplicate(outcome.candidates)
-
-        accepted = sum(len(rows) for rows in found.values())
-        counts["candidates_accepted"] = accepted
-        logger.info(
-            "brightdata_candidate_funnel discovery_run_id=%s %s",
-            self._run.id,
-            " ".join(f"{key}={counts[key]}" for key in sorted(counts)),
-        )
-        return ProviderStepResult(
-            candidates=found,
-            calls=calls,
-            raw_count=raw_total,
-            no_match_categories=no_match,
-            failure_reason=failure,
-            warnings=warnings,
-            stage_counts=dict(counts),
-            outcome=_provider_step_outcome(
-                searched=calls > 0 and failure is None,
-                failure=failure,
-                accepted=accepted,
-                enrichment_failed=False,
-            ),
-        )
-
-
-def _brightdata_inputs(
-    profile: JobPeopleSearchProfile, query: PeopleSearchQuery
-) -> list[dict[str, object]]:
-    """Keyword-discovery inputs, built only from fields Bright Data documents.
-
-    ``discover_by=keyword`` is the one published discovery mode that can carry a
-    company plus a role, so the keyword is the canonical employer name and the
-    category's strongest title. No undocumented field name is invented here; if
-    an account's discovery dataset expects a different shape, the operator
-    supplies the dataset id and this is the shape to confirm first.
-    """
-
-    titles = query.titles[:3] or [query.title_group]
-    return [
-        {"keyword": f"{profile.company_name} {title}".strip()}
-        for title in titles
-        if title
-    ]
-
-
 class _ApolloFallbackStep:
     """Apollo People Search, then enrichment for the few survivors.
 
@@ -2975,6 +2971,91 @@ async def _combined_usage(providers: list[object]) -> ProviderUsage:
     )
 
 
+# Providers whose candidates are a *sighting* rather than a data contract, and
+# so may never be displayed until Bright Data has confirmed the real profile.
+_REQUIRES_VERIFICATION: frozenset[str] = frozenset({"openai_web"})
+
+
+async def _verify_discovered_candidates(
+    categories: dict[PeopleCategory, list[ProviderPerson]],
+    *,
+    profile: JobPeopleSearchProfile,
+    diagnostics: dict[str, dict],
+    run_id: int,
+) -> tuple[dict[PeopleCategory, list[ProviderPerson]], object | None]:
+    """Replace unverified sightings with Bright Data's confirmed record.
+
+    Returns the categories with verified candidates substituted in and
+    unconfirmed ones removed, plus the verification result for diagnostics.
+    ``None`` means nothing needed verifying.
+
+    Candidates from structured providers pass through untouched: PDL answers
+    with its own employment contract, and paying to re-fetch it would buy
+    nothing.
+    """
+
+    pending = [
+        person
+        for rows in categories.values()
+        for person in rows
+        if person.provider in _REQUIRES_VERIFICATION
+    ]
+    if not pending:
+        return categories, None
+
+    gap = verification_configuration_gap()
+    if gap is not None:
+        logger.warning(
+            "people_verification_unavailable provider=brightdata discovery_run_id=%s "
+            "pending=%s detail=%s",
+            run_id,
+            len(pending),
+            gap,
+        )
+    result = await verify_candidates(
+        pending,
+        company_name=profile.company_name,
+        company_aliases=tuple(profile.company_aliases),
+        company_domain=profile.company_domain,
+    )
+    confirmed_by_url = {
+        person.linkedin_url: person for person in result.confirmed if person.linkedin_url
+    }
+    verified: dict[PeopleCategory, list[ProviderPerson]] = {}
+    for category in _PEOPLE_CATEGORIES:
+        kept: list[ProviderPerson] = []
+        for person in categories.get(category, []):
+            if person.provider not in _REQUIRES_VERIFICATION:
+                kept.append(person)
+                continue
+            match = confirmed_by_url.get(safe_profile_url(person.linkedin_url))
+            if match is not None:
+                kept.append(match)
+        dropped = len(categories.get(category, [])) - len(kept)
+        if dropped:
+            counts = diagnostics.setdefault(category, {}).setdefault(
+                "rejection_reason_counts", {}
+            )
+            counts["profile_not_verified"] = counts.get("profile_not_verified", 0) + dropped
+        verified[category] = kept
+    metric(
+        "people_profiles_verified_total",
+        len(result.confirmed),
+        provider="brightdata",
+    )
+    logger.info(
+        "people_verification discovery_run_id=%s pending=%s confirmed=%s "
+        "records=%s rejected=%s failure=%s",
+        run_id,
+        len(pending),
+        len(result.confirmed),
+        result.records_returned,
+        dict(sorted(result.rejected.items())),
+        result.failure_reason or "none",
+    )
+    return verified, result
+
+
 def _build_provider_steps(
     db: Session,
     *,
@@ -2992,12 +3073,17 @@ def _build_provider_steps(
     waterfall was consulted, so PDL was first by construction and no
     configuration could change that. Now the order is the only thing that
     decides, which is what lets the chain be
-    ``brightdata -> openai_web -> pdl``.
+    ``openai_web -> pdl``, with Bright Data verifying the result.
     """
 
     steps: list[ProviderStep] = []
     by_name: dict[str, object] = {}
     for name in configured_provider_order():
+        if name == "brightdata":
+            # Bright Data discovers nothing. It verifies what the discovery
+            # providers found, in a pass of its own after the chain has run, so
+            # it is deliberately not a search step.
+            continue
         if name in {"pdl", "mock"}:
             step: object = _PDLStep(
                 db,
@@ -3008,10 +3094,6 @@ def _build_provider_steps(
                 diagnostics=diagnostics,
                 company_context=company_context,
                 strategy=strategy,
-            )
-        elif name == "brightdata":
-            step = _BrightDataStep(
-                db, user=user, job_id=job_id, run=run, profile=profile
             )
         elif name == "apollo":
             step = _ApolloFallbackStep(
@@ -3216,6 +3298,7 @@ async def _discover_once(
                 "controls": {
                     "email_discovery": settings.people_email_discovery_enabled,
                     "outreach_drafting": settings.people_outreach_drafting_enabled,
+                    "outreach_ai_improvement": settings.people_outreach_ai_enabled,
                 },
             }
         # Recheck after lock acquisition.
@@ -3428,7 +3511,53 @@ async def _discover_once(
                         web_step.rejected
                     )
 
+            pipeline_stage = "verification"
+            # Public-web discovery finds a *cited* profile; it cannot confirm
+            # that the person still works there. Bright Data fetches each
+            # discovered URL and its answer replaces what the discovering
+            # provider claimed. A candidate that cannot be confirmed is dropped
+            # here — never displayed with an unverified badge, because a user
+            # cannot act on the difference.
+            categories, verification = await _verify_discovered_candidates(
+                categories, profile=profile, diagnostics=diagnostics, run_id=run.id
+            )
+            if verification is not None:
+                provider_calls += verification.calls
+                provider_outcomes["brightdata"] = (
+                    ProviderOutcome.SEARCH_SUCCESS_ENRICHMENT_SUCCESS.value
+                    if verification.confirmed
+                    else ProviderOutcome.SEARCH_FAILED.value
+                    if verification.failure_reason
+                    else ProviderOutcome.SEARCH_NO_MATCH.value
+                )
+                if "brightdata" not in providers_attempted:
+                    providers_attempted.append("brightdata")
+                if verification.failure_reason:
+                    # Verification is not optional: without it a public-web
+                    # sighting has no evidence behind it, so its failure is the
+                    # reason those candidates are missing.
+                    warnings.append(verification.failure_reason)
+                company_context["verification"] = {
+                    "provider": "brightdata",
+                    "confirmed": len(verification.confirmed),
+                    "records_returned": verification.records_returned,
+                    "rejected": dict(sorted(verification.rejected.items())),
+                    "failure_reason": verification.failure_reason,
+                }
+
             pipeline_stage = "enrichment"
+
+            # Whether a user-relationship comparison can run at all for this
+            # user. When it cannot, the relationship weights are excluded from
+            # scoring rather than counted as absent evidence — otherwise no
+            # referral candidate can reach the acceptance threshold. Computed
+            # once per discovery: it depends on the user, not the candidate.
+            relationship_signals_available = _relationship_signals_available(db, user.id)
+            metric(
+                "people_relationship_signals_available_total",
+                1,
+                status=("available" if relationship_signals_available else "unavailable"),
+            )
 
             preliminary_by_category: dict[PeopleCategory, list[PreliminaryCandidate]] = {
                 category: [] for category in _PEOPLE_CATEGORIES
@@ -3439,6 +3568,7 @@ async def _discover_once(
                     score = score_candidate(
                         category, person, profile,
                         shared_school=bool(school), shared_employer=bool(employer),
+                        relationship_signals_available=relationship_signals_available,
                     )
                     preliminary_by_category[category].append(
                         (score, category, person, school, employer)
@@ -3623,6 +3753,13 @@ async def _discover_once(
                 "potential_hiring_manager": settings.people_max_displayed_managers,
                 "potential_referrer": settings.people_max_displayed_referrers,
             }
+            # Per-provider funnel tallies for the acceptance-ratio health check.
+            # The raw counters emitted below were all present during the
+            # profile-URL incident; only the ratio computed from them
+            # distinguishes an adapter defect from a company with no matches.
+            funnel_evaluated: dict[str, int] = {}
+            funnel_accepted: dict[str, int] = {}
+            funnel_rejections: dict[str, dict[str, int]] = {}
             for _, category, initial, school, employer in enrich_targets:
                 if displayed[category] >= caps[category]:
                     diagnostics[category]["display_cap_excluded"] += 1
@@ -3642,6 +3779,7 @@ async def _discover_once(
                 score = score_candidate(
                     category, person, profile,
                     shared_school=bool(school), shared_employer=bool(employer),
+                    relationship_signals_available=relationship_signals_available,
                 )
                 data_confidence = confidence(person)
                 threshold = _category_threshold(category)
@@ -3805,6 +3943,14 @@ async def _discover_once(
                     employment_status=employment.status,
                 )
                 metric("people_contacts_evaluated_total", provider=person.provider)
+                funnel_evaluated[person.provider] = (
+                    funnel_evaluated.get(person.provider, 0) + 1
+                )
+                for reason in decision.rejection_reasons:
+                    provider_reasons = funnel_rejections.setdefault(
+                        person.provider, {}
+                    )
+                    provider_reasons[reason] = provider_reasons.get(reason, 0) + 1
                 if not decision.accepted:
                     # Merged, not counted: the suppression branch below tallies
                     # every reason exactly once, and counting here as well
@@ -3821,6 +3967,9 @@ async def _discover_once(
                     person = decision.candidate or person
                     metric(
                         "people_contacts_accepted_total", provider=person.provider
+                    )
+                    funnel_accepted[person.provider] = (
+                        funnel_accepted.get(person.provider, 0) + 1
                     )
                 if rejection_reasons:
                     pipeline_stage = "recommendation_persistence"
@@ -3950,6 +4099,22 @@ async def _discover_once(
                     scoring_version=SCORING_VERSION,
                 )
                 pipeline_stage = "employment_validation"
+            # One verdict per provider per run. A provider that returned records
+            # and converted none of them into contacts is an integration
+            # failure, and it must be visible as such rather than as a company
+            # that happens to have no matching employees.
+            for provider_name, evaluated in funnel_evaluated.items():
+                emit_funnel_health(
+                    FunnelCounts(
+                        provider=provider_name,
+                        raw=evaluated,
+                        normalized=evaluated,
+                        accepted=funnel_accepted.get(provider_name, 0),
+                        rejections_by_reason=funnel_rejections.get(
+                            provider_name, {}
+                        ),
+                    )
+                )
             usage = await _combined_usage(step_providers)
             run = db.get(PeopleDiscoveryRun, run.id)
             any_displayed = any(displayed.values())
@@ -4526,6 +4691,9 @@ def recommendations_payload(db: Session, user: User, job_id: int) -> dict:
         "controls": {
             "email_discovery": settings.people_email_discovery_enabled,
             "outreach_drafting": settings.people_outreach_drafting_enabled,
+            # Availability only. The endpoint re-checks the flag itself, so this
+            # is a rendering hint and never the security boundary.
+            "outreach_ai_improvement": settings.people_outreach_ai_enabled,
         },
     }
 
@@ -4784,8 +4952,10 @@ def outreach_draft(
     job = _job_or_404(db, job_id)
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
     name = (profile.full_name if profile else "") or "a candidate"
-    first_name = person.canonical_full_name.split()[0]
-    greeting = f"Hi {first_name},"
+    # "Hi natalie," was reaching real recipients. A name with no reliable first
+    # token gets a plain greeting rather than a guess.
+    first_name = _first_name(person.canonical_full_name)
+    greeting = f"Hi {first_name}," if first_name else "Hi,"
     facts_used = [
         f"job:{job.title}",
         f"company:{job.company}",
@@ -4819,33 +4989,31 @@ def outreach_draft(
     qualification_line = ""
     if qualifications:
         qualification_line = (
-            " My relevant experience includes "
-            + " and ".join(qualifications)
-            + "."
+            " My background in "
+            + _join_naturally(qualifications)
+            + " seems closely related to the position."
         )
         facts_used.extend(f"applicant_skill:{value}" for value in qualifications)
-    advertised_skills = [
-        str(value).strip()
-        for value in (job.required_skills or [])
-        if str(value).strip()
-    ][:2]
+    # One relevance sentence, never two. The old draft emitted "My relevant
+    # experience includes CI/CD and Python." immediately followed by "The
+    # posting specifically emphasizes Python and Go." — two mechanically joined
+    # keyword lists that overlap, restate each other, and read as generated.
+    # The applicant's own skills are the honest half: the posting's
+    # requirements are already known to the recipient.
     job_focus_line = ""
-    if advertised_skills:
-        job_focus_line = (
-            " The posting specifically emphasizes "
-            + " and ".join(advertised_skills)
-            + "."
-        )
-        facts_used.extend(f"job_skill:{value}" for value in advertised_skills)
+    if qualifications:
+        facts_used.extend(f"job_skill:{value}" for value in qualifications)
 
     if candidate.candidate_category == "likely_recruiter":
+        # Present tense only. "I applied" asserts a submitted application, and
+        # nothing in this code path checks whether one exists.
         role_line = (
-            f" I applied for the {job.title} role at {job.company}."
+            f" I’m applying for the {job.title} role at {job.company}."
             f"{qualification_line}{job_focus_line}"
         )
         ask = (
-            " If you handle this area, could you point me to the most useful "
-            "information to include for the recruiting team?"
+            " Is there anything the recruiting team is prioritizing most for "
+            "this opening?"
         )
         omitted = ["recruiter_assignment_unconfirmed"]
     elif candidate.candidate_category == "potential_hiring_manager":
@@ -4891,26 +5059,16 @@ def outreach_draft(
         close = "Thanks for your time."
     core = f"{greeting}{opener}{shared_line}{role_line}{guidance_line}{ask}"
     if request.message_type == "email":
-        category_context = {
-            "likely_recruiter": (
-                "I want to give the recruiting team the clearest, most relevant "
-                "summary rather than send a broad introduction."
-            ),
-            "potential_hiring_manager": (
-                "I’m especially interested in how the advertised work maps to "
-                "the engineering priorities your function is solving."
-            ),
-            "potential_referrer": (
-                "I’m looking for candid context before making any request beyond "
-                "learning more about the opportunity."
-            ),
-        }[candidate.candidate_category]
-        body = (
-            f"{core}\n\n{category_context} That context would help me keep the "
-            "application focused and useful. I’m happy to share a concise resume "
-            f"or clarify any relevant experience.\n\n{close}\n{name}"
-        )
-        subject = f"Question about {job.title} at {job.company}"
+        # An outreach email is three things: why the role is relevant, one
+        # practical question, and a brief close. It used to carry a fourth
+        # paragraph — a category preamble, plus "That context would help me keep
+        # the application focused and useful", plus "I’m happy to share a
+        # concise resume or clarify any relevant experience" — roughly forty
+        # words that restated the ask already made in `core` and read as
+        # generated filler. Removed rather than reworded: the sentences had no
+        # job to do.
+        body = f"{core}\n\n{close}\n{name}"
+        subject = f"Quick question about the {outreach_job_title(job.title)} role"
     elif request.message_type == "linkedin_connection_note":
         body = f"{greeting}{role_line}{ask}"
         if len(body) > 300:
@@ -4921,21 +5079,13 @@ def outreach_draft(
         body = body[:300]
         subject = None
     else:
-        direct_context = {
-            "likely_recruiter": (
-                "I want to make the application easy for the recruiting team "
-                "to review."
-            ),
-            "potential_hiring_manager": (
-                "I’m trying to understand how the advertised work connects to "
-                "the function’s current engineering priorities."
-            ),
-            "potential_referrer": (
-                "I’m looking for candid context before making any request beyond "
-                "learning about the opportunity."
-            ),
-        }[candidate.candidate_category]
-        body = f"{core}\n\n{direct_context}\n\n{close}\n{name}"
+        # The LinkedIn branch carried its own copy of the category preamble that
+        # was removed from the email branch earlier — which is why
+        # "I want to make the application easy for the recruiting team to
+        # review." kept appearing after it had supposedly been deleted. There
+        # were two builders and only one was fixed. A LinkedIn message is one
+        # short paragraph: greeting, relevance, one question, sign-off.
+        body = f"{core}\n\n{close}\n{name}"
         subject = None
     # Channel handoff evidence. The client opens LinkedIn or an email composer
     # only from these values — it never derives a profile URL from a name or a
@@ -4947,10 +5097,26 @@ def outreach_draft(
         else None
     )
     generation_path = "deterministic_template"
+    # A LinkedIn message is not a short email: no subject, no multi-line
+    # signature, one paragraph. Built from the same verified inputs as the
+    # email so the two can never drift, and returned with every draft so the
+    # card can copy it synchronously from a click — a message fetched *by* the
+    # click would race the popup and lose.
+    linkedin_body = _linkedin_message(
+        first_name=first_name,
+        short_title=outreach_job_title(job.title),
+        company=job.company,
+        qualifications=qualifications,
+        category=candidate.candidate_category,
+        person_title=person.current_title,
+        shared_line=shared_line,
+        user_first_name=_first_name(name) or "",
+    )
     response = {
         "message_type": request.message_type,
         "subject": subject,
         "body": body,
+        "linkedin_body": linkedin_body,
         "draft": body,
         "facts_used": facts_used,
         "assumptions": [],

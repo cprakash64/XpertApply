@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-TITLE_ONTOLOGY_VERSION = "people-title-v2"
+# v3: curated morphology (engineering≡engineer) plus a domain/role conflict
+# guard. Both change which candidates are accepted, so results stored under v2
+# are not comparable. This feeds SCORING_VERSION and therefore
+# PEOPLE_SEARCH_CONTRACT_VERSION, which retires those runs rather than replaying
+# them.
+TITLE_ONTOLOGY_VERSION = "people-title-v3"
 
 _PHRASE_EQUIVALENTS = {
     "artificial intelligence": "ai",
@@ -26,11 +31,69 @@ _TOKEN_EQUIVALENTS = {
     "mgr": "manager",
     "dir": "director",
     "dev": "engineer",
+    "developer": "engineer",
     "developers": "engineer",
     "engineers": "engineer",
     "recruiters": "recruiter",
     "managers": "manager",
+    # Curated morphology, not a stemmer. A general stemmer collapses tokens that
+    # mean different things in job titles ("analytics" is not "analyst"), so
+    # only the discipline/role pairs that genuinely denote the same work are
+    # listed, one at a time.
+    #
+    # The gap this closes: "Software Engineering" and "Software Engineer" shared
+    # only one token, scoring 0.425 against a 0.42 floor — real employees were
+    # discarded *after* their records had already been paid for.
+    "engineering": "engineer",
+    "recruiting": "recruiter",
+    "recruitment": "recruiter",
+    "management": "manager",
+    "directors": "director",
+    "analysts": "analyst",
+    "scientists": "scientist",
+    "architects": "architect",
+    "designers": "designer",
+    "specialists": "specialist",
+    "partners": "partner",
+    # Deliberately NOT mapped: "development" -> "engineer". "Business
+    # Development" is a sales function, and collapsing it would make a Business
+    # Development Manager match an Engineering Manager.
+    # Also NOT mapped: "analytics" -> "analyst". A Data Analytics Engineer and a
+    # Data Analyst are different jobs.
 }
+
+# Role nouns that appear in a large share of professional titles and therefore
+# carry almost no matching signal on their own. "Civil Engineer" and "Software
+# Engineer" overlap only here, as do "Product Manager" and "Product Engineer" —
+# and before this guard every one of those pairs scored an identical 0.425,
+# indistinguishable from a genuine match, and all of them cleared the referral
+# floor. A shared head noun is not evidence of a shared role.
+_GENERIC_ROLE_TOKENS = frozenset(
+    {
+        "engineer",
+        "manager",
+        "director",
+        "analyst",
+        "scientist",
+        "recruiter",
+        "specialist",
+        "partner",
+        "architect",
+        "designer",
+        "lead",
+        "head",
+        "senior",
+        "junior",
+        "staff",
+        "principal",
+        "associate",
+        "intern",
+        "consultant",
+        "coordinator",
+        "officer",
+        "executive",
+    }
+)
 
 _EARLY_CAREER_MARKERS = (
     "intern",
@@ -178,10 +241,26 @@ def title_similarity(value: str | None, choices: list[str]) -> float:
         right = set(normalize_title(choice).split())
         if not right:
             continue
-        overlap = len(left & right)
+        shared = left & right
+        overlap = len(shared)
         containment = overlap / max(1, len(right))
         jaccard = overlap / max(1, len(left | right))
-        best = max(best, 0.55 * containment + 0.45 * jaccard)
+        score = 0.55 * containment + 0.45 * jaccard
+        # A professional title is a domain qualifier plus a role noun ("civil"
+        # + "engineer"). Two titles are only similar when neither part
+        # *conflicts*. Before this guard, "Civil Engineer" vs "Software
+        # Engineer", "Product Manager" vs "Product Engineer" and "Data
+        # Engineer" vs "Data Analyst" all scored an identical 0.425 — the same
+        # score as a genuine match, and all above the referral floor.
+        left_roles, right_roles = left & _GENERIC_ROLE_TOKENS, right & _GENERIC_ROLE_TOKENS
+        left_domain, right_domain = left - _GENERIC_ROLE_TOKENS, right - _GENERIC_ROLE_TOKENS
+        conflicting_domain = bool(left_domain and right_domain and not (left_domain & right_domain))
+        conflicting_role = bool(left_roles and right_roles and not (left_roles & right_roles))
+        if conflicting_domain or conflicting_role:
+            # Damped, not zeroed: a weak signal stays weak rather than becoming
+            # a hard exclusion that a later relaxation tier cannot recover.
+            score *= 0.5
+        best = max(best, score)
     return round(min(1.0, best), 4)
 
 

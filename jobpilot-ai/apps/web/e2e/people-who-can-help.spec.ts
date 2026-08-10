@@ -1,6 +1,20 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
+ * Fixture dates must be relative to now.
+ *
+ * These were hardcoded ("2026-07-25T12:00:00Z"), which passed when written and
+ * then silently started failing once more than seven days had elapsed: the Jobs
+ * list defaults to "Posted within: past 7 days" and filtered the seeded job out
+ * client-side, so the job card never appeared and every test that opens
+ * Networking timed out. The page and the People feature were both fine — the
+ * fixture had simply aged out. jobs-workspace.spec.ts already does this.
+ */
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
  * People Who Can Help, end to end against a mocked provider.
  *
  * The panel now lives in the Jobs workspace's Networking section rather than
@@ -22,12 +36,12 @@ const basePerson = {
   confidence: "high",
   current_employment_confidence: 0.95,
   employment_validation_status: "confirmed_exact_company_verified",
-  employment_last_verified_at: "2026-07-25T12:00:00Z",
+  employment_last_verified_at: daysAgo(1),
   employment_warning: null,
   email_lookup_allowed: true,
   reasons: ["Currently listed by a professional data source at the hiring company."],
   limitations: ["Recruiting responsibility for this specific opening has not been confirmed."],
-  last_checked_at: "2026-07-25T12:00:00Z",
+  last_checked_at: daysAgo(1),
   professional_profile_url: "https://www.linkedin.com/in/rita-recruiter",
   email_status: "not_requested" as string,
   professional_email: null as string | null,
@@ -116,8 +130,8 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
     workplace_type: "remote",
     employment_type: "full-time",
     seniority_level: "mid",
-    posted_at: "2026-07-25T12:00:00Z",
-    discovered_at: "2026-07-25T12:00:00Z",
+    posted_at: daysAgo(1),
+    discovered_at: daysAgo(1),
     application_url: "https://job-boards.greenhouse.io/acme/jobs/provider-9981",
     source_url: "https://job-boards.greenhouse.io/acme/jobs/provider-9981",
     description_clean: "Build production machine-learning systems.",
@@ -140,7 +154,7 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
     ...job,
     id: 732,
     title: "Data Platform Engineer",
-    posted_at: "2026-07-24T12:00:00Z",
+    posted_at: daysAgo(2),
     application_url: "https://job-boards.greenhouse.io/acme/jobs/provider-9982",
     source_url: "https://job-boards.greenhouse.io/acme/jobs/provider-9982"
   };
@@ -290,8 +304,8 @@ test("complete people workflow remains manual, grounded, cached, and user-scoped
     workplace_type: "remote",
     employment_type: "full-time",
     seniority_level: "mid",
-    posted_at: "2026-07-25T12:00:00Z",
-    discovered_at: "2026-07-25T12:00:00Z",
+    posted_at: daysAgo(1),
+    discovered_at: daysAgo(1),
     application_url: "https://job-boards.greenhouse.io/acme/jobs/7",
     source_url: "https://job-boards.greenhouse.io/acme/jobs/7",
     description_clean: "Build production machine-learning systems.",
@@ -427,8 +441,8 @@ test("Toshiba no-result state broadens once and keeps its canonical logo", async
     workplace_type: "hybrid",
     employment_type: "internship",
     seniority_level: "intern",
-    posted_at: "2026-07-25T12:00:00Z",
-    discovered_at: "2026-07-25T12:00:00Z",
+    posted_at: daysAgo(1),
+    discovered_at: daysAgo(1),
     application_url: "https://job-boards.greenhouse.io/toshiba/jobs/7606",
     source_url: "https://job-boards.greenhouse.io/toshiba/jobs/7606",
     description_clean: "Build AI-enabled commerce software.",

@@ -1,4 +1,4 @@
-"""The private-beta chain, end to end: brightdata -> openai_web -> pdl.
+"""The private-beta chain, end to end: openai_web -> pdl, verified by Bright Data.
 
 POST /discover -> database -> GET /people, through the real FastAPI routes and
 a real (SQLite) database, with every provider replaced at the transport or
@@ -6,9 +6,11 @@ method boundary. No provider account is contacted and no credit is spent.
 
 What these pin that unit tests could not:
 
+* OpenAI discovers a cited LinkedIn URL and Bright Data confirms it against the
+  real profile before any of it can be displayed;
+* an unconfirmed profile is withheld, however plausible the sighting was;
 * the chain runs in the configured order, and PDL is genuinely last;
-* the chain stops as soon as coverage is met, so a good Bright Data answer never
-  pays for an OpenAI or PDL search;
+* the chain stops as soon as coverage is met;
 * one provider's failure cannot erase another provider's valid contacts;
 * masked or linkless records never reach the response, whichever provider
   produced them;
@@ -39,7 +41,7 @@ from app.models.entities import (
     User,
     UserProfile,
 )
-from app.people import brightdata, circuit, pdl_company, providers, service
+from app.people import brightdata, circuit, pdl_company, providers
 from app.people.openai_web import OpenAIWebPeopleProvider, WebDiscoveryOutcome
 from app.people.schemas import ProviderPerson
 
@@ -50,6 +52,25 @@ PDL_BUDGET_EXHAUSTED = {
     "status": 402,
     "error": {"type": "payment_required", "message": "account maximum"},
 }
+
+
+def _sighting(slug: str, name: str, title: str) -> ProviderPerson:
+    """What OpenAI's public-web step returns: a cited profile URL, unverified."""
+
+    url = f"https://www.linkedin.com/in/{slug}"
+    return ProviderPerson(
+        provider="openai_web",
+        provider_person_id=url,
+        full_name=name,
+        current_company_name=COMPANY,
+        current_company_domain=DOMAIN,
+        current_title=title,
+        linkedin_url=url,
+        current_role_indicator=True,
+        provider_record_observed_at=datetime.now(UTC),
+        provider_employment_updated_at=datetime.now(UTC),
+        evidence={"supporting_sources": ["https://example.com/newsroom"]},
+    )
 
 
 def _bd_row(slug: str, name: str, title: str, *, company: str = COMPANY) -> dict:
@@ -63,17 +84,15 @@ def _bd_row(slug: str, name: str, title: str, *, company: str = COMPANY) -> dict
     }
 
 
-RECRUITERS = [
+# What OpenAI reports, and what Bright Data confirms about the same people.
+SIGHTINGS = [
+    _sighting("priya-raghavan", "Priya Raghavan", "Recruiter"),
+    _sighting("daniel-okafor", "Daniel Okafor", "Engineering Manager"),
+]
+VERIFIED_ROWS = [
     _bd_row("priya-raghavan", "Priya Raghavan", "Senior Technical Recruiter"),
-    _bd_row("sam-okonkwo", "Sam Okonkwo", "Technical Recruiter"),
+    _bd_row("daniel-okafor", "Daniel Okafor", "Engineering Manager"),
 ]
-MANAGER = _bd_row("daniel-okafor", "Daniel Okafor", "Engineering Manager")
-REFERRERS = [
-    _bd_row("lena-fischer", "Lena Fischer", "Senior Software Engineer"),
-    _bd_row("ravi-menon", "Ravi Menon", "Backend Engineer"),
-]
-# What Apollo-style masking looks like when it reaches any provider.
-MASKED = _bd_row("x", "Priya R███████", "Technical Recruiter")
 
 
 @pytest.fixture()
@@ -111,21 +130,16 @@ def _beta_stack(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "people_recommendations_enabled", True)
     monkeypatch.setattr(settings, "people_rollout_mode", "all")
     monkeypatch.setattr(
-        settings, "people_provider_order", ["brightdata", "openai_web", "pdl"]
+        settings, "people_provider_order", ["openai_web", "brightdata", "pdl"]
     )
-    monkeypatch.setattr(settings, "people_primary_provider", "brightdata")
-    # Bright Data, fully configured so the discovery step is live.
-    monkeypatch.setattr(settings, "people_brightdata_discovery_enabled", True)
+    monkeypatch.setattr(settings, "people_primary_provider", "openai_web")
+    # Bright Data verifies; it never discovers.
+    monkeypatch.setattr(settings, "people_brightdata_verification_enabled", True)
     monkeypatch.setattr(settings, "brightdata_api_token", "bd-token-not-a-secret")
     monkeypatch.setattr(settings, "people_brightdata_dataset_id", "gd_profiles")
-    monkeypatch.setattr(
-        settings, "people_brightdata_discovery_dataset_id", "gd_discovery"
-    )
     monkeypatch.setattr(settings, "people_brightdata_daily_record_budget", 500)
     monkeypatch.setattr(settings, "people_brightdata_per_user_daily_limit", 200)
     monkeypatch.setattr(settings, "people_brightdata_max_records_per_discovery", 10)
-    monkeypatch.setattr(settings, "people_brightdata_poll_interval_seconds", 0.001)
-    monkeypatch.setattr(settings, "people_brightdata_max_poll_seconds", 0.5)
     # OpenAI public web.
     monkeypatch.setattr(settings, "people_openai_web_discovery_enabled", True)
     monkeypatch.setattr(settings, "openai_api_key", "openai-key-not-a-secret")
@@ -152,34 +166,25 @@ def _beta_stack(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _BrightDataTransport:
-    """Trigger -> progress -> snapshot, per the documented lifecycle."""
+    """The documented synchronous collect-by-URL endpoint, and nothing else."""
 
-    def __init__(self, rows_by_call: list[list[dict]] | None = None, *, status: int = 200):
-        self.rows_by_call = rows_by_call if rows_by_call is not None else []
+    def __init__(self, rows: list[dict] | None = None, *, status: int = 200):
+        self.rows = rows if rows is not None else []
         self.status = status
         self.calls: list[str] = []
-        self._snapshot = 0
 
     async def request(self, method, url, *, params=None, json=None, headers=None):
         request = httpx.Request(method, url)
-        if url.endswith("/trigger"):
-            self.calls.append("bd_trigger")
-            if self.status != 200:
-                return httpx.Response(self.status, request=request, json={"error": "x"})
-            return httpx.Response(
-                200, request=request, json={"snapshot_id": f"s_{self._snapshot}"}
-            )
-        if "/progress/" in url:
-            self.calls.append("bd_progress")
-            return httpx.Response(200, request=request, json={"status": "ready"})
-        self.calls.append("bd_snapshot")
-        rows = (
-            self.rows_by_call[self._snapshot]
-            if self._snapshot < len(self.rows_by_call)
-            else []
+        assert url.endswith("/scrape"), f"only collect-by-URL is supported: {url}"
+        self.calls.append("bd_scrape")
+        if self.status != 200:
+            return httpx.Response(self.status, request=request, json={"error": "x"})
+        requested = {item["url"] for item in (json or [])}
+        return httpx.Response(
+            200,
+            request=request,
+            json=[row for row in self.rows if row["url"] in requested],
         )
-        self._snapshot += 1
-        return httpx.Response(200, request=request, json=rows)
 
 
 class _PDLTransport:
@@ -229,12 +234,13 @@ def _install(
 ) -> dict[str, object]:
     bd = bd if bd is not None else _BrightDataTransport()
     pdl = pdl if pdl is not None else _PDLTransport()
-    # The step constructs its own provider, so the class is replaced with a
-    # factory that injects the fake transport.
+    # Capture the real class before replacing the name, or the factory would
+    # recurse into its own patch.
+    real_class = brightdata.BrightDataPeopleProvider
     monkeypatch.setattr(
-        service,
+        brightdata,
         "BrightDataPeopleProvider",
-        lambda *_a, **_kw: brightdata.BrightDataPeopleProvider(client=bd),
+        lambda *_a, **_kw: real_class(client=bd),
     )
     monkeypatch.setattr(providers.httpx, "AsyncClient", lambda **_kw: pdl)
 
@@ -313,52 +319,52 @@ def _finalizations(caplog) -> list[str]:
 
 
 # --------------------------------------------------------------------------
-# Scenario A — Bright Data answers, chain stops, contacts persist and re-read
+# The corrected happy path: OpenAI discovers, Bright Data verifies
 # --------------------------------------------------------------------------
 
 
-def test_brightdata_success_persists_and_is_returned_by_get(
+def test_openai_discovers_and_brightdata_verifies_then_get_returns_them(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     harness = _install(
         monkeypatch,
-        bd=_BrightDataTransport(
-            [RECRUITERS, [MANAGER], REFERRERS, RECRUITERS, [MANAGER], REFERRERS]
-        ),
+        bd=_BrightDataTransport(VERIFIED_ROWS),
+        web=SIGHTINGS,
     )
-    headers = _auth(client, "bd-success@example.com")
-    job_id = _job("chain-bd-success")
+    headers = _auth(client, "verified@example.com")
+    job_id = _job("chain-verified")
 
     with caplog.at_level(logging.INFO, logger="jobpilot.people"):
         response = client.post(f"/jobs/{job_id}/people/discover", headers=headers)
 
     assert response.status_code == 200, response.text
     people = _people(response.json())
-    assert len(people) == 5, response.json()
+    assert len(people) == 2, response.json()
 
-    # Every displayed contact is actionable.
+    # OpenAI found them; Bright Data confirmed them; the verified record is what
+    # is shown — note the title comes from Bright Data, not from the sighting.
+    assert harness["web_calls"] == ["openai_web"]
+    assert "bd_scrape" in harness["bd"].calls
+    by_name = {person["full_name"]: person for person in people}
+    assert by_name["Priya Raghavan"]["current_title"] == "Senior Technical Recruiter"
     for person in people:
         assert person["professional_profile_url"].startswith(
             "https://www.linkedin.com/in/"
         )
-        assert len(person["full_name"].split()) >= 2
         assert person["current_company"] == COMPANY
 
     run = _latest_run(job_id)
     assert run.status in {"complete", "partial"}
-    assert run.provider == "brightdata"
     context = run.company_context or {}
-    assert context["accepted_candidate_sources"] == {"brightdata": 5}
+    assert context["verification"]["provider"] == "brightdata"
+    assert context["verification"]["confirmed"] == 2
+    assert "brightdata" in context["providers_attempted"]
 
-    # Coverage was met by Bright Data, so nothing downstream was ever paid for.
-    assert harness["web_calls"] == []
-    assert harness["pdl"].calls == []
-    assert context["providers_attempted"] == ["brightdata"]
-
-    # GET returns exactly what was persisted, and spends nothing.
+    # GET returns exactly what was persisted, and spends nothing more.
+    calls_after = len(harness["bd"].calls)
     follow_up = client.get(f"/jobs/{job_id}/people", headers=headers).json()
-    assert len(_people(follow_up)) == 5
-    assert harness["pdl"].calls == []
+    assert len(_people(follow_up)) == 2
+    assert len(harness["bd"].calls) == calls_after
 
     db = _session()
     assert db.scalar(select(PeopleUserDiscoveryQuota)).discoveries_used == 1
@@ -366,81 +372,18 @@ def test_brightdata_success_persists_and_is_returned_by_get(
 
 
 # --------------------------------------------------------------------------
-# Scenario B — Bright Data insufficient, OpenAI supplies a sourced contact
+# Verification failures
 # --------------------------------------------------------------------------
 
 
-def test_openai_web_fills_the_gap_bright_data_left(
+def test_a_sighting_bright_data_cannot_confirm_is_never_displayed(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    sourced = ProviderPerson(
-        provider="openai_web",
-        provider_person_id="https://www.linkedin.com/in/alexis-turner",
-        full_name="Alexis Turner",
-        current_company_name=COMPANY,
-        current_company_domain=DOMAIN,
-        current_title="Technical Recruiter",
-        linkedin_url="https://www.linkedin.com/in/alexis-turner",
-        current_role_indicator=True,
-        provider_record_observed_at=datetime.now(UTC),
-        provider_employment_updated_at=datetime.now(UTC),
-    )
-    harness = _install(
-        monkeypatch,
-        bd=_BrightDataTransport([[], [], []]),
-        web=[sourced],
-    )
-    headers = _auth(client, "web-fallback@example.com")
-    job_id = _job("chain-web-fallback")
+    """Bright Data returns nothing for the URL: the profile is not shown."""
 
-    with caplog.at_level(logging.INFO, logger="jobpilot.people"):
-        payload = client.post(
-            f"/jobs/{job_id}/people/discover", headers=headers
-        ).json()
-
-    people = _people(payload)
-    assert [person["full_name"] for person in people] == ["Alexis Turner"]
-    assert people[0]["professional_profile_url"] == (
-        "https://www.linkedin.com/in/alexis-turner"
-    )
-
-    run = _latest_run(job_id)
-    context = run.company_context or {}
-    # Bright Data ran first and answered with nobody; OpenAI answered second.
-    assert context["providers_attempted"][:2] == ["brightdata", "openai_web"]
-    assert context["accepted_candidate_sources"] == {"openai_web": 1}
-    assert "bd_trigger" in harness["bd"].calls
-    assert harness["web_calls"] == ["openai_web"]
-    assert len(_finalizations(caplog)) == 1
-
-
-# --------------------------------------------------------------------------
-# Scenario C — everything masked or linkless: neutral empty state
-# --------------------------------------------------------------------------
-
-
-def test_masked_and_linkless_results_produce_a_neutral_empty_state(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    linkless = ProviderPerson(
-        provider="openai_web",
-        provider_person_id="pdl-linkless",
-        full_name="Jordan Nolinked",
-        current_company_name=COMPANY,
-        current_company_domain=DOMAIN,
-        current_title="Technical Recruiter",
-        linkedin_url=None,
-        current_role_indicator=True,
-        provider_record_observed_at=datetime.now(UTC),
-    )
-    _install(
-        monkeypatch,
-        bd=_BrightDataTransport([[MASKED], [MASKED], [MASKED]]),
-        web=[linkless],
-        pdl=_PDLTransport(budget_exhausted=True),
-    )
-    headers = _auth(client, "all-masked@example.com")
-    job_id = _job("chain-all-masked")
+    _install(monkeypatch, bd=_BrightDataTransport([]), web=SIGHTINGS)
+    headers = _auth(client, "unconfirmed@example.com")
+    job_id = _job("chain-unconfirmed")
 
     with caplog.at_level(logging.INFO, logger="jobpilot.people"):
         payload = client.post(
@@ -448,75 +391,146 @@ def test_masked_and_linkless_results_produce_a_neutral_empty_state(
         ).json()
 
     assert _people(payload) == []
-    # A neutral state, not an alarming one, and never a provider name.
-    joined = " ".join(payload["warnings"]).lower()
-    assert "brightdata" not in joined and "openai" not in joined and "pdl" not in joined
-    # No masked fragment leaks into the response at all.
-    assert "███" not in str(payload)
-    assert "Priya R" not in str(payload)
-    assert len(_finalizations(caplog)) == 1
-
-
-# --------------------------------------------------------------------------
-# Scenario D — one provider's failure cannot erase another's contacts
-# --------------------------------------------------------------------------
-
-
-def test_a_provider_failure_never_erases_another_providers_contacts(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Bright Data fails outright; OpenAI's sourced contact must still stand."""
-
-    sourced = ProviderPerson(
-        provider="openai_web",
-        provider_person_id="https://www.linkedin.com/in/robin-vega",
-        full_name="Robin Vega",
-        current_company_name=COMPANY,
-        current_company_domain=DOMAIN,
-        current_title="Engineering Manager",
-        linkedin_url="https://www.linkedin.com/in/robin-vega",
-        current_role_indicator=True,
-        provider_record_observed_at=datetime.now(UTC),
-        provider_employment_updated_at=datetime.now(UTC),
-    )
-    _install(
-        monkeypatch,
-        bd=_BrightDataTransport(status=500),
-        web=[sourced],
-        pdl=_PDLTransport(budget_exhausted=True),
-    )
-    headers = _auth(client, "mixed-failure@example.com")
-    job_id = _job("chain-mixed-failure")
-
-    with caplog.at_level(logging.INFO, logger="jobpilot.people"):
-        payload = client.post(
-            f"/jobs/{job_id}/people/discover", headers=headers
-        ).json()
-
-    people = _people(payload)
-    assert [person["full_name"] for person in people] == ["Robin Vega"]
-
     run = _latest_run(job_id)
-    # A real contact outranks every provider failure in the chain.
-    assert run.status in {"partial", "complete"}
-    assert run.failure_code is None
-    assert (run.company_context or {})["accepted_candidate_sources"] == {
-        "openai_web": 1
+    assert (run.company_context or {})["verification"]["rejected"] == {
+        "verification_no_record": 2
     }
     assert len(_finalizations(caplog)) == 1
 
 
+def test_a_person_who_has_left_the_company_is_rejected_by_verification(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact failure verification exists to catch."""
+
+    moved_on = [
+        _bd_row(
+            "priya-raghavan",
+            "Priya Raghavan",
+            "Senior Technical Recruiter",
+            company="Somewhere Else Inc",
+        )
+    ]
+    _install(monkeypatch, bd=_BrightDataTransport(moved_on), web=[SIGHTINGS[0]])
+    headers = _auth(client, "moved-on@example.com")
+    job_id = _job("chain-moved-on")
+
+    payload = client.post(f"/jobs/{job_id}/people/discover", headers=headers).json()
+
+    assert _people(payload) == []
+    run = _latest_run(job_id)
+    rejected = (run.company_context or {})["verification"]["rejected"]
+    # Counted twice on purpose: the normalizer notes the employer did not match,
+    # and verification records that the candidate was therefore not confirmed.
+    assert rejected["verification_company_mismatch"] == 1
+    assert rejected["company_mismatch"] == 1
+
+
+def test_an_unsupported_url_is_dropped_before_a_record_is_spent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OpenAI returned something that is not a profile URL."""
+
+    unsupported = SIGHTINGS[0].model_copy(
+        update={"linkedin_url": "https://www.linkedin.com/company/northwind"}
+    )
+    harness = _install(monkeypatch, bd=_BrightDataTransport([]), web=[unsupported])
+    headers = _auth(client, "unsupported-url@example.com")
+    job_id = _job("chain-unsupported-url")
+
+    payload = client.post(f"/jobs/{job_id}/people/discover", headers=headers).json()
+
+    assert _people(payload) == []
+    # A company page could never be verified, so no Bright Data record is bought.
+    assert harness["bd"].calls == []
+
+
+def test_verification_being_unavailable_withholds_the_candidates(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No verifier means no evidence, and no evidence means nothing displayed."""
+
+    monkeypatch.setattr(settings, "people_brightdata_verification_enabled", False)
+    harness = _install(monkeypatch, bd=_BrightDataTransport(VERIFIED_ROWS), web=SIGHTINGS)
+    headers = _auth(client, "no-verifier@example.com")
+    job_id = _job("chain-no-verifier")
+
+    payload = client.post(f"/jobs/{job_id}/people/discover", headers=headers).json()
+
+    assert _people(payload) == []
+    assert harness["bd"].calls == []
+    run = _latest_run(job_id)
+    assert (run.company_context or {})["verification"]["failure_reason"] == (
+        "provider_not_configured"
+    )
+
+
+def test_a_verification_outage_never_erases_a_structured_providers_contacts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PDL answers with its own contract, so a Bright Data outage cannot hurt it."""
+
+    pdl_rows = [
+        {
+            "id": "pdl-1",
+            "full_name": "Robin Vega",
+            "job_title": "Technical Recruiter",
+            "job_title_role": "human_resources",
+            "job_company_name": COMPANY,
+            "job_company_website": DOMAIN,
+            "job_last_changed": datetime.now(UTC).isoformat(),
+            "linkedin_url": "https://www.linkedin.com/in/robin-vega",
+        }
+    ]
+    _install(
+        monkeypatch,
+        bd=_BrightDataTransport(status=500),
+        web=SIGHTINGS,
+        pdl=_PDLTransport(rows=pdl_rows, budget_exhausted=False),
+    )
+    headers = _auth(client, "bd-outage@example.com")
+    job_id = _job("chain-bd-outage")
+
+    payload = client.post(f"/jobs/{job_id}/people/discover", headers=headers).json()
+
+    names = {person["full_name"] for person in _people(payload)}
+    # The unverifiable public-web sightings are gone; PDL's contact stands.
+    assert names == {"Robin Vega"}
+
+
 # --------------------------------------------------------------------------
-# Scenario E — quota: one click, one unit; reopening costs nothing
+# Order, quota and cache
 # --------------------------------------------------------------------------
+
+
+def test_pdl_is_reached_only_when_the_providers_before_it_fall_short(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _install(
+        monkeypatch,
+        bd=_BrightDataTransport([]),
+        web=[],
+        pdl=_PDLTransport(budget_exhausted=True),
+    )
+    headers = _auth(client, "pdl-last@example.com")
+    job_id = _job("chain-pdl-last")
+
+    client.post(f"/jobs/{job_id}/people/discover", headers=headers)
+
+    run = _latest_run(job_id)
+    attempted = (run.company_context or {})["providers_attempted"]
+    # OpenAI first, PDL last. Bright Data is a verification stage, not a
+    # discovery provider, so it only appears when there was something to verify.
+    assert attempted[0] == "openai_web"
+    assert attempted[-1] == "pdl"
+    assert harness["pdl"].calls, "PDL should have been reached once others fell short"
 
 
 def test_one_deliberate_search_costs_exactly_one_unit_across_the_chain(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness = _install(
-        monkeypatch,
-        bd=_BrightDataTransport([RECRUITERS, [MANAGER], REFERRERS]),
+        monkeypatch, bd=_BrightDataTransport(VERIFIED_ROWS), web=SIGHTINGS
     )
     headers = _auth(client, "quota-chain@example.com")
     job_id = _job("chain-quota")
@@ -529,28 +543,19 @@ def test_one_deliberate_search_costs_exactly_one_unit_across_the_chain(
     # Rendering, reopening and re-reading are free.
     for _ in range(3):
         client.get(f"/jobs/{job_id}/people", headers=headers)
-    db = _session()
-    assert db.scalar(select(PeopleUserDiscoveryQuota)).discoveries_used == 1
-    assert len(harness["bd"].calls) == calls_after_search
-
-    # A repeated POST is answered from cache: still one unit, still no calls.
+    # A repeated POST is answered from cache.
     client.post(f"/jobs/{job_id}/people/discover", headers=headers)
+
     db = _session()
     assert db.scalar(select(PeopleUserDiscoveryQuota)).discoveries_used == 1
     assert len(harness["bd"].calls) == calls_after_search
-
-
-# --------------------------------------------------------------------------
-# Scenario F — legacy weak cache is not served
-# --------------------------------------------------------------------------
 
 
 def test_a_legacy_weak_cached_result_is_never_served(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness = _install(
-        monkeypatch,
-        bd=_BrightDataTransport([RECRUITERS, [MANAGER], REFERRERS]),
+        monkeypatch, bd=_BrightDataTransport(VERIFIED_ROWS), web=SIGHTINGS
     )
     headers = _auth(client, "legacy-cache@example.com")
     job_id = _job("chain-legacy")
@@ -580,27 +585,6 @@ def test_a_legacy_weak_cached_result_is_never_served(
 
     payload = client.post(f"/jobs/{job_id}/people/discover", headers=headers).json()
 
-    # The retired run is not replayed: a real search ran and produced contacts.
-    assert "bd_trigger" in harness["bd"].calls
-    assert len(_people(payload)) == 5
-
-
-def test_pdl_is_reached_only_when_the_providers_before_it_fall_short(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    harness = _install(
-        monkeypatch,
-        bd=_BrightDataTransport([[], [], []]),
-        web=[],
-        pdl=_PDLTransport(budget_exhausted=True),
-    )
-    headers = _auth(client, "pdl-last@example.com")
-    job_id = _job("chain-pdl-last")
-
-    client.post(f"/jobs/{job_id}/people/discover", headers=headers)
-
-    run = _latest_run(job_id)
-    attempted = (run.company_context or {})["providers_attempted"]
-    # The whole point of the refactor: PDL is last, not first.
-    assert attempted == ["brightdata", "openai_web", "pdl"]
-    assert harness["pdl"].calls, "PDL should have been reached once others fell short"
+    # The retired run is not replayed: a real search ran and was verified.
+    assert harness["web_calls"] == ["openai_web"]
+    assert len(_people(payload)) == 2

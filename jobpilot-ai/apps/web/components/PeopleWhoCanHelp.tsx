@@ -50,6 +50,8 @@ type OutreachDraftData = {
   message_type: MessageType;
   subject: string | null;
   body: string;
+  /** Short one-paragraph LinkedIn variant, built by the same backend template. */
+  linkedin_body?: string | null;
   facts_used: string[];
   assumptions: string[];
   omitted_uncertain_facts: string[];
@@ -57,6 +59,8 @@ type OutreachDraftData = {
   requires_manual_review: boolean;
   /** How the draft was produced. Every draft is template-built today. */
   generation_path?: string;
+  /** Low-cardinality, internal. Never rendered — only used to choose copy. */
+  ai_fallback_reason?: string;
   template_version?: string;
   recipient_name?: string;
   recipient_category?: string;
@@ -66,6 +70,27 @@ type OutreachDraftData = {
   professional_email?: string | null;
   email_available?: boolean;
 };
+/**
+ * The AI action has exactly six states and the message is derived from the
+ * state, so a stale failure line cannot outlive the failure that caused it.
+ */
+type AiImproveState =
+  | "idle"
+  | "improving"
+  | "improved"
+  | "fallback"
+  | "unavailable"
+  | "limit_reached";
+
+const AI_IMPROVE_MESSAGE: Record<AiImproveState, string> = {
+  idle: "",
+  improving: "",
+  improved: "Improved with AI",
+  fallback: "Couldn’t safely improve — using the original draft.",
+  unavailable: "AI improvement is currently unavailable.",
+  limit_reached: "AI improvement limit reached."
+};
+
 type DraftContext = {
   person: PeopleRecommendation;
   messageType: MessageType;
@@ -575,6 +600,8 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
       <OutreachDraft
         draft={controller.draft}
         context={controller.draftContext}
+        jobId={jobId}
+        aiEnabled={Boolean(data?.controls?.outreach_ai_improvement)}
         setDraft={controller.setDraft}
         setContext={controller.setDraftContext}
         regenerate={controller.draftOutreach}
@@ -668,6 +695,48 @@ function PersonCard({
 }) {
   const [status, setStatus] = useState("");
   const profileUrl = safeExternalUrl(person.professional_profile_url);
+  /**
+   * The LinkedIn draft is fetched *before* the click, never during it.
+   *
+   * A message requested by the same click that opens the profile would race the
+   * popup: the browser only treats window/tab opening as user-initiated while
+   * the handler runs synchronously, so awaiting a request first is how the tab
+   * gets blocked. Prefetching on hover/focus means the click does nothing but
+   * copy an already-resolved string.
+   */
+  const linkedinDraft = useRef<string | null>(null);
+  const draftRequested = useRef(false);
+
+  const prefetchLinkedInDraft = useCallback(() => {
+    // One request per person per mount, however many times the user hovers.
+    if (draftRequested.current || !outreachEnabled) return;
+    draftRequested.current = true;
+    void onDraft(person, "linkedin_message", "concise", "", false)
+      .then((result) => {
+        linkedinDraft.current = result?.linkedin_body ?? result?.body ?? null;
+      })
+      .catch(() => {
+        // A failed prefetch must never stop the user reaching the profile.
+        linkedinDraft.current = null;
+      });
+  }, [onDraft, outreachEnabled, person]);
+
+  const copyLinkedInMessage = useCallback(() => {
+    const message = linkedinDraft.current;
+    if (!message) {
+      setStatus("LinkedIn opened. Create or copy a draft message from the card.");
+      return;
+    }
+    // Deliberately not awaited: navigation has already been handed to the
+    // browser by the anchor, and the clipboard result only affects the notice.
+    void copyText(message).then((ok) => {
+      setStatus(
+        ok
+          ? "Message copied — paste it into LinkedIn."
+          : "LinkedIn opened. Copy the draft message manually."
+      );
+    });
+  }, []);
   const verifiedEmail = safeEmailAddress(
     person.email_status === "verified" ? person.professional_email : null
   );
@@ -733,13 +802,25 @@ function PersonCard({
 
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/70 pt-3.5">
         {profileUrl ? (
+          /* LinkedIn brand colour on hover and keyboard focus, applied to the
+           * anchor itself so focus-visible actually receives it — a wrapper
+           * would never see either state. Only this one action is branded;
+           * colouring neighbouring buttons would imply they are LinkedIn too. */
           <a
-            className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel"
+            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--linkedin)] hover:bg-[var(--linkedin-surface)] hover:text-[var(--linkedin)] focus-visible:border-[var(--linkedin)] focus-visible:bg-[var(--linkedin-surface)] focus-visible:text-[var(--linkedin)]"
             href={profileUrl}
             target="_blank"
             rel="noopener noreferrer"
+            aria-label={`Open ${person.full_name} on LinkedIn and copy outreach message`}
+            onMouseEnter={prefetchLinkedInDraft}
+            onFocus={prefetchLinkedInDraft}
+            onClick={copyLinkedInMessage}
           >
-            <Linkedin className="h-4 w-4" aria-hidden /> LinkedIn
+            <Linkedin
+              className="h-4 w-4 transition-colors group-hover:text-[var(--linkedin)] group-focus-visible:text-[var(--linkedin)]"
+              aria-hidden
+            />{" "}
+            LinkedIn
             <ExternalLink className="h-3 w-3 opacity-60" aria-hidden />
           </a>
         ) : null}
@@ -749,9 +830,9 @@ function PersonCard({
             type="button"
             disabled={busy}
             onClick={() => void openEmail()}
-            className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel disabled:opacity-50"
+            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4" aria-hidden />}
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden />}
             Email
           </button>
         ) : canLookUpEmail ? (
@@ -759,9 +840,9 @@ function PersonCard({
             type="button"
             disabled={busy}
             onClick={() => void onAction(person, "email")}
-            className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel disabled:opacity-50"
+            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4" aria-hidden />}
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden />}
             {person.email_status === "provider_error" ? "Retry work email" : "Find work email"}
           </button>
         ) : (
@@ -769,7 +850,7 @@ function PersonCard({
             className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded-lg border border-line/70 px-3 text-sm text-[var(--text-muted)] opacity-70"
             title={emailNote ?? "No verified work email is available for this contact."}
           >
-            <Mail className="h-4 w-4" aria-hidden /> No email
+            <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden /> No email
           </span>
         )}
 
@@ -896,12 +977,16 @@ function emailStateNote(person: PeopleRecommendation): string | null {
 function OutreachDraft({
   draft,
   context,
+  jobId,
+  aiEnabled,
   setDraft,
   setContext,
   regenerate
 }: {
   draft: OutreachDraftData | null;
   context: DraftContext | null;
+  jobId: JobId;
+  aiEnabled: boolean;
   setDraft: (value: OutreachDraftData | null) => void;
   setContext: (value: DraftContext | null) => void;
   regenerate: (
@@ -913,13 +998,40 @@ function OutreachDraft({
   ) => Promise<OutreachDraftData | null>;
 }) {
   const [copied, setCopied] = useState<"subject" | "body" | null>(null);
+  // One explicit state instead of three booleans that could disagree. The bug
+  // this replaces: `improveNote` said "Couldn't safely improve" while the button
+  // still read "Improve with AI", because the note and the button were separate
+  // pieces of state and only one of them was reset.
+  const [aiState, setAiState] = useState<AiImproveState>("idle");
+  // The deterministic draft, kept untouched so a fallback always has something
+  // correct to restore rather than leaving the user with partial content.
+  const originalRef = useRef<OutreachDraftData | null>(null);
+  // Identifies the request that is allowed to update state. A response for a
+  // different person — or one that arrives after the user edited the text —
+  // must not overwrite what is on screen.
+  const improveRequestRef = useRef(0);
+
+  // Refs only. Setting state here trips the cascading-render rule, and the
+  // reset it would perform belongs to close() anyway — that is the single point
+  // where the dialog stops being about this person.
+  useEffect(() => {
+    if (draft && originalRef.current === null) originalRef.current = draft;
+    if (!draft) {
+      originalRef.current = null;
+      // Invalidate any in-flight improvement: its result is now for nobody.
+      improveRequestRef.current += 1;
+    }
+  }, [draft]);
 
   if (!draft || !context) return null;
 
   const close = () => {
+    // Bump first: a response still in flight must not update a closed dialog.
+    improveRequestRef.current += 1;
     setDraft(null);
     setContext(null);
     setCopied(null);
+    setAiState("idle");
   };
 
   // Both handoff targets come from the backend's verified fields. Nothing here
@@ -937,6 +1049,74 @@ function OutreachDraft({
     : draft.message_type === "linkedin_connection_note"
       ? "LinkedIn connection note"
       : "LinkedIn message";
+
+  /**
+   * The only path in this component that can reach OpenAI, and it needs a
+   * deliberate click. Hover, focus, LinkedIn and Email all read the current
+   * draft state and never generate.
+   */
+  async function improveWithAi() {
+    if (aiState === "improving") return; // one click, one request
+    const requestId = improveRequestRef.current + 1;
+    improveRequestRef.current = requestId;
+    setAiState("improving");
+    const requestedFor = context!.person.recommendation_id;
+    try {
+      const response = await api<OutreachDraftData>(
+        `/jobs/${jobId}/people/${requestedFor}/outreach-draft/improve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            draft_type: "recruiter_introduction",
+            message_type: context!.messageType,
+            tone: context!.tone
+          })
+        }
+      );
+      // A late response must not land on a different person, a reopened
+      // dialog, or text the user has since edited.
+      if (improveRequestRef.current !== requestId) return;
+      // A provider/configuration failure is NOT a safety rejection. Both return
+      // deterministic_fallback, so the reason has to separate them — otherwise
+      // "the prompt file was missing" reads to the user as "your draft was
+      // unsafe", which is exactly how the missing-prompt bug stayed hidden.
+      const providerFailed =
+        response.ai_fallback_reason === "provider_unavailable" ||
+        response.ai_fallback_reason === "provider_error" ||
+        response.ai_fallback_reason === "timeout";
+      if (response.generation_path === "openai_validated") {
+        setDraft({ ...response });
+        // A later success clears any earlier failure.
+        setAiState("improved");
+      } else {
+        // Any non-accepted path keeps the deterministic text exactly as it was.
+        if (originalRef.current) setDraft({ ...originalRef.current });
+        setAiState(providerFailed ? "unavailable" : "fallback");
+      }
+    } catch (error) {
+      if (improveRequestRef.current !== requestId) return;
+      if (originalRef.current) setDraft({ ...originalRef.current });
+      // Internal reason codes, model names and provider errors stay server-side.
+      // A misconfigured or disabled feature is reported as unavailable, never
+      // as though a safety check rejected the copy.
+      setAiState(
+        error instanceof ApiError &&
+        (error.serverCode === "PEOPLE_RATE_LIMITED" || error.code === "rate_limited")
+          ? "limit_reached"
+          : error instanceof ApiError &&
+            (error.serverCode === "PEOPLE_OUTREACH_AI_DISABLED" ||
+              error.status === 404 ||
+              error.code === "not_found")
+            ? "unavailable"
+            : "fallback"
+      );
+    } finally {
+      // Only the request that still owns the state may clear "improving".
+      if (improveRequestRef.current === requestId) {
+        setAiState((current) => (current === "improving" ? "fallback" : current));
+      }
+    }
+  }
 
   async function copy(kind: "subject" | "body", value: string) {
     const ok = await copyText(value);
@@ -1020,7 +1200,35 @@ function OutreachDraft({
         />
         <p className="mt-1 text-xs text-[var(--text-muted)]">{draft.character_count} characters</p>
 
+        {/* The AI action is announced politely rather than replacing the
+          * controls, so Email, LinkedIn, editing and closing stay usable while
+          * a refinement is running. */}
+        {AI_IMPROVE_MESSAGE[aiState] ? (
+          <p aria-live="polite" className="mt-2 text-xs text-[var(--text-muted)]">
+            {aiState === "improved" ? "✓ " : ""}{AI_IMPROVE_MESSAGE[aiState]}
+          </p>
+        ) : null}
+
         <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
+          {aiEnabled ? (
+            <Button
+              variant="secondary"
+              /* Only this control is disabled while the request runs — the
+               * dialog stays fully usable. */
+              disabled={aiState === "improving"}
+              onClick={() => void improveWithAi()}
+            >
+              {aiState === "improving" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Improving…
+                </>
+              ) : aiState === "improved" ? (
+                "Improved with AI"
+              ) : (
+                "Improve with AI"
+              )}
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={() => void copy("body", draft.body)}>
             <Copy className="h-4 w-4" /> {copied === "body" ? "Message copied" : "Copy message"}
           </Button>
@@ -1089,16 +1297,15 @@ function OutreachDraft({
           </p>
         ) : null}
 
-        {draft.facts_used.length ? (
-          <p className="mt-3 text-xs text-[var(--text-muted)]">
-            Grounded in: {draft.facts_used.join("; ")}
-          </p>
-        ) : null}
-        {draft.omitted_uncertain_facts.length ? (
-          <p className="mt-1 text-xs text-[var(--text-muted)]">
-            Omitted as uncertain: {draft.omitted_uncertain_facts.join("; ")}
-          </p>
-        ) : null}
+        {/* facts_used and omitted_uncertain_facts stay in the API response —
+          * they are what the grounding audit and the AI validator are built on —
+          * but they are internal identifiers ("applicant_skill:Python",
+          * "recruiter_assignment_unconfirmed") and they were being printed
+          * verbatim under "Grounded in:" and "Omitted as uncertain:" for every
+          * ordinary user. They are now available only through the authorized
+          * diagnostics endpoint and structured logs. A collapsible section
+          * would not have fixed this: the problem is that the strings are
+          * internal, not that they took up space. */}
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           Review and edit before manually sending. JobPilot never sends this message automatically.
         </p>

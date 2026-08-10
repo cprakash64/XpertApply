@@ -67,6 +67,13 @@ def _freshness(person: ProviderPerson) -> float:
     return 0.15
 
 
+# The two ``potential_referrer`` weights that can only ever be earned from a
+# user-relationship comparison. When that comparison does not run, they are not
+# "zero evidence" — they are *absent* evidence, and the difference decides
+# whether any referral candidate can be shown at all. See score_candidate.
+_RELATIONSHIP_WEIGHT_KEYS = ("school", "employer")
+
+
 def score_candidate(
     category: PeopleCategory,
     person: ProviderPerson,
@@ -74,7 +81,33 @@ def score_candidate(
     *,
     shared_school: bool = False,
     shared_employer: bool = False,
+    relationship_signals_available: bool = True,
 ) -> float:
+    """Score one candidate for one category, out of 100.
+
+    ``relationship_signals_available=False`` means the user-relationship
+    comparison did not run — because ``people_network_matching_enabled`` is off,
+    or the user has no stored education/employment history. It does **not** mean
+    the comparison ran and found nothing.
+
+    That distinction is the whole reason this parameter exists. ``school`` (15)
+    and ``employer`` (10) are 25 of the 100 points available to a
+    ``potential_referrer``. Counting absent evidence as a zero silently lowered
+    the achievable maximum to 75 while the acceptance threshold stayed at 60 —
+    so a referral candidate had to reach **80% of what it could possibly score**,
+    while recruiters and hiring managers (whose weights carry no relationship
+    component) needed only 60%.
+
+    Observed live on the Samsara run: PDL returned 8 referral candidates, all 8
+    scored between 45.0 and 58.9 against a threshold of 60.0, and every one was
+    rejected as ``below_relevance_threshold``. The section rendered empty, which
+    read to the user as "this company has nobody worth contacting".
+
+    So when the comparison did not run, its weights are excluded from the total
+    and the remaining signals are rescaled over the mass that *was* reachable.
+    A candidate is then judged on the evidence the system actually looked at.
+    """
+
     company, _company_kind = company_match_strength(person, profile)
     location = _similar(person.location, [profile.location or ""]) if profile.location else 0.5
     quality = (1.0 if person.linkedin_url else 0.5) * 0.4 + _freshness(person) * 0.6
@@ -115,7 +148,21 @@ def score_candidate(
             "seniority": 0.8 if normalize_text(person.seniority) not in {"c suite", "executive"} else 0,
             "quality": quality,
         }
-    return round(sum(WEIGHTS[category][key] * parts[key] for key in parts), 1)
+    weights = WEIGHTS[category]
+    scored_keys = list(parts)
+    if not relationship_signals_available:
+        # Drop the un-computed signals from both the numerator and the
+        # denominator, rather than scoring them as absent evidence.
+        scored_keys = [
+            key for key in scored_keys if key not in _RELATIONSHIP_WEIGHT_KEYS
+        ]
+    total_weight = sum(weights[key] for key in scored_keys)
+    if total_weight <= 0:
+        return 0.0
+    raw = sum(weights[key] * parts[key] for key in scored_keys)
+    # Rescale so every category is judged against the same 0–100 range and one
+    # acceptance threshold means the same thing everywhere.
+    return round(raw * (100.0 / total_weight), 1)
 
 
 def candidate_rejection_reasons(

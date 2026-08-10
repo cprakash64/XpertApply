@@ -383,14 +383,14 @@ def collect_people_provider_findings(settings) -> list[Finding]:
 def _check_brightdata_provider(settings, *, order: list[str]) -> list[Finding]:
     """Bright Data's gates, reported all at once rather than one deploy at a time.
 
-    Verification (collect a known profile URL) and discovery (find profiles
-    matching a query) are separate Bright Data datasets, so they are validated
-    separately: a deployment can legitimately run verification-only while the
-    discovery contract is still being confirmed.
+    Bright Data is a *verification* integration: it confirms profiles other
+    providers discovered. It is therefore validated whenever verification is
+    enabled or whenever "brightdata" is named in the provider order, and it has
+    no discovery configuration to check because it performs no discovery.
     """
 
     listed = "brightdata" in order
-    enabled = bool(getattr(settings, "people_brightdata_discovery_enabled", False))
+    enabled = bool(getattr(settings, "people_brightdata_verification_enabled", False))
     if not (listed or enabled):
         return []
 
@@ -398,14 +398,15 @@ def _check_brightdata_provider(settings, *, order: list[str]) -> list[Finding]:
     where = (
         "is listed in PEOPLE_PROVIDER_ORDER"
         if listed
-        else "is enabled by PEOPLE_BRIGHTDATA_DISCOVERY_ENABLED"
+        else "is enabled by PEOPLE_BRIGHTDATA_VERIFICATION_ENABLED"
     )
     if listed and not enabled:
         findings.append(
             Finding(
-                "PEOPLE_BRIGHTDATA_DISCOVERY_ENABLED",
+                "PEOPLE_BRIGHTDATA_VERIFICATION_ENABLED",
                 "must be true while brightdata is listed in PEOPLE_PROVIDER_ORDER, "
-                "or the waterfall will skip it on every discovery",
+                "or discovered profiles will never be verified and none of them "
+                "can be displayed",
             )
         )
     if not (getattr(settings, "brightdata_api_token", None) or "").strip():
@@ -416,20 +417,24 @@ def _check_brightdata_provider(settings, *, order: list[str]) -> list[Finding]:
         findings.append(
             Finding(
                 "PEOPLE_BRIGHTDATA_DATASET_ID",
-                f"is missing while Bright Data {where}. This is the "
-                "collect-by-URL dataset used to verify a known profile.",
+                f"is missing while Bright Data {where}. This is the LinkedIn "
+                "people-profiles collect-by-URL dataset used for verification.",
             )
         )
-    if not (
-        getattr(settings, "people_brightdata_discovery_dataset_id", None) or ""
-    ).strip():
+    # Verification is the only thing that can turn a public-web sighting into a
+    # displayable contact, so a chain with OpenAI but no verifier can never show
+    # anyone and should say so at startup rather than at request time.
+    if (
+        "openai_web" in order
+        and not enabled
+        and bool(getattr(settings, "people_openai_web_discovery_enabled", False))
+    ):
         findings.append(
             Finding(
-                "PEOPLE_BRIGHTDATA_DISCOVERY_DATASET_ID",
-                f"is missing while Bright Data {where}, so discovery cannot run. "
-                "Bright Data's people-discovery input schema is account-specific "
-                "and unpublished; supply the discovery dataset id and confirm the "
-                "query shape before relying on discovery.",
+                "PEOPLE_BRIGHTDATA_VERIFICATION_ENABLED",
+                "must be true when openai_web is in PEOPLE_PROVIDER_ORDER: "
+                "public-web candidates are only displayable once Bright Data "
+                "has verified their profile",
             )
         )
     for setting, attribute in (
@@ -451,26 +456,11 @@ def _check_brightdata_provider(settings, *, order: list[str]) -> list[Finding]:
                     "remove brightdata from PEOPLE_PROVIDER_ORDER.",
                 )
             )
-    for setting, attribute in (
-        ("PEOPLE_BRIGHTDATA_TIMEOUT_SECONDS", "people_brightdata_timeout_seconds"),
-        (
-            "PEOPLE_BRIGHTDATA_POLL_INTERVAL_SECONDS",
-            "people_brightdata_poll_interval_seconds",
-        ),
-        ("PEOPLE_BRIGHTDATA_MAX_POLL_SECONDS", "people_brightdata_max_poll_seconds"),
-    ):
-        if _configured_float(settings, attribute) <= 0:
-            findings.append(
-                Finding(setting, f"must be a positive number while Bright Data {where}")
-            )
-    poll = _configured_float(settings, "people_brightdata_poll_interval_seconds")
-    ceiling = _configured_float(settings, "people_brightdata_max_poll_seconds")
-    if poll > 0 and ceiling > 0 and poll > ceiling:
+    if _configured_float(settings, "people_brightdata_timeout_seconds") <= 0:
         findings.append(
             Finding(
-                "PEOPLE_BRIGHTDATA_POLL_INTERVAL_SECONDS",
-                f"({poll}s) exceeds PEOPLE_BRIGHTDATA_MAX_POLL_SECONDS ({ceiling}s), "
-                "so no snapshot could ever be polled even once",
+                "PEOPLE_BRIGHTDATA_TIMEOUT_SECONDS",
+                f"must be a positive number while Bright Data {where}",
             )
         )
     return findings
