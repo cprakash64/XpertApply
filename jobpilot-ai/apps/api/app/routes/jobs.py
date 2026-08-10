@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.applications.mark_applied import (
     DISCOVERY_HIDDEN_STATUSES,
-    AppliedSource,
     ApplicationJobNotFound,
+    AppliedSource,
     mark_application_applied,
     serialize_application,
 )

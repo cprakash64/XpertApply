@@ -28,7 +28,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 
 #: Job ingestion is a background batch, so a newly discovered posting may take
 #: up to this long to be reflected in the fresh-match count. Everything the user
@@ -52,8 +52,19 @@ def _redis_client():
 
     Tests never touch Redis: the local dict alone keeps them deterministic and
     independent of whether a developer has the container running.
+
+    ``app_env`` alone is not enough to guarantee that. A normal local checkout
+    runs pytest with the developer's own ``.env``, where ``APP_ENV`` is
+    ``development``, so the suite would reach the dev Redis container whenever
+    it happened to be up. Every test builds a fresh in-memory database whose
+    user ids restart at 1 and whose fixture profiles are identical, so the keys
+    collide: ``clear_local_dashboard_cache`` empties the in-process dict but
+    cannot evict those entries, and one test reads the previous test's counts.
+    Detecting the active pytest run closes that hole without depending on how a
+    given machine is configured. ``PYTEST_CURRENT_TEST`` is set by pytest only,
+    so this is inert in production.
     """
-    if settings.app_env == "test":
+    if running_under_test():
         return None
     try:
         import redis

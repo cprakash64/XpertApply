@@ -1,5 +1,6 @@
 """Dashboard summary: aggregation, ordering, isolation, caching, empty state."""
 
+import os
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 
@@ -787,3 +788,34 @@ def test_next_action_never_triggers_scoring(client: TestClient, monkeypatch):
     complete_profile(client, headers)
     score(user_email=email, job_id=seed_job(company="PrioNoScore"), fit_score=90.0)
     assert summary(client, headers)["nextAction"]["kind"] == "strong_matches"
+
+
+def test_the_suite_never_shares_a_dashboard_cache_with_a_real_redis(monkeypatch):
+    """The cache must be process-local while tests run, whatever APP_ENV says.
+
+    Regression test for the defect that made thirteen tests in this file fail on
+    an ordinary developer machine. Each test builds a fresh in-memory database,
+    so user ids restart at 1 and the fixture profiles are byte-identical, which
+    means every test computes the SAME cache key. When the cache reached the dev
+    Redis container, ``clear_local_dashboard_cache`` could not evict those
+    entries and each test read the previous test's fresh-match counts — the
+    failure looked like a broken eligibility gate rather than shared state.
+
+    The gate keyed on ``app_env == "test"`` alone, which is false in a normal
+    local checkout, so this pins the pytest-detection half specifically: with
+    APP_ENV set to a non-test value, the client must still be None.
+    """
+    from app.core.config import running_under_test
+    from app.dashboard import summary_cache
+    from app.people import circuit, pdl_company
+
+    monkeypatch.setattr(summary_cache.settings, "app_env", "development", raising=False)
+    assert "PYTEST_CURRENT_TEST" in os.environ
+    assert running_under_test() is True
+
+    # Every process-external cache, not just this one: the People circuit
+    # breaker leaking between tests is what produced whole files of
+    # ``circuit_open`` failures that moved from run to run.
+    assert summary_cache._redis_client() is None
+    assert circuit._redis_client() is None
+    assert pdl_company._redis_client() is None

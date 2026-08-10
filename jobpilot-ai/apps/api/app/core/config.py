@@ -441,3 +441,26 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+def running_under_test() -> bool:
+    """True while the automated suite runs, whatever this machine's APP_ENV is.
+
+    Every process-external cache in this codebase (the People circuit breaker,
+    the discovery locks, the complete-person and PDL company caches, the
+    dashboard summary) is an optimisation that must never be shared BETWEEN
+    tests. Each test builds a fresh in-memory database whose ids restart at 1
+    and whose fixtures are identical, so those keys collide across tests; a real
+    Redis then carries one test's state into the next, and the local reset
+    helpers cannot evict what they never wrote.
+
+    Gating on ``app_env`` alone did not achieve that. A normal local checkout
+    runs pytest against the developer's own ``.env``, where ``APP_ENV`` is
+    ``development``, so the suite silently reached the dev Redis container
+    whenever it was up — which is what made whole files of People tests fail
+    with ``circuit_open`` and made the failures move between runs.
+
+    ``PYTEST_CURRENT_TEST`` is set by pytest and by nothing else, so this is
+    inert in every real deployment.
+    """
+    return settings.app_env == "test" or "PYTEST_CURRENT_TEST" in os.environ

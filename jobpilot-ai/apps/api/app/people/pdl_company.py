@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 from app.people.intelligence import normalize_company_name
 from app.people.observability import metric
 
@@ -92,7 +92,7 @@ def _cache_key(normalized_name: str, domain: str | None) -> str:
 
 
 def _redis_client():
-    if settings.app_env == "test":
+    if running_under_test():
         return None
     try:
         import redis

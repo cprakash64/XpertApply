@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Literal
 
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 
 BulkCapabilityState = Literal[
     "unknown",
@@ -35,7 +35,7 @@ def _read(
     account_scope: str,
 ) -> dict[str, object]:
     key = _key(provider, adapter_version, account_scope)
-    if settings.app_env != "test":
+    if not running_under_test():
         try:
             import redis
 
@@ -77,7 +77,7 @@ def _write(
         "expires_at": (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat(),
     }
     key = _key(provider, adapter_version, account_scope)
-    if settings.app_env != "test":
+    if not running_under_test():
         try:
             import redis
 
@@ -173,7 +173,7 @@ def reset_bulk_capability(
     account_scope: str,
 ) -> None:
     key = _key(provider, adapter_version, account_scope)
-    if settings.app_env != "test":
+    if not running_under_test():
         try:
             import redis
 

@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Literal
 
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 from app.people.errors import (
     PeopleErrorCode,
     circuit_kind,
@@ -122,7 +122,7 @@ def _state_ttl_seconds(kind: CircuitKind) -> int:
 
 
 def _redis_client():
-    if settings.app_env == "test":
+    if running_under_test():
         return None
     try:
         import redis

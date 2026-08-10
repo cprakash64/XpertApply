@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Literal, TypedDict
 
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 from app.people.schemas import ProviderPerson
 
 CompletePersonCacheState = Literal["success", "not_found", "error"]
@@ -40,7 +40,7 @@ def _cache_key(
 
 def _read(key: str) -> CompletePersonCacheEntry | None:
     raw: str | None = None
-    if settings.app_env != "test":
+    if not running_under_test():
         try:
             import redis
 
@@ -77,7 +77,7 @@ def _write(
 ) -> None:
     ttl = max(60, ttl_seconds)
     raw = json.dumps(value, separators=(",", ":"), sort_keys=True)
-    if settings.app_env != "test":
+    if not running_under_test():
         try:
             import redis
 

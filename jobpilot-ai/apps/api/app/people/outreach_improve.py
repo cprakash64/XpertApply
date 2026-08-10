@@ -23,7 +23,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.ai.provider import AIProvider
-from app.core.config import settings
+from app.core.config import running_under_test, settings
 from app.models.entities import User, UserProfile
 from app.people.observability import metric
 from app.people.outreach_ai import (
@@ -112,6 +112,8 @@ def _redis():
     """A Redis client, or ``None``. The cache is an optimisation, never a
     dependency — losing Redis costs a duplicate model call, not the feature."""
 
+    if running_under_test():
+        return None
     try:
         import redis
 

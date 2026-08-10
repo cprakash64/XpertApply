@@ -179,6 +179,11 @@ describe("Application preferences page", () => {
 
   it("keeps the three legal questions distinct and offers all three choices", async () => {
     await renderPage();
+    // ApplicationEligibility fetches its own answers, so the prompts arrive
+    // after renderPage resolves — that only awaits the surrounding fieldset.
+    // Awaiting the first one is what makes the rest synchronously assertable;
+    // a question that genuinely went missing still fails here, on timeout.
+    await screen.findByText(/legally authorized to work in the United States/i);
     for (const prompt of [
       /legally authorized to work in the United States/i,
       /currently require employer sponsorship/i,
