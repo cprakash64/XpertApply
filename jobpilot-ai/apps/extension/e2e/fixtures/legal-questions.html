@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Application — Eligibility</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 32px; }
+    .field { margin: 22px 0; max-width: 560px; }
+    label, .q { display: block; font-weight: 600; margin-bottom: 6px; }
+    .combo { border: 1px solid #ccc; border-radius: 6px; padding: 9px 12px; cursor: pointer; background: #fff; }
+    .menu { position: absolute; z-index: 50; background: #fff; border: 1px solid #ccc;
+            border-radius: 6px; margin-top: 4px; min-width: 240px; list-style: none; padding: 4px; }
+    .menu[hidden] { display: none; }
+    .menu li { padding: 8px 10px; cursor: pointer; }
+    select { padding: 8px; min-width: 240px; }
+  </style>
+</head>
+<body>
+  <h1>Eligibility</h1>
+  <form id="application-form" action="/submit" method="post">
+    <!-- Ordinary application fields, so the form-root scorer recognises this as
+         a real application rather than a stray three-control form. -->
+    <div class="field">
+      <label for="first_name">First name</label>
+      <input id="first_name" name="first_name" required />
+    </div>
+    <div class="field">
+      <label for="last_name">Last name</label>
+      <input id="last_name" name="last_name" required />
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required />
+    </div>
+    <div class="field">
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" />
+    </div>
+    <div class="field">
+      <label for="resume">Resume</label>
+      <input id="resume" name="resume" type="file" />
+    </div>
+
+    <!-- Custom React-style combobox with a PORTAL menu. -->
+    <div class="field" data-jobpilot-control>
+      <span class="q" id="q-auth">Are you legally authorized to work in the US without restriction?</span>
+      <div id="auth" class="combo" role="combobox" aria-labelledby="q-auth"
+           aria-controls="auth-menu" aria-expanded="false" tabindex="0">Select…</div>
+      <input type="hidden" id="auth-hidden" name="work_auth" value="" />
+    </div>
+
+    <!-- Native select. -->
+    <div class="field">
+      <label for="sponsor">Will you now or in the future require visa sponsorship or a visa transfer?</label>
+      <select id="sponsor" name="sponsor">
+        <option value="">Select…</option>
+        <option value="y">Yes</option>
+        <option value="n">No</option>
+      </select>
+    </div>
+
+    <!-- The two sponsorship COMPONENTS, shown only with ?components=1. An
+         employer that asks all three is how the dependency becomes visible:
+         answering a component for this application has to move the combined
+         control too, or the page would show two answers that disagree. -->
+    <div class="field" id="component-fields" hidden>
+      <label for="sponsor-now">Do you currently require employer sponsorship or a visa transfer?</label>
+      <select id="sponsor-now" name="sponsor_now">
+        <option value="">Select…</option>
+        <option value="y">Yes</option>
+        <option value="n">No</option>
+      </select>
+      <label for="sponsor-future">Will you require employer sponsorship in the future?</label>
+      <select id="sponsor-future" name="sponsor_future">
+        <option value="">Select…</option>
+        <option value="y">Yes</option>
+        <option value="n">No</option>
+      </select>
+    </div>
+
+    <!-- Job source. -->
+    <div class="field">
+      <label for="source">Where did you hear about this opportunity?</label>
+      <select id="source" name="source">
+        <option value="">Select…</option>
+        <option value="cw">Company website</option>
+        <option value="li">LinkedIn</option>
+        <option value="ot">Other</option>
+      </select>
+    </div>
+
+    <!-- Consent: must never be touched. -->
+    <div class="field">
+      <label><input type="checkbox" id="privacy" name="privacy" /> I agree to the privacy policy and terms</label>
+    </div>
+
+    <button type="submit" id="final-submit">Submit application</button>
+  </form>
+
+  <!-- Portal menu, deliberately outside the form. -->
+  <ul class="menu" id="auth-menu" role="listbox" hidden aria-labelledby="q-auth"></ul>
+
+  <script>
+    window.__jobpilotFixture = { submitted: false, revertNext: false, replaceNext: false };
+    const params = new URLSearchParams(location.search);
+    // Variants that make verification actually mean something.
+    if (params.get("revert") === "1") window.__jobpilotFixture.revertNext = true;
+    if (params.get("qualified") === "1") {
+      window.__authOptions = ["Yes, with restrictions", "No"];
+    }
+    if (params.get("components") === "1") {
+      document.getElementById("component-fields").hidden = false;
+    }
+
+    const combo = document.getElementById("auth");
+    const menu = document.getElementById("auth-menu");
+    const hidden = document.getElementById("auth-hidden");
+    const OPTIONS = window.__authOptions || ["Yes", "No"];
+
+    // Expose options for discovery the way an ARIA widget would.
+    combo.setAttribute("data-options", OPTIONS.join("|"));
+
+    function renderMenu() {
+      menu.innerHTML = "";
+      for (const label of OPTIONS) {
+        const li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.textContent = label;
+        li.addEventListener("click", () => {
+          if (window.__jobpilotFixture.revertNext) {
+            // React-style revert: accept the click, then discard it.
+            combo.textContent = label;
+            setTimeout(() => { combo.textContent = "Select…"; hidden.value = ""; }, 60);
+          } else {
+            combo.textContent = label;
+            // Real custom controls commonly submit a machine boolean whose
+            // value differs from the visible Yes/No label.
+            hidden.value = params.get("backing") === "mismatch"
+              ? (label === "Yes" ? "false" : "true")
+              : (label === "Yes" ? "true" : "false");
+          }
+          closeMenu();
+        });
+        menu.appendChild(li);
+      }
+    }
+
+    // ?closed=1 models the likely TikTok shape: NO options in the DOM until the
+    // control is opened, and the portal torn down again on close.
+    const CLOSED_MENU = params.get("closed") === "1";
+    const GESTURE_ONLY = params.get("gesture") === "1";
+    const DELAY_MS = Number(params.get("menudelay") || 0);
+    if (!CLOSED_MENU) renderMenu();
+
+    function openMenu() {
+      const show = () => {
+        renderMenu();
+        const box = combo.getBoundingClientRect();
+        menu.style.left = box.left + "px";
+        menu.style.top = box.bottom + "px";
+        menu.hidden = false;
+        combo.setAttribute("aria-expanded", "true");
+      };
+      if (DELAY_MS > 0) setTimeout(show, DELAY_MS);
+      else show();
+    }
+
+    function closeMenu() {
+      menu.hidden = true;
+      if (CLOSED_MENU) menu.innerHTML = "";   // portal torn down
+      combo.setAttribute("aria-expanded", "false");
+    }
+
+    combo.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
+    document.body.addEventListener("click", (e) => {
+      if (e.target === document.body) closeMenu();
+    });
+
+    let sawPointer = false;
+    combo.addEventListener("pointerdown", () => { sawPointer = true; });
+    combo.addEventListener("click", () => {
+      // A gesture-only page refuses every synthetic open, however well formed.
+      if (GESTURE_ONLY) return;
+      if (!sawPointer) return;           // ignore synthetic clicks
+      openMenu();
+    });
+
+    document.getElementById("application-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      window.__jobpilotFixture.submitted = true;
+    });
+  </script>
+</body>
+</html>

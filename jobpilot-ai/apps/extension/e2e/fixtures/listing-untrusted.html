@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Listing — untrusted events rejected</title>
+  <style>
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; }
+    header { display: flex; gap: 12px; padding: 12px 24px; border-bottom: 1px solid #ddd; }
+    main { max-width: 820px; margin: 0 auto; padding: 28px 24px 120px; }
+    .btn { display: inline-block; border: 0; border-radius: 6px; padding: 10px 18px;
+           font: inherit; font-weight: 600; cursor: pointer; background: #fe2c55;
+           color: #fff; text-decoration: none; }
+    .btn.ghost { background: #f4f4f5; color: #111; }
+    #cookie { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; padding: 18px;
+              background: #18181b; color: #fff; display: flex; gap: 12px; align-items: center; }
+    body[data-cover="1"] #cookie { inset: 0; }
+    body[data-cover="none"] #cookie { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Careers</strong>
+    <button class="btn ghost" id="header-apply">Apply</button>
+  </header>
+
+  <main>
+    <h1>Senior Engineer, Search</h1>
+    <p>Own ranking and retrieval for the search stack.</p>
+
+    <!--
+      The CTA shape is chosen by ?cta=. Every variant REJECTS untrusted events:
+      a script-dispatched click has isTrusted === false and is ignored, exactly
+      like a production site that gates navigation on real user input.
+    -->
+    <div id="cta-slot"></div>
+
+    <h2>Other openings</h2>
+    <a class="btn ghost" href="/careers/other-role">Apply to other roles</a>
+  </main>
+
+  <div id="cookie">
+    <span>We use cookies.</span>
+    <button class="btn" id="cookie-accept">Accept all</button>
+    <button class="btn ghost" id="cookie-decline">Decline all</button>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const cta = params.get("cta") || "anchor";
+    document.body.dataset.cover = params.get("cover") || "none";
+    window.__jobpilotFixture = { clicks: [], untrustedRejected: 0, cta, navigatedTo: null };
+
+    const slot = document.getElementById("cta-slot");
+    const LABEL = "Apply to this job";
+
+    function markup() {
+      switch (cta) {
+        case "anchor":
+          return `<a class="btn" id="primary-apply" href="/careers/apply/12345">${LABEL}</a>`;
+        case "anchor-blank":
+          return `<a class="btn" id="primary-apply" target="_blank" href="/careers/apply/12345">${LABEL}</a>`;
+        case "ancestor-anchor":
+          return `<a href="/careers/apply/12345" id="apply-wrapper"><button class="btn" id="primary-apply">${LABEL}</button></a>`;
+        case "data-url":
+          return `<button class="btn" id="primary-apply" data-url="/careers/apply/12345">${LABEL}</button>`;
+        case "unsafe-scheme":
+          return `<a class="btn" id="primary-apply" href="javascript:void(0)">${LABEL}</a>`;
+        case "cross-employer":
+          return `<a class="btn" id="primary-apply" href="https://unrelated-recruiter.test/apply">${LABEL}</a>`;
+        case "duplicate":
+          // TWO identical CTAs in main content — the shape that made the old
+          // tie-break return null and stall the whole run.
+          return `<a class="btn" id="primary-apply" href="/careers/apply/12345">${LABEL}</a>
+                  <p>More about the role.</p>
+                  <a class="btn" id="primary-apply-2" href="/careers/apply/12345">${LABEL}</a>`;
+        case "shadow": {
+          return `<div id="shadow-host"></div>`;
+        }
+        case "script-only":
+        default:
+          return `<button class="btn" id="primary-apply">${LABEL}</button>`;
+      }
+    }
+
+    slot.innerHTML = markup();
+
+    if (cta === "shadow") {
+      const host = document.getElementById("shadow-host");
+      const root = host.attachShadow({ mode: "open" });
+      root.innerHTML = `<a class="btn" id="primary-apply" href="/careers/apply/12345">${LABEL}</a>`;
+    }
+
+    // Every clickable CTA ignores untrusted (script-dispatched) events.
+    function guard(el) {
+      if (!el) return;
+      el.addEventListener("click", (event) => {
+        window.__jobpilotFixture.clicks.push("primary-apply:click");
+        if (!event.isTrusted) {
+          window.__jobpilotFixture.untrustedRejected += 1;
+          window.__jobpilotFixture.clicks.push("primary-apply:untrusted-ignored");
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        window.__jobpilotFixture.clicks.push("primary-apply:trusted");
+      }, true);
+    }
+    guard(document.getElementById("primary-apply"));
+    guard(document.getElementById("primary-apply-2"));
+    const shadowHost = document.getElementById("shadow-host");
+    if (shadowHost) guard(shadowHost.shadowRoot.getElementById("primary-apply"));
+
+    document.getElementById("header-apply").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("header-apply");
+    });
+    document.getElementById("cookie-accept").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("cookie-accept");
+      document.body.dataset.cover = "none";
+    });
+    document.getElementById("cookie-decline").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("cookie-decline");
+      document.body.dataset.cover = "none";
+    });
+  </script>
+</body>
+</html>

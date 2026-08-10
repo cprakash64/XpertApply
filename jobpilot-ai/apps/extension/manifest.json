@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "description": "User-controlled application copilot. Fills employer forms with your verified JobPilot data — you always review and submit yourself.",
   "permissions": ["sidePanel", "storage", "scripting", "tabs"],
+  "optional_permissions": ["webNavigation"],
   "host_permissions": [
     "https://*/*",
     "http://localhost/*",
@@ -24,7 +25,8 @@
       "exclude_matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*", "https://app.jobpilot.ai/*"],
       "js": ["content.js"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "match_origin_as_fallback": true
     }
   ]
 }

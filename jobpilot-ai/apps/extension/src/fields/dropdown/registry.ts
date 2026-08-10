@@ -4,6 +4,7 @@
  * satisfy the generic ARIA test.
  */
 
+import { deepClosest, deepQuery } from "../../dom/deepDom";
 import type { DiscoveredField } from "../../types";
 import { createCustomAdapter } from "./adapters/custom";
 import { nativeSelectAdapter, radioGroupAdapter } from "./adapters/native";
@@ -16,7 +17,7 @@ function hasClass(field: DiscoveredField, fragment: string): boolean {
   const el = field.element as HTMLElement | undefined;
   if (!el) return false;
   if ((el.className || "").includes(fragment)) return true;
-  return Boolean(el.querySelector(`[class*="${fragment}"]`) || el.closest(`[class*="${fragment}"]`));
+  return Boolean(deepQuery(el, `[class*="${fragment}"]`) || deepClosest(el, `[class*="${fragment}"]`));
 }
 
 /** Greenhouse's own custom select (job-boards React app). */
@@ -48,7 +49,11 @@ export const searchableComboboxAdapter: DropdownAdapter = createCustomAdapter({
     if (!isCustomControl(field)) return false;
     const el = field.element as HTMLElement | undefined;
     if (!el) return false;
-    const input = el.tagName.toLowerCase() === "input" ? el : el.querySelector('input:not([type="hidden"])');
+    // Shadow-piercing: a web-component combobox keeps its real <input> — and
+    // therefore its `aria-autocomplete` — inside its shadow root. Without this
+    // the control fell through to the generic ARIA adapter, which cannot type,
+    // so a search-driven field (City, Title, Company) could never be filled.
+    const input = el.tagName.toLowerCase() === "input" ? el : deepQuery(el, 'input:not([type="hidden"])');
     return Boolean(input && (el.getAttribute("aria-autocomplete") || input.getAttribute("aria-autocomplete")));
   },
   searchable: () => true

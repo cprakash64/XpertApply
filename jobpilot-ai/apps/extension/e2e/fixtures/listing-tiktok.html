@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Software Engineer, Recommendation Infrastructure — Careers</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #111; }
+    header.site {
+      position: sticky; top: 0; z-index: 40; display: flex; align-items: center;
+      gap: 16px; padding: 12px 24px; background: #fff; border-bottom: 1px solid #e4e4e7;
+    }
+    header.site nav { display: flex; gap: 16px; margin-left: auto; align-items: center; }
+    .btn {
+      border: 0; border-radius: 6px; padding: 10px 18px; font: inherit;
+      font-weight: 600; cursor: pointer; background: #fe2c55; color: #fff;
+    }
+    .btn.ghost { background: #f4f4f5; color: #111; }
+    main { max-width: 860px; margin: 0 auto; padding: 32px 24px 160px; }
+    .job-detail-actions { display: flex; gap: 12px; margin: 24px 0; }
+    /* A second, sticky copy of the same CTA — extremely common on job pages
+       and the shape that a strict "ties are ambiguous" rule chokes on. */
+    .sticky-apply {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+      display: flex; justify-content: flex-end; gap: 12px;
+      padding: 12px 24px; background: #fff; border-top: 1px solid #e4e4e7;
+    }
+    #cookie-banner {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      padding: 20px 24px; background: #18181b; color: #fff;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+    }
+    #cookie-banner.hidden { display: none; }
+    #application-root:empty { display: none; }
+    #application-root { max-width: 860px; margin: 0 auto; padding: 0 24px 80px; }
+    label { display: block; margin: 14px 0 4px; font-weight: 600; font-size: 13px; }
+    input, textarea, select { width: 100%; padding: 9px 11px; border: 1px solid #d4d4d8; border-radius: 6px; font: inherit; }
+  </style>
+</head>
+<body>
+  <!-- Site chrome. A generic "Apply" shortcut lives here; it must NOT win. -->
+  <header class="site">
+    <strong>Careers</strong>
+    <nav>
+      <label for="site-search" class="sr-only" style="position:absolute;left:-9999px">Search jobs</label>
+      <input id="site-search" type="text" placeholder="Search jobs" style="width:220px" />
+      <a href="/jobs">All jobs</a>
+      <button class="btn ghost" id="header-apply">Apply</button>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Software Engineer, Recommendation Infrastructure</h1>
+    <p><strong>San Jose, CA</strong> · Full-time · R&amp;D</p>
+
+    <div class="job-detail-actions">
+      <!-- The control the extension must choose. -->
+      <button class="btn" data-role="primary-apply">Apply to this job</button>
+      <button class="btn ghost">Save this job</button>
+      <button class="btn ghost">Share</button>
+    </div>
+
+    <h2>Responsibilities</h2>
+    <p>Build and operate large-scale recommendation infrastructure serving billions of requests.</p>
+    <h2>Qualifications</h2>
+    <p>Experience with distributed systems, Python or Go, and production operations.</p>
+
+    <h2>Other openings</h2>
+    <!-- Belongs to a different job: must never be chosen. -->
+    <button class="btn ghost">Apply to other roles</button>
+  </main>
+
+  <!-- The same CTA repeated in a sticky action bar. -->
+  <div class="sticky-apply">
+    <button class="btn" data-role="sticky-apply">Apply to this job</button>
+  </div>
+
+  <div id="cookie-banner">
+    <span>We and our partners use cookies to personalise content and ads.</span>
+    <button class="btn" id="cookie-accept">Accept all</button>
+    <button class="btn ghost" id="cookie-decline">Decline all</button>
+  </div>
+
+  <!-- The application does not exist until an Apply CTA is activated. -->
+  <div id="application-root"></div>
+
+  <script>
+    window.__jobpilotFixture = { clicks: [], applicationMounted: false };
+
+    document.getElementById("cookie-accept").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("cookie-accept");
+      document.getElementById("cookie-banner").classList.add("hidden");
+    });
+    document.getElementById("cookie-decline").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("cookie-decline");
+      document.getElementById("cookie-banner").classList.add("hidden");
+    });
+    document.getElementById("header-apply").addEventListener("click", () => {
+      window.__jobpilotFixture.clicks.push("header-apply");
+    });
+
+    // Both job CTAs mount the same application, via a client-side route change.
+    function mountApplication(source) {
+      window.__jobpilotFixture.clicks.push(source);
+      if (window.__jobpilotFixture.applicationMounted) return;
+      window.__jobpilotFixture.applicationMounted = true;
+      history.pushState({}, "", location.pathname + "?step=application");
+      document.querySelector("main").style.display = "none";
+      document.querySelector(".sticky-apply").style.display = "none";
+      document.getElementById("application-root").innerHTML = `
+        <h1>Apply — Software Engineer, Recommendation Infrastructure</h1>
+        <form id="application-form" action="/careers/applications/submit" method="post">
+          <label for="first_name">First name</label><input id="first_name" name="first_name" required />
+          <label for="last_name">Last name</label><input id="last_name" name="last_name" required />
+          <label for="email">Email</label><input id="email" name="email" type="email" required />
+          <label for="phone">Phone</label><input id="phone" name="phone" />
+          <label for="resume">Resume</label><input id="resume" name="resume" type="file" />
+          <label for="why">Why are you interested?</label><textarea id="why" name="why"></textarea>
+          <button type="submit" id="final-submit">Submit application</button>
+        </form>`;
+    }
+
+    // Only respond to a REAL user-style gesture sequence. A bare
+    // element.click() with no preceding pointer events is ignored, exactly as
+    // many React/pointer-driven employer pages behave.
+    for (const el of document.querySelectorAll('[data-role="primary-apply"],[data-role="sticky-apply"]')) {
+      let sawPointerDown = false;
+      el.addEventListener("pointerdown", () => { sawPointerDown = true; });
+      el.addEventListener("click", (event) => {
+        window.__jobpilotFixture.clicks.push(`${el.dataset.role}:click`);
+        if (!sawPointerDown) {
+          window.__jobpilotFixture.clicks.push(`${el.dataset.role}:ignored-no-pointer`);
+          return;
+        }
+        event.preventDefault();
+        mountApplication(el.dataset.role);
+      });
+    }
+  </script>
+</body>
+</html>

@@ -14,8 +14,8 @@ export function uploadFileToInput(input: HTMLInputElement, file: File): UploadOu
     const dt = new DataTransfer();
     dt.items.add(file);
     input.files = dt.files;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     const ok = input.files.length === 1 && input.files[0].name === file.name;
     return ok ? { status: "uploaded", filename: file.name } : { status: "error", reason: "upload not confirmed" };
   } catch (err) {

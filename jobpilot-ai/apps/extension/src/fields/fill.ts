@@ -274,9 +274,22 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
   el.value = value;
 }
 
+/**
+ * Fire the events a framework listens for.
+ *
+ * `composed: true` is required, not cosmetic: an event dispatched inside an open
+ * shadow root does NOT cross the boundary unless it is composed, so a web
+ * component's own listener (SmartRecruiters' `spl-input` wraps the real
+ * `<input>` in a shadow root and syncs its value from these events) would never
+ * see the change. Verified against the live SmartRecruiters "Easy Apply" form:
+ * without `composed`, the inner input shows the value and the component — and
+ * therefore the submitted model — keeps the old one.
+ */
 function dispatch(el: HTMLElement, events: string[]): void {
   for (const type of events) {
-    const event = type === "click" ? new MouseEvent("click", { bubbles: true }) : new Event(type, { bubbles: true });
+    const event = type === "click"
+      ? new MouseEvent("click", { bubbles: true, composed: true })
+      : new Event(type, { bubbles: true, composed: true });
     el.dispatchEvent(event);
   }
 }

@@ -10,6 +10,7 @@
 import type { DetectionOutcome } from "../ats/registry";
 import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
+import { deepClosest, deepTextContent } from "../dom/deepDom";
 import { applyFill, scan, type FillSummary } from "../fields/runner";
 import { uploadFileToInput } from "../fields/upload";
 import { buildLedger, computeCounts, type LedgerCounts, type LedgerEntry } from "../fields/ledger";
@@ -21,6 +22,7 @@ import type {
   ReasonCode
 } from "../messages";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping } from "../types";
+import { reconcileAtsValues } from "./reconciliation";
 
 /** Terminal upload states surfaced as ledger entries so documents are counted
  * consistently with every other required control (invariant B.5). */
@@ -30,6 +32,16 @@ export interface AutofillDeps {
   /** Fetch a generated document as a File (bytes come from the background). */
   fetchDocument: (kind: "resume" | "cover-letter") => Promise<File | null>;
   onUploadStart?: (kind: "resume" | "cover-letter") => void;
+  /** Documents prepared before ATS parsing. Supplying this prevents a second
+   * upload during the authoritative post-parse fill. */
+  preparedDocuments?: PreparedDocumentUploads;
+}
+
+export interface PreparedDocumentUploads {
+  uploaded: ("resume" | "cover_letter")[];
+  reviewDocs: ("resume" | "cover_letter")[];
+  fieldResults: FieldFillResult[];
+  resumeCommitted: boolean;
 }
 
 export interface AutofillOutcome {
@@ -54,14 +66,75 @@ export async function runAutofill(
 ): Promise<AutofillOutcome> {
   const root = pickApplicationForm(document);
   const scanned = scan(root, session, step);
-  const summary = await applyFill(scanned.fields, scanned.mappings, session);
-
+  // Upload before scalar fill. ATSs such as TikTok parse the resume and replace
+  // the form; filling the pre-parse nodes first creates stale references.
+  const documents = deps.preparedDocuments
+    ?? await prepareDocumentUploads(session, deps, root, scanned.fields, scanned.mappings);
+  const reconciliation = new Map(
+    reconcileAtsValues(scanned.fields, scanned.mappings, session).map((item) => [item.uid, item])
+  );
+  const takeoverMappings = scanned.mappings.filter((mapping) => {
+    const classification = reconciliation.get(mapping.uid)?.classification;
+    return classification === "EMPTY_AND_RESOLVABLE" || classification === "EMPTY_AND_MISSING_INFORMATION";
+  });
+  const summary = await applyFill(scanned.fields, takeoverMappings, session);
   const fieldResults = buildFieldResults(scanned.fields, scanned.mappings, session, summary);
+  fieldResults.push(...documents.fieldResults);
+  const { uploaded, reviewDocs } = documents;
 
-  // Uploads — resolve the real inputs (including hidden inputs behind "Attach"),
-  // classify by document type, download the tailored file, set it, and VERIFY.
+  // --- The field ledger: the ONE source of truth. Every discovered control
+  // plus every document target becomes exactly one entry; all counts derive
+  // from it (never from ad-hoc filters). ---
+  const ledger = buildScanLedger(
+    scanned.fields,
+    scanned.mappings,
+    fieldResults,
+    uploadLedgerStates(uploaded, reviewDocs)
+  );
+  const counts = computeCounts(ledger);
+  const reviewItems = counts.pending;
+  const filled = counts.filled;
+  const submit = outcome.adapter.findSubmitControl({ url: location.href, document });
+  const progress: ProgressPayload = {
+    state: reviewItems > 0 ? "completed_with_review" : "completed",
+    atsId: outcome.result.atsId,
+    atsDisplayName: outcome.adapter.displayName,
+    limited: outcome.limited,
+    fieldsDiscovered: counts.discovered,
+    filled,
+    skipped: counts.optionalSkipped,
+    reviewRequired: reviewItems,
+    reachedFinalStep: submit !== null,
+    documentsUploaded: uploaded,
+    reviewDocuments: reviewDocs
+  };
+  const result: AutofillResult = {
+    status: counts.discovered === 0 ? "no_fields" : reviewItems > 0 ? "completed_with_review" : "completed",
+    ats: outcome.result.atsId,
+    fields_discovered: counts.discovered,
+    fields_filled: filled,
+    documents_uploaded: uploaded,
+    review_items: reviewItems,
+    failures: fieldResults
+      .filter((item) => item.status === "failed" && item.reasonCode)
+      .map((item) => ({ field_key: item.fieldKey, reason_code: item.reasonCode as string }))
+  };
+  return { progress, result, fieldResults, fields: scanned.fields, ledger, counts };
+}
+
+/** Upload documents as a separate lifecycle phase before any authoritative DOM
+ * discovery. The returned durable result is reused after ATS parsing settles. */
+export async function prepareDocumentUploads(
+  session: ApplicationSessionData,
+  deps: Pick<AutofillDeps, "fetchDocument" | "onUploadStart">,
+  root: ParentNode,
+  fields?: DiscoveredField[],
+  mappings?: FieldMapping[]
+): Promise<PreparedDocumentUploads> {
+  const scanned = fields && mappings ? { fields, mappings } : scan(root, session, 0);
   const uploaded: ("resume" | "cover_letter")[] = [];
   const reviewDocs: ("resume" | "cover_letter")[] = [];
+  const fieldResults: FieldFillResult[] = [];
   const uploadTargets = resolveUploadTargets(scanned.fields, scanned.mappings, root);
   for (const target of uploadTargets) {
     const publicKind: "resume" | "cover_letter" = target.kind === "cover-letter" ? "cover_letter" : "resume";
@@ -88,48 +161,12 @@ export async function runAutofill(
       pushResult(fieldResults, publicKind, `Upload ${publicKind}`, "review", "DOCUMENT_UPLOAD_REJECTED");
     }
   }
-
-  // --- The field ledger: the ONE source of truth. Every discovered control
-  // plus every document target becomes exactly one entry; all counts derive
-  // from it (never from ad-hoc filters). ---
-  const ledger = buildScanLedger(scanned.fields, scanned.mappings, fieldResults, uploadLedgerStates(uploaded, reviewDocs));
-  const counts = computeCounts(ledger);
-
-  // "review_items" / "reviewRequired" now means: everything the user still has
-  // to resolve (missing info + confirmations + technical + unsupported). This is
-  // ledger-derived, so it can never disagree with the review list.
-  const reviewItems = counts.pending;
-  const filled = counts.filled;
-  const submit = outcome.adapter.findSubmitControl({ url: location.href, document });
-
-  const progress: ProgressPayload = {
-    state: reviewItems > 0 ? "completed_with_review" : "completed",
-    atsId: outcome.result.atsId,
-    atsDisplayName: outcome.adapter.displayName,
-    limited: outcome.limited,
-    fieldsDiscovered: counts.discovered,
-    filled,
-    skipped: counts.optionalSkipped,
-    reviewRequired: reviewItems,
-    reachedFinalStep: submit !== null,
-    documentsUploaded: uploaded,
-    reviewDocuments: reviewDocs
+  return {
+    uploaded,
+    reviewDocs,
+    fieldResults,
+    resumeCommitted: uploaded.includes("resume")
   };
-
-  const result: AutofillResult = {
-    status:
-      counts.discovered === 0 ? "no_fields" : reviewItems > 0 ? "completed_with_review" : "completed",
-    ats: outcome.result.atsId,
-    fields_discovered: counts.discovered,
-    fields_filled: filled,
-    documents_uploaded: uploaded,
-    review_items: reviewItems,
-    failures: fieldResults
-      .filter((r) => r.status === "failed" && r.reasonCode)
-      .map((r) => ({ field_key: r.fieldKey, reason_code: r.reasonCode as string }))
-  };
-
-  return { progress, result, fieldResults, fields: scanned.fields, ledger, counts };
 }
 
 // --------------------------------------------------------------------------- //
@@ -381,17 +418,41 @@ function resolveUploadTargets(
     targets.push(found);
     usedInputs.add(found.input);
   }
+
+  // An "Easy Apply"/"Upload your resume" block frequently sits ABOVE the scored
+  // application root rather than inside it — it belongs to the page, not to the
+  // question form. Scoping is what keeps a site-search box from being read as
+  // an application question, but it must not be the reason the resume is never
+  // attached at all, so the whole document is consulted once when the root
+  // offered no resume target. The same classification gates still apply: only a
+  // control that names itself a resume, or the single document dropzone of an
+  // apply block, is ever written to.
+  if (!targets.some((target) => target.kind === "resume")) {
+    const doc = documentOf(root);
+    for (const found of doc ? discoverUploadInputs(doc) : []) {
+      if (found.kind !== "resume" || usedInputs.has(found.input)) continue;
+      targets.push(found);
+      usedInputs.add(found.input);
+    }
+  }
   return targets;
+}
+
+function documentOf(root: ParentNode): Document | null {
+  if (root instanceof Document) return null;
+  return (root as Node).ownerDocument ?? null;
 }
 
 /** Verify the employer UI accepted the file (filename appears, or files set and
  * no rejection) — never trust `input.files` assignment alone. */
 async function verifyUpload(input: HTMLInputElement, filename: string): Promise<boolean> {
   const name = filename.toLowerCase();
-  const scope = input.closest("div,fieldset,section,form") ?? input.ownerDocument.body;
+  // The confirmation ("resume.pdf ✓") is rendered by the component AROUND the
+  // input, which for a web-component dropzone is outside its shadow root.
+  const scope = deepClosest(input, "div,fieldset,section,form") ?? input.ownerDocument.body;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const assigned = input.files && input.files.length === 1 && input.files[0].name === filename;
-    const shown = (scope.textContent || "").toLowerCase().includes(name);
+    const shown = deepTextContent(scope, 20_000).toLowerCase().includes(name);
     if (assigned && shown) return true;
     // If the control removes the input from the DOM after accepting, treat a
     // visible filename as success.

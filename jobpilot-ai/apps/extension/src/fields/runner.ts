@@ -227,10 +227,14 @@ function resolveApplicationAnswer(
     return syntheticAnswer(key, "__jobpilot_company_careers_page__");
   }
   if (!answer && key === "privacy_policy_acknowledgement") {
-    // Checkboxes represent the only acknowledgement option directly. Selects,
-    // radios, and comboboxes use a sentinel whose matcher requires exactly one
-    // substantive I-agree/I-acknowledge/Yes option.
-    return syntheticAnswer(key, field.control === "checkbox" ? "true" : "__jobpilot_privacy_acknowledgement__");
+    // Deliberately NOT answered.
+    //
+    // This used to auto-accept, on the reasoning that the user had asked
+    // JobPilot to apply on their behalf. Consenting to an employer's privacy
+    // terms is the user's own legal act, though, and "please apply for me" is
+    // not consent to terms they have not seen. It now surfaces for review and
+    // the user ticks it themselves.
+    return undefined;
   }
   if (
     !answer &&

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ServiceNow-style job listing</title></head>
+<body>
+  <main data-testid="job-detail">
+    <header><h1>Principal Engineer</h1><p>Example Company</p></header>
+    <div class="actions">
+      <a id="interest" href="https://acme.wd5.myworkdayjobs.com/apply/123" target="_blank">I’m interested</a>
+      <a id="refer" href="https://careers.servicenow.example/refer/123">Refer a friend</a>
+    </div>
+  </main>
+  <script>
+    document.getElementById('interest').addEventListener('click', () => {
+      if (!window.pendingApplicationLaunch || window.pendingApplicationLaunch.state !== 'PENDING_NAVIGATION') {
+        throw new Error('application launch was not persisted before click');
+      }
+    });
+    window.addEventListener('message', event => {
+      if (event.data?.type === 'APPLICATION_CONTENT_READY') {
+        window.destinationHandshake = event.data;
+      }
+    });
+  </script>
+</body>
+</html>

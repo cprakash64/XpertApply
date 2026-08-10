@@ -130,13 +130,18 @@ describe("manual dropdown fixture (task section L)", () => {
     expect((document.getElementById("referral") as HTMLSelectElement).value).toBe("Employee referral");
   });
 
-  it("acknowledges a privacy policy and the required single-option AI-use attestation", async () => {
+  it("leaves a privacy-policy acknowledgement for the user and does not accept it", async () => {
+    // Previously auto-accepted, on the reasoning that asking JobPilot to apply
+    // implied consent. Agreeing to an employer's privacy terms is the user's
+    // own legal act, so it is now surfaced rather than ticked.
     mountFixture(DROPDOWN_FIXTURE);
     const outcome = detectAdapter({ url: "https://boards.greenhouse.io/affirm/jobs/1", document })!;
     const res = await runAutofill(session(), outcome, { fetchDocument: async () => null });
 
-    expect((document.getElementById("privacyPolicy") as HTMLSelectElement).value).toContain("I acknowledge");
-    expect(res.fieldResults.find((r) => r.fieldKey === "privacy_policy_acknowledgement")?.status).toBe("filled");
+    expect((document.getElementById("privacyPolicy") as HTMLSelectElement).value).toBe("");
+    expect(res.fieldResults.find((r) => r.fieldKey === "privacy_policy_acknowledgement")?.status).not.toBe("filled");
+    // The AI-use attestation is a separate, single-option required affirmation
+    // and is unaffected by this change.
     expect((document.getElementById("aiAttestation") as HTMLSelectElement).value).toBe("I agree that all submitted materials are my original work and were completed without AI tools.");
     expect(res.fieldResults.find((r) => r.fieldKey === "legal_attestation")?.status).toBe("filled");
   });

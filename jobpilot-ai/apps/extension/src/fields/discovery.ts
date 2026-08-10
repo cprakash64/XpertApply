@@ -16,6 +16,16 @@
  */
 
 import type { DiscoveredField, ExcludedControl, FieldControl } from "../types";
+import {
+  deepClosest,
+  deepContains,
+  deepParentElement,
+  deepQuery,
+  deepQueryAll,
+  rootNodeOf,
+  scopedElementById,
+  scopedQuery
+} from "../dom/deepDom";
 
 const NATIVE_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])",
@@ -100,13 +110,16 @@ export function discoverAll(root: ParentNode = document, step = 0): DiscoveryRes
   // wrapper is the semantic control (it carries role=combobox and the label);
   // the inner input is only its search box. Discover the wrapper, not the input,
   // or the field would surface as an unlabelled text box.
-  const customWrappers = Array.from(
-    root.querySelectorAll<HTMLElement>('[role="combobox"], [role="listbox"], [class*="__control"], [class*="-control"]')
-  );
+  //
+  // Both passes are shadow-piercing. On SmartRecruiters "Easy Apply" (the live
+  // ServiceNow destination) EVERY control is inside an open shadow root, so a
+  // light-DOM-only `querySelectorAll` returned zero fields on a fully rendered
+  // application form.
+  const customWrappers = collapseCustomWrappers(deepQueryAll<HTMLElement>(root, CUSTOM_SELECTOR));
   const insideCustomControl = (el: HTMLElement): boolean =>
-    customWrappers.some((wrapper) => wrapper !== el && wrapper.contains(el));
+    customWrappers.some((wrapper) => wrapper !== el && deepContains(wrapper, el));
 
-  for (const el of Array.from(root.querySelectorAll<HTMLElement>(NATIVE_SELECTOR))) {
+  for (const el of deepQueryAll<HTMLElement>(root, NATIVE_SELECTOR)) {
     if (insideCustomControl(el)) {
       excluded.push({ reason: "duplicate", control: controlOf(el, false), label: labelFor(el) });
       seenElements.add(el);
@@ -117,7 +130,7 @@ export function discoverAll(root: ParentNode = document, step = 0): DiscoveryRes
   // A combobox's popup listbox (its aria-controls/aria-owns target) is that
   // combobox's option menu, NOT a separate field — never discover it on its own.
   const ownedListboxIds = comboboxOwnedListboxIds(root);
-  for (const el of collapseCustomWrappers(Array.from(root.querySelectorAll<HTMLElement>(CUSTOM_SELECTOR)))) {
+  for (const el of customWrappers) {
     // A wrapper around a native <select> (some ATSs decorate one) is the select's
     // own control — keep the native field discovered above, not the wrapper.
     if (containsSeenNativeSelect(el, seenElements)) continue;
@@ -134,12 +147,52 @@ export function discoverFields(root: ParentNode = document, step = 0): Discovere
 /** React-Select renders `.xxx__control` inside `.xxx__value-container` inside an
  * outer container; keep only the OUTERMOST matched wrapper per stack. */
 function collapseCustomWrappers(elements: HTMLElement[]): HTMLElement[] {
-  return elements.filter((el) => !elements.some((other) => other !== el && other.contains(el)));
+  const semantic = (element: HTMLElement) =>
+    element.matches('[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]');
+  const semanticDescendants = (element: HTMLElement) =>
+    deepQueryAll<HTMLElement>(element, '[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]');
+  const classWrapper = (element: HTMLElement) =>
+    !semantic(element) && element.matches('[class*="__control"], [class*="-control"]');
+
+  const selected = new Set<HTMLElement>();
+  for (const element of elements) {
+    if (!semantic(element)) continue;
+    // React Select needs its visual wrapper for committed-value verification.
+    // Pick only the NEAREST wrapper that represents this one semantic control.
+    // The previous outermost-wrapper rule could select an ATS section container
+    // whose generated class happened to contain "-control"; that collapsed two
+    // unrelated blank eligibility comboboxes into one descriptor.
+    const wrapper = elements
+      .filter((candidate) =>
+        classWrapper(candidate)
+        && deepContains(candidate, element)
+        && semanticDescendants(candidate).length === 1
+      )
+      .sort((a, b) => structuralDepth(b) - structuralDepth(a))[0];
+    selected.add(wrapper ?? element);
+  }
+
+  // Keep class-only custom widgets, but never a broad wrapper containing more
+  // than one semantic control. Empty id/name/value cannot make fields collide.
+  for (const element of elements) {
+    if (!classWrapper(element) || semanticDescendants(element).length > 0) continue;
+    const nestedClassWidget = elements.some((candidate) =>
+      candidate !== element && classWrapper(candidate) && deepContains(element, candidate)
+    );
+    if (!nestedClassWidget) selected.add(element);
+  }
+  return Array.from(selected);
+}
+
+function structuralDepth(element: HTMLElement): number {
+  let depth = 0;
+  for (let node: HTMLElement | null = element; node; node = deepParentElement(node)) depth += 1;
+  return depth;
 }
 
 function comboboxOwnedListboxIds(root: ParentNode): Set<string> {
   const ids = new Set<string>();
-  for (const combo of Array.from(root.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"]'))) {
+  for (const combo of deepQueryAll(root, '[role="combobox"], [aria-haspopup="listbox"]')) {
     for (const attr of ["aria-controls", "aria-owns"]) {
       for (const id of (combo.getAttribute(attr) || "").split(/\s+/).filter(Boolean)) ids.add(id);
     }
@@ -148,7 +201,7 @@ function comboboxOwnedListboxIds(root: ParentNode): Set<string> {
 }
 
 function containsSeenNativeSelect(el: HTMLElement, seen: Set<HTMLElement>): boolean {
-  for (const n of Array.from(el.querySelectorAll<HTMLElement>("select"))) {
+  for (const n of deepQueryAll<HTMLElement>(el, "select")) {
     if (seen.has(n)) return true;
   }
   return false;
@@ -169,10 +222,19 @@ function exclusionReason(el: HTMLElement): ExcludedControl["reason"] | null {
 }
 
 function isNavigation(el: HTMLElement): boolean {
+  const tag = el.tagName.toLowerCase();
+  if (tag === "button") {
+    // A <button> with no `type` attribute reports `type === "submit"`, so the
+    // submit test below used to exclude EVERY bare button — including the ones
+    // the next line was written to keep, i.e. dropdown triggers that open a
+    // listbox. The popup semantics decide here, never the implicit default.
+    // (SmartRecruiters' phone-country picker and many React selects are exactly
+    // this shape: `<button aria-haspopup="listbox">` with no type attribute.)
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    return !(el.hasAttribute("aria-haspopup") || role === "combobox" || role === "listbox");
+  }
   const type = ((el as HTMLInputElement).type || "").toLowerCase();
   if (type === "submit" || type === "reset" || type === "button" || type === "image" || type === "search") return true;
-  const tag = el.tagName.toLowerCase();
-  if (tag === "button" && !el.getAttribute("aria-haspopup")) return true;
   return false;
 }
 
@@ -192,6 +254,8 @@ function describe(el: HTMLElement, custom: boolean, step: number): DiscoveredFie
   const resolved = resolveQuestion(metadataEl);
   const label = resolved.label;
   const ariaLabel = input.getAttribute("aria-label") || ariaLabelledBy(metadataEl) || "";
+  const nearby = nearbyText(metadataEl);
+  const section = sectionHeading(metadataEl);
   return {
     uid: uidFor(el),
     frameId: currentFrameId(),
@@ -205,9 +269,9 @@ function describe(el: HTMLElement, custom: boolean, step: number): DiscoveredFie
     label,
     labelSource: resolved.source,
     normalizedLabel: normalizeLabel(label || ariaLabel || nearbyText(metadataEl)),
-    nearbyText: nearbyText(metadataEl),
-    sectionHeading: sectionHeading(metadataEl),
-    required: isRequired(metadataEl),
+    nearbyText: nearby,
+    sectionHeading: section,
+    required: isRequired(metadataEl, { label, ariaLabel, nearbyText: nearby, sectionHeading: section }),
     disabled: input.disabled,
     visible: true,
     multiple: isMultiple(el, control),
@@ -227,29 +291,91 @@ function semanticControlInside(el: HTMLElement): HTMLElement | null {
   if (
     el.matches('[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]')
   ) return el;
-  const candidates = Array.from(
-    el.querySelectorAll<HTMLElement>('[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]')
+  const candidates = deepQueryAll<HTMLElement>(
+    el, '[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]'
   );
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-/** Required detection uses MANY signals, not just a literal asterisk. */
-function isRequired(el: HTMLElement): boolean {
+export type RequiredEvidence =
+  | "native_required"
+  | "aria_required"
+  | "ats_required_metadata"
+  | "visible_required_marker"
+  | "native_validation"
+  | "known_eligibility_question"
+  | "tiktok_application_adapter";
+
+/** Required detection uses independent evidence, not just a native attribute. */
+export function requiredEvidence(
+  el: HTMLElement,
+  descriptor: { label?: string; ariaLabel?: string; nearbyText?: string; sectionHeading?: string } = {}
+): RequiredEvidence[] {
+  const evidence = new Set<RequiredEvidence>();
   const input = el as HTMLInputElement;
-  if (input.required) return true;
-  if (el.getAttribute("aria-required") === "true") return true;
-  // Greenhouse/ATS wrappers commonly mark required on an ancestor field wrapper.
-  const wrapper = el.closest("[data-required], .field, fieldset, .form-group, [class*='field']");
-  if (wrapper?.getAttribute("data-required") === "true") return true;
-  // A label/legend ending in "*" (the classic required marker) — supported as
-  // ONE signal, never the only one.
-  const labelText = `${labelFor(el)} ${ariaLabelledBy(el)} ${legendText(el)}`;
-  if (/[\*✱]\s*$/.test(labelText.trim()) || /\brequired\b/i.test(labelText)) return true;
-  return false;
+  if (input.required) evidence.add("native_required");
+  if (el.getAttribute("aria-required") === "true") evidence.add("aria_required");
+  // A web-component field puts `required`/`aria-required` on the real control
+  // inside its shadow root, so a host-only check reported every one of them as
+  // optional — and an optional field is never chased or counted.
+  const innerControl = el.tagName.includes("-")
+    ? deepQuery<HTMLInputElement>(el, "input:not([type=hidden]),select,textarea")
+    : null;
+  if (innerControl) {
+    if (innerControl.required) evidence.add("native_required");
+    if (innerControl.getAttribute("aria-required") === "true") evidence.add("aria_required");
+  }
+  const wrapper = deepClosest<HTMLElement>(
+    el,
+    "[data-required], [data-is-required], [data-validation-required], .field, fieldset, .form-group, [class*='field']"
+  );
+  if (
+    wrapper?.getAttribute("data-required") === "true"
+    || wrapper?.getAttribute("data-is-required") === "true"
+    || wrapper?.getAttribute("data-validation-required") === "true"
+  ) evidence.add("ats_required_metadata");
+
+  const describedByText = (el.getAttribute("aria-describedby") ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((id) => scopedElementById(el, id)?.textContent ?? "")
+    .join(" ");
+  const labelText = [
+    descriptor.label,
+    descriptor.ariaLabel,
+    labelFor(el),
+    ariaLabelledBy(el),
+    legendText(el),
+    describedByText
+  ].filter(Boolean).join(" ");
+  if (/[\*✱]\s*(?:$|\n)|\brequired\b/i.test(labelText)) {
+    evidence.add("visible_required_marker");
+  }
+  if (input.validity?.valueMissing || Boolean(input.validationMessage)) {
+    evidence.add("native_validation");
+  }
+  const semanticText = [
+    descriptor.label,
+    descriptor.ariaLabel,
+    descriptor.nearbyText,
+    descriptor.sectionHeading,
+    labelText
+  ].filter(Boolean).join(" ");
+  if (
+    /legally authori[sz]ed to work|work authori[sz]ation|require (?:visa |employer )?sponsorship|visa sponsorship|visa transfer/i.test(semanticText)
+  ) evidence.add("known_eligibility_question");
+  return Array.from(evidence);
+}
+
+function isRequired(
+  el: HTMLElement,
+  descriptor: { label?: string; ariaLabel?: string; nearbyText?: string; sectionHeading?: string } = {}
+): boolean {
+  return requiredEvidence(el, descriptor).length > 0;
 }
 
 function legendText(el: HTMLElement): string {
-  const legend = el.closest("fieldset")?.querySelector("legend");
+  const legend = deepClosest(el, "fieldset")?.querySelector("legend");
   return legend?.textContent?.replace(/\s+/g, " ").trim() ?? "";
 }
 
@@ -302,7 +428,7 @@ function existingValue(el: HTMLElement, control: FieldControl): string {
 /** The visible selected-option text of a custom control (empty when it still
  * shows only a placeholder such as "Select..."). */
 function customSelectionText(el: HTMLElement): string {
-  const selected = el.querySelector('[aria-selected="true"], [class*="singleValue"], [class*="single-value"], [class*="multiValue"], [class*="multi-value"]');
+  const selected = deepQuery(el, '[aria-selected="true"], [class*="singleValue"], [class*="single-value"], [class*="multiValue"], [class*="multi-value"]');
   const text = clean(selected?.textContent || "");
   if (text && !isPlaceholderText(text)) return text;
   return "";
@@ -321,7 +447,9 @@ function optionsOf(el: HTMLElement, control: FieldControl): string[] {
   if (control === "radio") {
     const name = (el as HTMLInputElement).name;
     if (!name) return [];
-    const root = el.ownerDocument;
+    // A radio group is scoped to its own tree: two components can legitimately
+    // reuse a group name inside their own shadow roots.
+    const root = rootNodeOf(el) as ParentNode;
     return Array.from(root.querySelectorAll<HTMLInputElement>(`input[type=radio][name="${cssEscape(name)}"]`))
       .map((r) => labelFor(r) || r.value)
       .filter(Boolean);
@@ -336,22 +464,21 @@ function optionsOf(el: HTMLElement, control: FieldControl): string[] {
  * listbox, a nested role=listbox, or role=option descendants. Never invents
  * options — only what the ATS actually renders (may be empty until opened). */
 function customOptions(el: HTMLElement): string[] {
-  const doc = el.ownerDocument;
   const listboxId = el.getAttribute("aria-controls") || el.getAttribute("aria-owns");
   const scopes: ParentNode[] = [];
   if (listboxId) {
-    const lb = doc.getElementById(listboxId);
+    const lb = scopedElementById(el, listboxId);
     if (lb) scopes.push(lb);
   }
   const ownRole = (el.getAttribute("role") || "").toLowerCase();
   if (ownRole === "listbox") scopes.push(el);
-  const nested = el.querySelector('[role="listbox"]');
+  const nested = deepQuery(el, '[role="listbox"]');
   if (nested) scopes.push(nested);
   if (scopes.length === 0) scopes.push(el);
 
   const labels = new Set<string>();
   for (const scope of scopes) {
-    for (const opt of Array.from(scope.querySelectorAll('[role="option"]'))) {
+    for (const opt of deepQueryAll(scope, '[role="option"]')) {
       const text = clean(opt.textContent || "");
       if (text) labels.add(text);
     }
@@ -376,8 +503,11 @@ function isVisible(el: HTMLElement): boolean {
   // Walk a bounded number of ancestors: a conditional follow-up is commonly
   // hidden by a `display:none` on its WRAPPER, not the control itself, so an
   // element-only check would wrongly treat it as an active field (see J).
+  // The walk crosses shadow boundaries: a web component's host is where the page
+  // hides a conditional field, and stopping at the shadow root would treat a
+  // hidden control as active.
   let node: HTMLElement | null = el;
-  for (let depth = 0; node && depth < 8; depth += 1) {
+  for (let depth = 0; node && depth < 12; depth += 1) {
     const style = (node.getAttribute("style") || "").toLowerCase();
     if (/display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?!\.)/.test(style)) return false;
     if (node.hidden) return false;
@@ -391,7 +521,7 @@ function isVisible(el: HTMLElement): boolean {
       const computed = view.getComputedStyle(node);
       if (computed.display === "none" || computed.visibility === "hidden") return false;
     }
-    node = node.parentElement;
+    node = deepParentElement(node);
   }
   return true;
 }
@@ -400,7 +530,8 @@ function isVisible(el: HTMLElement): boolean {
  * mislabelled field can be traced to the wrapper rule that produced it. */
 export type LabelSource =
   | "label_for" | "wrapping_label" | "aria_labelledby" | "fieldset_legend"
-  | "ats_question_wrapper" | "aria_label" | "placeholder" | "field_container_text" | "none";
+  | "ats_question_wrapper" | "aria_label" | "placeholder" | "field_container_text"
+  | "host_label_attribute" | "none";
 
 /**
  * Resolve a control's QUESTION in strict priority order (section B). Arbitrary
@@ -410,17 +541,26 @@ export type LabelSource =
  * replaces the useless "This question" fallback.
  */
 export function resolveQuestion(el: HTMLElement): { label: string; source: LabelSource } {
-  const doc = el.ownerDocument;
-
-  // 1. Explicit label[for].
+  // 1. Explicit label[for], resolved in the control's OWN tree first.
+  //
+  // SmartRecruiters reuses one id (`first-name-input`) for both the `spl-input`
+  // host and the real input inside its shadow root, and the matching
+  // `<label for>` lives in that shadow root. A document-scoped lookup finds the
+  // host, not the label, so the field arrived at the mapper unlabelled.
   if (el.id) {
-    const explicit = doc.querySelector(`label[for="${cssEscape(el.id)}"]`);
+    const explicit = scopedQuery(el, `label[for="${cssEscape(el.id)}"]`);
     const text = clean(explicit?.textContent);
     if (text) return { label: text, source: "label_for" };
   }
 
+  // 1b. The host element's own `label` attribute. Web-component form fields
+  // (`<spl-input label="First name">`) carry the question there and nowhere the
+  // ARIA rules would look.
+  const hostLabel = clean(hostLabelAttribute(el));
+  if (hostLabel) return { label: hostLabel, source: "host_label_attribute" };
+
   // 2. Wrapping <label> — minus the control's own rendered text.
-  const wrapping = el.closest("label");
+  const wrapping = deepClosest(el, "label");
   if (wrapping) {
     const text = textWithout(wrapping, el);
     if (text) return { label: text, source: "wrapping_label" };
@@ -431,12 +571,12 @@ export function resolveQuestion(el: HTMLElement): { label: string; source: Label
   if (labelled) return { label: labelled, source: "aria_labelledby" };
 
   // 4. The legend of the nearest fieldset (a grouped question).
-  const legend = clean(el.closest("fieldset")?.querySelector("legend")?.textContent);
+  const legend = clean(deepClosest(el, "fieldset")?.querySelector("legend")?.textContent);
   if (legend) return { label: legend, source: "fieldset_legend" };
 
   // 5. An ATS question wrapper's own label/legend element.
-  const wrapper = el.closest('[data-field], .field, [class*="question"], [class*="field-entry"], [class*="_fieldEntry"]') as HTMLElement | null;
-  const wrapperLabel = clean(wrapper?.querySelector("label,legend,.label,[class*='label']")?.textContent);
+  const wrapper = deepClosest<HTMLElement>(el, '[data-field], .field, [class*="question"], [class*="field-entry"], [class*="_fieldEntry"]');
+  const wrapperLabel = clean(wrapper ? deepQuery(wrapper, "label,legend,.label,[class*='label']")?.textContent : "");
   if (wrapperLabel) return { label: wrapperLabel, source: "ats_question_wrapper" };
 
   // 6/7. The control's own accessible name / placeholder.
@@ -447,11 +587,29 @@ export function resolveQuestion(el: HTMLElement): { label: string; source: Label
 
   // 8. Help text inside the SAME field container — never arbitrary page text,
   // and only when that container holds this one control.
-  if (wrapper && wrapper.querySelectorAll(NATIVE_SELECTOR).length <= 1) {
+  if (wrapper && deepQueryAll(wrapper, NATIVE_SELECTOR).length <= 1) {
     const text = textWithout(wrapper, el);
     if (text) return { label: text.slice(0, 160), source: "field_container_text" };
   }
   return { label: "", source: "none" };
+}
+
+/**
+ * The `label` attribute of the web component this control belongs to.
+ *
+ * Only the immediate host chain is consulted, and only an element that actually
+ * declares a `label` attribute — so this can never borrow a section title or a
+ * neighbouring field's question.
+ */
+function hostLabelAttribute(el: HTMLElement): string {
+  let node: HTMLElement | null = el;
+  for (let hops = 0; node && hops < 4; hops += 1) {
+    const value = node.getAttribute("label");
+    if (value && value.trim()) return value;
+    const root = rootNodeOf(node);
+    node = root instanceof ShadowRoot ? (root.host as HTMLElement) : null;
+  }
+  return "";
 }
 
 /** Text of `container` with `exclude` (and option/script/style noise) removed. */
@@ -466,29 +624,27 @@ function textWithout(container: HTMLElement, exclude: HTMLElement): string {
 
 function labelFor(el: HTMLElement): string {
   const id = el.id;
-  const doc = el.ownerDocument;
   if (id) {
-    const label = doc.querySelector(`label[for="${cssEscape(id)}"]`);
+    const label = scopedQuery(el, `label[for="${cssEscape(id)}"]`);
     if (label?.textContent) return clean(label.textContent);
   }
-  const wrapping = el.closest("label");
+  const wrapping = deepClosest(el, "label");
   if (wrapping?.textContent) return clean(wrapping.textContent);
   return "";
 }
 
 function ariaLabelledBy(el: HTMLElement): string {
   const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
-  const doc = el.ownerDocument;
-  const texts = ids.map((id) => doc.getElementById(id)?.textContent || "").filter(Boolean);
+  const texts = ids.map((id) => scopedElementById(el, id)?.textContent || "").filter(Boolean);
   return clean(texts.join(" "));
 }
 
 function nearbyText(el: HTMLElement): string {
-  const container = el.closest("div,fieldset,section,li,p");
+  const container = deepClosest(el, "div,fieldset,section,li,p");
   // Only use a container that is specific to this field. A container holding
   // multiple controls (or the whole form) would leak other fields' labels —
   // e.g. a sensitive "Gender" label bleeding onto an unrelated text input.
-  if (!container || container.querySelectorAll("input,textarea,select").length > 1) {
+  if (!container || deepQueryAll(container, "input,textarea,select").length > 1) {
     return "";
   }
   const clone = container.cloneNode(true) as HTMLElement;
@@ -503,12 +659,12 @@ function nearbyText(el: HTMLElement): string {
 
 function sectionHeading(el: HTMLElement): string {
   let node: HTMLElement | null = el;
-  while (node) {
-    const section = node.closest("section,fieldset") as HTMLElement | null;
+  for (let hops = 0; node && hops < 12; hops += 1) {
+    const section = deepClosest<HTMLElement>(node, "section,fieldset");
     if (!section) break;
-    const heading = section.querySelector("legend,h1,h2,h3,h4");
+    const heading = deepQuery(section, "legend,h1,h2,h3,h4");
     if (heading?.textContent) return clean(heading.textContent);
-    node = section.parentElement;
+    node = deepParentElement(section);
   }
   return "";
 }

@@ -67,8 +67,8 @@ export const nativeSelectAdapter: DropdownAdapter = {
     if (target.disabled) return { ok: false, reason: "OPTION_NOT_AVAILABLE" };
     if (el.multiple) target.selected = true;
     else el.value = target.value;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     return { ok: true };
   },
 
@@ -130,8 +130,8 @@ export const radioGroupAdapter: DropdownAdapter = {
     if (radio.disabled) return { ok: false, reason: "OPTION_NOT_AVAILABLE" };
     scrollIntoView(radio);
     if (!radio.checked) radio.click(); // native activation fires framework handlers
-    radio.dispatchEvent(new Event("input", { bubbles: true }));
-    radio.dispatchEvent(new Event("change", { bubbles: true }));
+    radio.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    radio.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
     return { ok: true };
   },
 

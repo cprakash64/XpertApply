@@ -78,6 +78,27 @@ describe("field classification", () => {
     expect(classified.get("company-why")).toBe("custom_motivation");
     expect(classified.get("departure")).not.toBe("custom_motivation");
   });
+
+  /**
+   * Employers often word the optional pitch as an invitation rather than a
+   * question. SmartRecruiters' box is headed "Message to the Hiring Team" and
+   * labelled "Let the company know about your interest working there" — it
+   * matched no rule, so the prepared draft was never offered for it.
+   */
+  it("recognizes an invitation-worded message to the hiring team", () => {
+    document.body.innerHTML = `<form>
+      <label for="msg">Let the company know about your interest working there</label><textarea id="msg"></textarea>
+      <label for="note">Note to the hiring team</label><textarea id="note"></textarea>
+      <label for="feedback">Let us know about any accessibility needs</label><textarea id="feedback"></textarea>
+    </form>`;
+    const classified = new Map(
+      discoverFields(document.querySelector("form")!).map((field) => [field.id, classifyField(field).canonicalKey])
+    );
+    expect(classified.get("msg")).toBe("custom_motivation");
+    expect(classified.get("note")).toBe("custom_motivation");
+    // Not every "let us know" prompt is a pitch.
+    expect(classified.get("feedback")).not.toBe("custom_motivation");
+  });
 });
 
 describe("mapping + confidence policy", () => {

@@ -7,7 +7,11 @@
  * optional field must never crash the package loader.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { exchangeLaunchToken, fetchSessionData } from "../api/client";
+import {
+  exchangeLaunchToken,
+  fetchSessionData,
+  parseResolveQuestionsResponse
+} from "../api/client";
 
 function mockFetch(handlers: Record<string, unknown>) {
   vi.stubGlobal(
@@ -85,5 +89,31 @@ describe("session package parsing (current backend response shape)", () => {
     expect(session.jobTitle).toBeNull();
     expect(session.company).toBeNull();
     expect(session.documents?.resume.status).toBe("missing");
+  });
+
+  it("does not drop typed false while parsing a resolver response", () => {
+    const parsed = parseResolveQuestionsResponse({
+      request_schema_version: 3,
+      registry_version: "1.0.0",
+      answer_contract_version: 3,
+      results: [{
+        field_ref: "f1",
+        status: "resolved",
+        canonical_key: "sponsorship_required_now_or_future",
+        answer_type: "boolean",
+        selected_option_ref: null,
+        safe_source: "saved_profile",
+        confidence: 1,
+        sensitivity: "legal",
+        reason_code: "answer_resolved_options_unavailable",
+        source_values: [false, false],
+        typed_answer: false,
+        display_answer: "No"
+      }]
+    });
+
+    expect(parsed.results[0].typed_answer).toBe(false);
+    expect(parsed.results[0].source_values).toEqual([false, false]);
+    expect(parsed.results[0].display_answer).toBe("No");
   });
 });

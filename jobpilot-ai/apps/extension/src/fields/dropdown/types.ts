@@ -36,6 +36,13 @@ export type DropdownEventName =
   | "DROPDOWN_OPEN_ATTEMPT"
   | "DROPDOWN_OPENED"
   | "OPTIONS_DISCOVERED"
+  /** A remote autocomplete produced options only after a typed query. */
+  | "OPTIONS_AFTER_SEARCH"
+  /** A free-text combobox accepted and kept the typed value. */
+  | "FREE_TEXT_COMMITTED"
+  /** The control held the typed text but marked itself invalid — a lookup that
+   * requires a picked record. Never reported as a fill. */
+  | "FREE_TEXT_REJECTED"
   | "ANSWER_SOURCE"
   | "OPTION_MATCHED"
   | "OPTION_CLICKED"

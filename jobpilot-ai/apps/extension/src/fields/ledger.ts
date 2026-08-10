@@ -127,6 +127,13 @@ function reviewStatus(field: DiscoveredField, reason: string): LedgerStatus {
   if ((field.control === "checkbox" && field.required) || reason === "REQUIRES_ACKNOWLEDGEMENT") {
     return "needs_confirmation";
   }
+  // An unanswered optional scalar (including referral code, portfolio, work
+  // sample or self-introduction) is not information the application requires.
+  // Keep genuine interaction failures technical, but classify absence itself
+  // as an intentional optional skip.
+  if (!field.required && ["NO_VERIFIED_ANSWER", "LOW_CONFIDENCE", ""].includes(reason)) {
+    return "intentionally_skipped_optional";
+  }
   return "missing_information";
 }
 
@@ -145,6 +152,11 @@ export function valuePresent(field: DiscoveredField): boolean {
   const adapter = selectAdapter(field);
   if (adapter) return adapter.readSelection(field).length > 0;
 
+  if (input.type === "radio") {
+    if (!input.name) return input.checked;
+    return Array.from(input.ownerDocument.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+      .some((candidate) => candidate.name === input.name && candidate.checked);
+  }
   if (input.type === "checkbox") return input.checked;
   if (input.type === "file") return Boolean(input.files && input.files.length);
   const value = (el.value ?? el.textContent ?? "").trim();

@@ -16,10 +16,14 @@
     "noEmit": true
   },
   "include": ["src", "build.mjs"],
-  // This test asserts against the BUILD ARTIFACT (dist/manifest.json,
-  // dist/content.js) and therefore needs Node built-ins. Adding "node" to
-  // `types` globally would let browser code reach for `process`/`fs` without a
-  // type error, so the one Node-using test is excluded from the browser
-  // typecheck instead. Vitest still runs it.
-  "exclude": ["src/__tests__/generated_manifest.test.ts"]
+  // These tests assert against files on disk (the generated manifest, and the
+  // source itself for the self-exclusion / credential-safety invariants) and
+  // therefore need Node built-ins. Adding "node" to `types` globally would let
+  // browser code reach for `process`/`fs` without a type error, so the
+  // Node-using tests are excluded from the browser typecheck instead. Vitest
+  // still runs them.
+  "exclude": [
+    "src/__tests__/generated_manifest.test.ts",
+    "src/__tests__/self_exclusion_and_credentials.test.ts"
+  ]
 }

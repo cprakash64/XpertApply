@@ -8,6 +8,13 @@
  */
 
 import { normalizeForMatch } from "../aliases";
+import {
+  deepClosest,
+  deepContains,
+  deepQuery,
+  deepQueryAll,
+  scopedElementById
+} from "../../dom/deepDom";
 import type { DropdownOption } from "./types";
 
 /** Values that are ALWAYS blank (section K). A placeholder is never a value. */
@@ -145,14 +152,14 @@ export function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value
   try {
     if (protoSetter && protoSetter !== instanceSetter) {
       protoSetter.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
       return;
     }
   } catch {
     /* fall through */
   }
   el.value = value;
-  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
 }
 
 /**
@@ -223,25 +230,30 @@ export function resolveListbox(control: HTMLElement, ownedIds: string[] = []): H
     ...(control.getAttribute("aria-controls") || "").split(/\s+/),
     ...(control.getAttribute("aria-owns") || "").split(/\s+/)
   ].filter(Boolean);
+  // Scoped id resolution: `aria-controls` inside a shadow root names an id in
+  // THAT root, and a document-wide lookup finds nothing (or worse, a same-id
+  // element from another component). SmartRecruiters' City autocomplete is
+  // exactly this: `<input role="combobox" aria-controls="menu-...">` and the
+  // menu both live inside the component's shadow root.
   for (const id of ids) {
-    const el = doc.getElementById(id);
+    const el = scopedElementById(control, id);
     if (el && isElementVisible(el) && hasOptions(el)) return el;
   }
   // aria-activedescendant points AT an option; its menu is that option's ancestor.
   const active = control.getAttribute("aria-activedescendant");
   if (active) {
-    const option = doc.getElementById(active);
-    const menu = option?.closest(MENU_SELECTOR) as HTMLElement | null;
+    const option = scopedElementById(control, active);
+    const menu = option ? deepClosest<HTMLElement>(option, MENU_SELECTOR) : null;
     if (menu && isElementVisible(menu)) return menu;
   }
   // A menu rendered inside the control's own wrapper.
-  const wrapper = control.closest('[class*="__control"], [class*="-control"], [class*="__container"], [class*="-container"], div');
-  const nested = wrapper?.querySelector<HTMLElement>(MENU_SELECTOR);
+  const wrapper = deepClosest<HTMLElement>(control, '[class*="__control"], [class*="-control"], [class*="__container"], [class*="-container"], div');
+  const nested = wrapper ? deepQuery<HTMLElement>(wrapper, MENU_SELECTOR) : null;
   if (nested && isElementVisible(nested) && hasOptions(nested)) return nested;
 
   // Portal: the ONLY visible menu with options in the document. If several are
   // visible we cannot attribute one to this control, so we refuse to guess.
-  const visible = Array.from(doc.querySelectorAll<HTMLElement>(MENU_SELECTOR)).filter(
+  const visible = deepQueryAll<HTMLElement>(doc, MENU_SELECTOR).filter(
     (m) => isElementVisible(m) && hasOptions(m)
   );
   if (visible.length === 1) return visible[0];
@@ -249,12 +261,40 @@ export function resolveListbox(control: HTMLElement, ownedIds: string[] = []): H
 }
 
 function hasOptions(menu: HTMLElement): boolean {
-  return menu.querySelector(OPTION_SELECTOR) !== null || menu.tagName.toLowerCase() === "select";
+  if (deepQuery(menu, OPTION_SELECTOR) !== null) return true;
+  if (menu.tagName.toLowerCase() === "select") return true;
+  // An explicit `role="listbox"` names itself: whatever it holds are its
+  // options, even when they carry no option role of their own.
+  return (menu.getAttribute("role") ?? "").toLowerCase() === "listbox"
+    && optionElements(menu).length > 0;
+}
+
+/**
+ * The option elements of an ALREADY-RESOLVED menu.
+ *
+ * Falls back to the menu's own child elements when none of them declares an
+ * option role or class. That is not a guess: the menu has already been
+ * attributed to this control, so its children ARE its options — and a design
+ * system is free to render them as custom elements with no ARIA at all.
+ * SmartRecruiters' location suggestions are
+ * `<spl-select-option value="US_AZ_CITY_phoenix">Phoenix, AZ, US</spl-select-option>`,
+ * which matched nothing, so a menu full of live suggestions read as empty.
+ */
+function optionElements(menu: HTMLElement): HTMLElement[] {
+  const declared = deepQueryAll<HTMLElement>(menu, OPTION_SELECTOR);
+  if (declared.length > 0) return declared;
+  return Array.from(menu.children).filter((child): child is HTMLElement => {
+    if (!(child instanceof HTMLElement)) return false;
+    // Skip the menu's own chrome: separators, group labels with no text, and
+    // "can't find yours?" escape hatches that are actions, not values.
+    if (/^(hr|template|script|style)$/i.test(child.tagName)) return false;
+    return (child.textContent ?? "").trim().length > 0;
+  });
 }
 
 /** Collect visible, enabled, non-placeholder options from a resolved menu. */
 export function collectOptions(menu: HTMLElement): DropdownOption[] {
-  const nodes = Array.from(menu.querySelectorAll<HTMLElement>(OPTION_SELECTOR));
+  const nodes = optionElements(menu);
   const seen = new Set<string>();
   const options: DropdownOption[] = [];
   nodes.forEach((el, index) => {
@@ -278,8 +318,8 @@ export function collectOptions(menu: HTMLElement): DropdownOption[] {
 
 /** Close whatever menu is open, so two controls are never open at once. */
 export function closeAnyOpenMenu(doc: Document, except?: HTMLElement | null): void {
-  for (const control of Array.from(doc.querySelectorAll<HTMLElement>('[aria-expanded="true"]'))) {
-    if (except && (control === except || control.contains(except))) continue;
+  for (const control of deepQueryAll<HTMLElement>(doc, '[aria-expanded="true"]')) {
+    if (except && (control === except || deepContains(control, except))) continue;
     key(control, "Escape");
     control.setAttribute("aria-expanded", "false");
   }

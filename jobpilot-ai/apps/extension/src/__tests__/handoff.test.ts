@@ -39,6 +39,9 @@ function installFakeChrome(existingStore?: Record<string, unknown>, queryTabs: c
     tabs: {
       onRemoved: { addListener: (_fn: unknown) => undefined },
       onUpdated: { addListener: (_fn: unknown) => undefined },
+      // Real Chrome always provides this; the background uses it to adopt a
+      // popup/new tab the page itself opened during an apply handoff.
+      onCreated: { addListener: (_fn: unknown) => undefined },
       create: vi.fn(async (opts: { url: string }) => {
         const id = nextTabId++;
         tabsCreated.push({ id, url: opts.url });
@@ -479,5 +482,98 @@ describe("handshake + stale-handoff regressions", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(executedScripts.some((s) => s.tabId === 601)).toBe(true);
+  });
+});
+
+describe("application-start launch handoff", () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("persists PENDING_NAVIGATION before a script-driven CTA is clicked", async () => {
+    installFakeFetch();
+    const { messageListeners, store } = installFakeChrome();
+    const state = await import("../state");
+    await state.putPending(71, seedHandoff());
+    await state.putPackage(71, {
+      sessionToken: "session-token", cachedAt: Date.now(),
+      session: { sessionId: 55, atsType: null, officialUrl: "https://careers.mongodb.com/jobs/123", jobTitle: "Engineer", company: "MongoDB", answers: [], unresolvedQuestions: [] }
+    });
+    await import("../background");
+
+    const response = await dispatch(messageListeners, {
+      type: "JOBPILOT_PREPARE_APPLICATION_LAUNCH",
+      sessionId: 55,
+      sourceUrl: "https://careers.mongodb.com/jobs/123?tracking=secret",
+      normalizedCtaText: "i'm interested",
+      confidence: 84,
+      href: null,
+      target: "_blank",
+      expectedDestinationOrigin: null,
+      jobFingerprint: "job-fingerprint"
+    }, { tab: { id: 71, url: "https://careers.mongodb.com/jobs/123" }, frameId: 0 }) as { ok: boolean; launchId: string };
+
+    expect(response.ok).toBe(true);
+    expect(response.launchId).toContain("55-");
+    expect(store.pendingApplyActivationV1).toMatchObject({
+      launchId: response.launchId,
+      applicationId: "55",
+      sourceTabId: 71,
+      sessionId: 55,
+      sourceUrl: "https://careers.mongodb.com/jobs/123",
+      jobFingerprint: "job-fingerprint",
+      state: "PENDING_NAVIGATION",
+      normalizedCtaText: "i'm interested",
+      confidence: 84
+    });
+  });
+
+  it("carries the existing package into a new external ATS tab", async () => {
+    installFakeFetch();
+    const { messageListeners, tabsCreated } = installFakeChrome();
+    const state = await import("../state");
+    await state.putPending(72, seedHandoff());
+    await state.putPackage(72, {
+      sessionToken: "session-token", cachedAt: Date.now(),
+      session: { sessionId: 55, atsType: null, officialUrl: "https://careers.mongodb.com/jobs/123", jobTitle: "Engineer", company: "MongoDB", answers: [], unresolvedQuestions: [] }
+    });
+    await import("../background");
+
+    await dispatch(messageListeners, {
+      type: "JOBPILOT_PREPARE_APPLICATION_LAUNCH", sessionId: 55,
+      sourceUrl: "https://careers.mongodb.com/jobs/123", normalizedCtaText: "i'm interested", confidence: 84,
+      href: "https://acme.wd5.myworkdayjobs.com/job/123/apply", target: "_blank",
+      expectedDestinationOrigin: "https://acme.wd5.myworkdayjobs.com", jobFingerprint: "job-fingerprint"
+    }, { tab: { id: 72 }, frameId: 0 });
+    const response = await dispatch(messageListeners, {
+      type: "JOBPILOT_ACTIVATE_APPLICATION_DESTINATION", sessionId: 55,
+      url: "https://acme.wd5.myworkdayjobs.com/job/123/apply", newTab: true, source: "anchor_href"
+    }, { tab: { id: 72 }, frameId: 0 }) as { ok: boolean; tabId: number };
+
+    expect(response.ok).toBe(true);
+    expect(tabsCreated[0]?.url).toContain("myworkdayjobs.com/job/123/apply");
+    expect((await state.getPending(response.tabId))?.applicationUrl).toContain("myworkdayjobs.com/job/123/apply");
+    expect((await state.getPackage(response.tabId))?.sessionToken).toBe("session-token");
+  });
+
+  it("rebinds an approved external ATS content script without re-exchanging the token", async () => {
+    installFakeFetch();
+    const { messageListeners } = installFakeChrome();
+    const state = await import("../state");
+    await state.putPending(73, seedHandoff({
+      targetTabId: 73,
+      applicationUrl: "https://acme.wd5.myworkdayjobs.com/job/123/apply",
+      expectedOrigin: "https://acme.wd5.myworkdayjobs.com"
+    }));
+    await state.putPackage(73, {
+      sessionToken: "session-token", cachedAt: Date.now(),
+      session: { sessionId: 55, atsType: null, officialUrl: "https://careers.mongodb.com/jobs/123", jobTitle: "Engineer", company: "MongoDB", answers: [], unresolvedQuestions: [] }
+    });
+    await import("../background");
+    const response = await dispatch(messageListeners, {
+      type: "JOBPILOT_CONTENT_READY", url: "https://acme.wd5.myworkdayjobs.com/job/123/apply",
+      title: "Apply", protocolVersion: 3, isTopFrame: true, topUrl: "https://acme.wd5.myworkdayjobs.com/job/123/apply", detectedAts: "workday"
+    }, { tab: { id: 73, url: "https://acme.wd5.myworkdayjobs.com/job/123/apply" }, frameId: 0, url: "https://acme.wd5.myworkdayjobs.com/job/123/apply" }) as { ok: boolean; matched: boolean };
+    expect(response).toMatchObject({ ok: true, matched: true });
+    expect((await state.getPackage(73))?.sessionToken).toBe("session-token");
   });
 });

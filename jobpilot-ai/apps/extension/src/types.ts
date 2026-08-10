@@ -100,11 +100,17 @@ export interface DetectionResult {
 /** The subset of session data the extension is allowed to hold, from the API. */
 export interface ApplicationSessionData {
   sessionId: number;
+  /** Account identity as derived by the authenticated session endpoint. Used
+   * only to compare web/extension diagnostics; no email or profile data. */
+  authenticatedUserId?: number | null;
   atsType: string | null;
   officialUrl: string;
   jobTitle: string | null;
   company: string | null;
   profileData?: Record<string, unknown>;
+  /** Revision returned by the authenticated answers endpoint. Used only for
+   * stale-cache diagnostics; never derived from page data. */
+  profileRevision?: string | null;
   answers: SessionAnswer[];
   unresolvedQuestions: {
     canonical_key: string;

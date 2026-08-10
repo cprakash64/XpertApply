@@ -115,6 +115,30 @@ describe("tab-scoped launch state", () => {
     expect(await state.getPackage(303)).toBeNull();
   });
 
+  it("preserves false values through session-package cache hydration", async () => {
+    const state = await import("../state");
+    await state.putPackage(304, {
+      sessionToken: "sess",
+      cachedAt: Date.now(),
+      session: {
+        sessionId: 10,
+        authenticatedUserId: 3,
+        atsType: "generic",
+        officialUrl: "u",
+        jobTitle: null,
+        company: null,
+        profileData: { currentSponsorship: false, futureSponsorship: false },
+        answers: [],
+        unresolvedQuestions: []
+      }
+    });
+    const hydrated = await state.getPackage(304);
+    expect(hydrated?.session.profileData).toMatchObject({
+      currentSponsorship: false,
+      futureSponsorship: false
+    });
+  });
+
   it("removes expired durable handoffs and token-bearing packages", async () => {
     const state = await import("../state");
     const launch = {

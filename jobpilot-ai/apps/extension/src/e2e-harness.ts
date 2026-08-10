@@ -12,9 +12,43 @@ import { fillField } from "./fields/fill";
 import { configureDropdownTiming, isBlankValue } from "./fields/dropdown/dom";
 import { probeFrame, selectApplicationFrame } from "./frames/probe";
 import { dropdownEventLog, fillDropdown, selectAdapter } from "./fields/dropdown";
-import { valuePresent } from "./fields/ledger";
+import { buildLedger, valuePresent } from "./fields/ledger";
+import { scan } from "./fields/runner";
 import { createWidget } from "./content/widget";
+import { questionLedger } from "./content/bootstrap";
+import { findActivationCandidates, selectActivationControl } from "./ats/applicationSurface";
+import { resolveApplyDestination, validateDestination } from "./ats/applyDestination";
+import {
+  activateApplyCta,
+  classifyPage,
+  ctaFingerprint,
+  findSafeConsentDismissal,
+  isCtaObstructed
+} from "./ats/pageState";
 import type { DiscoveredField } from "./types";
+import { AtsLifecycleRun, waitForAtsParse } from "./content/atsLifecycle";
+import { fillRepeatableSections } from "./application/repeatableSections";
+import { verifyFinalLiveDom } from "./content/finalVerification";
+import {
+  actuateTikTokLegalField,
+  discoverTikTokApplication
+} from "./ats/tiktokApplication";
+import { committedValueMatches } from "./content/dropdownTransaction";
+import {
+  frameVerdict,
+  observeFrames,
+  reopenableFrameUrl,
+  selectApplicationFrame as selectObservedApplicationFrame
+} from "./frames/frameInventory";
+import {
+  awaitApplicationReadiness,
+  censusChildFrames,
+  collectApplicationEvidence,
+  hasApplicationEvidence,
+  type ReadinessStage
+} from "./content/applicationReadiness";
+import { fieldRef } from "./content/questionBatch";
+import type { QuestionExecutionTrace } from "./content/diagnostics";
 
 let cache: DiscoveredField[] = [];
 
@@ -129,6 +163,239 @@ const harness = {
     });
     (previewRoot as ShadowRoot | null)?.querySelector<HTMLButtonElement>(".review-toggle")?.click();
     return true;
+  },
+
+  // --- Application navigation (the production classifier, unmodified) ------ //
+  /** What the content script decides this page is, with real layout applied. */
+  classify: () => {
+    const page = classifyPage(document);
+    return {
+      state: page.state,
+      reason: page.reason,
+      obstructed: page.obstructed,
+      candidateName: page.candidate ? (page.candidate.element.textContent ?? "").trim() : null,
+      candidateReason: page.candidate?.reason ?? null
+    };
+  },
+  /** Every eligible control, for diagnosing selection between rivals. */
+  candidates: () =>
+    findActivationCandidates(document).map((candidate) => ({
+      name: (candidate.element.textContent ?? "").trim(),
+      reason: candidate.reason,
+      score: candidate.score
+    })),
+  selected: () => {
+    const candidate = selectActivationControl(document);
+    return candidate ? { name: (candidate.element.textContent ?? "").trim(), reason: candidate.reason } : null;
+  },
+  /** Real hit-testing: is the chosen CTA actually covered by an overlay? */
+  ctaObstructed: () => {
+    const candidate = selectActivationControl(document);
+    return candidate ? isCtaObstructed(candidate.element, document) : null;
+  },
+  consentDismissal: () => {
+    const control = findSafeConsentDismissal(document);
+    return control ? (control.textContent ?? "").trim() : null;
+  },
+  ctaFingerprint: () => {
+    const candidate = selectActivationControl(document);
+    return candidate ? ctaFingerprint(candidate.element, location.href) : null;
+  },
+  /** URL-first: what destination does the chosen CTA declare? */
+  destination: () => {
+    const candidate = selectActivationControl(document);
+    if (!candidate) return { ok: false, reason: "NO_CANDIDATE" };
+    return resolveApplyDestination(candidate.element, location.href);
+  },
+  validateDestination: (raw: string) => validateDestination(raw, location.href),
+
+  /** Drive the production activation path, including dispatch strategy. */
+  activate: async () => {
+    const candidate = selectActivationControl(document);
+    if (!candidate) return { ok: false, reason: "NO_CANDIDATE" };
+    return activateApplyCta(candidate.element, document);
+  },
+
+  /** The authoritative question ledger, for reconciliation assertions. */
+  ledger: () => ({
+    counts: questionLedger.counts(),
+    stage: questionLedger.stage(),
+    entries: questionLedger.all().map((e) => ({ state: e.state, reason: e.reasonCode }))
+  }),
+
+  /** Real-browser ATS parse handoff: retain an old node only to prove it was
+   * detached, then discover exclusively from the new DOM generation. */
+  lifecycleHandoff: async (selector = "form") => {
+    const root = document.querySelector(selector) ?? document;
+    const oldControl = root.querySelector("input,select,textarea,[role=combobox]");
+    const run = new AtsLifecycleRun(66, "e2e-build");
+    run.transition("WAITING_FOR_ATS_PARSE", "resume_upload_committed");
+    const parse = await waitForAtsParse(root, run.signal(), { quietWindowMs: 120, activityGraceMs: 80, maximumWaitMs: 2500 });
+    if (parse.activityDetected) run.transition("ATS_PARSE_ACTIVITY_DETECTED", "mutation_observed", { relevantMutations: parse.relevantMutations });
+    run.invalidatePreParse("parse_settled");
+    run.transition("REDISCOVERING_POST_PARSE_DOM", "fresh_scan");
+    const fields = discoverAll(document.querySelector(selector) ?? document).fields;
+    return {
+      parse,
+      oldConnected: Boolean(oldControl?.isConnected),
+      generation: run.domGeneration(),
+      fields: fields.map((field) => field.label || field.ariaLabel || field.name),
+      trace: run.trace().map((entry) => entry.state)
+    };
+  },
+
+  fillRepeatable: async (profileData: Record<string, unknown>, selector = "form") => {
+    const root = document.querySelector(selector) ?? document;
+    return fillRepeatableSections(root, {
+      sessionId: 66, atsType: "generic", officialUrl: location.href,
+      jobTitle: "Engineer", company: "Example", profileData, answers: [], unresolvedQuestions: []
+    });
+  },
+
+  finalVerify: (
+    profileData: Record<string, unknown>,
+    selector = "form",
+    answers: { label: string; canonicalKey: string; typedAnswer: boolean; verified: boolean; actuatorReached: boolean }[] = [],
+    repeatableSections: Awaited<ReturnType<typeof fillRepeatableSections>> = []
+  ) => {
+    const root = document.querySelector(selector) ?? document;
+    const activeSession = {
+      sessionId: 66, atsType: "generic", officialUrl: location.href,
+      jobTitle: "Engineer", company: "Example", profileData, answers: [], unresolvedQuestions: []
+    };
+    const scanned = scan(root, activeSession);
+    const mappingByUid = new Map(scanned.mappings.map((mapping) => [mapping.uid, mapping]));
+    const ledger = buildLedger(scanned.fields, [], (field) => ({
+      canonicalKey: mappingByUid.get(field.uid)?.canonicalKey ?? null,
+      sensitive: false, reusable: false, fillSource: "fixture"
+    }));
+    const traces: QuestionExecutionTrace[] = answers.flatMap((answer) => {
+      const field = scanned.fields.find((candidate) =>
+        `${candidate.label} ${candidate.ariaLabel}`.toLowerCase().includes(answer.label.toLowerCase())
+      );
+      if (!field) return [];
+      return [{
+        fieldId: fieldRef(field), frameId: field.frameId, rawLabel: field.label,
+        accessibleName: field.ariaLabel, sectionHeading: field.sectionHeading,
+        fieldType: field.control, ariaRole: field.element?.getAttribute("role") ?? null,
+        options: [...field.options], canonicalKey: answer.canonicalKey,
+        resolutionMethod: "e2e_fixture", resolutionConfidence: 1,
+        transform: answer.canonicalKey.includes("sponsorship") ? "boolean_or" : "none",
+        requiredCanonicalKeys: [], answerSource: "saved_profile",
+        sourceValues: answer.typedAnswer ? [true] : [false, false],
+        typedAnswer: answer.typedAnswer, displayAnswer: answer.typedAnswer ? "Yes" : "No",
+        profileRevision: "fixture", domGeneration: 1, actuator: "custom_choice",
+        actuatorReached: answer.actuatorReached,
+        transactionStates: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED", "QUEUED_FOR_ACTUATION"],
+        attemptedValue: "[redacted]", displayedValueAfterFill: answer.verified ? "[present]" : "[empty]",
+        backingValueAfterFill: answer.verified ? "[present]" : "[empty]",
+        verified: answer.verified, failureCode: answer.verified ? null : "CONTROL_VALUE_DID_NOT_COMMIT"
+      } satisfies QuestionExecutionTrace];
+    });
+    return verifyFinalLiveDom({
+      root, session: activeSession, domGeneration: 1, lifecycleIsCurrent: true,
+      ledger, questionEntries: [], questionTraces: traces, repeatableSections
+    });
+  },
+
+  /**
+   * Section B — destination readiness, run against a real hydrating page.
+   *
+   * Returns the terminal verdict plus the stages it passed through, so a spec
+   * can prove the widget could never have stayed on "Detecting fields".
+   */
+  awaitDestinationReadiness: async (timeoutMs = 8000, quietMs = 150) => {
+    const stages: ReadinessStage[] = [];
+    const result = await awaitApplicationReadiness({
+      timeoutMs,
+      quietMs,
+      onStage: (stage) => stages.push(stage)
+    });
+    return {
+      stages,
+      ready: result.ready,
+      stage: result.stage,
+      failureCode: result.failureCode,
+      fieldCount: result.fieldCount,
+      rootReplacements: result.rootReplacements,
+      elapsedMs: result.elapsedMs,
+      evidence: result.evidence,
+      evidenceLocation: result.evidenceLocation,
+      frames: result.frames
+    };
+  },
+  /** Section B — the committed-value comparison, run against real markup. */
+  committedValueMatches,
+  /** Section A — what the parent can observe about a genuinely cross-origin
+   * application frame, and what remedy that supports. */
+  observeFrames: () => observeFrames(document),
+  frameRemedy: () => {
+    const frames = observeFrames(document);
+    const candidate = selectObservedApplicationFrame(frames);
+    return {
+      frames,
+      candidate,
+      reopenUrl: reopenableFrameUrl(candidate, document),
+      verdictWithoutPermission: frameVerdict({
+        frame: candidate,
+        contentScriptResponds: false,
+        hostPermissionGranted: false,
+        reportedFieldCount: null
+      })
+    };
+  },
+  applicationEvidence: () => {
+    const evidence = collectApplicationEvidence(document);
+    return { ...evidence, sufficient: hasApplicationEvidence(evidence), frames: censusChildFrames(document) };
+  },
+
+  tiktokDiscover: (url: string, selector = "form") => {
+    const inventory = discoverTikTokApplication(url, document.querySelector(selector) ?? document);
+    return {
+      active: inventory.active,
+      trace: inventory.trace,
+      slots: inventory.slots.map((slot) => ({
+        identity: slot.identity,
+        canonicalKey: slot.canonicalKey,
+        required: slot.field?.required ?? true,
+        rowFound: slot.rowFound,
+        triggerFound: slot.triggerFound,
+        triggerId: slot.trigger?.id ?? null,
+        failureCode: slot.failureCode
+      }))
+    };
+  },
+
+  tiktokActuate: async (
+    url: string,
+    identity: string,
+    displayAnswer: string,
+    typedAnswer: boolean,
+    selector = "form"
+  ) => actuateTikTokLegalField(
+    url,
+    identity,
+    displayAnswer,
+    typedAnswer,
+    document.querySelector(selector) ?? document
+  ),
+
+  tiktokFinal: (url: string, selector = "form", traces: QuestionExecutionTrace[] = []) => {
+    const root = document.querySelector(selector) ?? document;
+    const activeSession = {
+      sessionId: 66, atsType: "generic", officialUrl: url,
+      jobTitle: "Engineer", company: "TikTok", profileData: {}, answers: [], unresolvedQuestions: []
+    };
+    const inventory = discoverTikTokApplication(url, root);
+    const fields = inventory.slots.flatMap((slot) => slot.field ? [slot.field] : []);
+    const ledger = buildLedger(fields, [], (field) => ({
+      canonicalKey: inventory.slots.find((slot) => slot.identity === field.uid)?.canonicalKey ?? null,
+      sensitive: false, reusable: true, fillSource: null
+    }));
+    return verifyFinalLiveDom({
+      root, session: activeSession, domGeneration: 1, lifecycleIsCurrent: true,
+      ledger, questionEntries: [], questionTraces: traces, repeatableSections: [], pageUrl: url
+    });
   },
 
   /** Section B — per-frame application census, run inside a real frame. */

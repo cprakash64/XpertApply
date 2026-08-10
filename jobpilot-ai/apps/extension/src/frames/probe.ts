@@ -16,6 +16,7 @@
  */
 
 import { resolveApplicationRoot, type FormCandidate } from "../ats/formRoot";
+import { deepQueryAll, deepTextContent, openShadowHostCount } from "../dom/deepDom";
 
 export interface FrameProbe {
   /** Assigned by the background from sender.frameId — never trusted from data. */
@@ -66,7 +67,7 @@ function isVisible(el: Element): boolean {
 }
 
 function countVisible(doc: Document, selector: string): number {
-  return Array.from(doc.querySelectorAll(selector)).filter(isVisible).length;
+  return deepQueryAll(doc, selector).filter(isVisible).length;
 }
 
 /** Labels that indicate a real job application rather than site chrome. */
@@ -85,32 +86,30 @@ const APPLICATION_LABEL_PATTERNS: [string, RegExp][] = [
 ];
 
 function findApplicationLabels(doc: Document): string[] {
-  // textContent of the body, capped — we only need to know WHICH labels exist,
-  // and we deliberately never store the surrounding text.
-  const text = (doc.body?.textContent ?? "").slice(0, 20000);
-  return APPLICATION_LABEL_PATTERNS.filter(([, re]) => re.test(text)).map(([name]) => name);
+  // Text of the body INCLUDING open shadow content, capped — we only need to
+  // know WHICH labels exist, and we deliberately never store the surrounding
+  // text. `body.textContent` alone reported zero labels on SmartRecruiters
+  // "Easy Apply", where every label lives inside a web component.
+  const text = doc.body ? deepTextContent(doc.body, 20000) : "";
+  const attributeText = deepQueryAll(doc, "[label],[aria-label],[placeholder],[autocomplete]")
+    .slice(0, 200)
+    .map((el) =>
+      [el.getAttribute("label"), el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("autocomplete")]
+        .filter(Boolean)
+        .join(" ")
+    )
+    .join(" ");
+  const haystack = `${text} ${attributeText}`;
+  return APPLICATION_LABEL_PATTERNS.filter(([, re]) => re.test(haystack)).map(([name]) => name);
 }
 
 function countOpenShadowRoots(doc: Document): number {
-  let count = 0;
-  const walk = (root: ParentNode, depth: number) => {
-    if (depth > 6) return;
-    for (const el of Array.from(root.querySelectorAll("*"))) {
-      const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-      // Closed shadow roots are invisible to us by design; they are reported as
-      // a limitation rather than silently ignored.
-      if (shadow) {
-        count += 1;
-        walk(shadow, depth + 1);
-      }
-    }
-  };
   try {
-    walk(doc, 0);
+    return openShadowHostCount(doc);
   } catch {
     /* a hostile page can throw from a getter; the count is best-effort */
+    return 0;
   }
-  return count;
 }
 
 /** Build this frame's probe. Pure observation — never mutates the page. */
@@ -123,16 +122,16 @@ export function probeFrame(doc: Document = document): FrameProbe {
     sanitizedUrl: sanitizeUrl(doc.location?.href ?? ""),
     readyState: doc.readyState,
 
-    formCount: doc.querySelectorAll("form").length,
+    formCount: deepQueryAll(doc, "form").length,
     visibleInputs: countVisible(doc, "input:not([type=hidden])"),
     visibleTextareas: countVisible(doc, "textarea"),
     nativeSelects: countVisible(doc, "select"),
-    ariaHaspopupButtons: doc.querySelectorAll('button[aria-haspopup="listbox"],button[aria-haspopup="menu"]').length,
-    roleComboboxes: doc.querySelectorAll('[role="combobox"],[role="listbox"]').length,
-    requiredControls: doc.querySelectorAll("[required],[aria-required=true]").length,
+    ariaHaspopupButtons: deepQueryAll(doc, 'button[aria-haspopup="listbox"],button[aria-haspopup="menu"]').length,
+    roleComboboxes: deepQueryAll(doc, '[role="combobox"],[role="listbox"]').length,
+    requiredControls: deepQueryAll(doc, "[required],[aria-required=true]").length,
     // NOT filtered by visibility: Greenhouse hides the real file input behind an
     // "Attach" button, and it is one of the strongest application signals.
-    fileInputs: doc.querySelectorAll('input[type="file"]').length,
+    fileInputs: deepQueryAll(doc, 'input[type="file"]').length,
     openShadowRoots: countOpenShadowRoots(doc),
     applicationLabelsFound: findApplicationLabels(doc),
 

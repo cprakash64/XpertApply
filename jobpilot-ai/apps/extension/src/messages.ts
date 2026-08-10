@@ -162,6 +162,8 @@ export type LaunchPayload = {
   jobId: number;
   officialUrl: string;
   atsType: string | null;
+  webApiBase?: string;
+  webAuthenticatedUserId?: number | null;
 };
 
 /** State the side panel renders — persisted in chrome.storage.session per tab. */
@@ -223,10 +225,53 @@ export const MSG = {
   START_AUTOFILL: "JOBPILOT_START_AUTOFILL",
   CLEAR_SESSION: "JOBPILOT_CLEAR_SESSION",
   COMPLETE_SESSION: "JOBPILOT_COMPLETE_SESSION",
+  /** Content script asks the service worker to navigate to a validated
+   * application destination. The content script never touches chrome.tabs. */
+  ACTIVATE_APPLICATION_DESTINATION: "JOBPILOT_ACTIVATE_APPLICATION_DESTINATION",
+  /** Persist the application launch before any CTA interaction. This covers
+   * script-driven, same-tab, popup and user-assisted clicks whose destination
+   * is not available in the DOM ahead of time. */
+  PREPARE_APPLICATION_LAUNCH: "JOBPILOT_PREPARE_APPLICATION_LAUNCH",
+  /** Destination page lost its binding and asks the worker to re-establish it.
+   * Carries only safe browser context; the worker derives tab, session and job. */
+  RECONNECT_APPLICATION_WORKFLOW: "JOBPILOT_RECONNECT_APPLICATION_WORKFLOW",
+  /** Content script asks the worker to resolve a batch of employer questions.
+   * The worker holds the session token; the page never sees it. */
+  RESOLVE_QUESTIONS: "JOBPILOT_RESOLVE_QUESTIONS",
+  /** Which build the service worker is, and which backend it would talk to.
+   * Asked BEFORE autofill: a content script talking to a worker from a
+   * different build is the most common reason a live page disagrees with a
+   * green test suite, and it must stop the run rather than produce nonsense. */
+  RUNTIME_IDENTITY: "JOBPILOT_RUNTIME_IDENTITY",
   GET_VIEW_STATE: "JOBPILOT_GET_VIEW_STATE",
   // review widget → background → API (runtime)
   SAVE_ANSWER: "JOBPILOT_SAVE_ANSWER",
+  /** The user answered one question for THIS application only. Carries the
+   * canonical key and the boolean they picked — never provenance, which the
+   * server derives from the authenticated session. */
+  SET_APPLICATION_OVERRIDE: "JOBPILOT_SET_APPLICATION_OVERRIDE",
+  /** Recover which questions were already answered for this application, so a
+   * reinjected content script does not depend on in-memory state. */
+  GET_APPLICATION_OVERRIDES: "JOBPILOT_GET_APPLICATION_OVERRIDES",
   CONFIRM_NAME: "JOBPILOT_CONFIRM_NAME",
+  // employer content script → background → API (runtime). Sent ONLY when the
+  // ATS itself confirmed the submission; see ats/submissionEvidence.ts.
+  SUBMISSION_CONFIRMED: "JOBPILOT_SUBMISSION_CONFIRMED",
+  /** The extension could not prove the submission — the web app must ask. */
+  MANUAL_CONFIRMATION_REQUIRED: "JOBPILOT_MANUAL_CONFIRMATION_REQUIRED",
+  /** The employer is asking the user to sign in. Autofill pauses; the
+   * application session stays valid across the detour. */
+  EMPLOYER_AUTH_REQUIRED: "JOBPILOT_EMPLOYER_AUTH_REQUIRED",
+  /** The application is in an iframe this frame cannot read. Ask the worker
+   * for the REAL frame picture: frame ids, url shapes, content-script
+   * reachability and host-permission state. Replaces a bare "not allowed". */
+  INSPECT_APPLICATION_FRAMES: "JOBPILOT_INSPECT_APPLICATION_FRAMES",
+  /** Ask, inside a user gesture, for host permission covering one exact frame
+   * origin. Never `<all_urls>`, never a wildcard the user did not see. */
+  REQUEST_FRAME_PERMISSION: "JOBPILOT_REQUEST_FRAME_PERMISSION",
+  /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
+   * Answered by every content-script instance, top or nested. */
+  PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -251,7 +296,7 @@ export type ProgressPayload = {
 
 export type RuntimeMessage =
   | { type: typeof MSG.LAUNCH_REQUEST; payload: LaunchPayload }
-  | { type: typeof MSG.HANDSHAKE; origin: string; protocolVersion: number }
+  | { type: typeof MSG.HANDSHAKE; origin: string; apiBase?: string; protocolVersion: number }
   | { type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | {
       type: typeof MSG.CONTENT_READY;
@@ -284,6 +329,40 @@ export type RuntimeMessage =
   | { type: typeof MSG.START_AUTOFILL; tabId?: number; reason: AutofillReason }
   | { type: typeof MSG.CLEAR_SESSION; tabId?: number }
   | { type: typeof MSG.COMPLETE_SESSION; sessionId: number }
+  | {
+      type: typeof MSG.RESOLVE_QUESTIONS;
+      sessionId: number;
+      questions: unknown[];
+    }
+  | {
+      type: typeof MSG.RECONNECT_APPLICATION_WORKFLOW;
+      /** Current page origin, so the worker can validate the transition. The
+       * worker derives tab id from the sender; the page never supplies it. */
+      origin: string;
+      /** Build/handoff version, for diagnosing a stale content script. */
+      handoffVersion: string;
+    }
+  | {
+      type: typeof MSG.PREPARE_APPLICATION_LAUNCH;
+      sessionId: number;
+      sourceUrl: string;
+      normalizedCtaText: string;
+      confidence: number;
+      href: string | null;
+      target: string | null;
+      expectedDestinationOrigin: string | null;
+      jobFingerprint: string;
+    }
+  | {
+      type: typeof MSG.ACTIVATE_APPLICATION_DESTINATION;
+      sessionId: number;
+      /** Absolute https URL, already validated by ats/applyDestination. */
+      url: string;
+      /** The markup asked for a new tab (target="_blank"). */
+      newTab: boolean;
+      /** Where the URL came from, for the audit trail. */
+      source: string;
+    }
   | { type: typeof MSG.GET_VIEW_STATE; tabId?: number }
   | {
       type: typeof MSG.SAVE_ANSWER;
@@ -295,6 +374,29 @@ export type RuntimeMessage =
       companyKey?: string;
     }
   | {
+      /**
+       * An answer for one application. The payload is exhaustively listed here
+       * on purpose: adding a provenance field would require editing this type,
+       * and `validateOverrideRequest` rejects one at runtime regardless.
+       */
+      type: typeof MSG.SET_APPLICATION_OVERRIDE;
+      sessionId: number;
+      /** A canonical key the resolver returned; validated against the
+       * answerable set on both sides of this message. */
+      canonicalKey: string;
+      /** The explicit choice. Never optional, never a string. */
+      value: boolean;
+    }
+  | {
+      type: typeof MSG.GET_APPLICATION_OVERRIDES;
+      sessionId: number;
+    }
+  | {
+      /** No payload: the worker answers about ITSELF. A content script that
+       * could describe the worker would defeat the point of asking. */
+      type: typeof MSG.RUNTIME_IDENTITY;
+    }
+  | {
       type: typeof MSG.CONFIRM_NAME;
       sessionId: number;
       firstName: string;
@@ -302,13 +404,66 @@ export type RuntimeMessage =
       middleName?: string;
       preferredFirstName?: string;
       preferredLastName?: string;
-    };
+    }
+  | {
+      type: typeof MSG.SUBMISSION_CONFIRMED;
+      sessionId: number;
+      /** Closed vocabulary — the server re-validates it and rejects anything else. */
+      evidenceType: "success_page" | "success_response" | "success_message";
+      submissionTimestamp: string;
+      submissionReference: string | null;
+      ats: string | null;
+    }
+  | {
+      type: typeof MSG.MANUAL_CONFIRMATION_REQUIRED;
+      sessionId: number;
+      /** Machine reason code from evaluateSubmissionEvidence. Never free text. */
+      reason: string;
+    }
+  | {
+      type: typeof MSG.EMPLOYER_AUTH_REQUIRED;
+      sessionId: number;
+      /** Whether the user's email was prefilled. NEVER the email itself, and
+       * never anything resembling a credential. */
+      emailPrefilled: boolean;
+    }
+  | {
+      type: typeof MSG.INSPECT_APPLICATION_FRAMES;
+      /** Parent-observable evidence about this document's iframes. Origins,
+       * redacted path shapes, sandbox tokens and counts only. */
+      observed: ObservedFramePayload[];
+    }
+  | {
+      type: typeof MSG.REQUEST_FRAME_PERMISSION;
+      /** One exact origin. The worker re-derives the pattern and refuses
+       * anything broader than `<origin>/*`. */
+      origin: string;
+    }
+  | { type: typeof MSG.PROBE_FRAME_APPLICATION };
+
+/** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
+ * contract does not depend on the DOM-side module. */
+export type ObservedFramePayload = {
+  frameIndex: number;
+  origin: string | null;
+  pathShape: string | null;
+  urlKind: string;
+  srcObservable: boolean;
+  sandboxTokens: string[];
+  sandboxed: boolean;
+  opaqueOrigin: boolean;
+  sameOriginReadable: boolean;
+  readableFieldCount: number;
+};
 
 const RUNTIME_TYPES = new Set<string>([
   MSG.LAUNCH_REQUEST, MSG.HANDSHAKE, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
-  MSG.COMPLETE_SESSION, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME
+  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
+  MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
+  MSG.SUBMISSION_CONFIRMED, MSG.MANUAL_CONFIRMATION_REQUIRED, MSG.EMPLOYER_AUTH_REQUIRED,
+  MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -335,7 +490,7 @@ export type ExtensionInfo = {
 };
 
 export type PageMessage =
-  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.PING }
+  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.PING; apiBase?: string }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.START_ASSISTED_APPLY; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } }

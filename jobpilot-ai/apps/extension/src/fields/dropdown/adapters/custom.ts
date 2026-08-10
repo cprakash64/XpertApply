@@ -8,6 +8,7 @@
 
 import { aliasMatches, normalizeForMatch } from "../../aliases";
 import type { DiscoveredField } from "../../../types";
+import { deepClosest, deepQuery, deepQueryAll } from "../../../dom/deepDom";
 import {
   clean,
   closeAnyOpenMenu,
@@ -38,13 +39,17 @@ export interface CustomAdapterConfig {
  * React Select listens on its `__control` wrapper, not the inner input. */
 export function pressTarget(field: DiscoveredField): HTMLElement {
   const el = field.element as HTMLElement;
-  const control = el.querySelector<HTMLElement>('[class*="__control"], [class*="-control"]');
+  const control = deepQuery<HTMLElement>(el, '[class*="__control"], [class*="-control"]');
   if (control) return control;
-  const closestControl = el.closest<HTMLElement>('[class*="__control"], [class*="-control"]');
+  const closestControl = deepClosest<HTMLElement>(el, '[class*="__control"], [class*="-control"]');
   if (closestControl && closestControl !== el) return closestControl;
   const role = (el.getAttribute("role") || "").toLowerCase();
-  if (role === "combobox" || role === "listbox" || el.getAttribute("aria-haspopup") === "listbox") return el;
-  const inner = el.querySelector<HTMLElement>('[role="combobox"], [aria-haspopup="listbox"], button');
+  // A web-component wrapper carries the combobox role but the real, focusable
+  // control is inside its shadow root. Pressing the host does nothing.
+  const inner = deepQuery<HTMLElement>(el, '[role="combobox"], [aria-haspopup="listbox"], input:not([type="hidden"]), button');
+  if (role === "combobox" || role === "listbox" || el.getAttribute("aria-haspopup") === "listbox") {
+    return inner ?? el;
+  }
   return inner ?? el;
 }
 
@@ -52,7 +57,9 @@ export function pressTarget(field: DiscoveredField): HTMLElement {
 export function focusTarget(field: DiscoveredField): HTMLElement {
   const el = field.element as HTMLElement;
   if (el.tagName.toLowerCase() === "input") return el;
-  const input = el.querySelector<HTMLElement>('input:not([type="hidden"])');
+  // Shadow-piercing: `spl-input`'s real <input> lives in its shadow root, so a
+  // light-DOM lookup returned nothing and every typed search went nowhere.
+  const input = deepQuery<HTMLElement>(el, 'input:not([type="hidden"])');
   return input ?? pressTarget(field);
 }
 
@@ -182,22 +189,22 @@ export function createCustomAdapter(config: CustomAdapterConfig): DropdownAdapte
 export function readCustomSelection(field: DiscoveredField): string[] {
   const el = field.element as HTMLElement | undefined;
   if (!el) return [];
-  const scope = (el.closest<HTMLElement>('[class*="__container"], [class*="-container"], .field, div') ?? el) as HTMLElement;
+  const scope = (deepClosest<HTMLElement>(el, '[class*="__container"], [class*="-container"], .field, div') ?? el);
   const labels: string[] = [];
 
   // 1. React Select multi-value chips (and any multi-select chip UI).
-  for (const chip of Array.from(el.querySelectorAll<HTMLElement>('[class*="multiValue"] , [class*="multi-value"]'))) {
+  for (const chip of deepQueryAll<HTMLElement>(el, '[class*="multiValue"] , [class*="multi-value"]')) {
     const text = clean(chip.textContent).replace(/[×✕✖]\s*$/, "").trim();
     if (text && !isBlankValue(text)) labels.push(text);
   }
   if (labels.length > 0) return dedupe(labels);
 
   // 2. React Select single value / generic display element.
-  const single = el.querySelector<HTMLElement>('[class*="singleValue"], [class*="single-value"]');
+  const single = deepQuery<HTMLElement>(el, '[class*="singleValue"], [class*="single-value"]');
   if (single && !isBlankValue(clean(single.textContent))) return [clean(single.textContent)];
 
   // 3. aria-selected options still present in the DOM (ARIA listboxes).
-  const selected = Array.from(el.querySelectorAll<HTMLElement>('[role="option"][aria-selected="true"]'))
+  const selected = deepQueryAll<HTMLElement>(el, '[role="option"][aria-selected="true"]')
     .map((o) => clean(o.textContent))
     .filter((t) => t && !isBlankValue(t));
   if (selected.length > 0) return dedupe(selected);
@@ -212,11 +219,11 @@ export function readCustomSelection(field: DiscoveredField): string[] {
   }
 
   // 5. The control's own input value (searchable combobox with a committed value).
-  const input = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : el.querySelector<HTMLInputElement>('input:not([type="hidden"])');
+  const input = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : deepQuery<HTMLInputElement>(el, 'input:not([type="hidden"])');
   if (input && !isBlankValue(input.value)) return [clean(input.value)];
 
   // 6. The hidden input a custom control posts (React Select's hidden field).
-  const hidden = scope.querySelector<HTMLInputElement>('input[type="hidden"]');
+  const hidden = deepQuery<HTMLInputElement>(scope, 'input[type="hidden"]');
   if (hidden && !isBlankValue(hidden.value)) return [clean(hidden.value)];
 
   // 7. Last resort: the control's rendered text, minus any placeholder node.

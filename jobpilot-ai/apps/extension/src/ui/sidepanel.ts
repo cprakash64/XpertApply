@@ -12,7 +12,10 @@
  */
 
 import { lastError } from "../logger";
+import { BUILD_INFO } from "../buildInfo";
+import { getApiBase } from "../config";
 import { MSG, PROTOCOL_VERSION, type LaunchViewState } from "../messages";
+import { classifyEnvironment, safeApiBase, SIDE_PANEL_RUNTIME_KEY } from "../runtimeIdentity";
 import { STORAGE_KEYS } from "../state";
 
 const el = (id: string) => document.getElementById(id) as HTMLElement;
@@ -115,7 +118,9 @@ function renderDiagnostics(v: LaunchViewState): void {
   diag.hidden = !isDev;
   if (!isDev) return;
   el("diagBody").textContent = [
-    `version: ${chrome.runtime.getManifest().version}`,
+    `version: ${BUILD_INFO.version}`,
+    `sidePanelBuild: ${BUILD_INFO.buildId}`,
+    `builtAt: ${BUILD_INFO.builtAt}`,
     `protocol: ${PROTOCOL_VERSION}`,
     `tabId: ${v.tabId}`,
     `state: ${v.state}`,
@@ -124,6 +129,17 @@ function renderDiagnostics(v: LaunchViewState): void {
     `adapter: ${v.atsId ?? "—"}`,
     `lastFailure: ${v.failureCode ?? "—"}`
   ].join("\n");
+}
+
+async function publishRuntimeIdentity(): Promise<void> {
+  await chrome.storage.local.set({
+    [SIDE_PANEL_RUNTIME_KEY]: {
+      buildId: BUILD_INFO.buildId,
+      version: BUILD_INFO.version,
+      environment: classifyEnvironment(await getApiBase()),
+      apiBase: safeApiBase(await getApiBase())
+    }
+  });
 }
 
 async function refresh(): Promise<void> {
@@ -186,4 +202,4 @@ el("complete").addEventListener("click", async () => {
   if (resp && resp.ok === false) showButtonError(`Couldn’t mark complete: ${resp.error ?? "unknown error"}`);
 });
 
-void refresh();
+void publishRuntimeIdentity().then(refresh);

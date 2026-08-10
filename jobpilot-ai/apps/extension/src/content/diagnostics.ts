@@ -17,7 +17,21 @@ import { RESOLVER_VERSION, type FormRootResult } from "../ats/formRoot";
 import type { LedgerCounts, LedgerEntry } from "../fields/ledger";
 import type { FrameProbe } from "../frames/probe";
 
+/** Sanitized handoff evidence: enums and booleans only — never tokens, URLs
+ * with queries, addresses, answers or document contents. */
+export interface HandoffDiagnostics {
+  handoffVersion: string;
+  navigationVersion: string;
+  sessionPresent: boolean;
+  matched: boolean;
+  reconnectAttempted: boolean;
+  reconnectReason: string;
+  originCategory: string;
+  applicationLaunch?: Record<string, unknown> | null;
+}
+
 export interface DiagnosticsInput {
+  handoff?: HandoffDiagnostics;
   url: string;
   atsId: string | null;
   ledger: LedgerEntry[];
@@ -31,6 +45,109 @@ export interface DiagnosticsInput {
   frameProbe?: FrameProbe | null;
   /** Build identity, so a stale loaded extension is immediately obvious. */
   build?: { version: string; builtAt: string; buildId: string };
+  /** Per-context build ids and environment categories from the runtime
+   * handshake. Categories, never hostnames. */
+  runtime?: Record<string, string> | null;
+  /** Registry + answer-contract versions as reported by the BACKEND, so a
+   * resolver older than this client is visible rather than mysterious. */
+  resolverContract?: {
+    requestSchemaVersion: number;
+    registryVersion: string;
+    answerContractVersion: number;
+  } | null;
+  /** Account/session boundary only; no email or profile fields. */
+  authenticatedUserId?: number | null;
+  /** The authoritative ledger's own stage, totals and per-question reason
+   * codes. Enums and counts only — no question text, no answer. */
+  authoritative?: {
+    stage: string;
+    counts: Record<string, number>;
+    reasons: { state: string; reason: string; canonical: string | null; required: boolean }[];
+  } | null;
+  /** Four-stage, per-question execution records. Values are presence markers,
+   * never profile/legal answers or submitted backing values. */
+  questionTraces?: QuestionExecutionTrace[];
+  /** Redacted ATS resume-parse lifecycle; counts/enums only. */
+  atsLifecycle?: unknown[];
+  reconciliation?: { classification: string; canonicalKey: string | null; provenance: string }[];
+  repeatableSections?: {
+    sectionKind: string; required: boolean; policy: string; existingItemCount: number;
+    candidateRecordCount: number; recordsAdded: number; duplicatesSkipped: number;
+    incompleteSkipped: number; candidateRecordIds?: string[]; failureCode: string | null;
+  }[];
+  structuredCandidateCounts?: Record<string, unknown>;
+  finalVerification?: Record<string, unknown> | null;
+  /** TikTok legal adapter evidence; structural summaries and booleans only. */
+  tiktokAdapter?: Record<string, unknown> | null;
+  /** Where the "I'm interested" handoff actually stopped on the destination:
+   * stage, honest failure code, per-frame field counts, elapsed time. Origins
+   * and counts only — never a destination URL with its query string. */
+  destinationReadiness?: Record<string, unknown> | null;
+  /** Per-frame reachability for an embedded application: frame ids, url kinds,
+   * sandbox tokens, host-permission state and field counts. Origins and
+   * redacted path shapes only — never a query string or a token. */
+  frameInspection?: Record<string, unknown> | null;
+}
+
+export interface QuestionExecutionTrace {
+  fieldId: string;
+  frameId: string;
+  rawLabel: string;
+  associatedLabelText?: string;
+  accessibleName: string;
+  ariaLabel?: string | null;
+  ariaLabelledbyIds?: string[];
+  ariaLabelledbyText?: string;
+  sectionHeading: string;
+  fieldType: string;
+  ariaRole: string | null;
+  controlTag?: string;
+  fieldName?: string;
+  fieldDomId?: string;
+  placeholder?: string;
+  ariaExpanded?: string | null;
+  ariaControls?: string | null;
+  required?: boolean;
+  disabled?: boolean;
+  nearbyText?: string;
+  descriptorFingerprint?: string;
+  options: string[];
+  discoveredBackingValues?: string[];
+  canonicalKey: string | null;
+  resolutionMethod: string;
+  resolutionConfidence: number;
+  transform: string;
+  requiredCanonicalKeys: string[];
+  answerSource: string;
+  sensitivity?: string | null;
+  sourceValues?: (boolean | null)[];
+  typedAnswer?: boolean | null;
+  displayAnswer?: string | null;
+  reviewStatus?: string;
+  profileRevision: string | null;
+  requestEndpoint?: string;
+  requestSchemaVersion?: number;
+  answerContractVersion?: number;
+  extensionBuildId?: string;
+  runId?: string;
+  runCreatedAt?: string;
+  applicationSessionId?: number;
+  domGeneration?: number;
+  actuator: string | null;
+  actuatorReached?: boolean;
+  transactionState?: string;
+  transactionStates?: string[];
+  actualTrigger?: string | null;
+  openStrategy?: string | null;
+  listboxFound?: boolean;
+  discoveredLiveOptions?: string[];
+  matchedOption?: "[present]" | null;
+  verificationSource?: string | null;
+  attemptedValue: "[redacted]" | null;
+  displayedValueAfterFill: "[present]" | "[empty]" | null;
+  backingValueAfterFill: "[present]" | "[empty]" | null;
+  verified: boolean;
+  failureCode: string | null;
 }
 
 export function buildDiagnostics(input: DiagnosticsInput): string {
@@ -43,6 +160,22 @@ export function buildDiagnostics(input: DiagnosticsInput): string {
     // Build identity — the first thing to check when the live page disagrees
     // with the test suite, because a stale unpacked extension explains it.
     build: input.build ?? null,
+    runtime: input.runtime ?? null,
+    resolverContract: input.resolverContract ?? null,
+    authenticatedUserId: input.authenticatedUserId ?? null,
+    atsLifecycle: input.atsLifecycle ?? [],
+    reconciliation: input.reconciliation ?? [],
+    repeatableSections: input.repeatableSections ?? [],
+    structuredCandidateCounts: input.structuredCandidateCounts ?? null,
+    finalVerification: input.finalVerification ?? null,
+    tiktokAdapter: input.tiktokAdapter ?? null,
+    destinationReadiness: input.destinationReadiness ?? null,
+    frameInspection: input.frameInspection ?? null,
+    authoritative: input.authoritative ?? null,
+    questionTraces: input.questionTraces ?? [],
+    // How this page resolved (or failed to resolve) its application workflow.
+    // Enums and booleans only — safe to paste into a bug report.
+    handoff: input.handoff ?? null,
     // This frame's census: what controls exist, whether a root resolved, and
     // WHY. A bare "could not identify form" is never enough to act on.
     frame: input.frameProbe

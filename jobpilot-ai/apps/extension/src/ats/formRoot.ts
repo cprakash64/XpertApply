@@ -15,8 +15,20 @@
  * chosen root — never a global scan.
  */
 
-/** Bumped when the scoring rules change, so diagnostics are comparable. */
-export const RESOLVER_VERSION = "2.0.0";
+import {
+  deepClosest,
+  deepContains,
+  deepParentElement,
+  deepQuery,
+  deepQueryAll,
+  scopedQuery
+} from "../dom/deepDom";
+
+/** Bumped when the scoring rules change, so diagnostics are comparable.
+ * 2.1.0: every count below pierces open shadow roots. Before it, an application
+ * built from web components (SmartRecruiters "Easy Apply", the live ServiceNow
+ * destination) scored `no_fields` on every candidate and resolved to nothing. */
+export const RESOLVER_VERSION = "2.1.0";
 
 /** A candidate must beat this to be used at all. */
 const MIN_CONFIDENT_SCORE = 6;
@@ -56,8 +68,8 @@ const EXCLUDE_TEXT_RE =
 
 function exclusionFor(el: Element): string | null {
   // JobPilot's own widget must never be treated as page content.
-  if (el.closest("#jobpilot-assisted-apply")) return "jobpilot_widget";
-  if (el.closest(EXCLUDE_ANCESTOR)) return "site_chrome";
+  if (deepClosest(el, "#jobpilot-assisted-apply")) return "jobpilot_widget";
+  if (deepClosest(el, EXCLUDE_ANCESTOR)) return "site_chrome";
 
   const role = (el.getAttribute("role") || "").toLowerCase();
   if (role === "search" || role === "navigation") return "search_or_nav_role";
@@ -69,7 +81,7 @@ function exclusionFor(el: Element): string | null {
   if (action && EXCLUDE_TEXT_RE.test(action)) return "action_matches_excluded";
 
   // A form whose only meaningful control is a search box.
-  const fields = Array.from(el.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
+  const fields = deepQueryAll<HTMLElement>(el, FIELD_SELECTOR);
   const searchy = fields.filter((f) => {
     const type = (f as HTMLInputElement).type;
     const text = `${f.id} ${f.className} ${(f as HTMLInputElement).name ?? ""} ${f.getAttribute("placeholder") ?? ""} ${f.getAttribute("aria-label") ?? ""}`;
@@ -82,7 +94,7 @@ function exclusionFor(el: Element): string | null {
 }
 
 function isHidden(el: Element): boolean {
-  for (let node: Element | null = el, depth = 0; node && depth < 8; node = node.parentElement, depth += 1) {
+  for (let node: Element | null = el, depth = 0; node && depth < 12; node = deepParentElement(node), depth += 1) {
     const style = (node.getAttribute("style") || "").toLowerCase();
     if (/display\s*:\s*none|visibility\s*:\s*hidden/.test(style)) return true;
     if ((node as HTMLElement).hidden) return true;
@@ -101,37 +113,53 @@ const RESUME_RE = /resume|r[ée]sum[ée]|\bcv\b|curriculum vitae/i;
 const APPLY_HEADING_RE = /\b(apply for this job|application form|submit your application|apply now|your application)\b/i;
 
 function fieldText(el: Element): string {
-  const input = el as HTMLInputElement;
   const id = el.id;
-  const doc = el.ownerDocument;
+  const input = el as HTMLInputElement;
   const parts = [
     input.name ?? "", el.id, el.getAttribute("aria-label") ?? "",
-    el.getAttribute("placeholder") ?? "", el.getAttribute("autocomplete") ?? ""
+    el.getAttribute("placeholder") ?? "", el.getAttribute("autocomplete") ?? "",
+    // Web-component form fields carry the question on the host element.
+    hostLabelAttribute(el)
   ];
-  if (id) parts.push(doc.querySelector(`label[for="${cssEscape(id)}"]`)?.textContent ?? "");
-  parts.push(el.closest("label")?.textContent ?? "");
+  // Scoped to the control's own tree: `label[for]` inside a shadow root refers
+  // to an id that is scoped to that root, and a document-wide lookup finds the
+  // wrong element (SmartRecruiters gives host and inner input the same id).
+  if (id) parts.push(scopedQuery(el, `label[for="${cssEscape(id)}"]`)?.textContent ?? "");
+  parts.push(deepClosest(el, "label")?.textContent ?? "");
   return parts.join(" ");
+}
+
+/** `label` attribute of the nearest web-component host, if any. */
+function hostLabelAttribute(el: Element): string {
+  let node: Element | null = el;
+  for (let hops = 0; node && hops < 4; hops += 1) {
+    const value = node.getAttribute("label");
+    if (value?.trim()) return value;
+    const root = node.getRootNode();
+    node = root instanceof ShadowRoot ? root.host : null;
+  }
+  return "";
 }
 
 function scoreCandidate(el: Element): { score: number; signals: string[]; fieldCount: number; requiredCount: number } {
   const signals: string[] = [];
   let score = 0;
 
-  const fields = Array.from(el.querySelectorAll<HTMLElement>(FIELD_SELECTOR));
+  const fields = deepQueryAll<HTMLElement>(el, FIELD_SELECTOR);
   const texts = fields.map(fieldText);
   const requiredCount = fields.filter(
     (f) => (f as HTMLInputElement).required || f.getAttribute("aria-required") === "true"
   ).length;
 
   // A resume/CV file input is the single strongest application signal.
-  const fileInputs = Array.from(el.querySelectorAll<HTMLInputElement>('input[type="file"]'));
-  if (fileInputs.some((f) => RESUME_RE.test(fieldText(f) + " " + (f.closest("div,section,fieldset")?.textContent ?? "")))) {
+  const fileInputs = deepQueryAll<HTMLInputElement>(el, 'input[type="file"]');
+  if (fileInputs.some((f) => RESUME_RE.test(fieldText(f) + " " + (deepClosest(f, "div,section,fieldset")?.textContent ?? "")))) {
     score += 5;
     signals.push("resume_upload");
   }
 
   // An apply/submit control belonging to this container.
-  const submits = Array.from(el.querySelectorAll<HTMLElement>('button,[type="submit"],[role="button"]'));
+  const submits = deepQueryAll<HTMLElement>(el, 'button,[type="submit"],[role="button"]');
   if (submits.some((b) => /\b(submit application|submit|apply)\b/i.test(b.textContent || b.getAttribute("value") || ""))) {
     score += 5;
     signals.push("submit_control");
@@ -148,19 +176,19 @@ function scoreCandidate(el: Element): { score: number; signals: string[]; fieldC
   }
 
   // ATS markers.
-  if (el.querySelector('[name^="job_application"],[id^="job_application"],#grnhse_app,#application_form')) {
+  if (deepQuery(el, '[name^="job_application"],[id^="job_application"],#grnhse_app,#application_form')) {
     score += 4;
     signals.push("greenhouse_markers");
   }
-  if (el.closest(".ashby-application-form-container") || el.querySelector('[class*="_fieldEntry"]')) {
+  if (deepClosest(el, ".ashby-application-form-container") || deepQuery(el, '[class*="_fieldEntry"]')) {
     score += 4;
     signals.push("ashby_markers");
   }
-  if (el.matches('[data-qa="application-form"],.application-form') || el.querySelector('[data-qa="application-form"]')) {
+  if (el.matches('[data-qa="application-form"],.application-form') || deepQuery(el, '[data-qa="application-form"]')) {
     score += 4;
     signals.push("lever_markers");
   }
-  if (el.querySelector('[data-automation-id]')) {
+  if (deepQuery(el, '[data-automation-id]')) {
     score += 3;
     signals.push("workday_markers");
   }
@@ -168,8 +196,8 @@ function scoreCandidate(el: Element): { score: number; signals: string[]; fieldC
   // An "Apply for this job" heading on the container OR on a close ancestor, so
   // a tight application div inherits the heading its section carries.
   let headingNode: Element | null = el;
-  for (let depth = 0; headingNode && depth < 4; headingNode = headingNode.parentElement, depth += 1) {
-    const heading = headingNode.querySelector("h1,h2,h3,legend");
+  for (let depth = 0; headingNode && depth < 4; headingNode = deepParentElement(headingNode), depth += 1) {
+    const heading = deepQuery(headingNode, "h1,h2,h3,legend");
     if (heading && APPLY_HEADING_RE.test(heading.textContent || "")) {
       score += 3;
       signals.push("apply_heading");
@@ -212,7 +240,7 @@ export function fingerprint(el: Element): string {
 // --------------------------------------------------------------------------- //
 function collectCandidates(doc: Document): Element[] {
   const found = new Set<Element>();
-  for (const form of Array.from(doc.querySelectorAll("form"))) found.add(form);
+  for (const form of deepQueryAll<Element>(doc, "form")) found.add(form);
 
   // React applications frequently render NO <form>. Offer explicit ATS
   // containers and, failing that, the tightest container holding the
@@ -224,7 +252,7 @@ function collectCandidates(doc: Document): Element[] {
     '[data-ui="application-form"]', "main"
   ];
   for (const selector of containerSelectors) {
-    for (const el of Array.from(doc.querySelectorAll(selector))) found.add(el);
+    for (const el of deepQueryAll<Element>(doc, selector)) found.add(el);
   }
 
   const synthesized = synthesizeRoot(doc);
@@ -236,20 +264,23 @@ function collectCandidates(doc: Document): Element[] {
  * for a form-less React application. */
 function synthesizeRoot(doc: Document): Element | null {
   const anchors: Element[] = [];
-  for (const el of Array.from(doc.querySelectorAll<HTMLElement>(FIELD_SELECTOR))) {
+  for (const el of deepQueryAll<HTMLElement>(doc, FIELD_SELECTOR)) {
     if (exclusionFor(el)) continue;
     const text = fieldText(el);
     if (NAME_RE.test(text) || EMAIL_RE.test(text) || PHONE_RE.test(text)) anchors.push(el);
   }
-  const resume = Array.from(doc.querySelectorAll<HTMLInputElement>('input[type="file"]')).find((f) =>
-    RESUME_RE.test(fieldText(f) + " " + (f.closest("div,section,fieldset")?.textContent ?? ""))
+  const resume = deepQueryAll<HTMLInputElement>(doc, 'input[type="file"]').find((f) =>
+    RESUME_RE.test(fieldText(f) + " " + (deepClosest(f, "div,section,fieldset")?.textContent ?? ""))
   );
   if (resume) anchors.push(resume);
   if (anchors.length < 2) return null;
 
-  let common: Element | null = anchors[0].parentElement;
+  // The common ancestor is computed with shadow-aware containment, so the root
+  // of a web-component application lands on the light-DOM container that holds
+  // every component — not inside one component's shadow tree.
+  let common: Element | null = deepParentElement(anchors[0]);
   for (const anchor of anchors.slice(1)) {
-    while (common && !common.contains(anchor)) common = common.parentElement;
+    while (common && !deepContains(common, anchor)) common = deepParentElement(common);
     if (!common) return null;
   }
   // body/documentElement are not returned as a *synthesized container* — that
@@ -393,8 +424,10 @@ export function resolveApplicationRoot(doc: Document): FormRootResult {
  * they are siblings (ambiguous — never mix fields from two forms). */
 function tightestNested(contenders: { el: Element; score: number }[]): Element | null {
   if (contenders.length === 0) return null;
-  const innermost = contenders.reduce((a, b) => (b.el.contains(a.el) ? a : a.el.contains(b.el) ? b : a));
-  const allNest = contenders.every((c) => c.el === innermost.el || c.el.contains(innermost.el));
+  const innermost = contenders.reduce((a, b) =>
+    deepContains(b.el, a.el) ? a : deepContains(a.el, b.el) ? b : a
+  );
+  const allNest = contenders.every((c) => c.el === innermost.el || deepContains(c.el, innermost.el));
   return allNest ? innermost.el : null;
 }
 

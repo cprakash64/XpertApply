@@ -46,6 +46,23 @@ describe("accessible name", () => {
 });
 
 describe("selecting the activation control", () => {
+  it("selects 'I’m interested' as the primary application CTA and rejects referral", () => {
+    mount(`<main><h1>Engineer</h1>
+      <a id="interest" href="/apply/123">I’m interested</a>
+      <a id="refer" href="/refer/123">Refer a friend</a></main>`);
+    const chosen = selectActivationControl(document);
+    expect(chosen?.element.id).toBe("interest");
+    expect(chosen?.reason).toContain("interest_application_cta");
+    expect(findActivationCandidates(document).some((item) => item.element.id === "refer")).toBe(false);
+  });
+
+  it.each(["Apply for this job", "Start application", "Continue application", "Apply externally", "Submit interest"])(
+    "recognizes %s as an application-start action",
+    (label) => {
+      mount(`<main><h1>Engineer</h1><a href="/apply/123">${label}</a></main>`);
+      expect(selectActivationControl(document)).not.toBeNull();
+    }
+  );
   it("finds the live Airbnb 'Switch to application form' button", () => {
     mount(AIRBNB_APPLY);
     const chosen = selectActivationControl(document);
@@ -68,12 +85,35 @@ describe("selecting the activation control", () => {
     expect(selectActivationControl(document)).toBeNull();
   });
 
-  it("refuses to choose between two equally strong candidates", () => {
+  it("refuses to choose between equally strong candidates that go to DIFFERENT places", () => {
     mount(`
-      <button aria-label="Switch to application form">Apply Now</button>
-      <button aria-label="Switch to application form">Apply</button>`);
+      <a href="/apply/role-a" aria-label="Switch to application form">Apply Now</a>
+      <a href="/apply/role-b" aria-label="Switch to application form">Apply</a>`);
     // Guessing could navigate somewhere the user did not ask to go.
     expect(selectActivationControl(document)).toBeNull();
+  });
+
+  it("picks the first when equally strong candidates lead to the SAME place", () => {
+    // A job page that renders its apply CTA twice — top and bottom of the
+    // description, or a duplicate in a sticky bar — is the common case, not an
+    // ambiguity. Treating it as one returned null, left the page classified as
+    // "form still loading", and ended in a bogus "the application form did not
+    // render in time".
+    mount(`
+      <a id="top" href="/apply/role-a" aria-label="Switch to application form">Apply Now</a>
+      <a id="bottom" href="/apply/role-a" aria-label="Switch to application form">Apply Now</a>`);
+    const chosen = selectActivationControl(document);
+    expect(chosen).not.toBeNull();
+    expect(chosen!.element.id).toBe("top");
+  });
+
+  it("picks the first when equally strong script-only candidates share a label", () => {
+    mount(`
+      <button id="top" aria-label="Switch to application form">Apply Now</button>
+      <button id="bottom" aria-label="Switch to application form">Apply Now</button>`);
+    const chosen = selectActivationControl(document);
+    expect(chosen).not.toBeNull();
+    expect(chosen!.element.id).toBe("top");
   });
 });
 
@@ -87,7 +127,10 @@ describe("forbidden controls are never activated", () => {
     ["Attach", "<button>Attach</button>"],
     ["Upload resume", "<button>Upload resume</button>"],
     ["I agree", "<button>I agree</button>"],
-    ["Accept cookies", "<button>Accept cookies</button>"]
+    ["Accept cookies", "<button>Accept cookies</button>"],
+    ["Refer a friend", "<button>Refer a friend</button>"],
+    ["View application history", "<button>View application history</button>"],
+    ["Similar jobs", "<button>Similar jobs</button>"]
   ] as const;
 
   for (const [label, html] of forbidden) {
@@ -100,6 +143,11 @@ describe("forbidden controls are never activated", () => {
 
   it("never activates a Submit button even inside a tablist", () => {
     mount(`<div role="tablist"><button role="tab">Submit application</button></div>`);
+    expect(selectActivationControl(document)).toBeNull();
+  });
+
+  it("never mistakes the final bare Submit control for an application start", () => {
+    mount(`<main><form><button type="submit">Submit</button></form></main>`);
     expect(selectActivationControl(document)).toBeNull();
   });
 });

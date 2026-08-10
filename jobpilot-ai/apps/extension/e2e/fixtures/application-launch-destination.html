@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>External ATS application</title></head>
+<body>
+  <main><form id="application-form"><h1>Application</h1><label>Email <input type="email" required></label></form></main>
+  <script>
+    window.jobpilotContentHandshake = {
+      type: 'APPLICATION_CONTENT_READY',
+      state: 'SESSION_REBOUND',
+      applicationRootDetected: true
+    };
+    window.opener?.postMessage({
+      type: 'APPLICATION_CONTENT_READY',
+      state: 'SESSION_REBOUND',
+      applicationRootDetected: true
+    }, 'https://careers.servicenow.example');
+  </script>
+</body>
+</html>

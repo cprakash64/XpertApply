@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Destination application (asynchronously hydrated)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    form { display: grid; gap: 10px; max-width: 640px; }
+    label { display: block; font-size: 13px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <!--
+    The destination the "I'm interested" CTA opens.
+
+    Reproduces the live shape faithfully, which is the whole point: the content
+    script attaches while this page contains ZERO applicant controls, and the
+    application is mounted afterwards. A single immediate scan sees nothing —
+    which is exactly how the widget ended up stuck on "Detecting fields /
+    Filled 0 of 0" beside a fully rendered form.
+
+    Query parameters drive the variants:
+      ?delay=<ms>     when the application mounts (default 600)
+      ?mode=top       application in this document (default)
+      ?mode=iframe    application inside a same-origin child frame
+      ?mode=spa       an intermediate route renders first, then is replaced
+      ?mode=remount   a partial form mounts, then the whole root is remounted
+      ?mode=never     the application never arrives (timeout path)
+  -->
+  <header><h1>Principal Engineer</h1><p>Example Company</p></header>
+  <main id="root"><p id="placeholder">Loading your application…</p></main>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const delay = Number(params.get('delay') ?? 600);
+    const mode = params.get('mode') ?? 'top';
+    const root = document.getElementById('root');
+
+    // The full application, exactly as the live destination presents it.
+    const APPLICATION = `
+      <h2>Personal information</h2>
+      <form id="application-form">
+        <label for="resume">Resume/CV</label>
+        <input id="resume" name="resume" type="file" required>
+
+        <label for="first-name">First name</label>
+        <input id="first-name" name="first_name" required>
+
+        <label for="last-name">Last name</label>
+        <input id="last-name" name="last_name" required>
+
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="confirm-email">Confirm email</label>
+        <input id="confirm-email" name="confirm_email" type="email" required>
+
+        <label for="city">City</label>
+        <input id="city" name="city" required>
+
+        <label for="phone-country">Phone country code</label>
+        <select id="phone-country" name="phone_country">
+          <option value="">Select</option>
+          <option value="+1">United States (+1)</option>
+          <option value="+44">United Kingdom (+44)</option>
+        </select>
+
+        <label for="phone">Phone number</label>
+        <input id="phone" name="phone" type="tel" required>
+
+        <label for="linkedin">LinkedIn profile</label>
+        <input id="linkedin" name="linkedin" type="url">
+
+        <label for="portfolio">Portfolio or website</label>
+        <input id="portfolio" name="portfolio" type="url">
+
+        <h3>Experience</h3>
+        <button type="button" id="add-experience">Add experience</button>
+
+        <h3>Education</h3>
+        <button type="button" id="add-education">Add education</button>
+
+        <label><input id="privacy" type="checkbox" name="privacy"> I agree to the privacy policy</label>
+
+        <button type="submit" id="submit-application">Submit application</button>
+      </form>`;
+
+    // A partially-mounted application: recognizable, but not the final DOM.
+    const PARTIAL = `
+      <h2>Personal information</h2>
+      <form id="application-form">
+        <label for="first-name">First name</label><input id="first-name" name="first_name" required>
+        <label for="last-name">Last name</label><input id="last-name" name="last_name" required>
+        <label for="email">Email</label><input id="email" name="email" type="email" required>
+        <label for="phone">Phone number</label><input id="phone" name="phone" type="tel" required>
+      </form>`;
+
+    function mountTop(html) {
+      root.innerHTML = html;
+    }
+
+    function mountIframe() {
+      root.innerHTML = '<iframe id="ats-frame" title="Application"></iframe>';
+      const frame = document.getElementById('ats-frame');
+      frame.style.width = '660px';
+      frame.style.height = '520px';
+      const doc = frame.contentDocument;
+      doc.open();
+      doc.write('<!doctype html><html><body>' + APPLICATION + '</body></html>');
+      doc.close();
+    }
+
+    if (mode === 'never') {
+      // Deliberately nothing. The extension must end on a NAMED failure rather
+      // than sitting on "Detecting fields" forever.
+    } else if (mode === 'iframe') {
+      setTimeout(mountIframe, delay);
+    } else if (mode === 'spa') {
+      // An intermediate route lands first and is then replaced wholesale.
+      setTimeout(() => { document.body.innerHTML = '<main id="root"><h1>Loading route…</h1></main>'; }, delay);
+      setTimeout(() => {
+        document.getElementById('root').innerHTML = APPLICATION;
+      }, delay * 2);
+    } else if (mode === 'remount') {
+      setTimeout(() => mountTop(PARTIAL), delay);
+      // React discards the first tree and mounts the real one a frame or two
+      // later. Any element reference captured from PARTIAL is dead after this
+      // point, so the gap is deliberately SHORT — that is the dangerous case,
+      // where a settling window that does not re-arm would discover the
+      // throwaway tree.
+      setTimeout(() => mountTop(APPLICATION), delay + Number(params.get('gap') ?? 150));
+    } else {
+      setTimeout(() => mountTop(APPLICATION), delay);
+    }
+
+    // Records that the page was never auto-submitted and consent was never
+    // auto-checked — asserted by the spec.
+    window.__destinationEvents = { submitted: false, consentChecked: false };
+    document.addEventListener('submit', (event) => {
+      event.preventDefault();
+      window.__destinationEvents.submitted = true;
+    }, true);
+    document.addEventListener('change', (event) => {
+      if (event.target && event.target.id === 'privacy' && event.target.checked) {
+        window.__destinationEvents.consentChecked = true;
+      }
+    }, true);
+  </script>
+</body>
+</html>

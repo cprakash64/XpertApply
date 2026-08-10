@@ -130,6 +130,26 @@ export async function updatePending(tabId: number, patch: Partial<PendingLaunch>
 }
 
 // --- SessionPackage (cached to survive the single-use launch token) --------- //
+/**
+ * Find an existing package for the SAME application session, on any tab.
+ *
+ * The session token is a property of the SESSION, not of a tab — caching it per
+ * tab id was the design error behind the live "lost the application connection"
+ * failure. The launch token that mints it is single-use, so any tab that binds
+ * itself without inheriting the package (the getActive() self-bind path in
+ * handleContentReady) would re-exchange a spent token and get a 401, which the
+ * widget then reported as a lost/invalid session on a perfectly healthy one.
+ *
+ * Reusing the session-scoped package makes that second exchange unnecessary.
+ */
+export async function findPackageForSession(sessionId: number): Promise<SessionPackage | null> {
+  const map = await getPackageMap();
+  for (const pkg of Object.values(map)) {
+    if (pkg?.session?.sessionId === sessionId) return pkg;
+  }
+  return null;
+}
+
 export async function putPackage(tabId: number, pkg: SessionPackage): Promise<void> {
   const map = await getPackageMap();
   map[String(tabId)] = pkg;

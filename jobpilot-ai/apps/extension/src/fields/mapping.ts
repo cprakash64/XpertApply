@@ -124,7 +124,16 @@ const KEYWORD_RULES: { key: CanonicalField; pattern: RegExp; confidence: number 
   { key: "previously_employed", pattern: /\b(previously (?:worked|(?:been )?employed)|have you been employed by|former(?:ly)? employee|worked (?:here|at this company) before)\b/i, confidence: 0.93 },
   { key: "relatives_employed", pattern: /\b(relatives?|family member).{0,20}(?:work|employed)|(?:work|employed).{0,20}relatives?\b/i, confidence: 0.83 },
   { key: "previously_interviewed", pattern: /\b(previously interviewed|interviewed (?:here|with us) before|prior interview)\b/i, confidence: 0.83 },
-  { key: "custom_motivation", pattern: /\b(why (?:do you )?want|why (?:are you )?interested|why (?:this|our) (?:role|company)|what interests you)\b/i, confidence: 0.8 },
+  {
+    key: "custom_motivation",
+    // The last three alternatives are the "message to the hiring team" shape:
+    // an optional free-text pitch that employers word as an invitation rather
+    // than a question. SmartRecruiters labels its box "Let the company know
+    // about your interest working there", which matched nothing and so was
+    // never even offered an answer.
+    pattern: /\b(why (?:do you )?want|why (?:are you )?interested|why (?:this|our) (?:role|company)|what interests you|message to (?:the )?(?:hiring|recruit|team)|let (?:the|us) (?:company )?know about your interest|note to (?:the )?(?:hiring|recruiter|team))\b/i,
+    confidence: 0.8
+  },
   { key: "custom_experience", pattern: /\b(describe (?:your )?(?:experience|a (?:relevant )?project)|tell us about|relevant experience)\b/i, confidence: 0.78 }
 ];
 
