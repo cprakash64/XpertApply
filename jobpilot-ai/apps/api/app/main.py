@@ -12,7 +12,16 @@ from app.core.config_validation import enforce as enforce_production_config
 from app.core.log_redaction import install as install_log_redaction
 from app.db.session import SessionLocal
 from app.people.feature_flags import configuration_summary as people_configuration_summary
-from app.routes import applications, auth, debug, jobs, people, privacy, profile
+from app.routes import (
+    applications,
+    auth,
+    dashboard,
+    debug,
+    jobs,
+    people,
+    privacy,
+    profile,
+)
 from app.services.readiness import check_readiness
 
 logger = logging.getLogger("jobpilot")
@@ -127,6 +136,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(profile.router)
+app.include_router(dashboard.router)
 app.include_router(jobs.router)
 app.include_router(people.router)
 app.include_router(privacy.router)
