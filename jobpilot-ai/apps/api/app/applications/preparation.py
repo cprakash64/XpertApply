@@ -103,7 +103,7 @@ def invalid_application_url(message: str) -> PreparationError:
 def job_not_found() -> PreparationError:
     return PreparationError(
         code="JOB_NOT_FOUND",
-        message="This job is no longer available in JobPilot.",
+        message="This job is no longer available in EZJobFind.",
         stage=PreparationStage.load_job,
         status_code=404,
         retryable=False,

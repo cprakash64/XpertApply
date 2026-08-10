@@ -24,6 +24,7 @@
   // still runs them.
   "exclude": [
     "src/__tests__/generated_manifest.test.ts",
-    "src/__tests__/self_exclusion_and_credentials.test.ts"
+    "src/__tests__/self_exclusion_and_credentials.test.ts",
+    "src/__tests__/branding.test.ts"
   ]
 }

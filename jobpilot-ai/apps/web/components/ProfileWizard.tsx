@@ -466,7 +466,7 @@ export function ProfileWizard({
                 label="Email"
                 value={form.email}
                 readOnly
-                hint="Your JobPilot login. Change it in Settings."
+                hint="Your EZJobFind login. Change it in Settings."
               />
               <Field
                 label="Application email"
@@ -474,7 +474,7 @@ export function ProfileWizard({
                 value={form.application_email}
                 onChange={(value) => update("application_email", value)}
                 error={fieldErrors.application_email ?? validateApplicationEmail(form.application_email) ?? undefined}
-                hint="This email will be used on job applications. It can be different from your JobPilot login email."
+                hint="This email will be used on job applications. It can be different from your EZJobFind login email."
               />
               {/* Employer-portal passwords are NOT career profile data. They
                 * are managed in Settings → Application accounts, where the
@@ -533,7 +533,7 @@ export function ProfileWizard({
                   <option value="yes">Yes</option>
                 </select>
                 <span className="mt-1 block text-xs text-muted">
-                  JobPilot uses this answer for sponsorship questions on employer applications.
+                  EZJobFind uses this answer for sponsorship questions on employer applications.
                 </span>
               </label>
               <Toggle
@@ -671,7 +671,7 @@ function ImportIntro({
       <div className="rounded-lg border border-line bg-panel p-5">
         <h3 className="text-lg font-semibold">Import your profile faster</h3>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">
-          Upload a resume, upload your LinkedIn PDF, or paste your profile text. JobPilot AI will extract a draft profile that you can review and edit.
+          Upload a resume, upload your LinkedIn PDF, or paste your profile text. EZJobFind will extract a draft profile that you can review and edit.
         </p>
         <p className="mt-3 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
           We do not log into LinkedIn or scrape your account. You control what you upload or paste.

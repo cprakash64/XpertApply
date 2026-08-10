@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "JobPilot AI assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
+  "description": "EZJobFind assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",

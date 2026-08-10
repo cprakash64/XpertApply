@@ -120,7 +120,7 @@ export function ApplicationAccounts() {
         Application accounts
       </h2>
       <p className="mt-1 max-w-2xl text-sm text-[var(--text-muted)]">
-        JobPilot uses this only when an application requires authentication.
+        EZJobFind uses this only when an application requires authentication.
       </p>
 
       <div className="mt-4 rounded-2xl border border-line bg-white p-5">
@@ -184,7 +184,7 @@ export function ApplicationAccounts() {
                 {configured ? "Replace password" : "Workday password"}
               </label>
               <p id="workday-password-hint" className="mt-1 text-xs text-[var(--text-muted)]">
-                At least 8 characters. Stored encrypted — JobPilot never displays it again and
+                At least 8 characters. Stored encrypted — EZJobFind never displays it again and
                 never returns it to this page.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">

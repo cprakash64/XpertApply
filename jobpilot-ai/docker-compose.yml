@@ -133,8 +133,19 @@ services:
   web:
     build:
       context: ./apps/web
+      # NEXT_PUBLIC_* are compiled into the browser bundle, so they have to be
+      # supplied to the BUILD, not just to the running container.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+        NEXT_PUBLIC_CHROME_EXTENSION_URL: ${NEXT_PUBLIC_CHROME_EXTENSION_URL:-}
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      # Public product configuration. Both are optional locally: the site URL
+      # falls back to the production domain, and an empty extension URL renders
+      # the landing page's "coming soon" state rather than a dead link.
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      NEXT_PUBLIC_CHROME_EXTENSION_URL: ${NEXT_PUBLIC_CHROME_EXTENSION_URL:-}
     ports:
       - "3000:3000"
     # Wait for the API to be serving before starting. No cycle: web -> api ->

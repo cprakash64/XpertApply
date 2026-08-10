@@ -147,7 +147,7 @@ async function run(context: BrowserContext, worker: Worker, origin: string, quer
   await seed(worker, url);
   const page = await context.newPage();
   const states: string[] = [];
-  page.on("console", (m) => { if (m.text().includes("[JobPilot]")) states.push(m.text().slice(0, 200)); });
+  page.on("console", (m) => { if (m.text().includes("[EZJobFind]")) states.push(m.text().slice(0, 200)); });
   await page.goto(url);
   await page.waitForSelector("#application-form");
   await page.waitForTimeout(4500);

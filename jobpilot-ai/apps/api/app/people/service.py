@@ -4291,7 +4291,7 @@ async def _discover_once(
                 )
                 failed_run.failure_code = failure_code
                 failed_run.safe_failure_message = (
-                    "JobPilot found potential contacts but could not save "
+                    "EZJobFind found potential contacts but could not save "
                     "the results. No additional search will run unless you retry."
                     if persistence_failure
                     else "People discovery is temporarily unavailable."
@@ -4556,7 +4556,7 @@ def recommendations_payload(db: Session, user: User, job_id: int) -> dict:
         warnings.append(
             latest_run.safe_failure_message
             or (
-                "JobPilot found potential contacts but could not save the "
+                "EZJobFind found potential contacts but could not save the "
                 "results. No additional search will run unless you retry."
             )
         )

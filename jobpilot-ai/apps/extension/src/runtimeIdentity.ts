@@ -40,6 +40,10 @@ export function classifyEnvironment(rawUrl: string): ApiEnvironment {
     return "local";
   }
   if (/(^|[.-])(staging|stage|preview|dev|qa|test)([.-]|$)/.test(host)) return "staging";
+  if (host === "ezjobfind.com" || host.endsWith(".ezjobfind.com")) return "production";
+  // The previous production domain. Still recognised so an extension that is
+  // talking to an older deployment does not report "unknown" and warn a user
+  // whose setup is in fact fine.
   if (host === "jobpilot.ai" || host.endsWith(".jobpilot.ai")) return "production";
   return "unknown";
 }
@@ -103,13 +107,13 @@ export interface HandshakeVerdict {
 
 /** The two blocking messages, fixed so the copy cannot drift between callers. */
 export const BUILD_MISMATCH_MESSAGE =
-  "JobPilot was updated. Reload the extension and reopen this application.";
+  "EZJobFind was updated. Reload the extension and reopen this application.";
 export const ENVIRONMENT_MISMATCH_MESSAGE =
-  "Your JobPilot profile and extension are connected to different environments. Reload the correct extension build.";
+  "Your EZJobFind profile and extension are connected to different environments. Reload the correct extension build.";
 export const WORKER_UNREACHABLE_MESSAGE =
-  "JobPilot lost its connection to the extension. Reload the extension and reopen this application.";
+  "EZJobFind lost its connection to the extension. Reload the extension and reopen this application.";
 export const ACCOUNT_MISMATCH_MESSAGE =
-  "Your JobPilot web app and extension are signed in as different accounts. Reopen the application from the correct account.";
+  "Your EZJobFind web app and extension are signed in as different accounts. Reopen the application from the correct account.";
 
 /**
  * Decide whether it is safe to autofill.

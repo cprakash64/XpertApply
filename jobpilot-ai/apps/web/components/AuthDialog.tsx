@@ -18,8 +18,19 @@ export function AuthDialog({
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [email, setEmail] = useState("demo@example.com");
-  const [password, setPassword] = useState("demo-password");
+  /*
+   * Both fields start EMPTY.
+   *
+   * They used to be seeded with the local seed script's fixture account
+   * (scripts/seed_demo_data.py), which was a convenience for local development
+   * and a liability in public beta: every visitor was shown a real, working
+   * credential pair, and a distracted signup would create an account under a
+   * fixture address that fixture_guard then blocks from autofilling.
+   *
+   * The seed script remains the one supported path to those demo credentials.
+   */
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +99,7 @@ export function AuthDialog({
           )}
         </div>
         <h1 id="auth-dialog-title" className="mt-7 text-3xl font-semibold tracking-[-0.04em]">
-          {isLogin ? "Sign in to JobPilot" : "Create your account"}
+          {isLogin ? "Sign in to EZJobFind" : "Create your account"}
         </h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           {isLogin ? "Continue your job search." : "One profile for every application."}
@@ -149,7 +160,7 @@ export function AuthDialog({
         </button>
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-sm text-[var(--text-muted)]">
-          <span>{isLogin ? "New to JobPilot?" : "Already have an account?"}</span>
+          <span>{isLogin ? "New to EZJobFind?" : "Already have an account?"}</span>
           <button
             type="button"
             className="focus-ring rounded-md px-1 py-0.5 font-semibold text-pine"

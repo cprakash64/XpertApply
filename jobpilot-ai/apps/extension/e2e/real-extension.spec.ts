@@ -150,7 +150,7 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
   const states: string[] = [];
   page.on("console", (message) => {
     const text = message.text();
-    if (text.includes("[JobPilot]")) states.push(text.slice(0, 160));
+    if (text.includes("[EZJobFind]")) states.push(text.slice(0, 160));
   });
 
   await page.goto(applicationUrl);
@@ -247,7 +247,7 @@ test("URL-first: the shipped extension navigates via the service worker, without
   const states: string[] = [];
   page.on("console", (message) => {
     const text = message.text();
-    if (text.includes("[JobPilot]")) states.push(text.slice(0, 160));
+    if (text.includes("[EZJobFind]")) states.push(text.slice(0, 160));
   });
 
   await page.goto(listingUrl);

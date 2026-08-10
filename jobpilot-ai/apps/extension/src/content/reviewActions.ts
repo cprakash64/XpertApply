@@ -234,16 +234,16 @@ export function answerNotesFor(canonicalKey: string): string[] {
 
 /** Why an override attempt failed, in words that assume nothing about it. */
 export const OVERRIDE_FAILURE_COPY: Readonly<Record<string, string>> = {
-  SESSION_UNAUTHORIZED: "JobPilot lost access to this application. Reopen it from JobPilot and try again.",
-  SESSION_FORBIDDEN: "JobPilot lost access to this application. Reopen it from JobPilot and try again.",
-  SESSION_NOT_FOUND: "JobPilot could not find this application session. Reopen it from JobPilot.",
-  SESSION_EXPIRED: "This application session has expired. Reopen the application from JobPilot to answer it here.",
-  ANSWER_NOT_PERMITTED: "JobPilot cannot answer this question for you. Please answer it on the employer's form.",
-  NETWORK_UNAVAILABLE: "JobPilot could not reach the server. Check your connection and try again.",
-  TIMEOUT: "JobPilot could not reach the server in time. Try again.",
+  SESSION_UNAUTHORIZED: "EZJobFind lost access to this application. Reopen it from EZJobFind and try again.",
+  SESSION_FORBIDDEN: "EZJobFind lost access to this application. Reopen it from EZJobFind and try again.",
+  SESSION_NOT_FOUND: "EZJobFind could not find this application session. Reopen it from EZJobFind.",
+  SESSION_EXPIRED: "This application session has expired. Reopen the application from EZJobFind to answer it here.",
+  ANSWER_NOT_PERMITTED: "EZJobFind cannot answer this question for you. Please answer it on the employer's form.",
+  NETWORK_UNAVAILABLE: "EZJobFind could not reach the server. Check your connection and try again.",
+  TIMEOUT: "EZJobFind could not reach the server in time. Try again.",
   SELECTION_FAILED: "Your answer was saved for this application, but the employer's control did not keep it. Use \"Jump to question\" and set it there.",
-  CONTROL_NOT_FOUND: "Your answer was saved for this application, but JobPilot can no longer find that question on the page.",
-  UNKNOWN: "JobPilot could not complete that. Nothing was changed on the employer's form."
+  CONTROL_NOT_FOUND: "Your answer was saved for this application, but EZJobFind can no longer find that question on the page.",
+  UNKNOWN: "EZJobFind could not complete that. Nothing was changed on the employer's form."
 };
 
 export function overrideFailureMessage(code: string): string {

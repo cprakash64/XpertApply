@@ -23,7 +23,7 @@ export default function ApplicationPreferencesPage() {
         </Link>
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">Application preferences</h1>
         <p className="mt-2 max-w-2xl text-[var(--text-muted)]">
-          Answers JobPilot can reuse when filling applications. Employer account passwords are
+          Answers EZJobFind can reuse when filling applications. Employer account passwords are
           kept in Settings, not here.
         </p>
       </header>

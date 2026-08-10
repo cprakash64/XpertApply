@@ -368,6 +368,72 @@ input[type="radio"] {
   }
 }
 
+/* --------------------------------------------------------------------------
+ * Landing page
+ *
+ * Motion here is CSS only — no animation library ships to a visitor who has not
+ * signed in. The `prefers-reduced-motion` block above already collapses every
+ * animation and transition below to its final state, so none of this needs its
+ * own reduced-motion handling.
+ * -------------------------------------------------------------------------- */
+
+/*
+ * Smooth anchor scrolling, scoped to the landing page.
+ *
+ * The scrolling element is <html>, which no page component can add a class to,
+ * so the landing page's own marker class is matched from the root instead. That
+ * keeps the authenticated app — which has its own scroll containers and
+ * programmatic scrolling — completely unaffected.
+ */
+html:has(.landing-page) {
+  scroll-behavior: smooth;
+}
+
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.landing-rise {
+  animation: landing-rise 420ms cubic-bezier(.2, .78, .2, 1) both;
+}
+
+/* The readiness meter draws itself once, from the left. `both` matters: with
+ * reduced motion the animation is cut to ~0ms and the element must still end
+ * fully drawn rather than at scaleX(0). */
+@keyframes landing-meter {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.landing-meter {
+  transform-origin: left center;
+  animation: landing-meter 900ms cubic-bezier(.2, .78, .2, 1) 140ms both;
+}
+
+/* A card lifts slightly under the pointer. Transform only — no layout property
+ * changes, so hovering a grid never reflows the section. */
+.landing-card {
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+@media (hover: hover) {
+  .landing-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-strong);
+  }
+}
+
 /*
  * Stretches a link over its nearest positioned ancestor so a whole card is
  * clickable while remaining ONE link in the accessibility tree — rather than a

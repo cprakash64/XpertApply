@@ -187,7 +187,7 @@ describe("DemographicsForm", () => {
     mockEeoFetch();
     render(React.createElement(DemographicsForm));
 
-    const consent = await screen.findByRole("checkbox", { name: /I consent to JobPilot AI securely storing/i });
+    const consent = await screen.findByRole("checkbox", { name: /I consent to EZJobFind securely storing/i });
     expect((consent as HTMLInputElement).checked).toBe(false);
   });
 
@@ -226,7 +226,7 @@ describe("DemographicsForm", () => {
 
     const genderGroup = await screen.findByRole("group", { name: "Gender identity" });
     await userEvent.click(within(genderGroup).getByRole("radio", { name: "Woman" }));
-    await userEvent.click(screen.getByRole("checkbox", { name: /I consent to JobPilot AI securely storing/i }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /I consent to EZJobFind securely storing/i }));
     await userEvent.click(screen.getByRole("button", { name: /save settings/i }));
 
     const put = calls.find((c) => c.init?.method === "PUT");

@@ -861,7 +861,7 @@ function handleLaunchRequest(
             ok: false,
             type: MSG.LAUNCH_FAILED,
             code: "HOST_PERMISSION_MISSING",
-            message: "JobPilot does not have access to the employer's site. Open chrome://extensions, choose JobPilot, and set Site access to \"On all sites\"."
+            message: "EZJobFind does not have access to the employer's site. Open chrome://extensions, choose EZJobFind, and set Site access to \"On all sites\"."
           }
         : { ok: false, type: MSG.LAUNCH_FAILED, code: "TAB_OPEN_FAILED", message: safeMessage(err) });
     }

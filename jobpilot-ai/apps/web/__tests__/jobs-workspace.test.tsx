@@ -232,7 +232,7 @@ describe("Jobs workspace", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Jobs" })).toBeInTheDocument();
     expect(sidebar()).toHaveAttribute("data-collapsed", "false");
-    expect(within(sidebar()).getByText("JobPilot AI")).toBeInTheDocument();
+    expect(within(sidebar()).getByText("EZJobFind")).toBeInTheDocument();
     expect(screen.getAllByTestId("job-card")).toHaveLength(5);
     expect(screen.queryByRole("tablist", { name: "Job sections" })).not.toBeInTheDocument();
     expect(window.location.search).toBe("");
@@ -277,7 +277,7 @@ describe("Jobs workspace", () => {
     await waitFor(() => expect(sidebar()).toHaveAttribute("data-collapsed", "true"));
     expect(sidebar().className).toContain("w-14");
     // Branding and navigation stay reachable, with accessible names.
-    expect(within(sidebar()).getByLabelText("JobPilot AI home")).toBeInTheDocument();
+    expect(within(sidebar()).getByLabelText("EZJobFind home")).toBeInTheDocument();
     expect(within(sidebar()).getByRole("link", { name: "Find Jobs" })).toHaveAttribute(
       "aria-current",
       "page"

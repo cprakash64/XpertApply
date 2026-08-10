@@ -39,7 +39,7 @@ const SECTION_META: Record<Section, { title: string; description: string }> = {
   },
   import: {
     title: "Import / Update resume",
-    description: "Upload or paste a resume and review what JobPilot extracted before saving."
+    description: "Upload or paste a resume and review what EZJobFind extracted before saving."
   },
   personal: {
     title: "Personal details",
@@ -47,7 +47,7 @@ const SECTION_META: Record<Section, { title: string; description: string }> = {
   },
   preferences: {
     title: "Job preferences",
-    description: "The roles, levels, and locations JobPilot should match you against."
+    description: "The roles, levels, and locations EZJobFind should match you against."
   },
   education: { title: "Education", description: "Schools, degrees, and dates." },
   experience: { title: "Experience", description: "The roles you want employers to see." },

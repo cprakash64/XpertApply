@@ -387,9 +387,9 @@ test("complete people workflow remains manual, grounded, cached, and user-scoped
   await page.getByRole("button", { name: "Find people" }).click();
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
   // Empty categories are no longer rendered at all.
-  await expect(page.getByText("No potential manager met JobPilot’s confidence threshold.")).toHaveCount(0);
+  await expect(page.getByText("No potential manager met EZJobFind’s confidence threshold.")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toHaveCount(0);
-  await expect(page.getByText("No relevant employee met JobPilot’s referral threshold.")).toHaveCount(0);
+  await expect(page.getByText("No relevant employee met EZJobFind’s referral threshold.")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Potential Referral Candidates" })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Find work email/ }).click();

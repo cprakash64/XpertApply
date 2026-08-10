@@ -210,7 +210,7 @@ export function startAssistedApply(
       () => finish({
         ok: false,
         code: "EXTENSION_NO_ACK",
-        message: "The extension did not acknowledge the handoff after retrying. Reload the JobPilot page and extension, then try again."
+        message: "The extension did not acknowledge the handoff after retrying. Reload the EZJobFind page and extension, then try again."
       }),
       timeoutMs
     );

@@ -73,7 +73,7 @@ const STATUS_OPTIONS: { value: TrackerStatus; label: string }[] = [
 
 /** Plain-language provenance, so "why is this in my Tracker?" has an answer. */
 const APPLIED_SOURCE_LABEL: Record<string, string> = {
-  extension_confirmed: "Confirmed by the JobPilot extension",
+  extension_confirmed: "Confirmed by the EZJobFind extension",
   auto_apply_confirmed: "Confirmed by assisted apply",
   user_confirmed: "You marked this as applied"
 };

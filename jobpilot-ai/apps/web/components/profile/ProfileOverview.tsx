@@ -430,7 +430,7 @@ function PreferencesCard({ data }: { data: ProfileOverviewData }) {
           </div>
         </div>
       ) : (
-        <EmptyHint text="Tell JobPilot what roles and locations you want." href="/profile/preferences" label="Set job preferences" />
+        <EmptyHint text="Tell EZJobFind what roles and locations you want." href="/profile/preferences" label="Set job preferences" />
       )}
     </ClickableCard>
   );

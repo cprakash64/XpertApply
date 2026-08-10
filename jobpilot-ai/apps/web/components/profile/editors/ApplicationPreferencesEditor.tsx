@@ -71,7 +71,7 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
           <section className="rounded-2xl border border-line bg-white p-4">
             <h2 className="text-sm font-semibold">Reusable application answers</h2>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              Answer once and JobPilot can reuse these. Each question is stored separately —
+              Answer once and EZJobFind can reuse these. Each question is stored separately —
               “now” and “in the future” are different questions, and “Answer during each
               application” is a real choice, not a blank.
             </p>

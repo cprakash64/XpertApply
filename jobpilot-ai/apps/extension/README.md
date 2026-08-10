@@ -1,15 +1,15 @@
-# JobPilot AI — Assisted Apply (browser extension)
+# EZJobFind — Assisted Apply (browser extension)
 
 A Manifest V3 Chrome/Chromium extension that autofills employer application
-forms with your **verified** JobPilot data, uploads your **tailored** resume and
+forms with your **verified** EZJobFind data, uploads your **tailored** resume and
 cover letter, flags anything that needs your review, and **never submits** —
 you always do the final review and click Submit yourself.
 
 ## What it does
 
-1. Detects the JobPilot web app (version + capability handshake).
+1. Detects the EZJobFind web app (version + capability handshake).
 2. When you click **Open and autofill application**, a content script on the
-   JobPilot origin catches that exact click in the **capture phase** and forwards
+   EZJobFind origin catches that exact click in the **capture phase** and forwards
    a launch request to the background **synchronously within the user gesture**.
    The background opens the side panel (gesture-valid), then creates the employer
    tab itself (`chrome.tabs.create` — no website popup, exact tab id) and binds a
@@ -23,7 +23,7 @@ you always do the final review and click Submit yourself.
    detects the ATS, fills confidently-known fields, uploads the tailored documents
    into the correct inputs (verifying the employer UI accepted them), and
    highlights unresolved/sensitive items for you to answer.
-5. It reports a **PII-free** summary (counts + reason codes only) back to JobPilot.
+5. It reports a **PII-free** summary (counts + reason codes only) back to EZJobFind.
 
 The launch flows through one canonical state machine
 (`idle → preparing → package_ready → opening_tab → waiting_for_tab →
@@ -69,16 +69,16 @@ Other scripts: `npm run typecheck`, `npm test`.
 3. Enable **Developer mode** (top-right toggle).
 4. Click **Load unpacked**.
 5. Select the **`apps/extension/dist`** directory.
-6. Refresh JobPilot (`http://localhost:3000`).
+6. Refresh EZJobFind (`http://localhost:3000`).
 7. Open a job and start an assisted application. The modal should now show
-   **“JobPilot extension connected.”**
+   **“EZJobFind extension connected.”**
 8. Click **Open and autofill application**.
 9. The extension opens the employer tab **and** the side panel. Autofill runs
    **automatically** (you should NOT need to click “Fill application”). The panel
    shows the ATS, stage, and non-zero Filled/Review counts as it works.
 10. Refresh the employer page — the extension recovers the pending session and
     continues without duplicating already-filled values or overwriting your edits.
-11. Review everything and **submit the application yourself** — JobPilot never submits.
+11. Review everything and **submit the application yourself** — EZJobFind never submits.
 
 > After any code change you must **rebuild AND reload**: run `npm run build`, then
 > click the ↻ reload icon on the extension card in `chrome://extensions`. A rebuild
@@ -88,7 +88,7 @@ Other scripts: `npm run typecheck`, `npm test`.
 
 Edit `src/config.ts`:
 
-- `DEFAULT_API_BASE` — the JobPilot API base (or set `apiBase` in extension
+- `DEFAULT_API_BASE` — the EZJobFind API base (or set `apiBase` in extension
   storage at runtime, no rebuild needed).
 - `JOBPILOT_WEB_ORIGINS` — origins allowed to hand a launch token to the
   extension.

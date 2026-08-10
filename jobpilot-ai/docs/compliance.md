@@ -1,6 +1,6 @@
 # Compliance
 
-JobPilot AI is designed as an assistant, not an automation bot.
+EZJobFind is designed as an assistant, not an automation bot.
 
 The platform must not:
 

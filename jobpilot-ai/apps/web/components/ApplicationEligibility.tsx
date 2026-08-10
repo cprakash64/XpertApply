@@ -87,7 +87,7 @@ export function ApplicationEligibility() {
             Application eligibility answers
           </h2>
           <p className="mt-1 max-w-prose text-sm leading-6 text-[var(--text-muted)]">
-            JobPilot can reuse these answers for equivalent application questions. You can review or
+            EZJobFind can reuse these answers for equivalent application questions. You can review or
             change them before submitting.
           </p>
         </div>
@@ -150,7 +150,7 @@ export function ApplicationEligibility() {
                   ) : entry.answered && entry.confirmed_at ? (
                     `Confirmed ${new Date(entry.confirmed_at).toLocaleDateString()}`
                   ) : (
-                    "Not answered yet — JobPilot will ask you during an application."
+                    "Not answered yet — EZJobFind will ask you during an application."
                   )}
                 </p>
               </fieldset>

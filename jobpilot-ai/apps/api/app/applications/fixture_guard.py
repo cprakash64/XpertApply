@@ -35,7 +35,7 @@ KNOWN_DEV_FIXTURE_EMAILS: frozenset[str] = frozenset({"demo@example.com"})
 # Shown in the review widget when a real employer application still carries a
 # seeded demo email. The user replaces it through the authenticated profile flow.
 DEMO_EMAIL_REPLACEMENT_REASON: str = (
-    "JobPilot still has a demo email for this profile. Add your real email before continuing."
+    "EZJobFind still has a demo email for this profile. Add your real email before continuing."
 )
 
 

@@ -73,7 +73,7 @@ export const PEOPLE_MESSAGES = {
   disabled_configuration: "People recommendations are temporarily unavailable.",
   disabled_account: "People recommendations are not enabled for this account.",
   persistence_error:
-    "JobPilot found potential contacts but could not save the results. No additional search will run unless you retry."
+    "EZJobFind found potential contacts but could not save the results. No additional search will run unless you retry."
 } as const;
 
 /** "Resets Jul 30 at 12:00 AM" — the user's own locale and timezone. */

@@ -571,7 +571,7 @@ Two authenticated runs, both ending `TECHNICAL_REVIEW_REQUIRED`:
   (`required remaining 2`, `needs information 0`), so the semantic answers were present and the
   failure was actuation — the Yes/No menu was never driven, automatically or through the assisted
   action.
-- **ServiceNow / SmartRecruiters**: `ATS populated 0 · JobPilot filled 9 · section records added 0`,
+- **ServiceNow / SmartRecruiters**: `ATS populated 0 · EZJobFind filled 9 · section records added 0`,
   with the "Easy Apply" dropzone still empty and Experience/Education blank. No document ever
   reached the ATS, so nothing was parsed and neither section could be populated from a parse.
 
@@ -643,7 +643,7 @@ Two authenticated runs, both ending `TECHNICAL_REVIEW_REQUIRED`:
 
 ### Reported production state
 
-A second authenticated ServiceNow run: JobPilot types the stored Title/Company/Institution, the
+A second authenticated ServiceNow run: EZJobFind types the stored Title/Company/Institution, the
 picker opens its suggestion list, nothing is selected, and the field ends up **empty** — Institution
 even showed "Arizona State University" above a red "Value is required". The Experience Description
 box stayed blank. Education rendered two editors with the record written into the second and the

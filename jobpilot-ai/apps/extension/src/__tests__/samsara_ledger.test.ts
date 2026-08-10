@@ -48,7 +48,7 @@ function unconfirmedNameSession(): ApplicationSessionData {
     unresolvedQuestions: [
       { canonical_key: "first_name", action: "confirm_name", suggested_value: "Chandra", reason: "Confirm the split." },
       { canonical_key: "last_name", action: "confirm_name", suggested_value: "Prakash Pandey", reason: "Confirm the split." },
-      { canonical_key: "email", action: "replace_demo_email", reason: "JobPilot still has a demo email for this profile. Add your real email before continuing." }
+      { canonical_key: "email", action: "replace_demo_email", reason: "EZJobFind still has a demo email for this profile. Add your real email before continuing." }
     ],
     answers: [answer("phone", "+1 555 0100")]
   };

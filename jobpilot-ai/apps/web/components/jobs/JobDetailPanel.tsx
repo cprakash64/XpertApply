@@ -544,7 +544,7 @@ function OverviewTab({
               * invented per-category scores would misdescribe the assessment. */}
             <p className="mt-4 border-t border-line/70 pt-3.5 text-xs leading-5 text-[var(--text-muted)]">
               This is a single overall score from your profile and this posting
-              {match?.explanation_source ? ` (${match.explanation_source} explanation)` : ""}. JobPilot does not
+              {match?.explanation_source ? ` (${match.explanation_source} explanation)` : ""}. EZJobFind does not
               break it into per-category sub-scores, so the signals below are the whole picture.
             </p>
           </div>

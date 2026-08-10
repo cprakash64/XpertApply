@@ -1307,7 +1307,7 @@ function OutreachDraft({
           * would not have fixed this: the problem is that the strings are
           * internal, not that they took up space. */}
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          Review and edit before manually sending. JobPilot never sends this message automatically.
+          Review and edit before manually sending. EZJobFind never sends this message automatically.
         </p>
       </div>
     </div>

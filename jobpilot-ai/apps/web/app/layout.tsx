@@ -1,9 +1,42 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
+
+/**
+ * Site-wide metadata.
+ *
+ * The canonical origin comes from NEXT_PUBLIC_SITE_URL (falling back to the
+ * production domain) rather than being written into each page, so a preview or
+ * self-hosted deployment advertises its own URLs without a code change.
+ * `metadataBase` is what makes the relative OpenGraph/Twitter URLs below absolute.
+ *
+ * The title template leaves per-page titles short: a page sets "Dashboard" and
+ * the browser tab reads "Dashboard · EZJobFind".
+ */
+const description =
+  `Discover relevant jobs, understand your fit, prepare tailored resumes and cover letters, ` +
+  `autofill repetitive application fields, and track your job search with ${PRODUCT_NAME}.`;
 
 export const metadata: Metadata = {
-  title: "JobPilot AI",
-  description: "Open-source, compliant AI job-search and application copilot."
+  metadataBase: new URL(siteUrl()),
+  title: {
+    default: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    template: `%s · ${PRODUCT_NAME}`
+  },
+  applicationName: PRODUCT_NAME,
+  description,
+  openGraph: {
+    type: "website",
+    siteName: PRODUCT_NAME,
+    title: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    description,
+    url: "/"
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    description
+  }
 };
 
 /**

@@ -44,19 +44,19 @@ const STAGE_LABEL: Record<string, string> = {
 
 const FAILURE_LABEL: Record<string, string> = {
   CONTENT_SCRIPT_NOT_INJECTED: "Couldn’t reach the application page. Reload it and click “Fill application”.",
-  SESSION_PACKAGE_FAILED: "Your prepared application couldn’t be loaded. Reopen from JobPilot.",
-  SESSION_UNAUTHORIZED: "Your session is no longer valid. Reopen the application from JobPilot.",
-  SESSION_NOT_FOUND: "This application session no longer exists. Reopen from JobPilot.",
-  TOKEN_CONSUMED: "This launch was already used. Reopen the application from JobPilot.",
-  HANDOFF_EXPIRED: "This launch expired. Reopen the application from JobPilot.",
+  SESSION_PACKAGE_FAILED: "Your prepared application couldn’t be loaded. Reopen from EZJobFind.",
+  SESSION_UNAUTHORIZED: "Your session is no longer valid. Reopen the application from EZJobFind.",
+  SESSION_NOT_FOUND: "This application session no longer exists. Reopen from EZJobFind.",
+  TOKEN_CONSUMED: "This launch was already used. Reopen the application from EZJobFind.",
+  HANDOFF_EXPIRED: "This launch expired. Reopen the application from EZJobFind.",
   HANDOFF_SCHEMA_OUTDATED: "The extension was updated. Reload this page to continue.",
   ADAPTER_NOT_DETECTED: "This application form isn’t supported yet. Fill it manually.",
   WRONG_ORIGIN: "The opened page didn’t match the expected employer. Nothing was filled.",
   WRONG_TAB: "This panel is bound to a different tab.",
   DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
-  HOST_PERMISSION_MISSING: "JobPilot needs permission to access this site. Check the extension's site access settings.",
-  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from JobPilot.",
-  HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from JobPilot.",
+  HOST_PERMISSION_MISSING: "EZJobFind needs permission to access this site. Check the extension's site access settings.",
+  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from EZJobFind.",
+  HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from EZJobFind.",
   FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
   NO_FIELDS_DISCOVERED: "No fillable fields were found on this page."
 };
@@ -70,7 +70,7 @@ function render(): void {
   const v = view;
   if (!v) {
     setText("job", "Waiting for an application…");
-    setText("stage", "Open an application from JobPilot to begin.");
+    setText("stage", "Open an application from EZJobFind to begin.");
     return;
   }
   setText("job", v.jobTitle ? `${v.jobTitle}${v.company ? " · " + v.company : ""}` : "Application detected");
@@ -97,7 +97,7 @@ function render(): void {
   // by retrying — the user has to reopen the application from JobPilot.
   const terminal = v.failureCode != null && v.failureRecoverable === false;
   (el("fill") as HTMLButtonElement).disabled = v.running || terminal;
-  setText("fill", v.running ? "Filling…" : terminal ? "Reopen from JobPilot" : "Fill application");
+  setText("fill", v.running ? "Filling…" : terminal ? "Reopen from EZJobFind" : "Fill application");
 
   renderDiagnostics(v);
 }

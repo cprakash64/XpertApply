@@ -1,4 +1,9 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/**
+ * `||`, not `??`: a build arg that is declared but left empty arrives as the
+ * empty string, which `??` would happily accept as a configured base URL and
+ * turn every request into a same-origin path. An empty value means "unset".
+ */
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type ResumeContent = {
   header: { full_name: string; email: string; phone: string; location: string; links: string[] };
@@ -395,7 +400,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     throw new ApiError({
       code: "network_unreachable",
       message:
-        "JobPilot could not reach the application service. Confirm the backend is running and NEXT_PUBLIC_API_URL is set correctly.",
+        "EZJobFind could not reach the application service. Confirm the backend is running and NEXT_PUBLIC_API_URL is set correctly.",
       retryable: true,
       details: cause instanceof Error ? cause.message : String(cause)
     });

@@ -13,8 +13,19 @@ export async function getApiBase(): Promise<string> {
 
 /** Origins allowed to hand a launch token to the extension. Kept in sync with
  * the manifest `content_scripts`, `host_permissions`, and `externally_connectable`
- * so the JobPilot-origin role only activates on trusted JobPilot origins. */
-export const JOBPILOT_WEB_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000", "https://app.jobpilot.ai"];
+ * so the JobPilot-origin role only activates on trusted first-party origins.
+ *
+ * `app.jobpilot.ai` stays in the list for backwards compatibility: an installed
+ * extension must keep working for anyone still on the previous deployment while
+ * the product moves to ezjobfind.com. The constant name is likewise unchanged —
+ * it is an internal identifier, not a user-visible string. */
+export const JOBPILOT_WEB_ORIGINS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://app.jobpilot.ai",
+  "https://ezjobfind.com",
+  "https://www.ezjobfind.com"
+];
 export function isApprovedJobPilotOrigin(origin: string): boolean {
   return JOBPILOT_WEB_ORIGINS.includes(origin);
 }

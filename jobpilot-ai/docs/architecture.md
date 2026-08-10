@@ -1,6 +1,6 @@
 # Architecture
 
-JobPilot AI is a monorepo with a Next.js frontend, FastAPI backend, shared schema package, Docker Compose infrastructure, and GitHub Actions CI.
+EZJobFind is a monorepo with a Next.js frontend, FastAPI backend, shared schema package, Docker Compose infrastructure, and GitHub Actions CI.
 
 ## Backend
 
