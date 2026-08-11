@@ -1,172 +1,204 @@
 <div align="center">
 
-<br />
+# XpertApply
 
-# 🧭 JobPilot AI
+### Your AI Copilot for Getting Hired
 
-### Your intelligent command center for the modern job search
+**Discover better jobs. Tailor every application. Reach the right people. Apply faster.**
 
-**Discover fresh opportunities, understand your fit, tailor every application, reach the right people, and track everything from one place.**
-
-<br />
-
-[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-Cache-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/)
+XpertApply brings job discovery, AI-powered resume tailoring, cover letters, recruiter networking, application tracking, and browser-based autofill into one intelligent platform.
 
 <br />
 
-[Features](#-everything-you-need-in-one-workflow) •
-[How It Works](#-how-jobpilot-ai-works) •
-[Architecture](#-architecture) •
-[Getting Started](#-getting-started) •
-[Security](#-privacy-security-and-responsible-automation) •
-[Roadmap](#-roadmap)
+[![Status](https://img.shields.io/badge/status-beta-blue?style=for-the-badge)](#)
+[![AI Powered](https://img.shields.io/badge/AI-Powered-purple?style=for-the-badge)](#)
+[![Browser Extension](https://img.shields.io/badge/Browser-Extension-orange?style=for-the-badge)](#)
+[![License](https://img.shields.io/badge/license-private-lightgrey?style=for-the-badge)](#)
 
 <br />
 
-> **JobPilot AI turns a scattered job search into one focused workflow.**
-
-<br />
+**Find → Match → Tailor → Connect → Apply → Track**
 
 </div>
 
 ---
 
-## 🌟 What is JobPilot AI?
+## ✨ What is XpertApply?
 
-Most job seekers use five or six disconnected tools:
+Job searching is fragmented.
 
-- job boards to find openings
-- spreadsheets to track progress
-- resume tools to tailor applications
-- browser extensions to fill forms
-- networking platforms to find recruiters and referrals
-- notes and reminders to follow up
+You discover jobs on one website, rewrite your resume somewhere else, create a cover letter with another tool, search LinkedIn for recruiters, manually answer the same application questions again and again, and then try to remember where you applied.
 
-**JobPilot AI brings those workflows together.**
+**XpertApply brings the entire workflow together.**
 
-It helps candidates move from discovery to application with more context, better organization, and less repetitive work.
+It acts as an intelligent job-search copilot that understands your professional profile and helps you move from discovering an opportunity to submitting a strong application with significantly less repetitive work.
+
+> **One profile. Every application. Smarter.**
 
 ---
 
-## ✨ Everything You Need in One Workflow
+## 🚀 What XpertApply Can Do
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🔎 Discover Fresh Jobs
+### 🔎 Intelligent Job Discovery
 
-Find recent roles from supported public and official application sources.
+Discover opportunities that better match your:
 
-- Filter by role, workplace, fit, and recency
-- Prefer official application links
-- Deduplicate repeated listings
-- Keep only relevant opportunities
-- Refresh results without losing your progress
+* Experience
+* Skills
+* Education
+* Projects
+* Preferred roles
+* Career goals
+* Location preferences
 
-</td>
-<td width="50%" valign="top">
-
-### 🎯 Understand Your Fit
-
-See more than a generic match score.
-
-- Profile-aware job scoring
-- Clear fit bands
-- Explainable match reasons
-- Suggested resume angle
-- Role, skill, and experience alignment
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 📄 Tailor Every Application
-
-Create job-specific application materials without rebuilding them from scratch.
-
-- ATS-friendly resumes
-- Role-specific cover letters
-- Structured skills and experience
-- Relevant project selection
-- User review before use
+XpertApply evaluates opportunities instead of treating every job listing equally.
 
 </td>
 <td width="50%" valign="top">
 
-### ⚡ Autofill Application Forms
+### 🎯 Job Fit Scoring
 
-Use one profile across common ATS workflows.
+Quickly understand how well a role fits your profile.
 
-- Fill text fields
-- Handle common dropdowns
-- Reuse profile answers
-- Support multiple application patterns
-- Keep final review and submission under user control
+XpertApply analyzes your background against the job requirements and provides an easy-to-understand fit score so you can focus your energy where it matters most.
+
+**80+** — 🟢 Strong Match
+**60–79** — 🟡 Good Match
+**45–59** — 🟠 Partial Match
+**Below 45** — 🔴 Weak Match
 
 </td>
 </tr>
+
 <tr>
 <td width="50%" valign="top">
 
-### 🤝 Find People Who Can Help
+### 📄 AI Resume Tailoring
 
-Go beyond anonymous applications.
+Generate a resume tailored specifically for each opportunity.
 
-- Likely recruiters
-- Potential hiring managers
-- Relevant referral candidates
-- Exact-company employment checks
-- Separate category coverage
-- Cached, budget-aware provider calls
+XpertApply can align your:
+
+* Professional summary
+* Skills
+* Experience
+* Projects
+* Keywords
+* Accomplishments
+
+with the role while keeping your underlying experience truthful.
 
 </td>
 <td width="50%" valign="top">
 
-### 💬 Draft Better Outreach
+### ✍️ Personalized Cover Letters
 
-Generate grounded outreach that sounds personal, not generic.
+Create job-specific cover letters using:
 
-- Recruiter messages
-- Hiring-manager messages
-- Referral-candidate messages
-- Email and LinkedIn formats
-- Editable drafts
-- No automatic sending
+* Your actual background
+* The company
+* The role
+* Relevant achievements
+* Skills from the job description
+
+No generic copy-and-paste letters.
 
 </td>
 </tr>
+
 <tr>
 <td width="50%" valign="top">
 
-### 📊 Track Every Application
+### 👥 Find the Right People
 
-Keep your job search organized.
+Go beyond clicking **Apply**.
 
-- Saved roles
-- In-progress applications
-- Submitted applications
-- Status changes
-- Centralized application history
+XpertApply helps identify relevant people connected to an opportunity, including potential:
+
+* Recruiters
+* Hiring team members
+* Employees
+* Referral contacts
+* People in relevant departments
 
 </td>
 <td width="50%" valign="top">
 
-### 🛡️ Keep Control
+### 💬 AI Outreach
 
-Automation should assist, not take over.
+Create personalized outreach for recruiters, employees, and potential referral contacts.
 
-- No automatic application submission
-- No automatic outreach
-- No guessed email addresses
-- No LinkedIn scraping
-- Clear confidence and limitation states
+Turn:
+
+**“Can you refer me?”**
+
+into thoughtful, contextual communication that gives people a reason to respond.
+
+</td>
+</tr>
+
+<tr>
+<td width="50%" valign="top">
+
+### ⚡ Browser Autofill
+
+The XpertApply browser extension helps complete repetitive application forms using information already stored in your profile.
+
+It can assist with fields such as:
+
+* Name
+* Contact information
+* Education
+* Employment history
+* Work authorization
+* Sponsorship questions
+* Application questions
+* Resume uploads
+* Cover letters
+* Dropdowns
+* Checkboxes
+* Radio buttons
+
+</td>
+<td width="50%" valign="top">
+
+### 🧠 Answer Memory
+
+Stop repeatedly answering the same application questions.
+
+XpertApply can reuse approved information from your profile and previous answers while allowing application-specific overrides when necessary.
+
+Your reusable profile remains separate from one-off application decisions.
+
+</td>
+</tr>
+
+<tr>
+<td width="50%" valign="top">
+
+### 📊 Application Tracker
+
+Keep your job search organized from one dashboard.
+
+Track opportunities across stages such as:
+
+* Saved
+* Preparing
+* Applied
+* Interviewing
+* Offer
+* Rejected
+
+</td>
+<td width="50%" valign="top">
+
+### 🏢 Rich Company Experience
+
+XpertApply presents jobs with useful context including company branding, logos, role information, fit signals, and application progress to make job discovery easier to scan and prioritize.
 
 </td>
 </tr>
@@ -174,475 +206,450 @@ Automation should assist, not take over.
 
 ---
 
-## 🚀 Why It Feels Different
-
-| Traditional job search | JobPilot AI |
-|---|---|
-| Search across disconnected sites | One searchable discovery workspace |
-| Guess whether a job is a fit | Explainable profile-aware fit scoring |
-| Rewrite materials manually | Tailored resume and cover-letter workflows |
-| Fill the same fields repeatedly | Browser-assisted autofill |
-| Apply without knowing anyone | Recruiter, manager, and referral discovery |
-| Track jobs in spreadsheets | Built-in application tracker |
-| Send generic outreach | Grounded, recipient-aware drafts |
-
----
-
-## 🧩 How JobPilot AI Works
-
-```mermaid
-flowchart LR
-    A[Build your profile] --> B[Discover fresh jobs]
-    B --> C[Review fit and match reasons]
-    C --> D[Generate tailored materials]
-    D --> E[Autofill the application]
-    C --> F[Find people who can help]
-    F --> G[Draft grounded outreach]
-    E --> H[Track the application]
-    G --> H
-```
-
-### The workflow
-
-1. **Create your profile**  
-   Add your experience, projects, skills, education, preferences, and application answers.
-
-2. **Discover recent jobs**  
-   Search fresh opportunities and narrow them by role, workplace, fit, and posting date.
-
-3. **Understand the match**  
-   Review fit score, match reasons, and the strongest angle for your application.
-
-4. **Tailor your materials**  
-   Generate a role-specific resume and cover letter.
-
-5. **Apply faster**  
-   Use the browser extension to fill common application fields.
-
-6. **Find relevant people**  
-   Research likely recruiters, potential managers, and employees who may be good referral candidates.
-
-7. **Track progress**  
-   Keep every saved, active, and submitted application organized.
-
----
-
-## 🤝 People Who Can Help
-
-The networking engine is designed around **precision before volume**.
-
-JobPilot AI performs independently bounded searches for:
-
-<table>
-<tr>
-<td width="33%" align="center">
-
-### 👤 Recruiters
-
-Talent acquisition, technical recruiting, university recruiting, and related hiring roles.
-
-</td>
-<td width="33%" align="center">
-
-### 🧑‍💼 Potential Managers
-
-Engineering leaders and relevant function managers who may be connected to the role.
-
-</td>
-<td width="33%" align="center">
-
-### 🧑‍💻 Referral Candidates
-
-Relevant individual contributors working in a closely related function.
-
-</td>
-</tr>
-</table>
-
-The system then:
-
-```mermaid
-flowchart TD
-    A[Exact-company people search] --> B[Normalize provider evidence]
-    B --> C[Validate current employment]
-    C --> D{Eligible?}
-    D -- No --> E[Suppress with safe reason]
-    D -- Yes --> F[Score category relevance]
-    F --> G[Deduplicate identities]
-    G --> H[Assign strongest category]
-    H --> I[Persist and cache results]
-```
-
-### Built-in safeguards
-
-- Exact-company checks
-- Current-employment evidence
-- Former-employee suppression
-- Conflicting-employment suppression
-- Related-company separation
-- Category-specific search quotas
-- Request coalescing and caching
-- Provider budget limits
-- Durable usage accounting
-- Read-only card reopen behavior
-
----
-
-## 🧠 Grounded Outreach
-
-Outreach drafts are created for the person’s likely relationship to the job.
-
-| Contact type | Draft objective |
-|---|---|
-| Recruiter | Make the application easy to understand and review |
-| Potential hiring manager | Show relevant experience and ask a focused team question |
-| Referral candidate | Ask for perspective before requesting help |
-
-JobPilot AI does **not** invent:
-
-- mutual connections
-- shared interests
-- recruiter ownership
-- hiring-team membership
-- willingness to refer
-- prior conversations
-- unpublished knowledge
-
-Every draft is editable and remains under the user’s control.
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart TB
-    subgraph Experience
-        WEB[Next.js Web App]
-        EXT[Browser Extension]
-    end
-
-    subgraph Application
-        API[FastAPI API]
-        WORKER[Background Worker]
-        SCHEDULER[Scheduler]
-    end
-
-    subgraph Data
-        POSTGRES[(PostgreSQL)]
-        REDIS[(Redis)]
-    end
-
-    subgraph External Services
-        JOBS[Job Sources]
-        PDL[People Data Labs]
-        HUNTER[Hunter]
-        AI[AI Provider]
-    end
-
-    WEB --> API
-    EXT --> API
-
-    API --> POSTGRES
-    API --> REDIS
-
-    WORKER --> POSTGRES
-    WORKER --> REDIS
-    SCHEDULER --> WORKER
-
-    API --> JOBS
-    API --> PDL
-    API --> HUNTER
-    API --> AI
-```
-
-### Technology stack
-
-<table>
-<tr>
-<td width="25%" align="center"><strong>Frontend</strong><br />Next.js<br />React<br />TypeScript</td>
-<td width="25%" align="center"><strong>Backend</strong><br />FastAPI<br />Python<br />Pydantic</td>
-<td width="25%" align="center"><strong>Data</strong><br />PostgreSQL<br />Redis<br />Alembic</td>
-<td width="25%" align="center"><strong>Infrastructure</strong><br />Docker Compose<br />Workers<br />Scheduler</td>
-</tr>
-</table>
-
----
-
-## 📁 Repository Structure
+# 🧭 The XpertApply Workflow
 
 ```text
-JobPilot-AI/
-├── README.md
-└── jobpilot-ai/
-    ├── apps/
-    │   ├── api/             # FastAPI backend, models, migrations, tests
-    │   ├── web/             # Next.js product interface
-    │   └── extension/       # Browser autofill extension
-    ├── docs/                # Architecture, privacy, providers, plans, reports
-    ├── evaluation/          # Recommendation evaluation and review tooling
-    ├── docker-compose.yml
-    ├── .env.example
-    └── Makefile
+                    ┌─────────────────────┐
+                    │   Build Your Profile │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │    Discover Jobs     │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  Analyze Job Match   │
+                    └──────────┬──────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+      ┌──────────────────┐          ┌──────────────────┐
+      │   Tailor Resume   │          │ Find Recruiters  │
+      └─────────┬────────┘          │ & Connections    │
+                │                   └─────────┬────────┘
+                ▼                             ▼
+      ┌──────────────────┐          ┌──────────────────┐
+      │ Generate Cover    │          │ Generate Outreach│
+      │ Letter            │          │ Messages         │
+      └─────────┬────────┘          └─────────┬────────┘
+                │                             │
+                └──────────────┬──────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │  Open Application    │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Browser Autofill     │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Review & Submit      │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Track Application    │
+                    └─────────────────────┘
 ```
 
 ---
 
-## ⚙️ Getting Started
+# 🎯 Why XpertApply?
 
-<details open>
-<summary><strong>1. Prerequisites</strong></summary>
+Most job-search products solve **one small piece** of the process.
 
-<br />
+XpertApply is being built around the entire application journey.
 
-Install:
+| Traditional Workflow                      | XpertApply                        |
+| ----------------------------------------- | --------------------------------- |
+| Search manually across job boards         | 🔎 Intelligent job discovery      |
+| Guess whether a job is worth applying to  | 🎯 AI-powered fit analysis        |
+| Rewrite your resume manually              | 📄 Job-specific resume tailoring  |
+| Write every cover letter from scratch     | ✍️ Personalized cover letters     |
+| Search manually for recruiters            | 👥 Relevant people discovery      |
+| Send generic networking messages          | 💬 Personalized outreach          |
+| Re-enter the same information repeatedly  | ⚡ Browser autofill                |
+| Answer the same questions again and again | 🧠 Reusable application profile   |
+| Track applications in spreadsheets        | 📊 Integrated application tracker |
 
-- Git
-- Docker Desktop
-- Node.js 20+
-- Python 3.11+ for local backend development
-- Chrome or Chromium for extension development
+---
 
-</details>
+# 🧩 Core Product Areas
 
-<details>
-<summary><strong>2. Clone the repository</strong></summary>
-
-<br />
-
-```bash
-git clone https://github.com/cprakash64/JobPilot-AI.git
-cd JobPilot-AI/jobpilot-ai
+```text
+XpertApply
+│
+├── 🔎 Job Discovery
+│   ├── Search & recommendations
+│   ├── Company information
+│   └── Job fit scoring
+│
+├── 👤 Candidate Profile
+│   ├── Personal information
+│   ├── Experience
+│   ├── Education
+│   ├── Skills
+│   ├── Projects
+│   └── Application preferences
+│
+├── 🤖 AI Application Intelligence
+│   ├── Job analysis
+│   ├── Resume tailoring
+│   ├── Cover letter generation
+│   └── Application question resolution
+│
+├── 👥 People & Networking
+│   ├── Recruiter discovery
+│   ├── Employee discovery
+│   ├── Referral opportunities
+│   └── AI-generated outreach
+│
+├── ⚡ Browser Extension
+│   ├── Form detection
+│   ├── Field resolution
+│   ├── Autofill
+│   ├── Dropdown interaction
+│   ├── Checkbox & radio handling
+│   └── Application-specific overrides
+│
+└── 📊 Application Management
+    ├── Application tracker
+    ├── Status management
+    └── Application history
 ```
 
-</details>
+---
 
-<details>
-<summary><strong>3. Configure the environment</strong></summary>
+# 🏗️ Architecture
 
-<br />
+XpertApply is designed as a multi-component platform:
+
+```text
+                         ┌───────────────────────┐
+                         │       XpertApply       │
+                         │       Web App          │
+                         └───────────┬───────────┘
+                                     │
+                                     │ HTTPS / API
+                                     ▼
+                         ┌───────────────────────┐
+                         │      Backend API       │
+                         │                       │
+                         │  Auth • Jobs • AI     │
+                         │  Profile • People     │
+                         │  Applications         │
+                         └──────┬────────┬───────┘
+                                │        │
+                     ┌──────────┘        └──────────┐
+                     ▼                              ▼
+          ┌─────────────────────┐       ┌─────────────────────┐
+          │   Data / Services    │       │     AI Services      │
+          └─────────────────────┘       └─────────────────────┘
+                     ▲
+                     │
+                     │ Authenticated API
+                     │
+          ┌─────────────────────┐
+          │ XpertApply Browser   │
+          │ Extension            │
+          │                      │
+          │ Detect → Resolve →   │
+          │ Fill → Verify        │
+          └─────────────────────┘
+```
+
+---
+
+# 🛡️ Human-in-the-Loop by Design
+
+XpertApply is built to **assist the applicant**, not silently make important decisions on their behalf.
+
+Sensitive or ambiguous application questions can be surfaced for review rather than blindly answered.
+
+```text
+Detected Question
+       │
+       ▼
+Known Answer? ─────── Yes ──────► Fill
+       │
+       No
+       ▼
+Can XpertApply Resolve It Safely?
+       │
+   ┌───┴───┐
+   │       │
+  Yes      No
+   │       │
+   ▼       ▼
+ Fill    Ask User
+           │
+           ▼
+     Use for Application
+```
+
+The goal is simple:
+
+**Automate repetition. Keep important decisions visible.**
+
+---
+
+# 🌐 Browser Extension
+
+The XpertApply extension is one of the core pieces of the platform.
+
+Instead of requiring users to manually copy information from XpertApply into external ATS platforms, the extension bridges the gap between the XpertApply profile and real application forms.
+
+### Application Flow
+
+```text
+Click Apply
+    ↓
+Open Employer Application
+    ↓
+Detect ATS / Application Form
+    ↓
+Discover Fields
+    ↓
+Resolve Fields Against XpertApply Profile
+    ↓
+Autofill Supported Fields
+    ↓
+Verify Values Were Persisted
+    ↓
+Surface Anything Requiring Review
+    ↓
+User Reviews & Submits
+```
+
+The autofill engine is being designed to work across different application experiences rather than relying on a single employer or ATS implementation.
+
+---
+
+# 🧠 XpertApply Philosophy
+
+### 1. Apply smarter, not everywhere.
+
+More applications do not automatically mean better outcomes.
+
+XpertApply helps users prioritize opportunities where they have a stronger chance of success.
+
+### 2. Personalization should scale.
+
+Every application should feel tailored without requiring the applicant to manually rebuild everything from scratch.
+
+### 3. Networking belongs inside the workflow.
+
+Finding a job and finding the right person at that company should not be completely separate activities.
+
+### 4. AI should assist—not fabricate.
+
+XpertApply should strengthen the presentation of a candidate's real experience, not invent credentials they do not have.
+
+### 5. Automation should remove repetition.
+
+The user should not have to type the same name, address, employment history, work authorization, and other information into hundreds of forms.
+
+---
+
+# 🔐 Privacy & Responsible Automation
+
+Job applications contain highly personal information.
+
+XpertApply is therefore being developed around several principles:
+
+* 🔐 Protect candidate information
+* 👁️ Keep important actions visible to the user
+* 🧠 Avoid inventing candidate qualifications
+* ✅ Verify autofilled values when possible
+* 📝 Preserve application-specific decisions separately
+* 🛑 Keep final submission under user control
+
+---
+
+# 🛣️ Roadmap
+
+XpertApply is actively evolving.
+
+### ✅ Foundation
+
+* [x] Candidate profile
+* [x] Job discovery experience
+* [x] Job fit scoring
+* [x] Resume tailoring
+* [x] Cover letter generation
+* [x] Application tracker
+* [x] Company branding
+* [x] Browser extension foundation
+* [x] Application form discovery
+* [x] Autofill engine
+* [x] Reusable application answers
+* [x] Application-specific answer overrides
+* [x] People discovery foundation
+* [x] Recruiter and referral workflows
+
+### 🚧 In Progress
+
+* [ ] Expanded ATS compatibility
+* [ ] More resilient application autofill
+* [ ] Improved dropdown and custom-control handling
+* [ ] Smarter recruiter and employee discovery
+* [ ] Better referral recommendations
+* [ ] Enhanced application intelligence
+* [ ] Production beta hardening
+
+### 🔮 Future
+
+* [ ] Interview preparation
+* [ ] AI mock interviews
+* [ ] Interview question prediction
+* [ ] Networking CRM
+* [ ] Follow-up automation
+* [ ] Career analytics
+* [ ] Offer comparison
+* [ ] Salary insights
+* [ ] Career progression planning
+* [ ] Personalized job-search agent
+
+---
+
+# 💡 The Vision
+
+XpertApply is not meant to become another job board.
+
+The long-term goal is to build an intelligent career platform that understands:
+
+```text
+Who you are
+     +
+What you have done
+     +
+What you are good at
+     +
+What opportunities fit you
+     +
+Who can help you get there
+     ↓
+─────────────────────────
+      XpertApply
+─────────────────────────
+     ↓
+Your next opportunity
+```
+
+Instead of forcing candidates to adapt themselves to dozens of disconnected systems, XpertApply aims to create a single intelligent layer across the entire job-search process.
+
+---
+
+# 🧑‍💻 Development
+
+### Repository Structure
+
+```text
+xpertapply/
+│
+├── apps/
+│   ├── web/             # XpertApply web application
+│   ├── api/             # Backend API
+│   └── extension/       # Browser extension
+│
+├── docs/                # Project documentation
+├── scripts/             # Development and maintenance scripts
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+## ⚙️ Local Development
+
+> The exact commands may vary depending on your environment and repository configuration.
+
+### Clone the repository
+
+```bash
+git clone <your-repository-url>
+cd xpertapply
+```
+
+### Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Add the local settings and provider credentials described in `.env.example`.
+Add the required environment variables for your local environment.
 
-> Never commit `.env`, API keys, tokens, provider payloads, or user data.
-
-</details>
-
-<details>
-<summary><strong>4. Start the application</strong></summary>
-
-<br />
+### Start with Docker
 
 ```bash
-docker compose up -d --build
+docker compose up --build
 ```
 
-</details>
-
-<details>
-<summary><strong>5. Apply database migrations</strong></summary>
-
-<br />
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-</details>
-
-<details>
-<summary><strong>6. Check readiness</strong></summary>
-
-<br />
-
-```bash
-docker compose ps
-curl -sS http://localhost:8000/readyz
-```
-
-Open the web app at:
-
-```text
-http://localhost:3000
-```
-
-</details>
+Or run individual services using the development commands defined within each application.
 
 ---
 
-## 🧪 Development
+# 🤝 Contributing
 
-### Backend
+XpertApply is currently under active development.
 
-```bash
-docker compose exec api pytest -q
-```
+If you are contributing to the project:
 
-### Web
-
-```bash
-cd apps/web
-npm test
-npm run lint
-npm run typecheck
-npm run build
-```
-
-### Repository checks
-
-```bash
-git diff --check
-docker compose config
-```
-
-### Covered areas
-
-- Job discovery and matching
-- Fit-score explanations
-- Company branding and logo safety
-- Profile and tracker workflows
-- People discovery and category ranking
-- Current-employment validation
-- Provider budgets and usage accounting
-- Frontend empty, loading, and error states
-- Browser extension behavior
-- Database migrations and readiness
+1. Create a dedicated branch.
+2. Keep changes focused.
+3. Add or update tests where appropriate.
+4. Run formatting, type checking, and test suites before submitting changes.
+5. Avoid committing credentials or environment secrets.
+6. Document major architectural decisions.
 
 ---
 
-## 🔐 Privacy, Security, and Responsible Automation
+# 🐛 Issues & Feedback
 
-JobPilot AI is designed to assist the user without pretending certainty or removing control.
+Found a bug or have an idea that could improve XpertApply?
 
-### Privacy principles
+When reporting an issue, please include as much useful context as possible:
 
-- User-triggered work-email lookup
-- No guessed email patterns
-- No LinkedIn scraping
-- No automatic outreach
-- No automatic application submission
-- Encrypted retention for supported sensitive fields
-- Provider call limits and caching
-- Honest provider and confidence states
-- Suppression of stale or conflicting employment data
+* What you were trying to do
+* What you expected to happen
+* What actually happened
+* Browser / environment
+* Relevant screenshots
+* Console errors
+* XpertApply diagnostics, when available
+* Steps to reproduce the issue
 
-### Security principles
-
-- Environment-based secret management
-- SSRF-aware external fetching
-- Safe redirect handling
-- Content-type and response-size validation
-- Database migration checks
-- Provider usage accounting
-- Bounded retry and circuit-breaker behavior
-
-Read more:
-
-- `docs/people-data-privacy.md`
-- `docs/people-data-providers.md`
-- `docs/people-recommendation-scoring.md`
-- `docs/people-observability.md`
+High-quality bug reports make high-quality fixes possible.
 
 ---
 
-## 📌 Current Status
+# ⭐ Support XpertApply
 
-| Area | Status |
-|---|---|
-| Job discovery | ✅ Implemented |
-| Fit scoring | ✅ Implemented |
-| Resume and cover-letter workflow | ✅ Implemented |
-| Application tracker | ✅ Implemented |
-| Browser autofill foundation | ✅ Implemented |
-| Recruiter discovery | ✅ Implemented |
-| Potential manager discovery | ✅ Implemented |
-| Referral-candidate discovery | ✅ Implemented |
-| Employment-evidence validation | ✅ Implemented |
-| PDL usage, caching, and budgets | ✅ Implemented |
-| Hunter live rollout | 🟡 Controlled validation pending |
-| Wider beta evaluation | 🟡 In progress |
-| Production deployment | 🟡 Planned |
+If you believe job searching should be smarter, faster, and less repetitive, consider giving the repository a ⭐.
 
----
-
-## 🗺️ Roadmap
-
-- [x] Profile-driven job discovery
-- [x] Explainable fit scoring
-- [x] Tailored resume generation
-- [x] Tailored cover-letter generation
-- [x] Application tracking
-- [x] Browser autofill foundation
-- [x] Recruiter, manager, and referral discovery
-- [x] Exact-company employment validation
-- [x] Provider caching and durable usage accounting
-- [x] Category-specific referral coverage
-- [ ] Controlled Hunter email validation
-- [ ] Wider ATS compatibility
-- [ ] Closed-beta evaluation
-- [ ] Production monitoring and deployment
-- [ ] Additional licensed data-provider coverage
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome.
-
-```bash
-git checkout -b feature/your-feature
-```
-
-Then:
-
-1. Make focused changes
-2. Add or update tests
-3. Run validation locally
-4. Commit with a clear message
-5. Open a pull request
-
-```bash
-git add .
-git commit -m "feat: describe your change"
-git push origin feature/your-feature
-```
-
-For major product or architecture changes, open an issue first.
-
----
-
-## ⚠️ Important Note
-
-JobPilot AI is under active development.
-
-Provider coverage, application-site behavior, and role data can vary. Users remain responsible for reviewing:
-
-- profile information
-- match explanations
-- generated materials
-- contact recommendations
-- outreach drafts
-- submitted applications
-
-JobPilot AI is an assistant—not an autonomous applicant.
+It helps support the project and its development.
 
 ---
 
 <div align="center">
 
-<br />
+## ⚡ XpertApply
 
-## Built for job seekers who want more clarity and less busywork
+### Stop repeating the application process.
 
-### **Discover better roles. Apply with confidence. Reach the right people.**
-
-<br />
-
-**JobPilot AI**
+### Start optimizing it.
 
 <br />
+
+**Discover • Tailor • Connect • Apply • Track**
+
+<br />
+
+Built with ambition to create a better way to get hired.
 
 </div>
