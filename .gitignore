@@ -1,56 +1,90 @@
-# Environment variables and secrets
+# --- Secrets -------------------------------------------------------------- #
+# .env.example is the only env file that may ever be committed.
 .env
 .env.*
 !.env.example
-**/.env
-**/.env.*
-!**/.env.example
+*.pem
+*.key
+!**/public*.key
+secrets.json
+.secrets/
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+# --- Local tooling state --------------------------------------------------- #
+# Machine-specific command allowlist; not portable between developers.
+.claude/settings.local.json
+
+# --- Dependencies / virtualenvs -------------------------------------------- #
+node_modules/
 .venv/
 venv/
+env/
 
-# Node / Next.js
-node_modules/
+# --- Build output ---------------------------------------------------------- #
 .next/
-out/
 dist/
 build/
-coverage/
+out/
 *.tsbuildinfo
+apps/extension/xpertapply-extension.zip
+# The pre-rebrand artifact name. Kept so a zip built before the rename is still
+# ignored rather than turning up as an untracked file in every status.
+apps/extension/jobpilot-extension.zip
+apps/extension/e2e/bundle/
 
-# IDE and operating system
+# --- Test / coverage artifacts --------------------------------------------- #
+coverage/
+coverage.xml
+htmlcov/
+.coverage
+.pytest_cache/
+test-results/
+playwright-report/
+apps/extension/e2e/smoke.png
+output/
+
+# --- Caches ---------------------------------------------------------------- #
+__pycache__/
+*.pyc
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# --- Runtime data ---------------------------------------------------------- #
+uploads/
+generated/
+
+# --- Database dumps and local databases ------------------------------------ #
+# A dump contains real user data; it must never be committed.
+*.sql
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+!apps/api/alembic/**/*.sql
+
+# --- OS noise -------------------------------------------------------------- #
 .DS_Store
+*.log
+logs/
+
+# --- Editor / IDE state ----------------------------------------------------- #
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Logs
-*.log
-logs/
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-# Local databases and generated files
-*.sqlite
-*.sqlite3
-uploads/
+# --- Scratch directories ---------------------------------------------------- #
 tmp/
 temp/
 
-# Docker overrides containing local settings
+# --- Local Docker overrides -------------------------------------------------- #
+# Contains machine-specific settings; never shared.
 docker-compose.override.yml
 
-# Browser extension build output
-apps/extension/dist/
-apps/extension/build/
+# --- Accidental editor/finder duplicates ----------------------------------- #
+# Finder's "file 2.py" copies caused a stale duplicate module to linger.
+* 2.*
+* copy.*
+
+.pnpm-store/

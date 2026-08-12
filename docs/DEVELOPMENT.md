@@ -65,7 +65,7 @@ Recent runs and the scoring backlog are also exposed at `/debug/ingestion-runs` 
 The default Docker Compose file is the stable local and production-like path. It runs API and web code from the built images and does not bind-mount source code into the containers.
 
 ```bash
-cd /Users/cprakash/Documents/Jobs/Job_Apply/jobpilot-ai
+# Run from the repository root.
 make dev
 docker compose logs api -f
 ```

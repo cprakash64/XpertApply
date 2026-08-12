@@ -547,6 +547,8 @@ Instead of forcing candidates to adapt themselves to dozens of disconnected syst
 
 # 🧑‍💻 Development
 
+> Full developer and operations guide: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+
 ### Repository Structure
 
 ```text
