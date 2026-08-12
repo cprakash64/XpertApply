@@ -230,7 +230,7 @@ function resolveApplicationAnswer(
     // Deliberately NOT answered.
     //
     // This used to auto-accept, on the reasoning that the user had asked
-    // JobPilot to apply on their behalf. Consenting to an employer's privacy
+    // XpertApply to apply on their behalf. Consenting to an employer's privacy
     // terms is the user's own legal act, though, and "please apply for me" is
     // not consent to terms they have not seen. It now surfaces for review and
     // the user ticks it themselves.

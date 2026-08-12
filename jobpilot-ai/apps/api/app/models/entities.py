@@ -63,7 +63,7 @@ class ApplicationStatus(StrEnum):
 
 class ApplicationSessionStatus(StrEnum):
     """Lifecycle of an assisted auto-apply session. The user always submits the
-    employer form manually; JobPilot never advances past ``ready_for_review`` on
+    employer form manually; XpertApply never advances past ``ready_for_review`` on
     the employer's behalf."""
 
     preparing = "preparing"

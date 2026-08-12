@@ -85,7 +85,7 @@ async def map_option(
     if not answer:
         if canonical_key in CONFIRMATION_REQUIRED_KEYS:
             return _ask_user("This question needs your own confirmed answer.")
-        return _ask_user("EZJobFind has no confirmed answer to map.")
+        return _ask_user("XpertApply has no confirmed answer to map.")
 
     result = await ai_provider.json_task(
         "map_dropdown_option.md",

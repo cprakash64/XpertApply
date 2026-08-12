@@ -5,7 +5,7 @@
  * The live failure this exists to fix: the application is embedded in a
  * cross-origin iframe. Every frame ran discovery independently and only the top
  * frame owned the widget, so the top frame — which genuinely has no application
- * in its own document — declared a tab-level failure ("JobPilot couldn't
+ * in its own document — declared a tab-level failure ("XpertApply couldn't
  * identify the application form on this page") without ever knowing that a
  * sibling frame held the entire application.
  *

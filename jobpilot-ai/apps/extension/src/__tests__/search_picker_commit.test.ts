@@ -1,7 +1,7 @@
 /**
  * The live ServiceNow (SmartRecruiters) Experience and Education pickers.
  *
- * Reported behaviour: JobPilot types the stored value, the picker opens its
+ * Reported behaviour: XpertApply types the stored value, the picker opens its
  * suggestion list, nothing is selected, and the field ends up EMPTY. The cause
  * was a hard order of operations — a suggestion list with no exact match ended
  * the attempt, and the adapter's `close()` (Escape + blur) then discarded the

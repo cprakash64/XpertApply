@@ -27,7 +27,7 @@ describe("sidebar", () => {
     const labels = within(sidebar())
       .getAllByRole("link")
       .map((link) => link.textContent?.trim())
-      .filter((label) => label && label !== "EZJobFind");
+      .filter((label) => label && label !== "XpertApply");
     expect(labels).toEqual([
       "Dashboard",
       "Find Jobs",

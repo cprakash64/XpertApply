@@ -11,6 +11,7 @@ import {
   type ResumeContent
 } from "@/lib/api";
 import { Button } from "@/components/Button";
+import { readAuthToken } from "@/lib/authToken";
 import { GeneratedResumePreview } from "@/components/GeneratedResumePreview";
 import { GeneratedCoverLetterPreview } from "@/components/GeneratedCoverLetterPreview";
 
@@ -160,7 +161,7 @@ export function DocumentModal({
     setStatus(`Preparing ${fmt.toUpperCase()}…`);
     try {
       await persist(); // ensure the export matches the (possibly edited) preview
-      const token = typeof window !== "undefined" ? window.localStorage.getItem("jobpilot_token") : null;
+      const token = readAuthToken();
       const response = await fetch(`${API_URL}/jobs/documents/${doc.document_id}/download/${fmt}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });

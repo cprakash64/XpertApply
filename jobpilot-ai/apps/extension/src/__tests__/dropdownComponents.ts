@@ -3,7 +3,7 @@
  *
  * A bare `<li role="option">` in a fixture is inert: clicking it changes
  * nothing, so a test that asserts "filled" against it is really asserting that
- * JobPilot lies. These helpers attach the same event contract a real React
+ * XpertApply lies. These helpers attach the same event contract a real React
  * Select / ARIA combobox implements — open on pointer/mouse down, render the
  * menu (optionally async, optionally in a portal), commit a selection on option
  * click, update the displayed value, and close.

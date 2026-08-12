@@ -2,7 +2,7 @@
  * Shadow DOM so ATS styles cannot break it and it cannot affect application
  * form layout. Never submits anything — every action here either fills a
  * field the user explicitly chose an answer for, or saves that answer to the
- * JobPilot profile/answer vault on explicit opt-in. */
+ * XpertApply profile/answer vault on explicit opt-in. */
 import type { LedgerCounts } from "../fields/ledger";
 import type { AuthoritativeReviewItem } from "./reviewItems";
 import { answerNotesFor, overrideFailureMessage, type OverrideRequest } from "./reviewActions";
@@ -30,7 +30,7 @@ export interface WidgetUpdate {
   /** Show "Open application form": automatic activation of a control we already
    * validated did not produce a transition, so the user's own click is needed. */
   offerOpenApplication?: boolean;
-  /** Show "Reconnect to JobPilot": the workflow binding is missing but the
+  /** Show "Reconnect to XpertApply": the workflow binding is missing but the
    * session itself is fine. */
   offerReconnect?: boolean;
   /** A reconnect request is in flight. */
@@ -186,7 +186,7 @@ export function createWidget(actions: {
   reconnect?: () => void;
   diagnostics?: () => void;
   captureControl?: () => void;
-  /** Toggle "Teach JobPilot" observation. */
+  /** Toggle "Teach XpertApply" observation. */
   teach?: (enabled: boolean) => void;
 }): {
   update: (value: WidgetUpdate) => void;
@@ -313,7 +313,7 @@ export function createWidget(actions: {
       @media(prefers-reduced-motion:reduce){button{transition:none}}
     </style>
     <section class="box" aria-live="polite">
-      <header><span class="dot"></span><span class="title">Preparing</span><button class="collapse" type="button" aria-label="Collapse EZJobFind" title="Collapse">−</button></header>
+      <header><span class="dot"></span><span class="title">Preparing</span><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
       <div class="body">
         <div class="message">Preparing your application…</div>
         <div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div>
@@ -330,7 +330,7 @@ export function createWidget(actions: {
           <button type="button" data-a="open-application" style="display:none">Open application form</button>
           <!-- Primary recovery when the workflow binding is missing. Retrying
                field detection with no session would just fail again. -->
-          <button type="button" data-a="reconnect" style="display:none">Reconnect to EZJobFind</button>
+          <button type="button" data-a="reconnect" style="display:none">Reconnect to XpertApply</button>
           <button type="button" data-a="retry">Retry autofill</button>
           <button type="button" data-a="continue">Continue filling</button>
           <button type="button" data-a="next">Jump to next issue</button>
@@ -338,8 +338,8 @@ export function createWidget(actions: {
           <details class="more-actions">
             <summary>More options</summary>
             <div class="more-grid">
-              <button type="button" data-a="clear">Clear EZJobFind-filled fields</button>
-              <button type="button" data-a="teach" aria-pressed="false" title="Watch how you answer, and offer to remember it">Teach EZJobFind</button>
+              <button type="button" data-a="clear">Clear XpertApply-filled fields</button>
+              <button type="button" data-a="teach" aria-pressed="false" title="Watch how you answer, and offer to remember it">Teach XpertApply</button>
               <button type="button" data-a="diagnostics" title="Copy the redacted eligibility runtime trace">Copy eligibility diagnostic</button>
               <button type="button" data-a="capture-control" title="Capture the currently rendered eligibility control and any open listbox">Capture current control</button>
               <button type="button" data-a="rescan" title="Rediscover the current employer form without uploading the resume again">Rescan application</button>
@@ -369,7 +369,7 @@ export function createWidget(actions: {
   collapseBtn.addEventListener("click", () => {
     const collapsed = box.classList.toggle("collapsed");
     collapseBtn.textContent = collapsed ? "+" : "−";
-    collapseBtn.setAttribute("aria-label", collapsed ? "Expand EZJobFind" : "Collapse EZJobFind");
+    collapseBtn.setAttribute("aria-label", collapsed ? "Expand XpertApply" : "Collapse XpertApply");
     collapseBtn.title = collapsed ? "Expand" : "Collapse";
   });
   const reconnectBtn = root.querySelector<HTMLButtonElement>('[data-a="reconnect"]')!;
@@ -406,7 +406,7 @@ export function createWidget(actions: {
     teachBtn.addEventListener("click", () => {
       const enabled = teachBtn.getAttribute("aria-pressed") !== "true";
       teachBtn.setAttribute("aria-pressed", String(enabled));
-      teachBtn.textContent = enabled ? "Stop teaching" : "Teach EZJobFind";
+      teachBtn.textContent = enabled ? "Stop teaching" : "Teach XpertApply";
       actions.teach!(enabled);
     });
   } else {
@@ -832,7 +832,7 @@ export function createWidget(actions: {
             );
             return;
           }
-          say("TikTok kept the approved selection and EZJobFind verified it.");
+          say("TikTok kept the approved selection and XpertApply verified it.");
         });
         continue;
       }
@@ -848,7 +848,7 @@ export function createWidget(actions: {
           };
           setBusy(false);
           if (!outcome.ok) {
-            say("EZJobFind could not record that. Nothing was changed.", true);
+            say("XpertApply could not record that. Nothing was changed.", true);
             return;
           }
           openChoiceFor = null;
@@ -883,7 +883,7 @@ export function createWidget(actions: {
           onChoose: async (value) => {
             const sessionId = actionHandlers?.sessionId() ?? null;
             if (sessionId == null) {
-              say("EZJobFind is not connected to this application right now.", true);
+              say("XpertApply is not connected to this application right now.", true);
               return;
             }
             // Built here, validated here, and validated again at every boundary
@@ -956,7 +956,7 @@ export function createWidget(actions: {
       const sourceParts = [
         value.lifecyclePhase,
         value.atsPopulated == null ? "" : `ATS populated ${value.atsPopulated}`,
-        value.jobpilotFilled == null ? "" : `EZJobFind filled ${value.jobpilotFilled}`,
+        value.jobpilotFilled == null ? "" : `XpertApply filled ${value.jobpilotFilled}`,
         value.sectionRecordsAdded == null ? "" : `section records added ${value.sectionRecordsAdded}`,
         value.optionalSectionsSkipped == null ? "" : `optional sections skipped ${value.optionalSectionsSkipped}`
       ].filter(Boolean);
@@ -979,8 +979,8 @@ export function createWidget(actions: {
       const terminal = value.stage === "failed" && value.recoverable === false;
       const retryBtn = root.querySelector<HTMLButtonElement>('[data-a="retry"]');
       const continueBtn = root.querySelector<HTMLButtonElement>('[data-a="continue"]');
-      if (retryBtn) { retryBtn.disabled = terminal; retryBtn.title = terminal ? "Reopen the application from EZJobFind instead." : ""; }
-      if (continueBtn) { continueBtn.disabled = terminal; continueBtn.title = terminal ? "Reopen the application from EZJobFind instead." : ""; }
+      if (retryBtn) { retryBtn.disabled = terminal; retryBtn.title = terminal ? "Reopen the application from XpertApply instead." : ""; }
+      if (continueBtn) { continueBtn.disabled = terminal; continueBtn.title = terminal ? "Reopen the application from XpertApply instead." : ""; }
       // The manual fallback appears only when the caller asks for it: an
       // already-validated Apply control that automatic activation could not
       // open. The user's own click carries a real user gesture.
@@ -989,7 +989,7 @@ export function createWidget(actions: {
       // (which would re-run field detection with no session) steps aside.
       reconnectBtn.style.display = value.offerReconnect ? "" : "none";
       reconnectBtn.disabled = Boolean(value.reconnecting);
-      reconnectBtn.textContent = value.reconnecting ? "Reconnecting…" : "Reconnect to EZJobFind";
+      reconnectBtn.textContent = value.reconnecting ? "Reconnecting…" : "Reconnect to XpertApply";
       if (retryBtn && value.offerReconnect) retryBtn.style.display = "none";
       else if (retryBtn) retryBtn.style.display = "";
     },
@@ -1104,7 +1104,7 @@ function renderChoiceBlock(
   return block;
 }
 
-/** Render the "Should JobPilot remember this answer?" card. Every option is an
+/** Render the "Should XpertApply remember this answer?" card. Every option is an
  * explicit user choice — there is no default that silently saves. */
 function renderRememberPrompt(prompt: RememberPrompt): HTMLElement {
   const el = document.createElement("div");
@@ -1112,7 +1112,7 @@ function renderRememberPrompt(prompt: RememberPrompt): HTMLElement {
   el.setAttribute("data-teach", prompt.id);
   const scopeNote = prompt.employer && !prompt.sensitive ? ` (${prompt.employer})` : "";
   el.innerHTML = `
-    <div class="q">Should EZJobFind remember this answer?</div>
+    <div class="q">Should XpertApply remember this answer?</div>
     <div class="why">${escapeHtml(prompt.question)}</div>
     <div class="why"><b>${escapeHtml(prompt.chosenSummary)}</b>${escapeHtml(scopeNote)}</div>`;
 
@@ -1129,7 +1129,7 @@ function renderRememberPrompt(prompt: RememberPrompt): HTMLElement {
     radio.type = "radio";
     radio.name = name;
     radio.value = scope;
-    // Only preselect when JobPilot is confident; otherwise the user must choose.
+    // Only preselect when XpertApply is confident; otherwise the user must choose.
     if (prompt.scopeConfident && scope === prompt.proposedScope) radio.checked = true;
     label.appendChild(radio);
     label.appendChild(document.createTextNode(SCOPE_LABEL[scope]));

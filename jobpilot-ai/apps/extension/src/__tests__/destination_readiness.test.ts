@@ -79,7 +79,7 @@ describe("application evidence", () => {
     expect(hasApplicationEvidence(evidence)).toBe(true);
   });
 
-  it("never treats JobPilot's own widget as an application", () => {
+  it("never treats XpertApply's own widget as an application", () => {
     // Otherwise the extension proves its own premise and waits forever on a
     // page that has no employer form at all.
     document.body.innerHTML = `

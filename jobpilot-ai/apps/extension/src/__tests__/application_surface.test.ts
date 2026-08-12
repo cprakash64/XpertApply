@@ -191,7 +191,7 @@ describe("hidden and disabled controls", () => {
     expect(selectActivationControl(document)).toBeNull();
   });
 
-  it("ignores JobPilot's own widget buttons", () => {
+  it("ignores XpertApply's own widget buttons", () => {
     mount(`<div id="jobpilot-assisted-apply"><button aria-label="Switch to application form">Apply Now</button></div>`);
     expect(selectActivationControl(document)).toBeNull();
   });

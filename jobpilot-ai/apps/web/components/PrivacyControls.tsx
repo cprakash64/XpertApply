@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/Button";
 import { api } from "@/lib/api";
+import { AUTH_TOKEN_STORAGE_KEY, readAuthToken } from "@/lib/authToken";
 
 export function PrivacyControls() {
   const [exported, setExported] = useState("");
@@ -17,9 +18,9 @@ export function PrivacyControls() {
   async function deleteAccount() {
     await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/privacy/account`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${localStorage.getItem("jobpilot_token")}` }
+      headers: { Authorization: `Bearer ${readAuthToken()}` }
     });
-    localStorage.removeItem("jobpilot_token");
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     setMessage("Account deleted.");
   }
 

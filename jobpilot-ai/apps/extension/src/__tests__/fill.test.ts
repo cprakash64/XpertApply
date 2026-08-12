@@ -28,7 +28,7 @@ describe("fill engine", () => {
 
   it("does not overwrite a value the user already typed", async () => {
     const fields = mount(`<label for="name">Name</label><input id="name" value="Existing User" />`);
-    const outcome = await fillField(field(fields, "name"), "JobPilot Name");
+    const outcome = await fillField(field(fields, "name"), "XpertApply Name");
     expect(outcome.status).toBe("skipped");
     expect((document.getElementById("name") as HTMLInputElement).value).toBe("Existing User");
   });
@@ -77,7 +77,7 @@ describe("fill engine", () => {
     expect((document.getElementById("agree") as HTMLInputElement).checked).toBe(true);
   });
 
-  it("clears only JobPilot-filled values and restores the original", async () => {
+  it("clears only XpertApply-filled values and restores the original", async () => {
     const fields = mount(
       `<label for="a">A</label><input id="a" />
        <label for="b">B</label><input id="b" value="user-typed" />`
@@ -87,7 +87,7 @@ describe("fill engine", () => {
     await fillField(field(fields, "b"), "jobpilot");
 
     const cleared = clearJobPilotFields(document);
-    expect(cleared).toBe(1); // only the field JobPilot actually filled
+    expect(cleared).toBe(1); // only the field XpertApply actually filled
     expect((document.getElementById("a") as HTMLInputElement).value).toBe("");
     expect((document.getElementById("b") as HTMLInputElement).value).toBe("user-typed");
     expect(document.querySelectorAll("[data-jobpilot-filled]").length).toBe(0);

@@ -241,7 +241,7 @@ export function classifyField(field: DiscoveredField): Classification {
   }
 
   // A candidate/data-privacy acknowledgement is a narrow consent the user has
-  // explicitly asked JobPilot to accept while applying. Recognize it before
+  // explicitly asked XpertApply to accept while applying. Recognize it before
   // the generic `acknowledge` legal-attestation detector, but do not broaden
   // this to employment, conflict, originality, or AI-use attestations.
   if (

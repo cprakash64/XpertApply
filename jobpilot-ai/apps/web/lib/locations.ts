@@ -1,7 +1,7 @@
 /**
  * Global location vocabulary for job preferences.
  *
- * JobPilot is not a US product, but the location picker used to offer fifteen
+ * XpertApply is not a US product, but the location picker used to offer fifteen
  * hardcoded American cities, which made every non-US user type their own
  * country by hand. This module replaces that list with a genuinely global one
  * without adding a dependency:

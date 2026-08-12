@@ -56,7 +56,7 @@ describe("review widget", () => {
     const items: ReviewItem[] = [
       {
         id: "uid-1", kind: "field", category: "application", question: "How did you hear about us?",
-        required: false, reasonText: "EZJobFind doesn't have a confirmed answer for this question.",
+        required: false, reasonText: "XpertApply doesn't have a confirmed answer for this question.",
         options: ["LinkedIn", "Referral", "Other"], control: "select", reusable: true, defaultScope: "company"
       }
     ];
@@ -189,7 +189,7 @@ describe("review widget", () => {
   });
 });
 
-describe("Teach JobPilot — consent before anything is remembered", () => {
+describe("Teach XpertApply — consent before anything is remembered", () => {
   it("never saves without an explicit scope choice", () => {
     const widget = mountWidget();
     const onDecision = vi.fn();

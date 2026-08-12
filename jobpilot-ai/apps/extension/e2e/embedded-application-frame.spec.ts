@@ -4,9 +4,9 @@
  * The live failure: the "I'm interested" launch succeeded, the destination
  * visibly contained a résumé upload, first/last name, email, confirm email,
  * city, phone country, phone number, Experience, Education and profile links —
- * and JobPilot said:
+ * and XpertApply said:
  *
- *     "The application is inside a frame JobPilot isn't allowed to read."
+ *     "The application is inside a frame XpertApply isn't allowed to read."
  *
  * That verdict rested on one fact, `contentDocument` throwing, which proves only
  * that the frame is cross-origin. It offered the user nothing to do.

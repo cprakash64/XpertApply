@@ -5,7 +5,7 @@ import manifest from "../../manifest.json";
 import { isApprovedJobPilotOrigin } from "../config";
 
 describe("message validation", () => {
-  it("accepts configured JobPilot origins and rejects an untrusted origin", () => {
+  it("accepts configured XpertApply origins and rejects an untrusted origin", () => {
     expect(isApprovedJobPilotOrigin("http://localhost:3000")).toBe(true);
     expect(isApprovedJobPilotOrigin("https://app.jobpilot.ai")).toBe(true);
     expect(isApprovedJobPilotOrigin("https://jobpilot.ai.evil.example")).toBe(false);
@@ -54,7 +54,7 @@ describe("manifest ↔ build outputs (build test)", () => {
     expect(atsEntry).toBeTruthy();
     expect(atsEntry.all_frames).toBe(true);
     expect(atsEntry.run_at).toBe("document_idle");
-    // The JobPilot web origin (bridge role) is excluded from the ATS role.
+    // The XpertApply web origin (bridge role) is excluded from the ATS role.
     expect(atsEntry.exclude_matches).toEqual(expect.arrayContaining(["https://app.jobpilot.ai/*"]));
   });
 });

@@ -24,6 +24,9 @@ env/
 dist/
 build/
 *.tsbuildinfo
+apps/extension/xpertapply-extension.zip
+# The pre-rebrand artifact name. Kept so a zip built before the rename is still
+# ignored rather than turning up as an untracked file in every status.
 apps/extension/jobpilot-extension.zip
 apps/extension/e2e/bundle/
 

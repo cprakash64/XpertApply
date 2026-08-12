@@ -13,15 +13,21 @@ export async function getApiBase(): Promise<string> {
 
 /** Origins allowed to hand a launch token to the extension. Kept in sync with
  * the manifest `content_scripts`, `host_permissions`, and `externally_connectable`
- * so the JobPilot-origin role only activates on trusted first-party origins.
+ * so the XpertApply-origin role only activates on trusted first-party origins.
  *
- * `app.jobpilot.ai` stays in the list for backwards compatibility: an installed
- * extension must keep working for anyone still on the previous deployment while
- * the product moves to ezjobfind.com. The constant name is likewise unchanged —
- * it is an internal identifier, not a user-visible string. */
+ * The list is APPEND-ONLY across a rebrand. An installed extension updates on
+ * Chrome's schedule, not at the moment DNS changes, so dropping a previous
+ * origin would break assisted apply for every user who has not yet received the
+ * new build. `xpertapply.com` is the current product; `ezjobfind.com` and
+ * `app.jobpilot.ai` are its earlier homes and stay trusted.
+ *
+ * The constant name is likewise unchanged — it is an internal identifier, not a
+ * user-visible string, and renaming it would churn every call site for nothing. */
 export const JOBPILOT_WEB_ORIGINS = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "https://xpertapply.com",
+  "https://www.xpertapply.com",
   "https://app.jobpilot.ai",
   "https://ezjobfind.com",
   "https://www.ezjobfind.com"

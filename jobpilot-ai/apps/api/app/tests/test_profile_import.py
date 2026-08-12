@@ -65,7 +65,7 @@ def sample_profile_text() -> str:
             "Backend Engineer Intern",
             "Built APIs for job search tools.",
             "Projects",
-            "JobPilot AI",
+            "Ledger Sync",
         ]
     )
 
@@ -251,11 +251,11 @@ def sample_apply_draft() -> dict:
         ],
         "projects": [
             {
-                "name": "JobPilot AI",
+                "name": "Ledger Sync",
                 "description": "Job search assistant",
                 "bullets": ["Built profile import"],
                 "technologies": ["React"],
-                "links": ["https://example.com/jobpilot"],
+                "links": ["https://example.com/ledger-sync"],
                 "start_date": "2025-01-01",
                 "end_date": "2025-04-01",
             }
@@ -322,14 +322,14 @@ def test_apply_import_all_sections_persists_profile_and_career(client: TestClien
     assert "FastAPI" in body["profile"]["skills"]
     assert body["career"]["education"][0]["school"] == "Arizona State University"
     assert body["career"]["experience"][0]["title"] == "Backend Engineer Intern"
-    assert body["career"]["projects"][0]["name"] == "JobPilot AI"
+    assert body["career"]["projects"][0]["name"] == "Ledger Sync"
     assert body["career"]["certifications"][0]["name"] == "AWS Cloud Practitioner"
     assert body["career"]["awards"][0]["name"] == "Hackathon Winner"
 
     persisted = client.get("/profile", headers=headers)
     assert persisted.json()["profile"]["full_name"] == "Imported Candidate"
     career = client.get("/profile/career", headers=headers).json()
-    assert career["projects"][0]["name"] == "JobPilot AI"
+    assert career["projects"][0]["name"] == "Ledger Sync"
 
 
 def test_apply_import_selected_sections_preserves_unchecked_profile_data(client: TestClient) -> None:

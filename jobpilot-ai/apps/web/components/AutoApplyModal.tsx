@@ -14,7 +14,7 @@ import {
   startAssistedApply
 } from "@/lib/autoApply";
 import { ApiError, api } from "@/lib/api";
-import { chromeExtensionUrl } from "@/lib/siteConfig";
+import { PRODUCT_NAME, chromeExtensionUrl } from "@/lib/siteConfig";
 
 /**
  * Where to get the extension.
@@ -49,7 +49,7 @@ function toPreparationError(err: unknown): PreparationError {
       case "PROFILE_INCOMPLETE":
         return { message: err.message, retryable: false, profileLink: true, requestId: err.requestId };
       case "JOB_NOT_FOUND":
-        return { message: "This job is no longer available in EZJobFind.", retryable: false, requestId: err.requestId };
+        return { message: "This job is no longer available in XpertApply.", retryable: false, requestId: err.requestId };
       case "INVALID_APPLICATION_URL":
         return { message: err.message, retryable: false, requestId: err.requestId };
       case "DATABASE_UNAVAILABLE":
@@ -102,7 +102,7 @@ const PREP_STEPS = [
 /**
  * Assisted auto-apply preparation flow. Creates a secure application session,
  * shows what was prepared, then opens the official employer page and hands a
- * one-time launch token to the JobPilot extension. JobPilot never submits.
+ * one-time launch token to the XpertApply extension. XpertApply never submits.
  */
 export function AutoApplyModal({
   jobId,
@@ -317,7 +317,7 @@ export function AutoApplyModal({
               {extConnected && (
                 <div className="rounded-2xl border border-[var(--success-border)] bg-[var(--success-surface)] p-4 text-xs text-[var(--accent)]">
                   <p className="flex items-center gap-1.5 font-medium text-[var(--accent)]">
-                    <ShieldCheck className="h-4 w-4" /> EZJobFind extension connected
+                    <ShieldCheck className="h-4 w-4" /> {PRODUCT_NAME} extension connected
                   </p>
                   <p className="mt-1 text-[var(--text-secondary)]">
                     We’ll open the application, fill verified fields, upload your tailored documents, and leave the final
@@ -328,9 +328,9 @@ export function AutoApplyModal({
 
               {extOutdated && (
                 <div className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-xs text-[var(--warning)]">
-                  <p className="font-medium">Your EZJobFind extension needs an update.</p>
+                  <p className="font-medium">Your XpertApply extension needs an update.</p>
                   <p className="mt-1">
-                    Reload EZJobFind after installing or updating the extension — an EZJobFind tab that was already
+                    Reload XpertApply after installing or updating the extension — an XpertApply tab that was already
                     open when the extension last updated won&apos;t pick up the new version until it&apos;s
                     reloaded.{" "}
                     <a className="font-medium text-pine underline" href={EXTENSION_INSTALL_URL}
@@ -342,7 +342,7 @@ export function AutoApplyModal({
               {extState?.present === false && (
                 <div className="rounded-2xl border border-line bg-[var(--glass-surface)] p-4 text-xs text-[var(--text-muted)]">
                   <p className="font-medium text-[var(--text-secondary)]">
-                    Install the EZJobFind browser extension to automatically fill employer applications.
+                    Install the XpertApply browser extension to automatically fill employer applications.
                   </p>
                   <p className="mt-1">
                     Without it you can still open the official application and apply manually below.{" "}
@@ -375,7 +375,7 @@ export function AutoApplyModal({
                     Finished applying on the employer’s site?
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-                    If the EZJobFind extension confirms your submission, this happens automatically. If it
+                    If the XpertApply extension confirms your submission, this happens automatically. If it
                     can’t, tell us here and we’ll move this job to your Tracker.
                   </p>
                   <button
@@ -393,7 +393,7 @@ export function AutoApplyModal({
               )}
 
               <p className="border-t border-line px-1 pt-5 text-xs leading-relaxed text-[var(--text-muted)]">
-                Your application is prepared for review. EZJobFind fills the form on the employer’s site but{" "}
+                Your application is prepared for review. XpertApply fills the form on the employer’s site but{" "}
                 <span className="font-semibold">never submits it</span> — you review everything and click Submit yourself.
               </p>
             </div>

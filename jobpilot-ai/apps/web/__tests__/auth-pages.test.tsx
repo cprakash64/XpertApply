@@ -154,6 +154,6 @@ describe("auth pages", () => {
     expect(form).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(screen.getByRole("heading", { name: "Sign in to EZJobFind" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sign in to XpertApply" })).toBeInTheDocument();
   });
 });

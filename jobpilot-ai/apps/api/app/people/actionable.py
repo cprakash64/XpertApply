@@ -1,6 +1,6 @@
 """The one gate that decides whether a person may be shown to a user.
 
-JobPilot's product rule is deliberately lopsided: **show fewer people, but make
+XpertApply's product rule is deliberately lopsided: **show fewer people, but make
 every displayed person actionable.** A contact the user cannot open, cannot
 name, or cannot trust is worse than an empty state, because it costs the user
 attention and returns nothing.

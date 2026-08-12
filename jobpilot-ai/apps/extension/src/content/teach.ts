@@ -1,5 +1,5 @@
 /**
- * "Teach JobPilot" — observe the user completing an application by hand, and
+ * "Teach XpertApply" — observe the user completing an application by hand, and
  * offer to remember each answer.
  *
  * Design: rather than trying to interpret every framework's events, we take a
@@ -40,7 +40,7 @@ export interface LearnedAnswer {
   required: boolean;
   canonicalKey: string | null;
   sensitive: boolean;
-  /** JobPilot's suggestion; the user always makes the final choice. */
+  /** XpertApply's suggestion; the user always makes the final choice. */
   proposedScope: LearnScope;
   /** False when the scope proposal is a guess — the widget must ask. */
   scopeConfident: boolean;
@@ -116,7 +116,7 @@ export function fieldFingerprint(field: DiscoveredField, ats: string | null): st
 
 /**
  * Start observing. Returns a stop() function. Only TRUSTED interactions inside
- * `root` are considered; synthetic events (including JobPilot's own autofill)
+ * `root` are considered; synthetic events (including XpertApply's own autofill)
  * are ignored, so autofill can never be mistaken for the user teaching.
  */
 export function startTeachMode(options: TeachOptions): () => void {
@@ -171,8 +171,8 @@ export function startTeachMode(options: TeachOptions): () => void {
   };
 
   const schedule = (event: Event): void => {
-    // Only real user input teaches JobPilot. `isTrusted` is false for every
-    // event JobPilot itself dispatches during autofill.
+    // Only real user input teaches XpertApply. `isTrusted` is false for every
+    // event XpertApply itself dispatches during autofill.
     if (options.requireTrusted !== false && !event.isTrusted) return;
     const node = event.target as Node | null;
     if (!node || !(options.root as Element).contains?.(node)) return;

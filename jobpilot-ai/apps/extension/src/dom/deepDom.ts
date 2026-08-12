@@ -16,7 +16,7 @@
  *
  * `document.querySelectorAll("input,textarea,select")` returns ZERO on that
  * page, and `document.body.innerText` contains no field labels at all. Every
- * layer of JobPilot that asked the document a question therefore answered
+ * layer of XpertApply that asked the document a question therefore answered
  * "there is no application here":
  *
  *   • field discovery found no controls;
@@ -29,7 +29,7 @@
  * `contentDocument` is null) counted as "an unreadable frame", the failure was
  * reported as
  *
- *     "JobPilot could not reach the embedded application form."
+ *     "XpertApply could not reach the embedded application form."
  *
  * That sentence named a cross-origin frame problem that does not exist. The
  * application was in the same document the whole time, one shadow boundary away.

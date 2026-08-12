@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "JobPilot people recommendation benchmark v1",
+  "title": "XpertApply people recommendation benchmark v1",
   "type": "object",
   "required": ["schema_version", "cases"],
   "properties": {

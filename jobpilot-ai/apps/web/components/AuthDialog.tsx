@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/authToken";
 
 export type AuthMode = "login" | "signup";
 
@@ -64,7 +65,7 @@ export function AuthDialog({
         method: "POST",
         body: JSON.stringify({ email, password })
       });
-      localStorage.setItem("jobpilot_token", result.access_token);
+      localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, result.access_token);
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : mode === "login" ? "Login failed." : "Signup failed.");
@@ -99,7 +100,7 @@ export function AuthDialog({
           )}
         </div>
         <h1 id="auth-dialog-title" className="mt-7 text-3xl font-semibold tracking-[-0.04em]">
-          {isLogin ? "Sign in to EZJobFind" : "Create your account"}
+          {isLogin ? "Sign in to XpertApply" : "Create your account"}
         </h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           {isLogin ? "Continue your job search." : "One profile for every application."}
@@ -160,7 +161,7 @@ export function AuthDialog({
         </button>
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-sm text-[var(--text-muted)]">
-          <span>{isLogin ? "New to EZJobFind?" : "Already have an account?"}</span>
+          <span>{isLogin ? "New to XpertApply?" : "Already have an account?"}</span>
           <button
             type="button"
             className="focus-ring rounded-md px-1 py-0.5 font-semibold text-pine"

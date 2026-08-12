@@ -1,8 +1,8 @@
 /**
- * Why can't JobPilot reach the embedded application?
+ * Why can't XpertApply reach the embedded application?
  *
  * The live failure: the destination application renders inside an iframe and
- * the widget said "The application is inside a frame JobPilot isn't allowed to
+ * the widget said "The application is inside a frame XpertApply isn't allowed to
  * read." That verdict came from one fact — `contentDocument` threw — which only
  * ever proves the frame is cross-origin. It gave the user no action and us no
  * diagnosis, and it was reached without ever checking whether a content script

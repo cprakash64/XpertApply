@@ -11,16 +11,19 @@ import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
  * `metadataBase` is what makes the relative OpenGraph/Twitter URLs below absolute.
  *
  * The title template leaves per-page titles short: a page sets "Dashboard" and
- * the browser tab reads "Dashboard · EZJobFind".
+ * the browser tab reads "Dashboard · XpertApply".
  */
 const description =
-  `Discover relevant jobs, understand your fit, prepare tailored resumes and cover letters, ` +
-  `autofill repetitive application fields, and track your job search with ${PRODUCT_NAME}.`;
+  `Discover better jobs, understand your fit, tailor your resume, autofill applications, ` +
+  `and manage your job search with ${PRODUCT_NAME}.`;
+
+/** The one title the site introduces itself with — search results, a shared link. */
+const SITE_TITLE = `${PRODUCT_NAME} | AI Job Application Copilot`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
   title: {
-    default: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    default: SITE_TITLE,
     template: `%s · ${PRODUCT_NAME}`
   },
   applicationName: PRODUCT_NAME,
@@ -28,13 +31,13 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: PRODUCT_NAME,
-    title: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    title: SITE_TITLE,
     description,
     url: "/"
   },
   twitter: {
     card: "summary_large_image",
-    title: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter`,
+    title: SITE_TITLE,
     description
   }
 };

@@ -234,16 +234,16 @@ export function answerNotesFor(canonicalKey: string): string[] {
 
 /** Why an override attempt failed, in words that assume nothing about it. */
 export const OVERRIDE_FAILURE_COPY: Readonly<Record<string, string>> = {
-  SESSION_UNAUTHORIZED: "EZJobFind lost access to this application. Reopen it from EZJobFind and try again.",
-  SESSION_FORBIDDEN: "EZJobFind lost access to this application. Reopen it from EZJobFind and try again.",
-  SESSION_NOT_FOUND: "EZJobFind could not find this application session. Reopen it from EZJobFind.",
-  SESSION_EXPIRED: "This application session has expired. Reopen the application from EZJobFind to answer it here.",
-  ANSWER_NOT_PERMITTED: "EZJobFind cannot answer this question for you. Please answer it on the employer's form.",
-  NETWORK_UNAVAILABLE: "EZJobFind could not reach the server. Check your connection and try again.",
-  TIMEOUT: "EZJobFind could not reach the server in time. Try again.",
+  SESSION_UNAUTHORIZED: "XpertApply lost access to this application. Reopen it from XpertApply and try again.",
+  SESSION_FORBIDDEN: "XpertApply lost access to this application. Reopen it from XpertApply and try again.",
+  SESSION_NOT_FOUND: "XpertApply could not find this application session. Reopen it from XpertApply.",
+  SESSION_EXPIRED: "This application session has expired. Reopen the application from XpertApply to answer it here.",
+  ANSWER_NOT_PERMITTED: "XpertApply cannot answer this question for you. Please answer it on the employer's form.",
+  NETWORK_UNAVAILABLE: "XpertApply could not reach the server. Check your connection and try again.",
+  TIMEOUT: "XpertApply could not reach the server in time. Try again.",
   SELECTION_FAILED: "Your answer was saved for this application, but the employer's control did not keep it. Use \"Jump to question\" and set it there.",
-  CONTROL_NOT_FOUND: "Your answer was saved for this application, but EZJobFind can no longer find that question on the page.",
-  UNKNOWN: "EZJobFind could not complete that. Nothing was changed on the employer's form."
+  CONTROL_NOT_FOUND: "Your answer was saved for this application, but XpertApply can no longer find that question on the page.",
+  UNKNOWN: "XpertApply could not complete that. Nothing was changed on the employer's form."
 };
 
 export function overrideFailureMessage(code: string): string {

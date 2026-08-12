@@ -1,8 +1,8 @@
 /**
  * Content script with two roles depending on where it runs:
  *
- * 1. JobPilot web origin: a detection handshake (PING/PONG) and — critically —
- *    a CAPTURE-PHASE click listener on the JobPilot Apply button that forwards a
+ * 1. XpertApply web origin: a detection handshake (PING/PONG) and — critically —
+ *    a CAPTURE-PHASE click listener on the XpertApply Apply button that forwards a
  *    LAUNCH_REQUEST to the background *synchronously within the real click*, so
  *    the background can open the side panel while the user gesture is still
  *    valid. The launch payload is staged into this isolated content world (never
@@ -160,7 +160,7 @@ if (isApprovedJobPilotOrigin(location.origin)) {
 }
 
 // --------------------------------------------------------------------------- //
-// 1. JobPilot web origin: validated, acknowledged bridge
+// 1. XpertApply web origin: validated, acknowledged bridge
 // --------------------------------------------------------------------------- //
 function initWebOrigin(): void {
   const info: ExtensionInfo = {
@@ -233,7 +233,7 @@ function validLaunch(payload: LaunchPayload): boolean {
 // host_permissions now cover every https(s) origin (employer/ATS forms live on
 // domains we cannot enumerate up front), so this script is declaratively
 // injected into every page. What keeps it dormant everywhere except a
-// user-initiated JobPilot handoff is this gate: it NEVER scans the DOM,
+// user-initiated XpertApply handoff is this gate: it NEVER scans the DOM,
 // inserts the widget, or observes mutations until the background confirms
 // this exact tab/frame matches an active, unexpired handoff. An unmatched
 // frame registers only the (inert) message listener and exits immediately.
@@ -328,7 +328,7 @@ async function requestReconnect(): Promise<boolean> {
       widget.update({
         stage: "failed",
         message: expired
-          ? "This application session expired. Reopen it from EZJobFind."
+          ? "This application session expired. Reopen it from XpertApply."
           : outside
             ? "This page is outside the active application workflow."
             : "We lost the application connection. Reconnect to continue.",
@@ -355,19 +355,19 @@ let formRoot: FormRootResult | null = null;
 let stopTeaching: (() => void) | null = null;
 
 const FAILURE_MESSAGE: Record<string, string> = {
-  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from EZJobFind.",
-  HANDOFF_URL_MISMATCH: "This page doesn't match the prepared application. Open it from EZJobFind.",
-  HANDOFF_EXPIRED: "This launch expired. Reopen the application from EZJobFind.",
+  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from XpertApply.",
+  HANDOFF_URL_MISMATCH: "This page doesn't match the prepared application. Open it from XpertApply.",
+  HANDOFF_EXPIRED: "This launch expired. Reopen the application from XpertApply.",
   HANDOFF_SCHEMA_OUTDATED: "The extension was updated. Reload this page to continue.",
-  TOKEN_CONSUMED: "This launch was already used. Reopen the application from EZJobFind.",
+  TOKEN_CONSUMED: "This launch was already used. Reopen the application from XpertApply.",
   // A 401 from the session package has TWO very different causes, and
   // collapsing them is what made a healthy session look expired: either the
   // handoff genuinely expired, or the single-use launch token was already
   // spent because the binding moved to another tab. The second is recoverable
   // and must not tell the user to start over.
-  SESSION_UNAUTHORIZED: "We lost the application connection. Reconnect to EZJobFind to continue.",
-  SESSION_NOT_FOUND: "This application session expired. Reopen it from EZJobFind.",
-  SESSION_PACKAGE_FAILED: "Your prepared application couldn't be loaded. Reopen from EZJobFind."
+  SESSION_UNAUTHORIZED: "We lost the application connection. Reconnect to XpertApply to continue.",
+  SESSION_NOT_FOUND: "This application session expired. Reopen it from XpertApply.",
+  SESSION_PACKAGE_FAILED: "Your prepared application couldn't be loaded. Reopen from XpertApply."
 };
 
 // Mirrors background.ts's TERMINAL_FAILURE_CODES — retrying these re-asks the
@@ -413,7 +413,7 @@ async function initAtsPage(): Promise<void> {
     }
     if (message.type === MSG.AUTOFILL_PROGRESS) {
       // The application may live in a cross-origin iframe while only the top
-      // frame owns the JobPilot widget. The background mirrors the iframe's
+      // frame owns the XpertApply widget. The background mirrors the iframe's
       // sanitized progress here so the top widget does not remain stuck on
       // "Opening the application…" after filling and uploads have completed.
       if (isTopFrame) mirrorFrameProgress(message.payload);
@@ -521,7 +521,7 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
       reconnectAttempted = true;
       if (isTopFrame) {
         widget = ensureWidget();
-        widget.update({ stage: "detecting", message: "Reconnecting to EZJobFind…", reconnecting: true });
+        widget.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true });
       }
       const reconnected = await requestReconnect();
       if (reconnected) return;
@@ -588,7 +588,7 @@ function ensureWidget(): ReturnType<typeof createWidget> {
       clear: () => { if (matched) clearJobPilotFields(document); },
       openApplication: () => { void manuallyOpenApplication(); },
       reconnect: () => {
-        widget?.update({ stage: "detecting", message: "Reconnecting to EZJobFind…", reconnecting: true, offerReconnect: true });
+        widget?.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true, offerReconnect: true });
         void requestReconnect();
       },
       complete: () => { if (session) void sendRuntime({ type: MSG.COMPLETE_SESSION, sessionId: session.sessionId }); },
@@ -693,7 +693,7 @@ async function discoverAndFill(reason: AutofillReason): Promise<void> {
         stage: "detecting",
         stageLabel: "Application in embedded form",
         total: readiness.fieldCount,
-        message: "The application is inside an embedded form. EZJobFind is filling it there…"
+        message: "The application is inside an embedded form. XpertApply is filling it there…"
       });
       return;
     }
@@ -740,9 +740,9 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
   const message = obstructed
     ? "A cookie or consent banner is covering this page. Dismiss it, then choose Retry."
     : code === "FIELD_DISCOVERY_RETURNED_ZERO"
-      ? "The application form loaded but EZJobFind found no fields it can fill. Choose Rescan application."
+      ? "The application form loaded but XpertApply found no fields it can fill. Choose Rescan application."
       : canOpen
-        ? "Click once to open the application form. EZJobFind will continue automatically."
+        ? "Click once to open the application form. XpertApply will continue automatically."
         : stillOnEntryUrl
           ? "This looks like a job listing rather than an application form. Open the employer's apply link, then choose Retry."
           : "The application page opened, but its form did not finish loading in time. Choose Retry.";
@@ -852,12 +852,12 @@ async function reportFrameRemedy(): Promise<void> {
       : null;
 
   const message = permissionOrigin
-    ? `The application is in an embedded form from ${new URL(permissionOrigin).hostname}. Choose Open application form to let EZJobFind fill it there.`
+    ? `The application is in an embedded form from ${new URL(permissionOrigin).hostname}. Choose Open application form to let XpertApply fill it there.`
     : reopenUrl
-      ? `The application is in an embedded form EZJobFind can't reach. Choose Open application form to reopen it from ${new URL(reopenUrl).hostname} as its own tab.`
+      ? `The application is in an embedded form XpertApply can't reach. Choose Open application form to reopen it from ${new URL(reopenUrl).hostname} as its own tab.`
       : outcome === "APPLICATION_FRAME_SANDBOXED_OPAQUE"
-        ? "The application is in a restricted embedded frame with no address EZJobFind can open. Fill it manually — your saved answers stay available in this panel."
-        : "EZJobFind could not reach the embedded application form. Fill it manually — your saved answers stay available in this panel.";
+        ? "The application is in a restricted embedded frame with no address XpertApply can open. Fill it manually — your saved answers stay available in this panel."
+        : "XpertApply could not reach the embedded application form. Fill it manually — your saved answers stay available in this panel.";
 
   widget = ensureWidget();
   widget.update({
@@ -901,7 +901,7 @@ async function applyFrameRemedy(): Promise<boolean> {
     if (!fallback) {
       widget?.update({
         stage: "failed",
-        message: "Without permission for the embedded form, EZJobFind can't fill it here. Fill it manually, or reopen the application from EZJobFind.",
+        message: "Without permission for the embedded form, XpertApply can't fill it here. Fill it manually, or reopen the application from XpertApply.",
         recoverable: true
       });
       return true;
@@ -927,14 +927,14 @@ async function applyFrameRemedy(): Promise<boolean> {
     log.info("embedded application reopened as a tab");
     widget?.update({
       stage: "opening",
-      message: "The application opened in a new tab. EZJobFind continues there."
+      message: "The application opened in a new tab. XpertApply continues there."
     });
     return true;
   }
   log.warn("embedded application reopen refused", { reason: navigated?.error ?? "unknown" });
   widget?.update({
     stage: "failed",
-    message: "EZJobFind could not reopen the embedded application. Fill it manually — your saved answers stay available in this panel.",
+    message: "XpertApply could not reopen the embedded application. Fill it manually — your saved answers stay available in this panel.",
     recoverable: true
   });
   return true;
@@ -982,8 +982,8 @@ let authWatcher: ReturnType<typeof setInterval> | null = null;
  * Pause on an employer login screen and wait for the user to authenticate.
  *
  * What deliberately does NOT happen here:
- *   • no password is ever typed. JobPilot has no employer credential and the
- *     user's JobPilot password is not one — it is never read, sent, or stored;
+ *   • no password is ever typed. XpertApply has no employer credential and the
+ *     user's XpertApply password is not one — it is never read, sent, or stored;
  *   • no account is created;
  *   • no CAPTCHA, MFA, passkey, SSO or email verification is touched.
  *
@@ -1002,7 +1002,7 @@ async function handleEmployerAuth(): Promise<void> {
   widget.update({
     stage: "detecting",
     message:
-      "Sign in to continue. Use your existing employer account or create one — EZJobFind will resume once the application form opens."
+      "Sign in to continue. Use your existing employer account or create one — XpertApply will resume once the application form opens."
   });
   void sendRuntime({
     type: MSG.EMPLOYER_AUTH_REQUIRED,
@@ -1164,7 +1164,7 @@ async function activateApplicationSurfaceOnce(): Promise<SurfaceActivation> {
     widget = ensureWidget();
     widget.update({
       stage: "failed",
-      message: "EZJobFind could not preserve the application session before opening the employer form. Reconnect, then try again.",
+      message: "XpertApply could not preserve the application session before opening the employer form. Reconnect, then try again.",
       recoverable: true,
       offerReconnect: true
     });
@@ -1203,7 +1203,7 @@ async function activateApplicationSurfaceOnce(): Promise<SurfaceActivation> {
       widget.update({
         stage: "failed",
         message:
-          "A cookie or consent banner is covering the apply button, and it only offers options EZJobFind won\u2019t choose for you. Dismiss it, then choose Open application form.",
+          "A cookie or consent banner is covering the apply button, and it only offers options XpertApply won\u2019t choose for you. Dismiss it, then choose Open application form.",
         recoverable: true,
         offerOpenApplication: true
       });
@@ -1300,7 +1300,7 @@ function offerUserGestureActivation(): void {
   widget = ensureWidget();
   widget.update({
     stage: "failed",
-    message: "Click once to open the application form. EZJobFind will continue automatically.",
+    message: "Click once to open the application form. XpertApply will continue automatically.",
     recoverable: true,
     offerOpenApplication: true
   });
@@ -1333,7 +1333,7 @@ async function manuallyOpenApplication(): Promise<void> {
   if (transition === "none") {
     widget?.update({
       stage: "failed",
-      message: "That didn\u2019t open the application. Continue on the employer\u2019s page and EZJobFind will resume when the form appears.",
+      message: "That didn\u2019t open the application. Continue on the employer\u2019s page and XpertApply will resume when the form appears.",
       recoverable: true,
       offerOpenApplication: true
     });
@@ -1451,7 +1451,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     // An unresolved root is EXPECTED state while the application has not been
     // revealed yet (the live Airbnb page ships "Role overview" selected and no
     // Greenhouse iframe at all). Logging it at warn made Chrome's extension
-    // error page show "[JobPilot] application root unresolved [object Object]"
+    // error page show "[XpertApply] application root unresolved [object Object]"
     // during entirely normal probing.
     log.debug(`application root unresolved (${formRoot.reason ?? "unknown"}), ${formRoot.candidates.length} candidate(s)`);
 
@@ -1460,7 +1460,7 @@ async function fill(reason: AutofillReason): Promise<void> {
       widget?.update({
         stage: "failed",
         message:
-          "EZJobFind found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it."
+          "XpertApply found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it."
       });
       void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: "APPLICATION_FORM_AMBIGUOUS" });
       return;
@@ -1539,7 +1539,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     lifecycle.transition("POST_PARSE_REDISCOVERY_FAILED", formRoot.reason ?? "application_root_missing");
     running = false;
     automaticRunSettled = true;
-    widget?.update({ stage: "failed", message: "The employer form changed, but EZJobFind could not safely reacquire it. Use Rescan application." });
+    widget?.update({ stage: "failed", message: "The employer form changed, but XpertApply could not safely reacquire it. Use Rescan application." });
     return;
   }
   const currentRoot = formRoot.root as ParentNode;
@@ -1679,7 +1679,7 @@ async function fill(reason: AutofillReason): Promise<void> {
       widget?.update({
         stage: "review",
         stageLabel: "Autofill incomplete",
-        message: "EZJobFind could not verify the current application form. Rescan the application before submitting.",
+        message: "XpertApply could not verify the current application form. Rescan the application before submitting.",
         lifecyclePhase: "TECHNICAL_REVIEW_REQUIRED",
         finalTechnicalIssues: 1
       });
@@ -2228,7 +2228,7 @@ async function resolveAndApply(
     }
     widget?.update({
       stage: "failed",
-      message: "EZJobFind's extension and answer service use different contracts. Reload the current local build.",
+      message: "XpertApply's extension and answer service use different contracts. Reload the current local build.",
       recoverable: false,
       ...authoritativeTotals()
     });
@@ -3177,7 +3177,7 @@ function refreshLedgerCounts(): void {
 }
 
 /**
- * Turn on "Teach JobPilot": observe the user completing THIS application inside
+ * Turn on "Teach XpertApply": observe the user completing THIS application inside
  * the verified form root, and offer to remember each answer. Nothing is ever
  * persisted without the user picking a scope in the widget.
  */

@@ -2,7 +2,7 @@
 
 SimplifyJobs and Pitt CSC maintain machine-readable new-grad and internship
 lists in public GitHub repositories. The records include their discovery date
-and, importantly for JobPilot, a direct employer/ATS application URL. We read
+and, importantly for XpertApply, a direct employer/ATS application URL. We read
 the published JSON and the public, server-rendered Simplify company profile.
 The profile's verified official website is used for branding; a logo URL is
 never guessed from a Simplify UUID.

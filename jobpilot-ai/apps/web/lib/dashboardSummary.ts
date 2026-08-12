@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { readAuthToken } from "@/lib/authToken";
 
 /**
  * The Dashboard's single data source.
@@ -103,7 +104,7 @@ let inFlight: Promise<DashboardSummary> | null = null;
  */
 function currentToken(): string {
   if (typeof window === "undefined") return "";
-  return window.localStorage.getItem("jobpilot_token") ?? "";
+  return readAuthToken() ?? "";
 }
 
 /** The cache entry, only if it belongs to whoever is signed in right now. */

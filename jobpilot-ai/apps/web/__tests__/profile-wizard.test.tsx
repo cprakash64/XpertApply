@@ -31,7 +31,7 @@ function mockProfileFetch(existingProfile: Record<string, unknown> | null = null
                 technologies: ["Python"]
               }
             ],
-            projects: [{ name: "JobPilot AI", bullets: ["Built import preview"] }],
+            projects: [{ name: "Ledger Sync", bullets: ["Built import preview"] }],
             skills: ["Python", "FastAPI"],
             certifications: [],
             awards: [],

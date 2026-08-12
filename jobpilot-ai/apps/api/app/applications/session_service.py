@@ -251,6 +251,9 @@ async def create_application_session(db: Session, user: User, job: JobPosting) -
         session.launch_token_hash = hash_token(raw_launch_token)
 
         log_action(db, session.id, ApplicationActionType.session_created, metadata={"job_id": job.id})
+        # `source` is persisted on the action row and read back by the audit
+        # trail, so it keeps its pre-rebrand value: changing it would split the
+        # history of a single session across two names for the same actor.
         if resume_doc:
             log_action(db, session.id, ApplicationActionType.resume_generated, source="jobpilot",
                        metadata={"document_id": resume_doc.id})
@@ -369,7 +372,7 @@ def complete_session(
     """Close an apply session as submitted and move the job into the Tracker.
 
     Only ever on confirmed submission — an explicit user confirmation, or an
-    extension/auto-apply event that already established the evidence. JobPilot
+    extension/auto-apply event that already established the evidence. XpertApply
     never infers submission on its own.
 
     The application record itself is written by

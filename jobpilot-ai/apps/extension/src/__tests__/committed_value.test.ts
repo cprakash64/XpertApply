@@ -2,7 +2,7 @@
  * Did the control actually keep the answer?
  *
  * The live TikTok defect: work authorization visibly displayed "Yes" and
- * JobPilot still reported "JobPilot could not keep this selection", offering to
+ * XpertApply still reported "XpertApply could not keep this selection", offering to
  * re-select an answer that was already correct. The comparison was an exact
  * string equality against the trigger's whole `textContent`, and a real widget's
  * trigger is never a bare text node — it carries a caret glyph, a clear

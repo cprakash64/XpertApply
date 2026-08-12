@@ -1,7 +1,7 @@
 """Public-web fallback: what it is allowed to believe.
 
 The model is a retrieval reporter, not a source of truth. Every test here is a
-way it could invent a person, and the assertion is that JobPilot throws the row
+way it could invent a person, and the assertion is that XpertApply throws the row
 away. No test makes a network call: the OpenAI client is a stub.
 """
 
@@ -176,7 +176,7 @@ async def test_past_employment_only_evidence_is_rejected(excerpt):
 @pytest.mark.anyio
 async def test_an_uncorroborated_profile_url_is_dropped_but_the_person_is_kept():
     # The URL appears in no retrieved source. The person's identity rests on the
-    # cited team page, so they survive — without a link JobPilot cannot stand
+    # cited team page, so they survive — without a link XpertApply cannot stand
     # behind. Showing a guessed profile would point at a real stranger.
     outcome = await discover(
         {

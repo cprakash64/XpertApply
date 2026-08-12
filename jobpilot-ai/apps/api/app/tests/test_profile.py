@@ -100,7 +100,7 @@ def test_career_profile_replace_supports_education_experience_projects(client: T
             ],
             "projects": [
                 {
-                    "name": "JobPilot",
+                    "name": "Ledger Sync",
                     "description": "Career platform",
                     "bullets": ["Built profile wizard"],
                     "technologies": ["React"],
@@ -114,7 +114,7 @@ def test_career_profile_replace_supports_education_experience_projects(client: T
     body = response.json()
     assert body["education"][0]["school"] == "Arizona State University"
     assert body["experience"][0]["title"] == "Backend Engineer Intern"
-    assert body["projects"][0]["name"] == "JobPilot"
+    assert body["projects"][0]["name"] == "Ledger Sync"
 
 
 def test_profile_import_from_pasted_text_returns_structured_draft(client: TestClient) -> None:

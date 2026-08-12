@@ -24,7 +24,7 @@ down_revision = "0024_people_persistence_usage"
 branch_labels = None
 depends_on = None
 
-# (column, previous length). Every one carries values JobPilot does not author.
+# (column, previous length). Every one carries values XpertApply does not author.
 _WIDENED: tuple[tuple[str, int], ...] = (
     ("title", 255),
     ("company", 255),

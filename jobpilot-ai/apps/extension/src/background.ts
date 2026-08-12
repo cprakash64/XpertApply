@@ -2,7 +2,7 @@
  * MV3 service worker: the canonical launch state machine.
  *
  * Responsibilities:
- *   • Accept an acknowledged, versioned handoff from the JobPilot bridge,
+ *   • Accept an acknowledged, versioned handoff from the XpertApply bridge,
  *     persist it before navigation, then create/focus the employer tab and bind it
  *     exact tab id in chrome.storage.session.
  *   • Drive a pull-based readiness handshake with the employer content script
@@ -88,11 +88,11 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 /**
- * A JobPilot tab that was already open when the extension was installed or
+ * An XpertApply tab that was already open when the extension was installed or
  * reloaded has an orphaned content script — `chrome.runtime` in that isolated
  * world is invalidated, so it can never bridge to this (new) background no
  * matter how long the page waits. Re-inject the (ATS-only-code-free)
- * web-origin bridge into every already-open, approved JobPilot tab so the
+ * web-origin bridge into every already-open, approved XpertApply tab so the
  * user doesn't have to know to manually refresh. Never touches ATS/employer
  * tabs — only the exact origins the bridge role is allowed to run on.
  */
@@ -131,7 +131,7 @@ async function reviveAfterRuntimeReset(): Promise<void> {
   await reviveOpenJobPilotTabs();
 
   // If an employer tab was already open, its old content script and widget are
-  // just as stale as the JobPilot bridge. Durable local state contains the
+  // just as stale as the XpertApply bridge. Durable local state contains the
   // exact bound tab, so revive only that user-authorized application tab.
   const active = await getActive().catch(() => null);
   if (
@@ -459,7 +459,7 @@ function originJoinsWorkflow(workflowUrl: string, candidate: URL): boolean {
  * first exchange and returns 401 afterwards. So a destination tab that arrives
  * without the package re-exchanges a spent token, gets 401, and the widget
  * reports "Your session is no longer valid. Reopen the application from
- * JobPilot." — on a perfectly healthy session, purely because the binding moved
+ * XpertApply." — on a perfectly healthy session, purely because the binding moved
  * tabs. Copying the package is what makes a cross-tab rebind survivable.
  */
 async function bindTabToLaunch(
@@ -571,7 +571,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 
   switch (message.type) {
     case MSG.HANDSHAKE:
-      // Remember which JobPilot deployment the user is actually using, so a
+      // Remember which XpertApply deployment the user is actually using, so a
       // later application can tell whether the extension is pointed somewhere
       // else. Only the CATEGORY is kept, and only for an approved origin.
       void rememberWebRuntime(message.origin, message.apiBase);
@@ -756,7 +756,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
             apiBase: safeApiBase(await getApiBase())
           },
           sidePanelIdentity,
-          // The environment of the JobPilot web app that launched this
+          // The environment of the XpertApply web app that launched this
           // application, recorded at launch. `null` when nothing launched it.
           ...(await launchWebRuntime())
         });
@@ -861,7 +861,7 @@ function handleLaunchRequest(
             ok: false,
             type: MSG.LAUNCH_FAILED,
             code: "HOST_PERMISSION_MISSING",
-            message: "EZJobFind does not have access to the employer's site. Open chrome://extensions, choose EZJobFind, and set Site access to \"On all sites\"."
+            message: "XpertApply does not have access to the employer's site. Open chrome://extensions, choose XpertApply, and set Site access to \"On all sites\"."
           }
         : { ok: false, type: MSG.LAUNCH_FAILED, code: "TAB_OPEN_FAILED", message: safeMessage(err) });
     }
@@ -1048,7 +1048,7 @@ async function handleContentReady(
 // Application-frame inspection
 //
 // The live failure: the destination application renders inside an iframe and
-// JobPilot said "the application is inside a frame JobPilot isn't allowed to
+// XpertApply said "the application is inside a frame XpertApply isn't allowed to
 // read" — a verdict derived solely from `contentDocument` throwing, which only
 // ever proves the frame is cross-origin. Four different causes hide behind that
 // sentence, and each has a different remedy:
@@ -1603,10 +1603,10 @@ async function handleGetApplicationOverrides(
 const WEB_RUNTIME_KEY = "jobpilotWebRuntimeV2";
 
 /**
- * Record the environment CATEGORY of the JobPilot web app that is talking to us.
+ * Record the environment CATEGORY of the XpertApply web app that is talking to us.
  *
  * Stored rather than derived on demand because by the time an employer page is
- * open, the JobPilot tab may be long gone. A category — never the origin — so
+ * open, the XpertApply tab may be long gone. A category — never the origin — so
  * the value is safe to surface in diagnostics.
  */
 async function rememberWebRuntime(
@@ -1814,7 +1814,7 @@ async function applyProgress(tabId: number | undefined, p: ProgressPayload): Pro
 
 // Terminal handoff/session failures: retrying re-asks the background the same
 // question and gets the same answer, so the widget/side panel must not offer
-// a Retry that just repeats it — the user has to go back to JobPilot instead.
+// a Retry that just repeats it — the user has to go back to XpertApply instead.
 const TERMINAL_FAILURE_CODES = new Set([
   "HANDOFF_URL_MISMATCH", "WRONG_TAB", "HANDOFF_NOT_FOUND", "HANDOFF_EXPIRED",
   "HANDOFF_SCHEMA_OUTDATED", "TOKEN_CONSUMED", "SESSION_UNAUTHORIZED", "SESSION_NOT_FOUND"
@@ -1913,7 +1913,7 @@ export function frameRegistrySnapshot(tabId: number): RegisteredFrame[] {
  * The live cross-origin failure: the application sits in an iframe, so the top
  * frame's own document genuinely has no application and reports
  * NO_APPLICATION_FORM. Because that was treated as a tab-level verdict, the
- * widget showed "JobPilot couldn't identify the application form on this page"
+ * widget showed "XpertApply couldn't identify the application form on this page"
  * while the iframe held the entire application.
  *
  * These codes may only become a tab failure once NO frame in the tab has a

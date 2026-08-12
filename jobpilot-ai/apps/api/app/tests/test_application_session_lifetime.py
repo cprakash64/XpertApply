@@ -3,7 +3,7 @@
 Root cause these cover: the session deadline was fixed at creation, so the
 genuine path — listing, Apply, employer login, password reset or email
 verification, then the application form — could outlast it and fail mid-flight
-with "Your session is no longer valid. Reopen the application from JobPilot."
+with "Your session is no longer valid. Reopen the application from XpertApply."
 
 The window now slides on authenticated activity, bounded by an absolute ceiling
 so this is not "sessions never expire".

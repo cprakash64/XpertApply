@@ -63,7 +63,7 @@ export interface RepeatableSectionAdapter {
 
 const POLICY: Record<SectionEnum, SectionPolicy> = {
   // Work history and education come from the user's own confirmed profile
-  // records, entered and reviewed by them in JobPilot. They are the two sections
+  // records, entered and reviewed by them in XpertApply. They are the two sections
   // an application is most incomplete without.
   work_experience: "AUTO_FILL_SAFE",
   education: "AUTO_FILL_SAFE",

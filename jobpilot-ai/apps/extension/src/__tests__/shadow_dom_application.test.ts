@@ -12,7 +12,7 @@
  *   • the form-root resolver scored every candidate `no_fields`;
  *   • readiness saw no application evidence, timed out, noticed the tracking
  *     iframe was unreadable, and reported APPLICATION_FRAME_UNAVAILABLE —
- *     surfaced to the user as "JobPilot could not reach the embedded
+ *     surfaced to the user as "XpertApply could not reach the embedded
  *     application form", a cross-origin frame problem that did not exist.
  *
  * The DOM below is the real page's structure, reduced to the parts that decide

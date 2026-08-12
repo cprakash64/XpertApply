@@ -1,4 +1,4 @@
-# EZJobFind repository guidance
+# XpertApply repository guidance
 
 - `apps/api` is the FastAPI/SQLAlchemy backend; add reversible Alembic migrations under
   `apps/api/alembic/versions` and never edit an already-applied migration.

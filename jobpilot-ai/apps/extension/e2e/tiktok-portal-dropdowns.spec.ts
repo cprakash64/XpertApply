@@ -3,8 +3,8 @@
  *
  * Reported from the authenticated page:
  *
- *   • work authorization visibly displayed "Yes", and JobPilot still said
- *     "JobPilot could not keep this selection" and offered to re-select it;
+ *   • work authorization visibly displayed "Yes", and XpertApply still said
+ *     "XpertApply could not keep this selection" and offered to re-select it;
  *   • sponsorship stayed blank — a separate, genuine actuation failure;
  *   • privacy consent correctly stayed manual.
  *

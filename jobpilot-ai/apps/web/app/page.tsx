@@ -44,9 +44,9 @@ import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
  * and no gradient, stock imagery, or invented social proof anywhere.
  */
 export const metadata: Metadata = {
-  // `absolute` because the root layout applies a "%s · EZJobFind" template, and
+  // `absolute` because the root layout applies a "%s · XpertApply" template, and
   // the landing page's title already ends in the product name.
-  title: { absolute: `${PRODUCT_NAME} — Find, Prepare, and Apply Smarter` },
+  title: { absolute: `${PRODUCT_NAME} | AI Job Application Copilot` },
   alternates: { canonical: siteUrl() }
 };
 
@@ -113,7 +113,7 @@ const WORKFLOW = [
  * Built as a string rather than inline JSX on purpose.
  *
  * JSX collapses the whitespace around an expression when the surrounding text
- * wraps onto further lines, which silently rendered "The EZJobFindChrome
+ * wraps onto further lines, which silently rendered "The XpertApplyChrome
  * extension". Any sentence that interpolates the product name mid-paragraph is
  * therefore assembled here, where the spacing is explicit and cannot be eaten by
  * the compiler.

@@ -1,23 +1,44 @@
 /**
  * Public product identity and deployment configuration.
  *
- * Everything here is read from `NEXT_PUBLIC_*` values so a deployment can point
- * the product at its own domain and its own Chrome Web Store listing without a
- * code change. Next.js inlines `process.env.NEXT_PUBLIC_*` at build time, so the
- * reads deliberately live inside functions: a module-level constant would be
- * frozen at import time in tests, and the literal substitution works the same
- * either way in a real build.
+ * Everything deployment-shaped here is read from `NEXT_PUBLIC_*` values so a
+ * deployment can point the product at its own domain and its own Chrome Web
+ * Store listing without a code change. Next.js inlines
+ * `process.env.NEXT_PUBLIC_*` at build time, so the reads deliberately live
+ * inside functions: a module-level constant would be frozen at import time in
+ * tests, and the literal substitution works the same either way in a real build.
  *
- * The product NAME is a constant rather than configuration — it is the brand,
- * not a deployment detail — but it lives here so there is exactly one place that
- * spells it.
+ * The BRAND, by contrast, is a constant rather than configuration — it is who
+ * the product is, not where it happens to be hosted. It lives here so there is
+ * exactly one place in the web app that spells the name, the tagline, and the
+ * domain. Changing the brand should mean editing this object and nothing else.
  */
 
-/** The user-facing product name. Spelled exactly this way everywhere. */
-export const PRODUCT_NAME = "EZJobFind";
+/**
+ * The canonical product identity.
+ *
+ * `name` is what the interface says almost everywhere. `tagline` is reserved for
+ * the few places that genuinely introduce the product to someone who has never
+ * seen it — the landing hero, the store listing, the README. Repeating it on
+ * every screen makes it read as a slogan rather than a description.
+ */
+export const BRAND = {
+  name: "XpertApply",
+  tagline: "Your AI Job Application Copilot",
+  domain: "xpertapply.com"
+} as const;
+
+/**
+ * The user-facing product name. Spelled exactly this way everywhere.
+ *
+ * Kept as its own export because it is by far the most-imported piece of the
+ * brand, and `PRODUCT_NAME` reads better than `BRAND.name` inside a template
+ * literal in the middle of a sentence.
+ */
+export const PRODUCT_NAME = BRAND.name;
 
 /** Canonical production origin, used when nothing is configured. */
-const DEFAULT_SITE_URL = "https://ezjobfind.com";
+const DEFAULT_SITE_URL = `https://${BRAND.domain}`;
 
 /**
  * Hosts a configured extension URL is allowed to point at.

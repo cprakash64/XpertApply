@@ -1,4 +1,4 @@
-"""Celery worker tasks + beat schedule for JobPilot.
+"""Celery worker tasks + beat schedule for XpertApply.
 
 Runs in dedicated ``worker`` and ``scheduler`` (beat) containers, never inside
 the API replicas, so multiple API instances can never trigger duplicate daily
@@ -19,6 +19,9 @@ from app.jobs.scoring_service import active_user_ids, score_users_for_job
 
 logger = logging.getLogger("jobpilot.worker")
 
+# The Celery app name is part of how tasks are addressed on the broker, so it
+# keeps its pre-rebrand spelling: renaming it would orphan every task already
+# queued under the old name at the moment of deploy.
 celery_app = Celery("jobpilot", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.timezone = settings.job_ingestion_timezone
 celery_app.conf.task_default_retry_delay = 30

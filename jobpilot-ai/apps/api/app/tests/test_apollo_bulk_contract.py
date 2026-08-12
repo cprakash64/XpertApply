@@ -198,7 +198,7 @@ async def test_bulk_request_carries_the_documented_headers_and_no_reveal_flags(t
     assert request.headers["accept"] == "application/json"
     # Present, but never snapshotted.
     assert request.headers.get("x-api-key")
-    # JobPilot wants LinkedIn URLs, not personal contact details.
+    # XpertApply wants LinkedIn URLs, not personal contact details.
     query = str(request.url.query)
     body = json.dumps(transport.body_for(BULK_PATH))
     for flag in ("reveal_personal_emails=true", "reveal_phone_number=true"):

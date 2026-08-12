@@ -7,7 +7,7 @@ import fs from "node:fs";
  * Listing -> employer login session handoff, against the REAL built extension.
  *
  * The live failure this reproduces: "Your session is no longer valid. Reopen
- * the application from JobPilot." appears the moment the employer login page
+ * the application from XpertApply." appears the moment the employer login page
  * loads, even though Apply navigation worked.
  *
  * The fidelity that matters here is the SINGLE-USE launch token. The real
@@ -152,7 +152,7 @@ async function seedLaunch(worker: Worker, applicationId: string) {
 function collectStates(target: { on: (event: "console", fn: (m: { text(): string }) => void) => void }, sink: string[], label: string) {
   target.on("console", (message) => {
     const text = message.text();
-    if (text.includes("[EZJobFind]")) sink.push(`${label}: ${text.slice(0, 200)}`);
+    if (text.includes("[XpertApply]")) sink.push(`${label}: ${text.slice(0, 200)}`);
   });
 }
 
@@ -314,7 +314,7 @@ test("the widget offers Reconnect rather than Retry when no session is bound", a
 
   const widget = fs.readFileSync(path.join(here, "..", "src", "content", "widget.ts"), "utf8");
   expect(widget).toContain('data-a="reconnect"');
-  expect(widget).toContain("Reconnect to EZJobFind");
+  expect(widget).toContain("Reconnect to XpertApply");
   expect(widget).toContain("Reconnecting…");
   // Reconnect replaces Retry as the primary action in that state.
   expect(widget).toContain('if (retryBtn && value.offerReconnect) retryBtn.style.display = "none";');

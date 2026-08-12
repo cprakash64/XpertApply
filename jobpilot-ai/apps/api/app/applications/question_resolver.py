@@ -223,6 +223,10 @@ _SOURCE_PREFERENCES: dict[str, tuple[str, ...]] = {
     "indeed": ("indeed", "online job board", "job board", "job search website"),
     "handshake": ("handshake", "university", "career fair", "job board"),
     "simplifyjobs": ("online job board", "job board", "job search website"),
+    # A persisted `job_sources.source_type` value, not a display string. It is
+    # matched against rows that already exist in the database, so it keeps the
+    # pre-rebrand spelling — renaming the key would silently stop resolving the
+    # question for every job ingested under it.
     "jobpilot": ("online job board", "job board", "job search website"),
     "greenhouse": ("company website", "company careers site"),
     "company_site": ("company website", "company careers site", "our website"),

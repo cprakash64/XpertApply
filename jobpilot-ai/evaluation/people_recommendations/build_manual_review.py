@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a safe, manually labelable 20-job People review report.
 
-This reads persisted JobPilot data only. It never invokes a provider and omits
+This reads persisted XpertApply data only. It never invokes a provider and omits
 names, emails, profile URLs, provider IDs, and raw payloads.
 """
 

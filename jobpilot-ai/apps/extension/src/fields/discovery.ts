@@ -7,7 +7,7 @@
  * Every actionable control — native OR custom (ARIA combobox/listbox, React
  * Select) — is discovered. Controls that are deliberately excluded (honeypots,
  * hidden, disabled, navigation) are RECORDED with a reason rather than silently
- * dropped, so nothing disappears from reporting merely because JobPilot cannot
+ * dropped, so nothing disappears from reporting merely because XpertApply cannot
  * fill it. See `discoverAll` for the exclusion ledger.
  *
  * uids are STABLE across rescans of the same live element (WeakMap-backed): the

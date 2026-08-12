@@ -256,7 +256,7 @@ function containsToken(haystack: string, token: string): boolean {
  * Did the control actually commit the approved answer?
  *
  * The live TikTok defect: work authorization visibly displayed "Yes", and
- * JobPilot still reported "could not keep this selection". The comparison was
+ * XpertApply still reported "could not keep this selection". The comparison was
  * `normalize(trigger.textContent) === "yes"`, and a real widget's trigger is not
  * a bare text node — it carries a caret glyph, a clear affordance, a visually
  * hidden label, or the placeholder it replaced. Any one of those makes an exact

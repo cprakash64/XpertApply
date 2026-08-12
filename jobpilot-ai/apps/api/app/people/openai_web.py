@@ -16,7 +16,7 @@ The model is asked to *report what it found*, never to reason about who probably
 works somewhere. Anything it asserts without a citation is dropped here.
 
 Nothing in this module fetches a web page itself: the OpenAI hosted tool does
-the retrieval, so JobPilot never touches authenticated pages, robots-restricted
+the retrieval, so XpertApply never touches authenticated pages, robots-restricted
 paths, or anything behind a login or CAPTCHA.
 """
 

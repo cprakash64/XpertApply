@@ -9,7 +9,7 @@ import {
 } from "../lib/outreachHandoff";
 
 /**
- * JobPilot never sends a message. Clicking a channel action produces an
+ * XpertApply never sends a message. Clicking a channel action produces an
  * editable draft; the user reviews it and hands off to LinkedIn or their mail
  * client themselves. These tests cover the L3Harris scenario where valid
  * managers rendered but every draft attempt failed.

@@ -51,7 +51,7 @@ describe("ATS resume-parse lifecycle", () => {
     expect(JSON.stringify(entry)).not.toContain("resume text");
   });
 
-  it("ignores JobPilot widget-only mutations", async () => {
+  it("ignores XpertApply widget-only mutations", async () => {
     const form = document.createElement("form"); document.body.appendChild(form);
     const widget = document.createElement("div"); widget.id = "jobpilot-assisted-apply"; document.body.appendChild(widget);
     const run = new AtsLifecycleRun(66, "build-test");

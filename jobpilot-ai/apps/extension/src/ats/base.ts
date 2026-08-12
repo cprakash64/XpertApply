@@ -49,7 +49,7 @@ export function baseMap(fields: DiscoveredField[], session: ApplicationSessionDa
   return buildMappings(fields, session);
 }
 
-/** Locate the final submit control — for WARNING only. JobPilot never clicks it. */
+/** Locate the final submit control — for WARNING only. XpertApply never clicks it. */
 export function findGenericSubmit(context: PageContext): HTMLElement | null {
   const doc = context.document;
   const explicit = deepQuery<HTMLElement>(doc, "button[type=submit], input[type=submit]");
@@ -100,7 +100,7 @@ export function discoverUploadInputs(root: ParentNode): { input: HTMLInputElemen
 
   // A "drop your resume here and we'll fill the form for you" control is an
   // IMPORT, not an attachment: uploading into it re-parses the document and
-  // overwrites fields the user (or JobPilot) already answered. It is used only
+  // overwrites fields the user (or XpertApply) already answered. It is used only
   // when the destination offers no real attachment field of the same kind.
   const out: { input: HTMLInputElement; kind: "resume" | "cover-letter" }[] = [];
   for (const kind of ["resume", "cover-letter"] as const) {

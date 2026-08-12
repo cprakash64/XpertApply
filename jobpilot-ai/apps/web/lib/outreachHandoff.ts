@@ -1,7 +1,7 @@
 /**
  * Channel handoff for outreach drafts.
  *
- * JobPilot never sends a message. It produces an editable draft and hands the
+ * XpertApply never sends a message. It produces an editable draft and hands the
  * user off to LinkedIn or their email client, which is where they review and
  * send it themselves.
  *

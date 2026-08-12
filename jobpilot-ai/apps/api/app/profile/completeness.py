@@ -5,7 +5,7 @@ Two different questions, deliberately kept apart:
 * **Completion** answers "how much of my career profile have I filled in?" It is
   what the Profile overview and the Dashboard's next-action hint report, and it
   weighs the things that make matching and document generation good.
-* **Autofill readiness** answers "can JobPilot fill in an employer's application
+* **Autofill readiness** answers "can XpertApply fill in an employer's application
   form on my behalf?" That needs the canonical *identity* facts an ATS asks for
   — legal name, an application email, a phone, a location, and the work
   authorization answers — which is a different and stricter set.
@@ -257,7 +257,7 @@ def profile_completion(signals: ProfileSignals) -> dict:
 
 
 def autofill_readiness(signals: ProfileSignals) -> dict:
-    """Whether JobPilot holds the canonical facts an application form needs."""
+    """Whether XpertApply holds the canonical facts an application form needs."""
     return _score(signals, AUTOFILL_REQUIREMENTS)
 
 

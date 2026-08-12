@@ -232,7 +232,10 @@ describe("Jobs workspace", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Jobs" })).toBeInTheDocument();
     expect(sidebar()).toHaveAttribute("data-collapsed", "false");
-    expect(within(sidebar()).getByText("EZJobFind")).toBeInTheDocument();
+    // Queried by accessible name, not by text: the wordmark renders "Xpert" and
+    // "Apply" as two spans so the seam can carry the brand's colour shift, and
+    // the link's name is what a user of assistive technology actually receives.
+    expect(within(sidebar()).getByRole("link", { name: "XpertApply home" })).toBeInTheDocument();
     expect(screen.getAllByTestId("job-card")).toHaveLength(5);
     expect(screen.queryByRole("tablist", { name: "Job sections" })).not.toBeInTheDocument();
     expect(window.location.search).toBe("");
@@ -277,7 +280,7 @@ describe("Jobs workspace", () => {
     await waitFor(() => expect(sidebar()).toHaveAttribute("data-collapsed", "true"));
     expect(sidebar().className).toContain("w-14");
     // Branding and navigation stay reachable, with accessible names.
-    expect(within(sidebar()).getByLabelText("EZJobFind home")).toBeInTheDocument();
+    expect(within(sidebar()).getByLabelText("XpertApply home")).toBeInTheDocument();
     expect(within(sidebar()).getByRole("link", { name: "Find Jobs" })).toHaveAttribute(
       "aria-current",
       "page"

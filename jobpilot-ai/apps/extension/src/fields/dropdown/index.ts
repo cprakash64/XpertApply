@@ -1,6 +1,6 @@
 /**
  * The ONE dropdown fill path. Automatic autofill and the user's own choice in
- * the JobPilot widget both call `fillDropdown` — there is no separate simplified
+ * the XpertApply widget both call `fillDropdown` — there is no separate simplified
  * widget path.
  *
  * Guarantees:

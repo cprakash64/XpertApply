@@ -61,7 +61,7 @@ const FULL_CAREER = {
   ],
   projects: [
     { name: "Luna AI", description: "RAG pipeline over personal notes", technologies: ["Python", "LangChain"], bullets: [] },
-    { name: "JobPilot", description: "", technologies: [], bullets: ["Automated applications"] },
+    { name: "Ledger Sync", description: "", technologies: [], bullets: ["Automated applications"] },
     { name: "Third", description: "", technologies: [], bullets: [] },
     { name: "Fourth", description: "", technologies: [], bullets: [] }
   ],

@@ -24,9 +24,15 @@ from app.routes import (
 )
 from app.services.readiness import check_readiness
 
+# The `jobpilot.*` logger namespace predates the product's current name and is
+# deliberately left alone. It is the root every module's logger hangs off, and
+# it is what deployed log filters, dashboards and alert rules select on — a
+# rename would silently drop existing routing while changing nothing a user
+# sees. `logging.getLogger("jobpilot")` here also sets the level for the whole
+# subtree, so every `jobpilot.<area>` child inherits it.
 logger = logging.getLogger("jobpilot")
 # Uvicorn configures its own named loggers but leaves application loggers at
-# the process default (WARNING). Keep JobPilot's secret-free startup and
+# the process default (WARNING). Keep XpertApply's secret-free startup and
 # operational diagnostics observable without changing third-party log levels.
 logger.setLevel(logging.INFO)
 
@@ -74,9 +80,11 @@ async def lifespan(_app: FastAPI):
 _docs_on = settings.docs_are_enabled()
 
 app = FastAPI(
-    title="JobPilot AI API",
+    title="XpertApply API",
     version="0.1.0",
-    description="Compliant, user-controlled AI job-search and application copilot.",
+    description="XpertApply — Your AI Job Application Copilot. Compliant and user-controlled: "
+    "it discovers roles, scores fit, tailors documents, and prepares applications, "
+    "but never submits an employer form on the user's behalf.",
     lifespan=lifespan,
     docs_url="/docs" if _docs_on else None,
     redoc_url="/redoc" if _docs_on else None,

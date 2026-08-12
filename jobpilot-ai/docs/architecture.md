@@ -1,6 +1,6 @@
 # Architecture
 
-EZJobFind is a monorepo with a Next.js frontend, FastAPI backend, shared schema package, Docker Compose infrastructure, and GitHub Actions CI.
+XpertApply is a monorepo with a Next.js frontend, FastAPI backend, shared schema package, Docker Compose infrastructure, and GitHub Actions CI.
 
 ## Backend
 

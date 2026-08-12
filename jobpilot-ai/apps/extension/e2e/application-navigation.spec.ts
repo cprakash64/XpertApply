@@ -174,7 +174,7 @@ test.describe("variants", () => {
   test("a consent-only banner offers no safe dismissal", async ({ page }) => {
     await load(page, `${VARIANTS}?variant=consent-only`);
     expect(await call(page, "ctaObstructed")).toBe(true);
-    // Only "Accept all" remains, which JobPilot will not choose for the user.
+    // Only "Accept all" remains, which XpertApply will not choose for the user.
     expect(await call(page, "consentDismissal")).toBeNull();
   });
 

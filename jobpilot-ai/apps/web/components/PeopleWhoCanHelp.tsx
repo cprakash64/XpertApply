@@ -749,7 +749,7 @@ function PersonCard({
   /**
    * Hands the draft to the user's own mail client. The address is only ever the
    * backend-verified one, and the mail client is where the user reads, edits,
-   * and sends — JobPilot never sends anything itself.
+   * and sends — XpertApply never sends anything itself.
    */
   async function openEmail() {
     if (!verifiedEmail) return;
@@ -1307,7 +1307,7 @@ function OutreachDraft({
           * would not have fixed this: the problem is that the strings are
           * internal, not that they took up space. */}
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          Review and edit before manually sending. EZJobFind never sends this message automatically.
+          Review and edit before manually sending. XpertApply never sends this message automatically.
         </p>
       </div>
     </div>

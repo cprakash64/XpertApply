@@ -1,12 +1,12 @@
 /**
  * Two safety properties that must hold no matter what else changes:
  *
- * 1. The extension does no application-page work on JobPilot's own web app.
+ * 1. The extension does no application-page work on XpertApply's own web app.
  *    If it scanned, observed, or autofilled there it would be mutating the very
  *    page the user is reading, which is both wrong and a plausible cause of
- *    render defects on JobPilot itself.
+ *    render defects on XpertApply itself.
  *
- * 2. The user's JobPilot password never reaches an employer site, and no
+ * 2. The user's XpertApply password never reaches an employer site, and no
  *    password is ever typed by the extension at all.
  */
 
@@ -19,14 +19,14 @@ function readSource(relative: string): string {
   return readFileSync(resolve(process.cwd(), relative), "utf8");
 }
 
-describe("JobPilot origin self-exclusion", () => {
-  it("recognises every JobPilot origin", () => {
+describe("XpertApply origin self-exclusion", () => {
+  it("recognises every XpertApply origin", () => {
     for (const origin of ["http://localhost:3000", "http://127.0.0.1:3000", "https://app.jobpilot.ai"]) {
       expect(isApprovedJobPilotOrigin(origin), origin).toBe(true);
     }
   });
 
-  it("does not treat an employer or look-alike origin as JobPilot", () => {
+  it("does not treat an employer or look-alike origin as XpertApply", () => {
     for (const origin of [
       "https://boards.greenhouse.io",
       "https://jobs.lever.co",
@@ -47,7 +47,7 @@ describe("JobPilot origin self-exclusion", () => {
     expect(gate).toBeGreaterThan(-1);
     expect(atsInit).toBeGreaterThan(gate);
 
-    // The JobPilot-origin role is a message bridge only: it must not scan the
+    // The XpertApply-origin role is a message bridge only: it must not scan the
     // DOM for forms, observe mutations, or autofill.
     const webOriginRole = bootstrap.slice(
       bootstrap.indexOf("function initWebOrigin()"),
@@ -67,7 +67,7 @@ describe("JobPilot origin self-exclusion", () => {
     }
   });
 
-  it("excludes JobPilot origins from the employer content script in the manifest", () => {
+  it("excludes XpertApply origins from the employer content script in the manifest", () => {
     const manifest = JSON.parse(readSource("manifest.json"));
     const employerScript = manifest.content_scripts.find((entry: { matches: string[] }) =>
       entry.matches.includes("https://*/*")
@@ -125,7 +125,7 @@ describe("credential safety", () => {
     expect(authHandler).toContain("input.value.trim()");
   });
 
-  it("never sends a password or the JobPilot login token to the API", () => {
+  it("never sends a password or the XpertApply login token to the API", () => {
     for (const [name, source] of [["client", client], ["background", background]] as const) {
       expect(source, `${name} must not post a password`).not.toMatch(/body:\s*JSON\.stringify\(\{[^}]*password/i);
     }

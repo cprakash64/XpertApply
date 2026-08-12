@@ -465,7 +465,7 @@ def test_complete_requires_confirmation_and_updates_tracker(client: TestClient) 
     ledger = client.get("/jobs/tracker/all", headers=headers).json()["applications"]
     assert ledger == []
 
-    # Unconfirmed completion is rejected — JobPilot never assumes submission.
+    # Unconfirmed completion is rejected — XpertApply never assumes submission.
     assert client.post(f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": False}).status_code == 422
     done = client.post(f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": True})
     assert done.status_code == 200 and done.json()["status"] == "completed"

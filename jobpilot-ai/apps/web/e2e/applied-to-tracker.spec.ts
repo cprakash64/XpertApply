@@ -280,7 +280,7 @@ test("an extension-confirmed submission moves the job from Jobs to Tracker", asy
   // 8 + 10. Tracker shows it under Applied, exactly once.
   await page.goto("/tracker");
   await expect(page.getByRole("heading", { name: "Machine Learning Engineer" })).toHaveCount(1);
-  await expect(page.getByText(/confirmed by the ezjobfind extension/i)).toBeVisible();
+  await expect(page.getByText(/confirmed by the xpertapply extension/i)).toBeVisible();
 
   // 9. Back on Jobs after a full navigation, it is still absent.
   await page.goto("/jobs");

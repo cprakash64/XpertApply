@@ -7,7 +7,7 @@
  * redirect anyone off-product.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PRODUCT_NAME, chromeExtensionUrl, siteUrl } from "../lib/siteConfig";
+import { BRAND, PRODUCT_NAME, chromeExtensionUrl, siteUrl } from "../lib/siteConfig";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -15,26 +15,39 @@ afterEach(() => {
 
 describe("product identity", () => {
   it("spells the brand exactly one way", () => {
-    expect(PRODUCT_NAME).toBe("EZJobFind");
+    expect(PRODUCT_NAME).toBe("XpertApply");
+    expect(BRAND.name).toBe("XpertApply");
+    expect(PRODUCT_NAME).toBe(BRAND.name);
+  });
+
+  it("carries the tagline and domain alongside the name", () => {
+    // Everything brand-shaped lives in one object, so a future rename is one
+    // edit rather than a repository-wide search.
+    expect(BRAND.tagline).toBe("Your AI Job Application Copilot");
+    expect(BRAND.domain).toBe("xpertapply.com");
+  });
+
+  it("carries no retired product name", () => {
+    expect(JSON.stringify(BRAND)).not.toMatch(/EZJobFind|JobPilot/i);
   });
 });
 
 describe("siteUrl", () => {
   it("defaults to the production domain", () => {
-    expect(siteUrl()).toBe("https://ezjobfind.com");
+    expect(siteUrl()).toBe("https://xpertapply.com");
   });
 
   it("uses a configured origin and strips the trailing slash", () => {
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://staging.ezjobfind.com/");
-    expect(siteUrl()).toBe("https://staging.ezjobfind.com");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://staging.xpertapply.com/");
+    expect(siteUrl()).toBe("https://staging.xpertapply.com");
   });
 
   it("treats an empty or unparseable value as unset", () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "   ");
-    expect(siteUrl()).toBe("https://ezjobfind.com");
+    expect(siteUrl()).toBe("https://xpertapply.com");
 
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "not a url");
-    expect(siteUrl()).toBe("https://ezjobfind.com");
+    expect(siteUrl()).toBe("https://xpertapply.com");
   });
 });
 
@@ -47,7 +60,7 @@ describe("chromeExtensionUrl", () => {
   });
 
   it("accepts a Chrome Web Store listing", () => {
-    const url = "https://chromewebstore.google.com/detail/ezjobfind/abcdefghijklmnopabcdefghijklmnop";
+    const url = "https://chromewebstore.google.com/detail/xpertapply/abcdefghijklmnopabcdefghijklmnop";
     vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url);
     expect(chromeExtensionUrl()).toBe(url);
   });
@@ -55,7 +68,7 @@ describe("chromeExtensionUrl", () => {
   it("accepts the legacy store host", () => {
     vi.stubEnv(
       "NEXT_PUBLIC_CHROME_EXTENSION_URL",
-      "https://chrome.google.com/webstore/detail/ezjobfind/abcdefghijklmnop"
+      "https://chrome.google.com/webstore/detail/xpertapply/abcdefghijklmnop"
     );
     expect(chromeExtensionUrl()).toContain("chrome.google.com");
   });

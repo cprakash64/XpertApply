@@ -348,7 +348,7 @@ const SPONSORSHIP_ROWS: { field: string; label: string }[] = [
 ];
 
 /**
- * A summary of the answers JobPilot reuses on applications.
+ * A summary of the answers XpertApply reuses on applications.
  *
  * Shows only what the user actually chose, in their words rather than ours:
  * never a canonical key, never a raw enum, and never an EEO answer — those live
@@ -430,7 +430,7 @@ function PreferencesCard({ data }: { data: ProfileOverviewData }) {
           </div>
         </div>
       ) : (
-        <EmptyHint text="Tell EZJobFind what roles and locations you want." href="/profile/preferences" label="Set job preferences" />
+        <EmptyHint text="Tell XpertApply what roles and locations you want." href="/profile/preferences" label="Set job preferences" />
       )}
     </ClickableCard>
   );

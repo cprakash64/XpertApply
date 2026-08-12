@@ -6,7 +6,7 @@
  * (authorization) selection, a menu node was still mounted, and the second
  * (sponsorship) transaction could adopt it — reading the FIRST question's
  * options and clicking inside the FIRST question's menu. The sponsorship answer
- * stayed blank, and the user saw "JobPilot could not keep this selection".
+ * stayed blank, and the user saw "XpertApply could not keep this selection".
  *
  * `openCustomControl` already refused to adopt a pre-existing menu. What undid
  * that was `fillCustomSelect` re-querying with `findMenu(afterOpen)` and NO

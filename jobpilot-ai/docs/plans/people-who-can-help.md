@@ -4,7 +4,7 @@ Status: implementation validated in the primary Jobs workflow (2026-07-26)
 
 ## Existing architecture discovered
 
-EZJobFind is a compact monorepo. `apps/api` is FastAPI with synchronous SQLAlchemy sessions,
+XpertApply is a compact monorepo. `apps/api` is FastAPI with synchronous SQLAlchemy sessions,
 Alembic migrations (current head `0019_education_gpa_scale`), JWT bearer authentication, Pydantic
 settings, a Redis-backed Celery worker, database audit events, and safe error envelopes.
 `apps/web` is Next.js 16/React 19 with a typed fetch wrapper, Tailwind design tokens, Vitest, and a
@@ -334,7 +334,7 @@ candidate is recorded only at the parent domain.
 - Migration `0021_people_funnel_diagnostics` adds only two safe JSONB aggregates to each discovery
   run: resolved company context and category funnel diagnostics. It is reversible and contains no
   provider payloads or person identifiers.
-- Company identity resolution uses the persisted EZJobFind company-branding record first, then a
+- Company identity resolution uses the persisted XpertApply company-branding record first, then a
   non-aggregator application hostname, normalized names, and structured aliases/parent evidence.
   A three-label employer domain can identify a controlled related-domain scope, but does not assert
   legal ownership. Exact-domain searches always run before a related-domain fallback.

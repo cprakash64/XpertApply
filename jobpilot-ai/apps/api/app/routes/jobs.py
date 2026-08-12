@@ -78,7 +78,7 @@ _EXT_FOR_CONTENT_TYPE = {
 
 @router.get("/companies/{normalized_key}/logo")
 def company_logo_proxy(normalized_key: str, db: Session = Depends(get_db)) -> Response:
-    """Serve a company's logo through a JobPilot-controlled endpoint instead of
+    """Serve a company's logo through an XpertApply-controlled endpoint instead of
     the browser hitting an arbitrary third-party/ATS-provided URL directly:
     avoids mixed-content/host-restriction issues, survives an upstream URL
     expiring or going down, and lets a broken source be re-resolved without

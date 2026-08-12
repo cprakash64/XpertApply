@@ -39,6 +39,12 @@ export async function getApplicationSession(sessionId: number): Promise<Applicat
 // These message-type strings and the payload shape MUST match the extension's
 // src/messages.ts (MSG.PING / MSG.PONG / MSG.STAGE_LAUNCH, PROTOCOL_VERSION 2).
 // The two builds are separate packages, so the contract is mirrored here.
+//
+// The `jobpilot`/`JOBPILOT_` spelling is the WIRE FORMAT and is frozen. An
+// installed extension updates on Chrome's schedule, so a deployed web app will
+// always be talking to older builds for a while: rename either side and the
+// handshake stops matching, the page decides no extension is present, and
+// assisted apply silently disappears for everyone who has not updated yet.
 // --------------------------------------------------------------------------- //
 const WEB_SOURCE = "jobpilot-web";
 const EXT_SOURCE = "jobpilot-extension";
@@ -127,7 +133,7 @@ export async function detectExtension(timeoutMs = 800): Promise<boolean> {
 }
 
 /**
- * STAGE the one-time launch token with the extension's JobPilot-origin content
+ * STAGE the one-time launch token with the extension's XpertApply-origin content
  * script (into its isolated world — never left in the DOM). The extension does
  * NOT act yet: it waits for the real Apply-button click (handled in the content
  * script's capture phase) so it can open the side panel + employer tab inside a
@@ -210,7 +216,7 @@ export function startAssistedApply(
       () => finish({
         ok: false,
         code: "EXTENSION_NO_ACK",
-        message: "The extension did not acknowledge the handoff after retrying. Reload the EZJobFind page and extension, then try again."
+        message: "The extension did not acknowledge the handoff after retrying. Reload the XpertApply page and extension, then try again."
       }),
       timeoutMs
     );

@@ -10,7 +10,7 @@
  *
  * Instead we score every candidate container on real application evidence,
  * hard-exclude site chrome (nav/search/newsletter/cookie/footer/header and
- * JobPilot's own widget), and refuse to guess when nothing is clearly the
+ * XpertApply's own widget), and refuse to guess when nothing is clearly the
  * application (APPLICATION_FORM_AMBIGUOUS). Discovery then runs ONLY inside the
  * chosen root — never a global scan.
  */
@@ -67,7 +67,7 @@ const EXCLUDE_TEXT_RE =
   /\b(search|newsletter|subscribe|subscription|cookie|consent[-_ ]?banner|gdpr|filter|sort|login|log[-_ ]?in|sign[-_ ]?in|sign[-_ ]?up|register|contact[-_ ]?us|demo[-_ ]?request|chat)\b/i;
 
 function exclusionFor(el: Element): string | null {
-  // JobPilot's own widget must never be treated as page content.
+  // XpertApply's own widget must never be treated as page content.
   if (deepClosest(el, "#jobpilot-assisted-apply")) return "jobpilot_widget";
   if (deepClosest(el, EXCLUDE_ANCESTOR)) return "site_chrome";
 

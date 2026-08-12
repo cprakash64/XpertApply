@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "EZJobFind — Assisted Apply",
-  "short_name": "EZJobFind",
+  "name": "XpertApply — Assisted Apply",
+  "short_name": "XpertApply",
   "version": "0.2.0",
-  "description": "User-controlled application copilot. Fills employer forms with your verified EZJobFind data — you always review and submit yourself.",
+  "description": "AI-powered job application autofill and career copilot by XpertApply. You always review and submit every application yourself.",
   "permissions": ["sidePanel", "storage", "scripting", "tabs"],
   "optional_permissions": ["webNavigation"],
   "host_permissions": [
@@ -13,12 +13,14 @@
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open EZJobFind Assisted Apply" },
+  "action": { "default_title": "Open XpertApply Assisted Apply" },
   "content_scripts": [
     {
       "matches": [
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
+        "https://xpertapply.com/*",
+        "https://www.xpertapply.com/*",
         "https://app.jobpilot.ai/*",
         "https://ezjobfind.com/*",
         "https://www.ezjobfind.com/*"
@@ -32,6 +34,8 @@
       "exclude_matches": [
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
+        "https://xpertapply.com/*",
+        "https://www.xpertapply.com/*",
         "https://app.jobpilot.ai/*",
         "https://ezjobfind.com/*",
         "https://www.ezjobfind.com/*"

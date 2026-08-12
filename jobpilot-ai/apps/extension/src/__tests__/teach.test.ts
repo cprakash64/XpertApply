@@ -1,7 +1,7 @@
 /**
- * Sections D/E/F/K — "Teach JobPilot".
+ * Sections D/E/F/K — "Teach XpertApply".
  *
- * JobPilot observes only TRUSTED user interactions inside the verified
+ * XpertApply observes only TRUSTED user interactions inside the verified
  * application root, reads the committed value through the same dropdown adapter
  * used for autofill, and never persists anything without an explicit user choice.
  */
@@ -20,7 +20,7 @@ const settle = () => new Promise((r) => setTimeout(r, 400));
 /** Simulate a user interaction. jsdom makes `isTrusted` non-configurable, so it
  * cannot be forged; the learning tests therefore run the observer with
  * `requireTrusted: false`. The guard itself is proved by the dedicated
- * "IGNORES JobPilot's own autofill" test below, which runs with the production
+ * "IGNORES XpertApply's own autofill" test below, which runs with the production
  * default and feeds it genuinely untrusted events. */
 function userEvent(el: Element, type: string, ctor: typeof Event | typeof MouseEvent = Event): void {
   el.dispatchEvent(new ctor(type, { bubbles: true }));
@@ -76,7 +76,7 @@ function teach(root: HTMLElement, fields: Map<string, DiscoveredField>, over: Pa
   return { learned, stop };
 }
 
-describe("Teach JobPilot", () => {
+describe("Teach XpertApply", () => {
   it("learns a manually typed text answer", async () => {
     const { root, fields } = mountForm();
     const { learned, stop } = teach(root, fields);
@@ -134,7 +134,7 @@ describe("Teach JobPilot", () => {
     expect(Array.isArray(entry.chosen)).toBe(true);
   });
 
-  it("IGNORES JobPilot's own autofill — only trusted user input teaches", async () => {
+  it("IGNORES XpertApply's own autofill — only trusted user input teaches", async () => {
     const { root, fields } = mountForm();
     // Production default: requireTrusted === true.
     const { learned, stop } = teach(root, fields, { requireTrusted: true });

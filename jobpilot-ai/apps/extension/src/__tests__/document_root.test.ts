@@ -3,7 +3,7 @@
  *
  * The live Airbnb/Greenhouse failure: the application is rendered by React at
  * document level with no <form> and no container matching a known ATS selector.
- * Every candidate scored below threshold, so the run aborted with "JobPilot
+ * Every candidate scored below threshold, so the run aborted with "XpertApply
  * couldn't identify the application form on this page" — on a page where the
  * application was fully visible.
  *
@@ -134,7 +134,7 @@ describe("document-level application root", () => {
     expect((result.element as Element).id).toBe("grnhse_app");
   });
 
-  it("ignores JobPilot's own widget when scoring the document", () => {
+  it("ignores XpertApply's own widget when scoring the document", () => {
     const doc = mount(`
       <div id="jobpilot-assisted-apply">
         <label for="w1">First Name</label><input id="w1" />

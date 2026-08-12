@@ -40,7 +40,7 @@ export function PreferencesEditor({ editor }: { editor: ProfileEditorState }) {
         <div className="grid gap-4">
           <SelectionCard
             title="Target roles"
-            description="The roles EZJobFind matches you against."
+            description="The roles XpertApply matches you against."
             selected={form.target_roles}
             catalog={roleGroups}
             allowCustom

@@ -3,6 +3,8 @@
  * empty string, which `??` would happily accept as a configured base URL and
  * turn every request into a same-origin path. An empty value means "unset".
  */
+import { readAuthToken } from "@/lib/authToken";
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type ResumeContent = {
@@ -85,7 +87,7 @@ export type Job = {
   company: string;
   company_domain?: string | null;
   company_logo_url?: string | null;
-  /** Relative path on the API — served through JobPilot's own cached, SSRF-safe
+  /** Relative path on the API — served through XpertApply's own cached, SSRF-safe
    * logo proxy. Preferred over company_logo_url when present. */
   company_logo_proxy_path?: string | null;
   source: string | null;
@@ -368,7 +370,7 @@ function codeForStatus(status: number): { code: ApiErrorCode; retryable: boolean
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = typeof window !== "undefined" ? window.localStorage.getItem("jobpilot_token") : null;
+  const token = readAuthToken();
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
   let response: Response;
@@ -400,7 +402,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     throw new ApiError({
       code: "network_unreachable",
       message:
-        "EZJobFind could not reach the application service. Confirm the backend is running and NEXT_PUBLIC_API_URL is set correctly.",
+        "XpertApply could not reach the application service. Confirm the backend is running and NEXT_PUBLIC_API_URL is set correctly.",
       retryable: true,
       details: cause instanceof Error ? cause.message : String(cause)
     });

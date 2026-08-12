@@ -2,9 +2,9 @@
  * What is actually in this tab's frames, and why can't we reach the application?
  *
  * The live failure this exists to fix: the destination application renders
- * inside an iframe, and JobPilot showed
+ * inside an iframe, and XpertApply showed
  *
- *     "The application is inside a frame JobPilot isn't allowed to read."
+ *     "The application is inside a frame XpertApply isn't allowed to read."
  *
  * That message was produced by ONE piece of evidence — `iframe.contentDocument`
  * threw — which proves only that the frame is cross-origin. It does not
@@ -166,7 +166,7 @@ function applicantControlCount(doc: Document): number {
  */
 export function observeFrames(doc: Document = document): ObservedFrame[] {
   return Array.from(doc.querySelectorAll("iframe")).map((frame, frameIndex) => {
-    // JobPilot's own UI never contains an employer application.
+    // XpertApply's own UI never contains an employer application.
     const raw = frame.getAttribute("src");
     const urlKind = classifyFrameUrl(raw, doc.location?.href);
     const sandbox = sandboxState(frame);

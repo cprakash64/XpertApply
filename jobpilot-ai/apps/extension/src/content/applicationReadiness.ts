@@ -70,7 +70,7 @@ export interface ApplicationEvidence {
   repeatableSectionControls: boolean;
   multiFieldForm: boolean;
   personalInformationHeading: boolean;
-  /** Applicant-shaped controls found, excluding JobPilot's own widget. */
+  /** Applicant-shaped controls found, excluding XpertApply's own widget. */
   applicantControlCount: number;
 }
 
@@ -89,7 +89,7 @@ export interface FrameCensus {
    * `@linkedin/xdoor-sdk` tracker. Its `contentDocument` is null, so it counted
    * as "an unreadable frame", and a readiness timeout on a page whose form was
    * simply in shadow DOM was reported as
-   * "JobPilot could not reach the embedded application form."
+   * "XpertApply could not reach the embedded application form."
    *
    * A frame with no navigable document of its own is never that application.
    */
@@ -132,7 +132,7 @@ export interface ReadinessOptions {
   now?: () => number;
 }
 
-/** JobPilot's own UI is never evidence of an employer application. */
+/** XpertApply's own UI is never evidence of an employer application. */
 const WIDGET_ROOT = "#jobpilot-assisted-apply";
 
 const APPLICANT_CONTROL_SELECTOR =

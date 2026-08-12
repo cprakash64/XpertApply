@@ -1,7 +1,7 @@
 /**
  * Form-filling engine. Deterministic DOM interaction with native setters so
  * React/Vue-controlled inputs register the change. Never overwrites a non-empty
- * value the user typed (unless forced), records what JobPilot filled so it can
+ * value the user typed (unless forced), records what XpertApply filled so it can
  * be cleared, and applies subtle, fully-removable status highlighting.
  */
 
@@ -28,7 +28,7 @@ export interface FillOptions {
   status?: FillStatus;
   /** Where the answer came from — recorded in dropdown diagnostics. */
   answerSource?: AnswerSource;
-  /** Let the caller move the JobPilot widget out of the way of a dropdown
+  /** Let the caller move the XpertApply widget out of the way of a dropdown
    * menu before interacting, and restore it afterwards (section L). */
   beforeInteract?: () => void | Promise<void>;
   afterInteract?: () => void | Promise<void>;

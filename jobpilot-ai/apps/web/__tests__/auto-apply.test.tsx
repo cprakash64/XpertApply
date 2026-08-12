@@ -126,7 +126,7 @@ describe("AutoApplyModal", () => {
   it("shows an install prompt when the extension is not detected but still allows opening the site", async () => {
     vi.mocked(autoApply.detectExtensionState).mockResolvedValue(EXT_ABSENT);
     renderModal();
-    expect(await screen.findByText(/Install the EZJobFind browser extension/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Install the XpertApply browser extension/i)).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /Install extension/i }).length).toBeGreaterThan(0);
     // No extension -> the primary CTA is the plain manual open, no autofill claim.
     expect(await screen.findByRole("button", { name: /Open official application/i })).toBeInTheDocument();
@@ -134,7 +134,7 @@ describe("AutoApplyModal", () => {
 
   it("shows a connected state and an autofill CTA when the extension is present", async () => {
     renderModal();
-    expect(await screen.findByText(/EZJobFind extension connected/i)).toBeInTheDocument();
+    expect(await screen.findByText(/XpertApply extension connected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open and autofill application/i })).toBeInTheDocument();
   });
 

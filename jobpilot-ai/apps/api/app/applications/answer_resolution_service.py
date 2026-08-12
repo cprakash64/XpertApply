@@ -148,7 +148,7 @@ def _boolean_answer(row: ApplicationAnswer | None) -> tuple[bool | None, str]:
 # --------------------------------------------------------------------------- #
 # Job-source metadata
 # --------------------------------------------------------------------------- #
-#: How a job reached JobPilot -> the category the option mapper understands.
+#: How a job reached XpertApply -> the category the option mapper understands.
 #: Board integrations mean the posting came from the employer's own careers
 #: site, which is the truthful answer to "where did you hear about this".
 _SOURCE_TYPE_TO_CATEGORY = {

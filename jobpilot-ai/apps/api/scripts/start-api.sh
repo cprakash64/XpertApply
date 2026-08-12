@@ -52,7 +52,7 @@ else
   echo "Skipping Alembic migrations because RUN_MIGRATIONS_ON_STARTUP is not true."
 fi
 
-echo "Starting JobPilot AI API..."
+echo "Starting XpertApply API..."
 if [ "${API_RELOAD:-false}" = "true" ]; then
   exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 else

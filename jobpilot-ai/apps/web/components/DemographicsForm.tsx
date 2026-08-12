@@ -93,7 +93,7 @@ export function DemographicsForm() {
       const confirmed =
         typeof window === "undefined" ||
         window.confirm(
-          "This will delete any demographic information EZJobFind has stored for you. Continue?"
+          "This will delete any demographic information XpertApply has stored for you. Continue?"
         );
       if (!confirmed) return;
     }
@@ -256,7 +256,7 @@ export function DemographicsForm() {
             onChange={(event) => set("consent_to_store", event.target.checked)}
           />
           <span className="text-sm text-[var(--text-primary)]">
-            I consent to EZJobFind securely storing this optional demographic information for assisted
+            I consent to XpertApply securely storing this optional demographic information for assisted
             application filling.
           </span>
         </label>

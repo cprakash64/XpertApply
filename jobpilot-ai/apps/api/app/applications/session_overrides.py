@@ -20,7 +20,7 @@ from app.models.entities import ApplicationSession
 
 #: Sensitivities that may never be answered for the user, at any scope. Consent
 #: and attestations are the user's signature; demographics are theirs to
-#: volunteer. An override is still a JobPilot-assisted answer, so these are
+#: volunteer. An override is still an XpertApply-assisted answer, so these are
 #: excluded here exactly as they are from reusable storage.
 INELIGIBLE_SENSITIVITIES = frozenset(
     {Sensitivity.consent, Sensitivity.attestation, Sensitivity.demographic}
@@ -54,7 +54,7 @@ def _normalize(canonical_key: str, value: Any) -> str:
         raise OverrideRejected("sensitivity_not_eligible")
     # A question the registry refuses to auto-fill at all (salary expectation,
     # say) must not become fillable just because the scope is narrower. The
-    # reason it is excluded is that JobPilot should not be answering it.
+    # reason it is excluded is that XpertApply should not be answering it.
     if not spec.autofill_allowed:
         raise OverrideRejected("autofill_not_permitted")
     if spec.answer_type not in SUPPORTED_TYPES:

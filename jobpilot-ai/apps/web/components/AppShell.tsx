@@ -135,7 +135,7 @@ function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
     >
       <Link
         href="/"
-        aria-label="EZJobFind home"
+        aria-label="XpertApply home"
         className={`focus-ring flex items-center rounded-lg font-semibold ${
           collapsed ? "justify-center py-2" : "mb-6 gap-2 px-1 py-1"
         }`}
@@ -146,7 +146,7 @@ function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         >
           <BriefcaseBusiness className="h-4 w-4" />
         </span>
-        {collapsed ? <span className="sr-only">EZJobFind</span> : <span>EZJobFind</span>}
+        {collapsed ? <span className="sr-only">XpertApply</span> : <span>XpertApply</span>}
       </Link>
 
       <nav aria-label="Sections" className={collapsed ? "mt-3 space-y-1" : "space-y-1"}>

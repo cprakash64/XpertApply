@@ -1,14 +1,14 @@
 {
-  "name": "@jobpilot/extension",
+  "name": "@xpertapply/extension",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "EZJobFind assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
+  "description": "XpertApply assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package": "node build.mjs && cd dist && zip -qr ../jobpilot-extension.zip . -x '*.map' && echo 'Packaged apps/extension/jobpilot-extension.zip'",
+    "package": "node build.mjs && cd dist && zip -qr ../xpertapply-extension.zip . -x '*.map' && echo 'Packaged apps/extension/xpertapply-extension.zip'",
     "test:e2e": "playwright test",
     "test:all": "vitest run && npm run test:e2e",
     "smoke:dropdowns": "node e2e/build-harness.mjs && node e2e/smoke.mjs"

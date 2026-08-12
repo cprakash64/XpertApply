@@ -1,10 +1,10 @@
 /**
  * Single source of truth for every message exchanged between the web page, the
- * JobPilot-origin content script, the employer-page content script, the
+ * XpertApply-origin content script, the employer-page content script, the
  * background service worker, and the side panel.
  *
  * There are two transports:
- *   • window.postMessage — page ⇆ JobPilot-origin content script (detection +
+ *   • window.postMessage — page ⇆ XpertApply-origin content script (detection +
  *     staging the launch payload; a token is staged into the isolated content
  *     world and never left in the DOM).
  *   • chrome.runtime messaging — content/side panel ⇆ background.
@@ -117,7 +117,7 @@ export interface FieldFillResult {
   defaultScope?: "global" | "company";
 }
 
-/** Safe, PII-free summary reported back to JobPilot. Counts + codes only. */
+/** Safe, PII-free summary reported back to XpertApply. Counts + codes only. */
 export type AutofillResult = {
   status: "completed" | "completed_with_review" | "partial" | "no_fields" | "failed" | "cancelled";
   ats: string | null;
@@ -197,16 +197,24 @@ export interface LaunchViewState {
 
 // --------------------------------------------------------------------------- //
 // Message-type constants (never inline a raw string anywhere else)
+//
+// The `JOBPILOT_` prefix is the WIRE FORMAT, not branding, and is frozen. These
+// strings are matched literally by the web app (apps/web/lib/autoApply.ts) and
+// by every already-installed copy of this extension. Because the two update on
+// completely independent schedules — a deploy versus Chrome's own update cycle
+// — a rename does not switch both sides over at once: it makes them stop
+// recognising each other, and assisted apply quietly stops working for anyone
+// running the older half. Rebranding these buys nothing a user can see.
 // --------------------------------------------------------------------------- //
 export const MSG = {
-  // page ⇆ JobPilot-origin content script (postMessage)
+  // page ⇆ XpertApply-origin content script (postMessage)
   PING: "JOBPILOT_PING",
   PONG: "JOBPILOT_PONG",
   STAGE_LAUNCH: "JOBPILOT_STAGE_LAUNCH",
   START_ASSISTED_APPLY: "JOBPILOT_START_ASSISTED_APPLY",
   START_ASSISTED_APPLY_RESULT: "JOBPILOT_START_ASSISTED_APPLY_RESULT",
   HANDSHAKE: "JOBPILOT_HANDSHAKE",
-  // JobPilot-origin content script → background (runtime)
+  // XpertApply-origin content script → background (runtime)
   LAUNCH_REQUEST: "JOBPILOT_LAUNCH_REQUEST",
   LAUNCH_ACCEPTED: "JOBPILOT_LAUNCH_ACCEPTED",
   LAUNCH_FAILED: "JOBPILOT_LAUNCH_FAILED",

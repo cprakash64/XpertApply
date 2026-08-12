@@ -131,7 +131,7 @@ describe("manual dropdown fixture (task section L)", () => {
   });
 
   it("leaves a privacy-policy acknowledgement for the user and does not accept it", async () => {
-    // Previously auto-accepted, on the reasoning that asking JobPilot to apply
+    // Previously auto-accepted, on the reasoning that asking XpertApply to apply
     // implied consent. Agreeing to an employer's privacy terms is the user's
     // own legal act, so it is now surfaced rather than ticked.
     mountFixture(DROPDOWN_FIXTURE);

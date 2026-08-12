@@ -1,4 +1,4 @@
-"""Resolve a JobPilot company to a verified People Data Labs company identity.
+"""Resolve an XpertApply company to a verified People Data Labs company identity.
 
 Searching people by display name is the weakest possible company constraint: it
 depends on the job feed and the provider spelling a company the same way. PDL

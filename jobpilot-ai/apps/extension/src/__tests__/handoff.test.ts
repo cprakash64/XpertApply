@@ -449,7 +449,7 @@ describe("handshake + stale-handoff regressions", () => {
     expect(resp.error).toBe("HANDOFF_NOT_FOUND");
   });
 
-  it("on install/update, re-injects the bridge into already-open JobPilot tabs but never an ATS/employer tab", async () => {
+  it("on install/update, re-injects the bridge into already-open XpertApply tabs but never an ATS/employer tab", async () => {
     installFakeFetch();
     const openTabs = [
       { id: 501, url: "https://app.jobpilot.ai/jobs" } as chrome.tabs.Tab,
@@ -468,7 +468,7 @@ describe("handshake + stale-handoff regressions", () => {
     expect(executedScripts.some((s) => s.tabId === 502)).toBe(false);
   });
 
-  it("revives an already-open JobPilot tab when the extension runtime resets even without onInstalled", async () => {
+  it("revives an already-open XpertApply tab when the extension runtime resets even without onInstalled", async () => {
     installFakeFetch();
     const openTabs = [
       { id: 601, url: "http://localhost:3000/jobs" } as chrome.tabs.Tab

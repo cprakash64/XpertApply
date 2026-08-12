@@ -9,6 +9,12 @@
 #     start with the default SECRET_KEY or the database password below.
 #   * The credentials below are development-only defaults and are intentionally
 #     public. Never reuse them anywhere real.
+#   * The `jobpilot` role and database name predate the product's current name
+#     and are kept on purpose. They are matched literally by .env.example,
+#     alembic.ini, the api image's OS user, and app/core/config_validation.py's
+#     known-weak-credential list — and, more importantly, by every developer's
+#     existing postgres_data volume. Renaming them would strand those volumes
+#     behind a role that no longer exists, for no user-visible gain.
 services:
   postgres:
     image: postgres:16-alpine

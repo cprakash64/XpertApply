@@ -270,7 +270,7 @@ def _safe_provider_message(reason: str) -> str:
 
 
 # Failures that mean the user's unit bought nothing. Configuration and
-# authentication problems are JobPilot's to fix; an unresolved company is our
+# authentication problems are XpertApply's to fix; an unresolved company is our
 # own missing data; a cancelled request never ran. A provider that answered
 # — including a truthful no-match — is a completed search and stays charged.
 _REFUNDABLE_CODES: frozenset[PeopleErrorCode] = frozenset(
@@ -288,7 +288,7 @@ _REFUNDABLE_CODES: frozenset[PeopleErrorCode] = frozenset(
 def _provider_work_started(provider: object) -> bool:
     """Did any external search actually leave the building?
 
-    Company resolution alone does not count: it is JobPilot deciding whether it
+    Company resolution alone does not count: it is XpertApply deciding whether it
     can search at all, not the search the user asked for.
     """
 
@@ -4143,7 +4143,7 @@ async def _discover_once(
                 outcome.code, _first_provider(step_providers)
             ):
                 # Nothing useful was bought with the user's unit: either
-                # JobPilot's own data was insufficient, or the provider was
+                # XpertApply's own data was insufficient, or the provider was
                 # never meaningfully reached. Give it back.
                 reservation.refund(db, reason=str(outcome.code))
             # The provider column names who actually answered. Writing the
@@ -4291,7 +4291,7 @@ async def _discover_once(
                 )
                 failed_run.failure_code = failure_code
                 failed_run.safe_failure_message = (
-                    "EZJobFind found potential contacts but could not save "
+                    "XpertApply found potential contacts but could not save "
                     "the results. No additional search will run unless you retry."
                     if persistence_failure
                     else "People discovery is temporarily unavailable."
@@ -4556,7 +4556,7 @@ def recommendations_payload(db: Session, user: User, job_id: int) -> dict:
         warnings.append(
             latest_run.safe_failure_message
             or (
-                "EZJobFind found potential contacts but could not save the "
+                "XpertApply found potential contacts but could not save the "
                 "results. No additional search will run unless you retry."
             )
         )

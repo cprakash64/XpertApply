@@ -1,6 +1,7 @@
 "use client";
 
 import { api, type PeopleResponse } from "@/lib/api";
+import { readAuthToken } from "@/lib/authToken";
 
 type JobId = string | number;
 type Listener = (data: PeopleResponse) => void;
@@ -19,7 +20,7 @@ const entries = new Map<string, CacheEntry>();
 
 function cacheKey(jobId: JobId): string {
   const token =
-    typeof window === "undefined" ? "server" : window.localStorage.getItem("jobpilot_token") ?? "anonymous";
+    typeof window === "undefined" ? "server" : readAuthToken() ?? "anonymous";
   return `${token}:${jobId}`;
 }
 

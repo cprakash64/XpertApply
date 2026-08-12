@@ -1,12 +1,14 @@
-# EZJobFind
+# XpertApply
 
-EZJobFind is an open-source, user-controlled job-search and job-application copilot for students, fresh graduates, and professionals.
+**Your AI Job Application Copilot.**
+
+XpertApply is an open-source, user-controlled job-search and job-application copilot for students, fresh graduates, and professionals.
 
 It helps users maintain one truthful career profile, discover recent jobs from allowed structured sources, generate ATS-friendly resumes and cover letters, prepare editable application answers, and track application status.
 
 ## Compliance Philosophy
 
-EZJobFind assists the user. It does not pretend to be the user.
+XpertApply assists the user. It does not pretend to be the user.
 
 - No scraping of restricted platforms such as LinkedIn, Indeed, or portals that prohibit scraping or automation.
 - No automated login to third-party job portals.
@@ -110,7 +112,7 @@ The Profile manager can import a draft profile from user-supplied content:
 - LinkedIn PDF exported by the user with LinkedIn's Save to PDF action
 - Pasted resume/profile text
 
-LinkedIn support means user-uploaded PDF parsing only. EZJobFind does not scrape LinkedIn, automate login, use cookies, use sessions, or run browser automation for this feature.
+LinkedIn support means user-uploaded PDF parsing only. XpertApply does not scrape LinkedIn, automate login, use cookies, use sessions, or run browser automation for this feature.
 
 Uploaded files are parsed in memory and discarded. The MVP file size limit is 5MB. Scanned image PDFs may not work because OCR is not enabled; upload a text-based PDF/DOCX or paste the resume text instead.
 

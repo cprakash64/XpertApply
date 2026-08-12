@@ -103,7 +103,7 @@ describe("application-form root resolution", () => {
     expect(result.candidates.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("JobPilot's own widget is never a candidate", () => {
+  it("XpertApply's own widget is never a candidate", () => {
     mountFixture(SAMSARA_LIVE_SHAPE_FIXTURE);
     const widget = document.createElement("div");
     widget.id = "jobpilot-assisted-apply";

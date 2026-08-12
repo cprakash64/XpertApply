@@ -355,7 +355,7 @@ def test_reading_recommendations_never_costs_quota(
 def test_unresolved_company_is_not_charged(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """JobPilot's own missing data must not cost the user a search."""
+    """XpertApply's own missing data must not cost the user a search."""
 
     _install(monkeypatch, _Transport(no_match=True))
     user = _user(db)
@@ -397,7 +397,7 @@ def test_provider_configuration_failure_is_refunded(
     payload = asyncio.run(discover(db, user, job.id))
 
     assert payload["status"] == "provider_configuration_error"
-    # A broken credential is JobPilot's problem, not the user's.
+    # A broken credential is XpertApply's problem, not the user's.
     assert user_discoveries_used(db, user.id) == 0
 
 

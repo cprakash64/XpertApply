@@ -84,7 +84,7 @@ class ProviderOutcome(StrEnum):
 #
 # The tiers, and why they are in this order:
 #
-# 1. Authentication/authorization. JobPilot's own credential or account grant.
+# 1. Authentication/authorization. XpertApply's own credential or account grant.
 #    Nothing else can be fixed until this is.
 # 2. Request/schema/integration. Our request was wrong. Reporting anything else
 #    — especially a budget — blames the provider for our defect.

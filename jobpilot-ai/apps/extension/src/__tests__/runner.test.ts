@@ -40,7 +40,7 @@ describe("fill runner (end-to-end on a fixture)", () => {
     expect(summary.errors).toEqual([]);
   });
 
-  it("clears every JobPilot-filled value, leaving the form as it was", async () => {
+  it("clears every XpertApply-filled value, leaving the form as it was", async () => {
     mountFixture(GREENHOUSE_FIXTURE);
     await runFill(document.querySelector("#application_form")!, session());
     const cleared = clearJobPilotFields(document);

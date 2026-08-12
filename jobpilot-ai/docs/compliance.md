@@ -1,6 +1,6 @@
 # Compliance
 
-EZJobFind is designed as an assistant, not an automation bot.
+XpertApply is designed as an assistant, not an automation bot.
 
 The platform must not:
 

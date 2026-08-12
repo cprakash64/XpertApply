@@ -106,7 +106,7 @@ test("M-8: virtualized list — an option outside the rendered window is reporte
 });
 
 test("M-9: a dropdown overlapped by a floating widget is still operated", async ({ page }) => {
-  // Simulate the JobPilot widget occupying the bottom-right corner.
+  // Simulate the XpertApply widget occupying the bottom-right corner.
   await page.evaluate(() => {
     const w = document.createElement("div");
     w.id = "fake-widget";

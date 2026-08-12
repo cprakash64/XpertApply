@@ -41,7 +41,7 @@ function isDev(): boolean {
 function emit(level: "debug" | "info" | "warn" | "error", msg: string, ctx?: Ctx): void {
   if (level === "debug" && !isDev()) return;
   // eslint-disable-next-line no-console
-  console[level](`[EZJobFind] ${msg}`, safeContext(ctx));
+  console[level](`[XpertApply] ${msg}`, safeContext(ctx));
 }
 
 export const log = {

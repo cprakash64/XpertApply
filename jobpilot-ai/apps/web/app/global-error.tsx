@@ -46,7 +46,7 @@ export default function GlobalError({
       <body>
         <div className="wrap">
           <div className="card" role="alert">
-            <h1>EZJobFind could not load</h1>
+            <h1>XpertApply could not load</h1>
             <p>An unexpected error stopped the application. Your saved data is unaffected.</p>
             <button type="button" onClick={reset}>
               Reload

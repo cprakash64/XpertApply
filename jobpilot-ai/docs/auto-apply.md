@@ -1,12 +1,12 @@
 # Assisted Auto-Apply (Application Copilot)
 
-EZJobFind's assisted auto-apply is a **user-controlled copilot**, not a mass-apply
-bot. When the user clicks **Apply on official site**, EZJobFind prepares a tailored
+XpertApply's assisted auto-apply is a **user-controlled copilot**, not a mass-apply
+bot. When the user clicks **Apply on official site**, XpertApply prepares a tailored
 resume + cover letter, creates a secure application session, opens the official
 employer page, and — via a Chrome extension — fills the form with verified
 profile data and marks anything uncertain or sensitive for review.
 
-> **EZJobFind never clicks the employer's final Submit button.** The user reviews
+> **XpertApply never clicks the employer's final Submit button.** The user reviews
 > everything and submits manually.
 
 ---
@@ -15,7 +15,7 @@ profile data and marks anything uncertain or sensitive for review.
 
 ```
 apps/web (Next.js)                 apps/api (FastAPI)                 apps/extension (MV3)
-  Apply button                       POST /application-sessions          content script (EZJobFind origin)
+  Apply button                       POST /application-sessions          content script (XpertApply origin)
     └─ AutoApplyModal  ──create──▶     ├─ reuse/generate resume+cover       └─ PING/PONG + LAUNCH handoff
        │                               ├─ build safe answer set           background service worker
        │  launch token (postMessage)   ├─ mint one-time launch token        ├─ exchange launch → session token
@@ -113,7 +113,7 @@ to answer directly.
   placeholder hosts rejected) before opening.
 - Best-effort rate limits on session creation and token exchange.
 - Only the active application form is filled; honeypot and disabled fields are
-  skipped; EZJobFind values are removable and never permanently alter the page.
+  skipped; XpertApply values are removable and never permanently alter the page.
 
 ---
 
@@ -142,7 +142,7 @@ test ever runs against a live job application.**
 2. Start the frontend: `cd apps/web && npm run dev`.
 3. Build + load the extension (above).
 4. Open a **local fixture** page (or a real ATS page you are authorized to test).
-5. In EZJobFind, click **Apply on official site** → the modal prepares the session
+5. In XpertApply, click **Apply on official site** → the modal prepares the session
    and opens the employer tab.
 6. Open the side panel → **Fill application** → review highlighted fields.
 7. **Submit yourself** on the employer site, then **Mark application complete**.
@@ -155,8 +155,8 @@ test ever runs against a live job application.**
 - [ ] Sensitive/EEO questions left blank + flagged
 - [ ] Unknown questions not guessed
 - [ ] Generated written answers marked for review
-- [ ] "Clear EZJobFind-filled fields" restores the form
-- [ ] Final Submit is never clicked by EZJobFind
+- [ ] "Clear XpertApply-filled fields" restores the form
+- [ ] Final Submit is never clicked by XpertApply
 - [ ] Tracker shows Applying → Applied after completion
 
 ---

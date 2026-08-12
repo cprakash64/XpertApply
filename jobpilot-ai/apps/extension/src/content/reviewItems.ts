@@ -96,7 +96,7 @@ function titleFor(entry: QuestionEntry): string {
     case "requires_user_gesture":
       return "Open this question to continue";
     case "interaction_failed":
-      return "EZJobFind could not keep this selection";
+      return "XpertApply could not keep this selection";
     case "sensitive_manual":
       return "Please review and accept the application privacy terms";
     case "filled_verified":
@@ -115,12 +115,12 @@ function explanationFor(entry: QuestionEntry): string {
   switch (entry.state) {
     case "answer_missing":
       return canAnswerForApplication(entry)
-        ? "EZJobFind only fills legal questions from an answer you have given yourself. You can answer it for this application without changing your saved answers."
+        ? "XpertApply only fills legal questions from an answer you have given yourself. You can answer it for this application without changing your saved answers."
         : entry.sensitivity === "legal"
-          ? "EZJobFind only fills legal questions from an answer you have given yourself. Please answer it on the employer's form."
-          : "EZJobFind does not have a saved answer for this question.";
+          ? "XpertApply only fills legal questions from an answer you have given yourself. Please answer it on the employer's form."
+          : "XpertApply does not have a saved answer for this question.";
     case "requires_confirmation":
-      return "You answered this before, and EZJobFind will not reuse it until you confirm it is still correct. Set it on the employer's form for now.";
+      return "You answered this before, and XpertApply will not reuse it until you confirm it is still correct. Set it on the employer's form for now.";
     case "requires_user_gesture":
       return "This employer only opens the menu for a real click. Open it yourself and choose your answer.";
     case "interaction_failed":
@@ -128,9 +128,9 @@ function explanationFor(entry: QuestionEntry): string {
         ? "Your answer is saved for this application, but the value did not stay selected on the employer's page. Set it there yourself."
         : "The value did not stay selected on the employer's page. Please set it yourself.";
     case "sensitive_manual":
-      return "Accepting terms is your decision to make, so EZJobFind leaves it to you.";
+      return "Accepting terms is your decision to make, so XpertApply leaves it to you.";
     default:
-      return "EZJobFind could not safely answer this one. Please review it before submitting.";
+      return "XpertApply could not safely answer this one. Please review it before submitting.";
   }
 }
 

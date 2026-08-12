@@ -35,6 +35,10 @@ from app.models.entities import IngestionRun, IngestionStatus, IngestionTrigger,
 
 logger = logging.getLogger("jobpilot.ingestion")
 
+# A Redis key, not a display string, so it keeps its pre-rebrand spelling. The
+# whole point of the key is that every replica agrees on it: renaming it would
+# mean that during a rolling deploy the old and new pods hold DIFFERENT locks
+# and both run the daily ingestion at once.
 INGESTION_LOCK_KEY = "jobpilot:ingestion:daily"
 
 

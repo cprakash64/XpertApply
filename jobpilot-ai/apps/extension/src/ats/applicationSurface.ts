@@ -177,7 +177,7 @@ export function findActivationCandidates(root: ParentNode = document): Activatio
 
   for (const el of controls) {
     if (!isVisible(el)) continue;
-    // JobPilot's own UI is never page content.
+    // XpertApply's own UI is never page content.
     if (el.closest("#jobpilot-assisted-apply")) continue;
     if (isForbiddenControl(el)) continue;
 

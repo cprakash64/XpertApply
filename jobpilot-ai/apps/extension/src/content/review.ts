@@ -9,23 +9,23 @@ import type { ApplicationSessionData } from "../types";
 import type { ReviewCategory, ReviewItem } from "./widget";
 
 const REASON_TEXT: Partial<Record<string, string>> = {
-  NO_VERIFIED_ANSWER: "EZJobFind doesn't have a confirmed answer for this question.",
-  LOW_CONFIDENCE: "EZJobFind found this field but isn't confident enough to fill it automatically.",
+  NO_VERIFIED_ANSWER: "XpertApply doesn't have a confirmed answer for this question.",
+  LOW_CONFIDENCE: "XpertApply found this field but isn't confident enough to fill it automatically.",
   SENSITIVE_FIELD: "This is a sensitive/voluntary question — please choose an answer yourself.",
-  VALUE_DID_NOT_STICK: "EZJobFind tried to fill this field, but the page didn't accept the value.",
+  VALUE_DID_NOT_STICK: "XpertApply tried to fill this field, but the page didn't accept the value.",
   DOCUMENT_DOWNLOAD_FAILED: "Could not download the generated document.",
   DOCUMENT_UPLOAD_REJECTED: "The employer page rejected the automatic upload.",
-  ADAPTER_NOT_DETECTED: "EZJobFind can't operate this type of control yet.",
-  UNSUPPORTED_CONTROL: "EZJobFind can't operate this type of control yet.",
+  ADAPTER_NOT_DETECTED: "XpertApply can't operate this type of control yet.",
+  UNSUPPORTED_CONTROL: "XpertApply can't operate this type of control yet.",
   // Dropdown-specific: say exactly what happened, and always offer the real options.
   DROPDOWN_NOT_VISIBLE: "This dropdown wasn't visible on the page — scroll to it and choose an answer.",
   DROPDOWN_DISABLED: "This dropdown is disabled on the page right now.",
-  DROPDOWN_OPEN_FAILED: "EZJobFind couldn't open this dropdown — choose an answer and it will be applied.",
-  LISTBOX_NOT_FOUND: "EZJobFind opened this dropdown but couldn't find its option list.",
+  DROPDOWN_OPEN_FAILED: "XpertApply couldn't open this dropdown — choose an answer and it will be applied.",
+  LISTBOX_NOT_FOUND: "XpertApply opened this dropdown but couldn't find its option list.",
   OPTIONS_NOT_FOUND: "This dropdown didn't render any options — choose an answer to apply.",
   OPTION_NOT_AVAILABLE: "Your saved answer isn't one of this employer's options — pick the closest match.",
-  DROPDOWN_SELECTION_FAILED: "EZJobFind couldn't select an option here — choose one and it will be applied.",
-  DROPDOWN_VERIFICATION_FAILED: "EZJobFind selected an option but the page didn't keep it — please choose it yourself."
+  DROPDOWN_SELECTION_FAILED: "XpertApply couldn't select an option here — choose one and it will be applied.",
+  DROPDOWN_VERIFICATION_FAILED: "XpertApply selected an option but the page didn't keep it — please choose it yourself."
 };
 
 const CLEAR_QUESTION: Partial<Record<string, string>> = {
@@ -82,11 +82,11 @@ export function reasonForEntry(e: LedgerEntry): string {
         ? "This is a sensitive/voluntary question — please choose an answer yourself."
         : "This needs your explicit acknowledgement for this application.";
     case "unsupported_control":
-      return "EZJobFind can't operate this type of control automatically — choose an answer and it will fill it.";
+      return "XpertApply can't operate this type of control automatically — choose an answer and it will fill it.";
     case "technical_failure":
-      return "EZJobFind tried to fill this, but the page didn't accept the value.";
+      return "XpertApply tried to fill this, but the page didn't accept the value.";
     default:
-      return "EZJobFind doesn't have a confirmed answer for this question.";
+      return "XpertApply doesn't have a confirmed answer for this question.";
   }
 }
 
@@ -116,7 +116,7 @@ export function buildReviewModel(entries: LedgerEntry[], session: ApplicationSes
       id: "name_confirm",
       kind: "name_confirm",
       category: "required",
-      question: "EZJobFind needs you to confirm how your name should be divided.",
+      question: "XpertApply needs you to confirm how your name should be divided.",
       required: true,
       reasonText:
         firstQ?.reason ||

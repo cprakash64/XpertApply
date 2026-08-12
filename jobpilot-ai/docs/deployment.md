@@ -232,6 +232,6 @@ alembic heads                                  # exactly one
 cd apps/api    && pytest -q
 cd apps/web    && npm test && npm run typecheck && npm run lint
 cd apps/extension && npm test && npm run typecheck && npm run build
-docker build -t jobpilot-api ./apps/api
-docker build -t jobpilot-web ./apps/web
+docker build -t xpertapply-api ./apps/api
+docker build -t xpertapply-web ./apps/web
 ```

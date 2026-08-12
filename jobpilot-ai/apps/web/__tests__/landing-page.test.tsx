@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage, { metadata as landingMetadata } from "../app/page";
 import { metadata as rootMetadata } from "../app/layout";
 
-const STORE_URL = "https://chromewebstore.google.com/detail/ezjobfind/abcdefghijklmnopabcdefghijklmnop";
+const STORE_URL = "https://chromewebstore.google.com/detail/xpertapply/abcdefghijklmnopabcdefghijklmnop";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() })
@@ -39,17 +39,19 @@ describe("landing page", () => {
     vi.restoreAllMocks();
   });
 
-  it("carries EZJobFind branding and never the retired name", () => {
+  it("carries XpertApply branding and never the retired name", () => {
     renderLanding();
 
-    expect(screen.getByRole("link", { name: "EZJobFind home" })).toHaveAttribute("href", "/");
-    expect(screen.getByText(/©\s*\d{4}\s*EZJobFind/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "XpertApply home" })).toHaveAttribute("href", "/");
+    expect(screen.getByText(/©\s*\d{4}\s*XpertApply/)).toBeInTheDocument();
+    // Neither retired name may survive anywhere a visitor can read.
     expect(document.body.textContent).not.toMatch(/JobPilot/i);
+    expect(document.body.textContent).not.toMatch(/EZ\s?Job\s?Find/i);
   });
 
   /*
    * Guards a defect this page actually shipped once: JSX ate the space around an
-   * interpolated {PRODUCT_NAME} mid-paragraph and rendered "EZJobFindChrome
+   * interpolated {PRODUCT_NAME} mid-paragraph and rendered "XpertApplyChrome
    * extension". Nothing about the brand name should ever be glued to the next
    * word.
    */
@@ -57,11 +59,11 @@ describe("landing page", () => {
     const { container } = renderLanding();
 
     // Prose elements only. Whole-body textContent would concatenate separate
-    // elements ("EZJobFind" + "Features" in the nav) and report a false break.
+    // elements ("XpertApply" + "Features" in the nav) and report a false break.
     for (const el of container.querySelectorAll("p, h1, h2, h3")) {
-      expect(el.textContent, el.textContent ?? "").not.toMatch(/EZJobFind[A-Za-z]/);
+      expect(el.textContent, el.textContent ?? "").not.toMatch(/XpertApply[A-Za-z]/);
     }
-    expect(container.textContent).toContain("EZJobFind Chrome extension");
+    expect(container.textContent).toContain("XpertApply Chrome extension");
   });
 
   it("leads with the hero headline, primary signup CTA, and the human-in-the-loop promise", () => {
@@ -233,16 +235,28 @@ describe("landing page", () => {
 });
 
 describe("product metadata", () => {
-  it("advertises EZJobFind, not the retired name", () => {
-    expect(rootMetadata.applicationName).toBe("EZJobFind");
-    expect(JSON.stringify(rootMetadata)).not.toMatch(/JobPilot/i);
+  it("advertises XpertApply, not a retired name", () => {
+    expect(rootMetadata.applicationName).toBe("XpertApply");
+    const serialized = JSON.stringify(rootMetadata);
+    expect(serialized).not.toMatch(/JobPilot/i);
+    expect(serialized).not.toMatch(/EZ\s?Job\s?Find/i);
     expect(landingMetadata.title).toEqual({
-      absolute: "EZJobFind — Find, Prepare, and Apply Smarter"
+      absolute: "XpertApply | AI Job Application Copilot"
     });
   });
 
+  it("states the product's positioning in the shared title and description", () => {
+    expect(rootMetadata.title).toMatchObject({
+      default: "XpertApply | AI Job Application Copilot",
+      template: "%s · XpertApply"
+    });
+    expect(rootMetadata.description).toContain("XpertApply");
+    expect(rootMetadata.openGraph?.title).toBe("XpertApply | AI Job Application Copilot");
+    expect(rootMetadata.twitter?.title).toBe("XpertApply | AI Job Application Copilot");
+  });
+
   it("uses the production domain as the canonical identity by default", () => {
-    expect(String(rootMetadata.metadataBase)).toContain("ezjobfind.com");
-    expect(landingMetadata.alternates?.canonical).toBe("https://ezjobfind.com");
+    expect(String(rootMetadata.metadataBase)).toContain("xpertapply.com");
+    expect(landingMetadata.alternates?.canonical).toBe("https://xpertapply.com");
   });
 });

@@ -1,1 +1,1 @@
-"""JobPilot API package."""
+"""XpertApply API package."""

@@ -4,7 +4,7 @@
  * Every dropdown — native select, ARIA combobox, React Select, Greenhouse's
  * custom control, a searchable combobox, a multi-select, or a radio group that
  * behaves like options — is driven through this one interface. Automatic fill
- * and the user's own choice in the JobPilot widget both go through it; there is
+ * and the user's own choice in the XpertApply widget both go through it; there is
  * no separate simplified path.
  *
  * The cardinal rule: a click attempt is NEVER success. `select()` must be
