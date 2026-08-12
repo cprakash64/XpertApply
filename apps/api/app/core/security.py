@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 try:
     from jose import JWTError, jwt
@@ -44,7 +44,7 @@ def verify_password(password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(subject: str) -> str:
-    expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expires_minutes)
+    expires = datetime.now(UTC) + timedelta(minutes=settings.jwt_expires_minutes)
     payload = {"sub": subject, "exp": expires}
     if jwt:
         return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
@@ -94,7 +94,7 @@ def _decode_hs256(token: str) -> dict | None:
         if not hmac.compare_digest(expected, actual):
             return None
         payload = json.loads(_b64url_decode(payload_segment))
-        if int(payload.get("exp", 0)) < int(datetime.now(timezone.utc).timestamp()):
+        if int(payload.get("exp", 0)) < int(datetime.now(UTC).timestamp()):
             return None
         return payload
     except (ValueError, json.JSONDecodeError, TypeError):

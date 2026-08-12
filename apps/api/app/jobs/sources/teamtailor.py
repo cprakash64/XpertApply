@@ -43,7 +43,11 @@ class TeamtailorAdapter(JobSourceAdapter):
     def _normalize(self, item: dict) -> NormalizedJob | None:
         attrs = item.get("attributes") or {}
         title = attrs.get("title")
-        apply_url = attrs.get("apply-url") or attrs.get("careers-url") or (item.get("links") or {}).get("careersite-job-url")
+        apply_url = (
+            attrs.get("apply-url")
+            or attrs.get("careers-url")
+            or (item.get("links") or {}).get("careersite-job-url")
+        )
         if not title or not apply_url:
             return None
         description = attrs.get("body") or ""

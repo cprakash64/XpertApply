@@ -142,7 +142,11 @@ def _normalize(text: str) -> str:
 
 def _bucket_for(low: str) -> tuple[str, int] | None:
     """Return (bucket, header_length) if the line starts with a known header."""
-    for bucket, headers in (("pref", PREFERRED_HEADERS), ("req", REQUIREMENT_HEADERS), ("resp", RESPONSIBILITY_HEADERS)):
+    for bucket, headers in (
+        ("pref", PREFERRED_HEADERS),
+        ("req", REQUIREMENT_HEADERS),
+        ("resp", RESPONSIBILITY_HEADERS),
+    ):
         for header in headers:
             if low.startswith(header):
                 return bucket, len(header)

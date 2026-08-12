@@ -22,7 +22,7 @@ if nothing is configured the registry is empty and discovery shows setup guidanc
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import settings

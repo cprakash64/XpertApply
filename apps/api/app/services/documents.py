@@ -32,9 +32,13 @@ def profile_payload(db: Session, user_id: int) -> dict[str, Any]:
     return {
         "profile": public_dict(profile) if profile else {},
         "education": [public_dict(item) for item in db.scalars(select(Education).where(Education.user_id == user_id))],
-        "experience": [public_dict(item) for item in db.scalars(select(Experience).where(Experience.user_id == user_id))],
+        "experience": [
+            public_dict(item) for item in db.scalars(select(Experience).where(Experience.user_id == user_id))
+        ],
         "projects": [public_dict(item) for item in db.scalars(select(Project).where(Project.user_id == user_id))],
-        "certifications": [public_dict(item) for item in db.scalars(select(Certification).where(Certification.user_id == user_id))],
+        "certifications": [
+            public_dict(item) for item in db.scalars(select(Certification).where(Certification.user_id == user_id))
+        ],
         "awards": [public_dict(item) for item in db.scalars(select(Award).where(Award.user_id == user_id))],
     }
 
@@ -85,7 +89,10 @@ def build_truthful_resume(payload: dict[str, Any], job: JobPosting) -> dict[str,
             ),
             "links": [profile.get("linkedin_url"), profile.get("github_url"), profile.get("portfolio_url")],
         },
-        "summary": f"Candidate targeting {job.title} roles with supported experience in {', '.join(selected_skills[:4])}.",
+        "summary": (
+            f"Candidate targeting {job.title} roles with supported experience "
+            f"in {', '.join(selected_skills[:4])}."
+        ),
         "skills": selected_skills,
         "experience": [
             {

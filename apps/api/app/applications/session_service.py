@@ -335,7 +335,9 @@ def exchange_launch_token(db: Session, raw_token: str) -> tuple[ApplicationSessi
     return session, create_session_token(session.id, session.user_id)
 
 
-def apply_status(db: Session, session: ApplicationSession, new_status: ApplicationSessionStatus, *, source: str) -> None:
+def apply_status(
+    db: Session, session: ApplicationSession, new_status: ApplicationSessionStatus, *, source: str
+) -> None:
     if new_status not in PATCHABLE_STATUSES:
         raise SessionError(f"Status '{new_status.value}' cannot be set directly.")
     session.status = new_status
@@ -508,7 +510,10 @@ async def _safe_generate(
         logger.info("apply.session.doc generate ok kind=%s user=%s job=%s doc=%s", kind, user.id, job.id, record.id)
         return record, None
     except Exception as exc:  # noqa: BLE001 - degrade gracefully; never fail the session
-        logger.warning("apply.session.doc generate failed kind=%s user=%s job=%s err=%s", kind, user.id, job.id, type(exc).__name__)
+        logger.warning(
+            "apply.session.doc generate failed kind=%s user=%s job=%s err=%s",
+            kind, user.id, job.id, type(exc).__name__,
+        )
         db.rollback()
         return None, f"Tailored {kind} could not be prepared automatically ({type(exc).__name__}). You can retry it."
 

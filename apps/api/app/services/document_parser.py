@@ -1,7 +1,7 @@
-from io import BytesIO
-from pathlib import Path
 import re
 import zipfile
+from io import BytesIO
+from pathlib import Path
 
 from docx import Document
 from fastapi import UploadFile

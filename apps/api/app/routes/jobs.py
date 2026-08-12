@@ -95,7 +95,9 @@ def company_logo_proxy(normalized_key: str, db: Session = Depends(get_db)) -> Re
     cached = _find_cached_logo(normalized_key, branding.logo_url)
     if cached is not None:
         path, content_type = cached
-        return Response(content=path.read_bytes(), media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+        return Response(
+            content=path.read_bytes(), media_type=content_type, headers={"Cache-Control": "public, max-age=86400"}
+        )
 
     try:
         result = safe_fetch_image(branding.logo_url)
@@ -117,7 +119,9 @@ def company_logo_proxy(normalized_key: str, db: Session = Depends(get_db)) -> Re
     ext = _EXT_FOR_CONTENT_TYPE.get(result.content_type, "img")
     fingerprint = _logo_cache_fingerprint(branding.logo_url)
     (_LOGO_CACHE_DIR / f"{normalized_key}-{fingerprint}.{ext}").write_bytes(result.content)
-    return Response(content=result.content, media_type=result.content_type, headers={"Cache-Control": "public, max-age=86400"})
+    return Response(
+        content=result.content, media_type=result.content_type, headers={"Cache-Control": "public, max-age=86400"}
+    )
 
 
 def _logo_cache_fingerprint(logo_url: str) -> str:
@@ -264,7 +268,14 @@ def _list_payload(
 
     cards: list[dict] = []
     # Debug counts of why fresh jobs were excluded (shown only in dev on the UI).
-    counts = {"fresh": 0, "excluded_location": 0, "excluded_seniority": 0, "excluded_role": 0, "excluded_other": 0, "eligible": 0}
+    counts = {
+        "fresh": 0,
+        "excluded_location": 0,
+        "excluded_seniority": 0,
+        "excluded_role": 0,
+        "excluded_other": 0,
+        "eligible": 0,
+    }
     # Counted, then emitted once per request. A metric per filtered row would
     # put one log line per applied job on every Jobs load.
     filtered_as_applied = 0
@@ -417,7 +428,9 @@ def _serialize_card(
         # Preferred source: served through our own endpoint (cached, SSRF-safe,
         # survives the upstream URL changing/expiring). The frontend tries this
         # first and falls back to company_logo_url, then the neutral placeholder.
-        "company_logo_proxy_path": f"/jobs/companies/{normalize_company_key(job.company or '')}/logo" if company_logo_url else None,
+        "company_logo_proxy_path": (
+            f"/jobs/companies/{normalize_company_key(job.company or '')}/logo" if company_logo_url else None
+        ),
         "source": source.type if source else None,
         "location": job.location,
         # Short label for cards; the full multi-city value stays in `location`.

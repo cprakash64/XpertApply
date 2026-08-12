@@ -144,7 +144,8 @@ def _allowed_countries(user_locations: list[str]) -> set[str]:
     allowed: set[str] = set()
     for entry in user_locations or []:
         low = f" {entry.lower()} "
-        if any(p in low for p in [" united states ", " usa ", " us ", " u.s. ", " america "]) or entry.strip().lower() == "us":
+        us_markers = [" united states ", " usa ", " us ", " u.s. ", " america "]
+        if any(p in low for p in us_markers) or entry.strip().lower() == "us":
             allowed.add("us")
         for country, keywords in NON_US_KEYWORDS.items():
             if any(kw.strip() in low for kw in keywords):

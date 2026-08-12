@@ -7,19 +7,16 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.ai.provider import ai_provider
 from app.api.deps import get_current_user
 from app.applications.eligibility_service import (
     FIELD_TO_CANONICAL,
     read_eligibility,
     set_eligibility_answer,
 )
-from app.ai.provider import ai_provider
 from app.core.audit import record_audit
 from app.db.session import get_db
 from app.documents.resume_compaction_service import looks_like_fragment
-from app.profile.completeness import build_completeness
-from app.profile.names import compose_full_name
-from app.profile.phone import parse_phone
 from app.models.entities import (
     Award,
     Certification,
@@ -31,6 +28,9 @@ from app.models.entities import (
     User,
     UserProfile,
 )
+from app.profile.completeness import build_completeness
+from app.profile.names import compose_full_name
+from app.profile.phone import parse_phone
 from app.schemas.import_profile import (
     FileSourceType,
     ImportProfileApplyRequest,
@@ -39,14 +39,14 @@ from app.schemas.import_profile import (
     ImportProfileTextRequest,
 )
 from app.schemas.profile import (
+    WORK_AUTHORIZATION_STATUSES,
+    WORK_PREFERENCES,
     CareerProfileIn,
     ProfileImportIn,
     ProfileNameIn,
     SensitiveDemographicsIn,
     UserProfileIn,
     WorkdayCredentialsIn,
-    WORK_AUTHORIZATION_STATUSES,
-    WORK_PREFERENCES,
 )
 from app.services.document_parser import (
     DocumentParserError,
@@ -175,7 +175,9 @@ def career_payload(user_id: int, db: Session) -> dict[str, list[dict[str, Any]]]
         "education": serialize_records(db.scalars(select(Education).where(Education.user_id == user_id)).all()),
         "experience": serialize_records(db.scalars(select(Experience).where(Experience.user_id == user_id)).all()),
         "projects": serialize_records(db.scalars(select(Project).where(Project.user_id == user_id)).all()),
-        "certifications": serialize_records(db.scalars(select(Certification).where(Certification.user_id == user_id)).all()),
+        "certifications": serialize_records(
+            db.scalars(select(Certification).where(Certification.user_id == user_id)).all()
+        ),
         "awards": serialize_records(db.scalars(select(Award).where(Award.user_id == user_id)).all()),
         "publications": serialize_records(
             db.scalars(select(Publication).where(Publication.user_id == user_id)).all()
@@ -493,9 +495,13 @@ def apply_profile_import(
         _apply_imported_name(profile, draft.basic_info, overwrite=payload.overwrite)
         _apply_imported_phone(profile)
         work_authorization = clean_string(draft.basic_info.work_authorization_status)
-        if work_authorization in WORK_AUTHORIZATION_STATUSES and should_apply(profile.work_authorization, work_authorization, payload.overwrite):
+        if work_authorization in WORK_AUTHORIZATION_STATUSES and should_apply(
+            profile.work_authorization, work_authorization, payload.overwrite
+        ):
             profile.work_authorization = work_authorization
-        if draft.basic_info.requires_sponsorship is not None and (payload.overwrite or not profile.requires_sponsorship):
+        if draft.basic_info.requires_sponsorship is not None and (
+            payload.overwrite or not profile.requires_sponsorship
+        ):
             profile.requires_sponsorship = bool(draft.basic_info.requires_sponsorship)
 
     if "links" in sections:
@@ -507,15 +513,21 @@ def apply_profile_import(
                 setattr(profile, field, imported)
 
     if "job_targets" in sections:
-        profile.target_roles = apply_string_list(profile.target_roles or [], draft.job_targets.target_roles, payload.overwrite)
-        profile.target_levels = apply_string_list(profile.target_levels or [], draft.job_targets.target_levels, payload.overwrite)
+        profile.target_roles = apply_string_list(
+            profile.target_roles or [], draft.job_targets.target_roles, payload.overwrite
+        )
+        profile.target_levels = apply_string_list(
+            profile.target_levels or [], draft.job_targets.target_levels, payload.overwrite
+        )
         profile.preferred_locations = apply_string_list(
             profile.preferred_locations or [],
             draft.job_targets.preferred_locations,
             payload.overwrite,
         )
         work_preference = draft.job_targets.work_preference or ""
-        if work_preference in WORK_PREFERENCES and should_apply(profile.remote_preference, work_preference, payload.overwrite):
+        if work_preference in WORK_PREFERENCES and should_apply(
+            profile.remote_preference, work_preference, payload.overwrite
+        ):
             profile.remote_preference = work_preference
 
     if "skills" in sections:

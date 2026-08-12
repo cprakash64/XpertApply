@@ -14,8 +14,8 @@ from app.db.base import Base
 from app.job_sources.base import JobSourceAdapter, NormalizedJob
 from app.jobs import job_ingestion_service
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 @pytest.fixture()
@@ -224,7 +224,9 @@ def test_reimport_same_resume_twice_does_not_double(client: TestClient) -> None:
         "awards": [{"name": "Dean's List"}],
     }
     for _ in range(2):
-        assert _apply(client, headers, sections=["experience", "projects", "awards"], overwrite=False, draft=draft).status_code == 200
+        assert _apply(
+            client, headers, sections=["experience", "projects", "awards"], overwrite=False, draft=draft
+        ).status_code == 200
     career = _career(client, headers)
     assert len(career["experience"]) == 1
     assert len(career["projects"]) == 1

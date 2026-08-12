@@ -37,7 +37,12 @@ class BreezyAdapter(JobSourceAdapter):
         if not title or not apply_url:
             return None
         location = item.get("location") or {}
-        parts = [location.get("city"), location.get("state"), (location.get("country") or {}).get("name") if isinstance(location.get("country"), dict) else location.get("country")]
+        country = location.get("country")
+        parts = [
+            location.get("city"),
+            location.get("state"),
+            (country or {}).get("name") if isinstance(country, dict) else country,
+        ]
         location_str = location.get("name") or ", ".join(p for p in parts if p)
         remote_type = "remote" if location.get("is_remote") else None
         description = item.get("description") or ""
@@ -49,7 +54,9 @@ class BreezyAdapter(JobSourceAdapter):
             location=location_str or None,
             remote_type=remote_type,
             employment_type=employment.get("name") if isinstance(employment, dict) else employment,
-            seniority_level=(item.get("experience") or {}).get("name") if isinstance(item.get("experience"), dict) else None,
+            seniority_level=(
+                (item.get("experience") or {}).get("name") if isinstance(item.get("experience"), dict) else None
+            ),
             posted_at=_parse_date(item.get("published_date") or item.get("creation_date")),
             application_url=apply_url,
             source_url=apply_url,

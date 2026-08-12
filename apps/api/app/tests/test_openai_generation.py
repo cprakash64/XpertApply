@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import openai
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -17,8 +17,8 @@ from app.api.deps import get_db
 from app.core.config import settings
 from app.db.base import Base
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 def run(coro):
@@ -156,7 +156,8 @@ def _setup(client: TestClient) -> tuple[dict, int]:
         location="Remote, United States", remote_type="remote", posted_at=datetime.now(UTC) - timedelta(days=1),
         discovered_at=datetime.now(UTC), application_url="https://boards.greenhouse.io/acme/1",
         source_url="https://boards.greenhouse.io/acme/1", description_raw="",
-        description_clean="Requirements: Python, FastAPI, Kubernetes.", required_skills=["Python", "FastAPI", "Kubernetes"],
+        description_clean="Requirements: Python, FastAPI, Kubernetes.",
+        required_skills=["Python", "FastAPI", "Kubernetes"],
         hash_for_deduplication="h1",
     )
     db.add(job)
@@ -224,7 +225,9 @@ def test_cover_letter_uses_ai_and_no_template_warning(client: TestClient, monkey
     body_text = "I am excited to apply for the Backend Engineer role at Acme. " * 12
     monkeypatch.setattr(
         ai_provider, "json_task",
-        _fake_json_task({"paragraphs": [body_text, "Second paragraph about my experience at Acme.", "Closing paragraph."]}),
+        _fake_json_task(
+            {"paragraphs": [body_text, "Second paragraph about my experience at Acme.", "Closing paragraph."]}
+        ),
     )
     body = client.post(f"/jobs/{job_id}/generate-cover-letter", headers=headers).json()
     assert body["model_used"] == "gpt-5.5"

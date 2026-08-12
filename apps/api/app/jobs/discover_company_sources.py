@@ -30,7 +30,10 @@ PROBES = {
     "greenhouse": ("https://boards-api.greenhouse.io/v1/boards/{s}/jobs", lambda d: len(d.get("jobs", []))),
     "lever": ("https://api.lever.co/v0/postings/{s}?mode=json", lambda d: len(d) if isinstance(d, list) else 0),
     "ashby": ("https://api.ashbyhq.com/posting-api/job-board/{s}", lambda d: len(d.get("jobs", []))),
-    "smartrecruiters": ("https://api.smartrecruiters.com/v1/companies/{s}/postings?limit=1", lambda d: d.get("totalFound", 0)),
+    "smartrecruiters": (
+        "https://api.smartrecruiters.com/v1/companies/{s}/postings?limit=1",
+        lambda d: d.get("totalFound", 0),
+    ),
     "recruitee": ("https://{s}.recruitee.com/api/offers/", lambda d: len(d.get("offers", []))),
     "workable": ("https://apply.workable.com/api/v1/widget/accounts/{s}", lambda d: len(d.get("jobs", []))),
     "breezy": ("https://{s}.breezy.hr/json", lambda d: len(d) if isinstance(d, list) else 0),

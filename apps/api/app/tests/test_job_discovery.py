@@ -15,7 +15,7 @@ from app.job_sources.base import JobSourceAdapter, NormalizedJob
 from app.jobs import job_ingestion_service
 from app.jobs.job_description_parser import parse_job_description
 from app.jobs.job_matching_service import JobView, ProfileView, score_job
-from app.jobs.job_normalization_service import deduplicate, is_fresh, normalize_jobs
+from app.jobs.job_normalization_service import is_fresh, normalize_jobs
 from app.jobs.job_search_criteria_service import build_search_criteria
 from app.main import app
 from app.models import entities  # noqa: F401
@@ -133,8 +133,9 @@ def test_profile_builds_ml_role_queries(client: TestClient) -> None:
     headers = signup(client, "crit@example.com")
     client.put("/profile", headers=headers, json=ml_profile_payload())
     # Build criteria directly from the model to assert expansion.
-    from app.models.entities import UserProfile
     from sqlalchemy import select
+
+    from app.models.entities import UserProfile
 
     override = app.dependency_overrides[get_db]
     gen = override()
@@ -225,7 +226,9 @@ def test_relevant_job_ranks_above_irrelevant():
 def test_location_conflict_lowers_score():
     view = ml_view()
     remote = score_job(view, JobView(title="ML Engineer", required_skills=["Python"], workplace_type="remote"))
-    onsite = score_job(view, JobView(title="ML Engineer", required_skills=["Python"], workplace_type="onsite", location="NYC"))
+    onsite = score_job(
+        view, JobView(title="ML Engineer", required_skills=["Python"], workplace_type="onsite", location="NYC")
+    )
     assert onsite.fit_score < remote.fit_score
     assert any("remote" in r.lower() for r in onsite.risk_factors)
 

@@ -16,6 +16,8 @@ from app.core.config import settings
 from app.db.base import Base
 from app.job_sources.base import JobSourceAdapter, NormalizedJob
 from app.jobs import job_ingestion_service
+from app.jobs.source_packs import load_pack_file, packs_for_profile, tags_for_packs
+from app.jobs.source_registry import build_adapters, load_registry
 from app.jobs.sources.breezy import BreezyAdapter
 from app.jobs.sources.recruitee import RecruiteeAdapter
 from app.jobs.sources.simplifyjobs import (
@@ -25,8 +27,6 @@ from app.jobs.sources.simplifyjobs import (
 from app.jobs.sources.smartrecruiters import SmartRecruitersAdapter
 from app.jobs.sources.teamtailor import TeamtailorAdapter
 from app.jobs.sources.workable import WorkableAdapter
-from app.jobs.source_packs import load_pack_file, packs_for_profile, tags_for_packs
-from app.jobs.source_registry import build_adapters, load_registry
 from app.main import app
 from app.models import entities  # noqa: F401
 
@@ -83,7 +83,13 @@ def test_smartrecruiters_connector(monkeypatch: pytest.MonkeyPatch) -> None:
                 "id": "744000123",
                 "name": "Machine Learning Engineer",
                 "releasedDate": recent_iso(2),
-                "location": {"city": "Austin", "region": "TX", "country": "us", "remote": False, "fullLocation": "Austin, TX, United States"},
+                "location": {
+                    "city": "Austin",
+                    "region": "TX",
+                    "country": "us",
+                    "remote": False,
+                    "fullLocation": "Austin, TX, United States",
+                },
                 "typeOfEmployment": {"label": "Full-time"},
             }
         ],
@@ -297,7 +303,7 @@ def test_connector_broken_source_raises_not_crashes(monkeypatch: pytest.MonkeyPa
         raise httpx.ConnectError("down")
 
     monkeypatch.setattr(httpx, "AsyncClient", boom)
-    with pytest.raises(Exception):
+    with pytest.raises(httpx.ConnectError):
         run(BreezyAdapter("acme", "Acme").fetch_recent_jobs(7))
 
 
@@ -432,7 +438,8 @@ def _headers(client: TestClient) -> dict[str, str]:
     token = client.post("/auth/signup", json={"email": "scale@example.com", "password": "password123"}).json()
     headers = {"Authorization": f"Bearer {token['access_token']}"}
     client.put("/profile", headers=headers, json={
-        "full_name": "T", "target_roles": ["Software Engineer", "Backend Engineer", "AI Engineer", "Machine Learning Engineer"],
+        "full_name": "T",
+        "target_roles": ["Software Engineer", "Backend Engineer", "AI Engineer", "Machine Learning Engineer"],
         "target_levels": ["New Grad", "Junior"], "preferred_locations": ["Remote", "United States"],
         "remote_preference": "everything", "skills": ["Python"], "requires_sponsorship": False,
     })

@@ -250,8 +250,16 @@ def signup(client: TestClient, email: str) -> dict[str, str]:
 
 
 def _seed_demo_and_real(db: Session) -> None:
-    demo_source = JobSource(name="DemoCo", type="demo", base_url="https://example.com/careers", enabled=True, supports_api=True)
-    real_source = JobSource(name="Acme", type="greenhouse", base_url="https://job-boards.greenhouse.io/acme", enabled=True, supports_api=True)
+    demo_source = JobSource(
+        name="DemoCo", type="demo", base_url="https://example.com/careers", enabled=True, supports_api=True
+    )
+    real_source = JobSource(
+        name="Acme",
+        type="greenhouse",
+        base_url="https://job-boards.greenhouse.io/acme",
+        enabled=True,
+        supports_api=True,
+    )
     db.add_all([demo_source, real_source])
     db.flush()
     db.add_all(

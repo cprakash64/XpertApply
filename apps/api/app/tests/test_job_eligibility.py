@@ -286,7 +286,12 @@ def test_discovery_returns_only_eligible_jobs(client: TestClient, monkeypatch: p
     # No senior/staff titles.
     assert not any(word in t for t in titles for word in ["Senior", "Staff", "Sr "])
     # No unrelated roles.
-    for bad in ["Customer Success Engineer", "Technical Partner Manager", "Sr Social Measurement Lead", "Design Engineer"]:
+    for bad in [
+        "Customer Success Engineer",
+        "Technical Partner Manager",
+        "Sr Social Measurement Lead",
+        "Design Engineer",
+    ]:
         assert bad not in titles
 
     # Debug counts add up.

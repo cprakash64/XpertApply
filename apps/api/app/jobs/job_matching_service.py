@@ -17,8 +17,8 @@ deterministic so matching works without OpenAI.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
+from dataclasses import dataclass, field
 
 from app.jobs.job_search_criteria_service import SENIORITY_ORDER, SearchCriteria
 
@@ -143,7 +143,7 @@ def _role_alignment(profile: ProfileView, job: JobView, criteria: SearchCriteria
         overlap = _token_overlap(role, title)
         best = max(best, overlap)
     if best >= 0.5:
-        return 0.6, f"Title is related to your target roles"
+        return 0.6, "Title is related to your target roles"
     if best > 0:
         return 0.3, ""
     return 0.0, ""

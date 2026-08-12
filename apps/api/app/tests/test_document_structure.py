@@ -16,8 +16,8 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.db.base import Base
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 @pytest.fixture()
@@ -54,8 +54,14 @@ def setup(client: TestClient) -> tuple[dict, int]:
     client.put("/profile/career", headers=headers, json={
         "education": [{"school": "Arizona State University", "degree": "BS", "major": "Computer Science"}],
         "experience": [{"company": "Cardinal Health", "title": "ML Engineer Intern",
-                        "bullets": ["Built Python services", "Shipped RAG search"], "technologies": ["Python", "FastAPI"]}],
-        "projects": [{"name": "Luna AI", "description": "Video platform", "bullets": ["Built pipeline"], "technologies": ["Python"]}],
+                        "bullets": ["Built Python services", "Shipped RAG search"],
+                        "technologies": ["Python", "FastAPI"]}],
+        "projects": [{
+            "name": "Luna AI",
+            "description": "Video platform",
+            "bullets": ["Built pipeline"],
+            "technologies": ["Python"],
+        }],
         "certifications": [], "awards": [],
     })
     db = next(app.dependency_overrides[get_db]())
@@ -67,7 +73,8 @@ def setup(client: TestClient) -> tuple[dict, int]:
         location="Remote, United States", remote_type="remote", posted_at=datetime.now(UTC) - timedelta(days=1),
         discovered_at=datetime.now(UTC), application_url="https://boards.greenhouse.io/acme/1",
         source_url="https://boards.greenhouse.io/acme/1", description_raw="",
-        description_clean="Requirements: Python, FastAPI, Rust, Go.", required_skills=["Python", "FastAPI", "Rust", "Go"],
+        description_clean="Requirements: Python, FastAPI, Rust, Go.",
+        required_skills=["Python", "FastAPI", "Rust", "Go"],
         hash_for_deduplication="h1",
     )
     db.add(job)

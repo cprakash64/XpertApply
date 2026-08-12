@@ -40,8 +40,21 @@ class WorkableAdapter(JobSourceAdapter):
         apply_url = item.get("application_url") or item.get("url") or item.get("shortlink")
         if not title or not apply_url:
             return None
-        parts = [item.get("city") or item.get("location", {}).get("city") if isinstance(item.get("location"), dict) else item.get("city"),
-                 item.get("country") or (item.get("location", {}) or {}).get("country") if isinstance(item.get("location"), dict) else item.get("country")]
+        # `A or B if C else D` binds as `(A or B) if C else D`; the explicit
+        # parentheses below preserve that original grouping exactly.
+        location_obj = item.get("location")
+        parts = [
+            (
+                (item.get("city") or item.get("location", {}).get("city"))
+                if isinstance(location_obj, dict)
+                else item.get("city")
+            ),
+            (
+                (item.get("country") or (item.get("location", {}) or {}).get("country"))
+                if isinstance(location_obj, dict)
+                else item.get("country")
+            ),
+        ]
         location = item.get("location_str") or ", ".join(p for p in parts if p)
         workplace = (item.get("workplace") or item.get("remote") or "")
         remote_type = "remote" if str(workplace).lower() in {"remote", "true"} else None

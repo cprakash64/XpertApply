@@ -122,11 +122,17 @@ def _template_paragraphs(profile: dict, job: JobPosting, strengths: list[str], p
     if experiences:
         exp = experiences[0]
         techs = ", ".join((exp.get("technologies") or [])[:3]) or strengths_text
-        proof = f"As {exp.get('title')} at {exp.get('company')}, I worked hands-on with {techs}, breaking down ambiguous problems and shipping features that held up in production."
+        proof = (
+            f"As {exp.get('title')} at {exp.get('company')}, I worked hands-on with {techs}, "
+            "breaking down ambiguous problems and shipping features that held up in production."
+        )
     elif projects:
         proj = projects[0]
         techs = ", ".join((proj.get("technologies") or [])[:3]) or strengths_text
-        proof = f"Through my project {proj.get('name')}, I applied {techs} to turn an idea into working software end to end."
+        proof = (
+            f"Through my project {proj.get('name')}, I applied {techs} "
+            "to turn an idea into working software end to end."
+        )
 
     second = ""
     if projects and experiences:
@@ -137,7 +143,10 @@ def _template_paragraphs(profile: dict, job: JobPosting, strengths: list[str], p
     education = payload.get("education", [])
     edu_line = ""
     if education and isinstance(education[0], dict) and education[0].get("school"):
-        edu_line = f" My studies at {education[0]['school']} gave me a solid foundation that I continue to build on through hands-on work."
+        edu_line = (
+            f" My studies at {education[0]['school']} gave me a solid foundation "
+            "that I continue to build on through hands-on work."
+        )
 
     para1 = (
         f"I am applying for the {job.title} role at {job.company} because it is a strong match for my strengths in "
@@ -148,8 +157,8 @@ def _template_paragraphs(profile: dict, job: JobPosting, strengths: list[str], p
         (proof + second).strip()
         or f"My background centers on {strengths_text}, which I have applied to build and ship working software."
     ) + edu_line + (
-        f" These experiences taught me how to work through ambiguity, collaborate across a team, and deliver features "
-        f"that hold up in production."
+        " These experiences taught me how to work through ambiguity, collaborate across a team, and deliver features "
+        "that hold up in production."
     )
     para3 = (
         f"I would welcome the chance to bring this experience to {job.company} and contribute to your team as a "

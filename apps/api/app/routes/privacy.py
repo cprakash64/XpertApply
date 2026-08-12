@@ -18,8 +18,8 @@ from app.models.entities import (
     Project,
     SensitiveDemographics,
     User,
-    UserProfile,
     UserJobPeopleRecommendation,
+    UserProfile,
 )
 
 router = APIRouter(prefix="/privacy", tags=["privacy"])

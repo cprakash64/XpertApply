@@ -52,7 +52,11 @@ class SmartRecruitersAdapter(JobSourceAdapter):
             location=location_str or None,
             remote_type=remote_type,
             employment_type=_employment(item.get("typeOfEmployment")),
-            seniority_level=(item.get("experienceLevel") or {}).get("id") if isinstance(item.get("experienceLevel"), dict) else None,
+            seniority_level=(
+                (item.get("experienceLevel") or {}).get("id")
+                if isinstance(item.get("experienceLevel"), dict)
+                else None
+            ),
             posted_at=_parse_date(item.get("releasedDate")),
             application_url=apply_url,
             source_url=apply_url,

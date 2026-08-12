@@ -16,13 +16,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.ai.provider import AIResult
+from app.applications import option_mapping_service as svc
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models import entities  # noqa: F401
-
-from app.ai.provider import AIResult
-from app.applications import option_mapping_service as svc
 
 OPTIONS = ["Yes, I will require sponsorship", "No, I will not require sponsorship"]
 
@@ -51,7 +50,12 @@ def client() -> Generator[TestClient, None, None]:
 
 def _session(client):
     """Create an authenticated application session; returns (headers, session_id)."""
-    from app.tests.test_applications import auth, complete_profile, create_session, seed_job  # noqa: PLC0415
+    from app.tests.test_applications import (  # noqa: PLC0415
+        auth,
+        complete_profile,
+        create_session,
+        seed_job,
+    )
 
     headers = auth(client, "mapopt@example.com")
     complete_profile(client, headers)

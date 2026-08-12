@@ -12,8 +12,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
-from app.applications.url_validation import is_valid_official_url, validate_official_url
-from app.core.session_tokens import create_launch_token, hash_token
+from app.applications.url_validation import (
+    InvalidApplicationURL,
+    is_valid_official_url,
+    validate_official_url,
+)
 from app.db.base import Base
 from app.main import app
 from app.models import entities  # noqa: F401
@@ -102,7 +105,7 @@ def test_url_validation_rejects_unsafe_schemes():
     for bad in ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "ftp://x.com", None, ""]:
         assert not is_valid_official_url(bad)
     assert is_valid_official_url("https://boards.greenhouse.io/acme/1")
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidApplicationURL):
         validate_official_url("https://example.com/apply")  # placeholder host
 
 
@@ -264,8 +267,18 @@ def test_session_read_refreshes_structured_employment_and_education(client: Test
         headers=headers,
         json={
             "education": [
-                {"school": "Arizona State University", "degree": "Bachelor of Science", "major": "Computer Science", "end_date": "2025-05-01"},
-                {"school": "Mesa Community College", "degree": "Associate of Science", "major": "Engineering", "end_date": "2021-05-01"},
+                {
+                    "school": "Arizona State University",
+                    "degree": "Bachelor of Science",
+                    "major": "Computer Science",
+                    "end_date": "2025-05-01",
+                },
+                {
+                    "school": "Mesa Community College",
+                    "degree": "Associate of Science",
+                    "major": "Engineering",
+                    "end_date": "2021-05-01",
+                },
             ],
             "experience": [
                 {
@@ -275,7 +288,13 @@ def test_session_read_refreshes_structured_employment_and_education(client: Test
                     "bullets": ["Built the evaluation harness", "Halved regression triage time"],
                     "technologies": ["Python"],
                 },
-                {"company": "Earlier Co", "title": "Developer", "currently_working": False, "bullets": [], "technologies": []},
+                {
+                    "company": "Earlier Co",
+                    "title": "Developer",
+                    "currently_working": False,
+                    "bullets": [],
+                    "technologies": [],
+                },
             ],
             "projects": [{"name": "Compiler Lab", "description": "Built a parser", "links": ["https://example.test/compiler"]}],
             "certifications": [],
@@ -409,7 +428,9 @@ def test_session_token_cannot_access_other_session(client: TestClient) -> None:
     a = create_session(client, headers, job_a)
     b = create_session(client, headers, job_b)
 
-    token_a = client.post("/application-sessions/token", json={"launch_token": a["extension_launch_token"]}).json()["session_token"]
+    token_a = client.post(
+        "/application-sessions/token", json={"launch_token": a["extension_launch_token"]}
+    ).json()["session_token"]
     ext = {"Authorization": f"Bearer {token_a}"}
     # Token scoped to session A cannot read session B.
     assert client.get(f"/application-sessions/{b['session_id']}", headers=ext).status_code == 403
@@ -434,7 +455,9 @@ def test_expired_session_cannot_be_exchanged(client: TestClient) -> None:
     db.commit()
     db.close()
 
-    assert client.post("/application-sessions/token", json={"launch_token": body["extension_launch_token"]}).status_code == 401
+    assert client.post(
+        "/application-sessions/token", json={"launch_token": body["extension_launch_token"]}
+    ).status_code == 401
 
 
 # --------------------------------------------------------------------------- #
@@ -466,7 +489,9 @@ def test_complete_requires_confirmation_and_updates_tracker(client: TestClient) 
     assert ledger == []
 
     # Unconfirmed completion is rejected — XpertApply never assumes submission.
-    assert client.post(f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": False}).status_code == 422
+    assert client.post(
+        f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": False}
+    ).status_code == 422
     done = client.post(f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": True})
     assert done.status_code == 200 and done.json()["status"] == "completed"
 

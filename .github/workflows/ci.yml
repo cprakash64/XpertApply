@@ -53,4 +53,16 @@ jobs:
         run: docker compose build
       - name: Check committed secrets
         run: |
-          ! grep -R "sk-" . --exclude-dir=.git --exclude-dir=node_modules
+          # Match the shape of a real OpenAI key (classic, project, and service
+          # account forms) rather than the bare substring "sk-", which also
+          # occurs inside ordinary words such as "risk-", "ask-" and
+          # "queue-microtask-" — and inside this very check, so the old
+          # substring form could never pass. Only tracked files are scanned,
+          # because a committed secret is by definition tracked. Lines marked
+          # with an allowlist pragma are known non-secret test fixtures.
+          if git grep -nIE 'sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}' \
+               | grep -v 'pragma: allowlist secret'; then
+            echo "::error::Possible committed API key (see matches above)"
+            exit 1
+          fi
+          echo "No committed API keys found."

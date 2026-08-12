@@ -134,11 +134,11 @@ class AIProvider:
         """Map an OpenAI/network exception to (reason_code, sanitized_message)."""
         if isinstance(exc, openai.NotFoundError):
             return "model_not_found", "model was not found"
-        if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
+        if isinstance(exc, openai.AuthenticationError | openai.PermissionDeniedError):
             return "auth", "authentication was rejected"
         if isinstance(exc, openai.RateLimitError):
             return "rate_limit", "rate limited"
-        if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
+        if isinstance(exc, openai.APIConnectionError | openai.APITimeoutError):
             return "request", "connection to the provider failed"
         if isinstance(exc, openai.BadRequestError):
             message = str(exc).lower()

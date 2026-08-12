@@ -13,8 +13,8 @@ from app.api.deps import get_db
 from app.db.base import Base
 from app.documents.document_guardrail_service import build_profile_facts, validate_resume
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 @pytest.fixture()
@@ -186,7 +186,12 @@ def test_generate_resume_dedupes_education_and_keeps_projects(client: TestClient
         "projects": [
             {"name": "Luna AI", "description": "AI video platform",
              "bullets": ["Built RAG pipeline with Python and FastAPI"], "technologies": ["Python", "FastAPI"]},
-            {"name": "VeoTrex", "description": "CV pipeline", "bullets": ["Trained models"], "technologies": ["PyTorch"]},
+            {
+                "name": "VeoTrex",
+                "description": "CV pipeline",
+                "bullets": ["Trained models"],
+                "technologies": ["PyTorch"],
+            },
         ],
         "certifications": [], "awards": [],
     })

@@ -137,8 +137,8 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    profile: Mapped["UserProfile | None"] = relationship(back_populates="user")
-    demographics: Mapped["SensitiveDemographics | None"] = relationship(back_populates="user")
+    profile: Mapped[UserProfile | None] = relationship(back_populates="user")
+    demographics: Mapped[SensitiveDemographics | None] = relationship(back_populates="user")
 
 
 class UserProfile(Base):

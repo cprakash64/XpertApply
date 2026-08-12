@@ -29,8 +29,21 @@ def _working(**over):
 
 
 def test_dedupes_duplicate_experience():
-    exp = {"company": "Cardinal Health", "title": "ML Engineer Intern", "start_date": "2024", "end_date": "2025", "bullets": ["Built services"]}
-    working = _working(experience=[exp, dict(exp), {"company": "cardinal health", "title": "ml engineer intern", "start_date": "2024", "end_date": "2025", "bullets": ["Built services"]}])
+    exp = {
+        "company": "Cardinal Health",
+        "title": "ML Engineer Intern",
+        "start_date": "2024",
+        "end_date": "2025",
+        "bullets": ["Built services"],
+    }
+    lowercased = {
+        "company": "cardinal health",
+        "title": "ml engineer intern",
+        "start_date": "2024",
+        "end_date": "2025",
+        "bullets": ["Built services"],
+    }
+    working = _working(experience=[exp, dict(exp), lowercased])
     out = compact_resume(working, set())
     assert len(out["experience"]) == 1
 

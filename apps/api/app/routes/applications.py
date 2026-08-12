@@ -21,17 +21,28 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.applications import answer_vault_service as vault
-from app.applications.session_refresh import refresh_if_stale, refresh_session_answers
-from app.applications import option_mapping_service
-from app.applications import preparation
+from app.applications import option_mapping_service, preparation
+from app.applications.answer_resolution_service import (
+    OptionIn,
+    QuestionIn,
+    resolve_questions,
+)
+from app.applications.answer_vault_service import ANSWER_VAULT_CONTRACT_VERSION
 from app.applications.canonical import CANONICAL_KEYS, is_sensitive_key
 from app.applications.mark_applied import (
-    AppliedSource,
     ApplicationJobNotFound,
+    AppliedSource,
     serialize_application,
 )
 from app.applications.observability import metric
 from app.applications.preparation import PreparationError
+from app.applications.question_registry import REGISTRY_VERSION
+from app.applications.session_overrides import (
+    OverrideRejected,
+    list_overrides,
+    set_override,
+)
+from app.applications.session_refresh import refresh_if_stale, refresh_session_answers
 from app.applications.session_service import (
     SessionError,
     apply_status,
@@ -59,26 +70,14 @@ from app.models.entities import (
     User,
     UserProfile,
 )
-from app.applications.answer_resolution_service import (
-    OptionIn,
-    QuestionIn,
-    resolve_questions,
-)
-from app.applications.question_registry import REGISTRY_VERSION
-from app.applications.session_overrides import (
-    OverrideRejected,
-    list_overrides,
-    set_override,
-)
-from app.applications.answer_vault_service import ANSWER_VAULT_CONTRACT_VERSION
 from app.schemas.applications import (
-    MapOptionIn,
     AnswerUpsertIn,
+    ApplicationOverrideIn,
     AutofillResultIn,
     CompleteSessionIn,
     CreateSessionIn,
     ExchangeTokenIn,
-    ApplicationOverrideIn,
+    MapOptionIn,
     ResolveQuestionsIn,
     SessionAnswerUpsertIn,
     SessionEventIn,
@@ -180,7 +179,7 @@ async def create_session(
     logger.info("apply.session.request user=%s job=%s rid=%s", user.id, payload.job_id, request_id)
     try:
         job = db.get(JobPosting, payload.job_id)
-    except OperationalError as exc:
+    except OperationalError:
         db.rollback()
         return _preparation_error_response(preparation.database_unavailable(), request_id)
     if job is None:
@@ -194,7 +193,7 @@ async def create_session(
             user.id, payload.job_id, exc.stage.value, exc.code, request_id,
         )
         return _preparation_error_response(exc, request_id)
-    except OperationalError as exc:
+    except OperationalError:
         db.rollback()
         return _preparation_error_response(preparation.database_unavailable(), request_id)
     body = _serialize_session(db, session)
@@ -446,7 +445,9 @@ async def regenerate_resume(
                               markdown=result.markdown, plain_text=result.plain_text, quality=result.quality,
                               model_used=result.model_used)
     session.tailored_resume_id = record.id
-    log_action(db, session.id, ApplicationActionType.resume_generated, source="user", metadata={"document_id": record.id})
+    log_action(
+        db, session.id, ApplicationActionType.resume_generated, source="user", metadata={"document_id": record.id}
+    )
     db.commit()
     return _serialize_session(db, session)
 
@@ -676,7 +677,8 @@ def record_autofill_results(
         "failures": failures,
     }
     logger.info(
-        "apply.session.autofill_results session=%s user=%s ats=%s status=%s discovered=%s filled=%s uploaded=%s review=%s failures=%s",
+        "apply.session.autofill_results session=%s user=%s ats=%s status=%s "
+        "discovered=%s filled=%s uploaded=%s review=%s failures=%s",
         session.id, session.user_id, summary["ats"], status_value,
         payload.fields_discovered, payload.fields_filled, len(uploaded), payload.review_items, len(failures),
     )

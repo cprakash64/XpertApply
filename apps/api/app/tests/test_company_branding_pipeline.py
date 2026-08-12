@@ -35,7 +35,9 @@ def db() -> Generator[Session, None, None]:
 def make_job(db: Session, *, company: str, external_id: str, logo_url: str | None = None) -> JobPosting:
     source = db.scalar(select(JobSource).where(JobSource.name == "TestSource"))
     if source is None:
-        source = JobSource(name="TestSource", type="greenhouse", base_url="https://example.com", enabled=True, supports_api=True)
+        source = JobSource(
+            name="TestSource", type="greenhouse", base_url="https://example.com", enabled=True, supports_api=True
+        )
         db.add(source)
         db.flush()
     job = JobPosting(
@@ -53,7 +55,9 @@ class TestCompanyBrandingReuse:
         get_or_create_company_branding(db, "Upstart")
         get_or_create_company_branding(db, "Upstart, Inc.")  # same company, different raw name
         db.commit()
-        rows = db.scalars(select(CompanyBranding).where(CompanyBranding.normalized_key == normalize_company_key("Upstart"))).all()
+        rows = db.scalars(
+            select(CompanyBranding).where(CompanyBranding.normalized_key == normalize_company_key("Upstart"))
+        ).all()
         assert len(rows) == 1
         assert rows[0].logo_url and "upstart.com" in rows[0].logo_url
 

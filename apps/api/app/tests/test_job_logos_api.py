@@ -14,8 +14,8 @@ from app.db.base import Base
 from app.jobs.backfill_company_logos import backfill_company_logos
 from app.jobs.company_logo_service import is_untrusted_simplify_logo_url
 from app.main import app
-from app.models import entities as E
 from app.models import entities  # noqa: F401
+from app.models import entities as E
 
 
 @pytest.fixture()

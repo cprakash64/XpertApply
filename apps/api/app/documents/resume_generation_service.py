@@ -157,7 +157,11 @@ def _education_entry(item: Any) -> dict[str, Any]:
 def _award_entry(item: Any) -> dict[str, Any]:
     if not isinstance(item, dict):
         return {"name": str(item), "issuer": "", "date": ""}
-    return {"name": item.get("name") or "", "issuer": item.get("issuer") or "", "date": str(item.get("date") or item.get("issue_date") or "")}
+    return {
+        "name": item.get("name") or "",
+        "issuer": item.get("issuer") or "",
+        "date": str(item.get("date") or item.get("issue_date") or ""),
+    }
 
 
 def _dates(start: Any, end: Any) -> str:
@@ -169,10 +173,14 @@ def _dates(start: Any, end: Any) -> str:
     return end_s or start_s or ""
 
 
-def _quality(content: dict, removed: list[str], missing: list[str], job: JobPosting, job_skills: set[str]) -> dict[str, Any]:
+def _quality(
+    content: dict, removed: list[str], missing: list[str], job: JobPosting, job_skills: set[str]
+) -> dict[str, Any]:
     # Tailored if any of the user's real skills overlap the job's skills.
     resume_skills = {i.lower() for g in content["skills"] for i in g["items"]}
-    tailored = bool(job_skills & resume_skills) or bool(content["summary"] and job.title.split()[0].lower() in content["summary"].lower())
+    tailored = bool(job_skills & resume_skills) or bool(
+        content["summary"] and job.title.split()[0].lower() in content["summary"].lower()
+    )
     return {
         "ats_friendly": True,  # single-column, standard sections, no tables/graphics/icons
         "job_tailored": bool(tailored),
@@ -235,7 +243,9 @@ def _build_resume(payload: dict, job: JobPosting, facts: ProfileFacts, job_skill
         "location": ", ".join(
             filter(None, [profile.get("location_city"), profile.get("location_state"), profile.get("location_country")])
         ),
-        "links": [u for u in [profile.get("linkedin_url"), profile.get("github_url"), profile.get("portfolio_url")] if u],
+        "links": [
+            u for u in [profile.get("linkedin_url"), profile.get("github_url"), profile.get("portfolio_url")] if u
+        ],
         "work_authorization": profile.get("work_authorization") or "",
     }
 
@@ -252,7 +262,11 @@ def _build_resume(payload: dict, job: JobPosting, facts: ProfileFacts, job_skill
 
 
 def _default_summary(profile: dict, job: JobPosting, relevant_skills: list[str]) -> str:
-    strengths = ", ".join(relevant_skills[:4]) if relevant_skills else ", ".join(str(s) for s in (profile.get("skills") or [])[:4])
+    strengths = (
+        ", ".join(relevant_skills[:4])
+        if relevant_skills
+        else ", ".join(str(s) for s in (profile.get("skills") or [])[:4])
+    )
     name = profile.get("full_name") or "Candidate"
     if strengths:
         return f"{name} targeting {job.title} roles, with hands-on experience in {strengths}."
@@ -450,7 +464,9 @@ def _to_plain_text(content: dict[str, Any]) -> str:
     if content.get("education"):
         section("Education")
         for edu in content["education"]:
-            lines.append(", ".join(filter(None, [edu.get("school"), edu.get("degree"), edu.get("dates"), edu.get("details")])))
+            lines.append(
+                ", ".join(filter(None, [edu.get("school"), edu.get("degree"), edu.get("dates"), edu.get("details")]))
+            )
     awards = (content.get("awards") or []) + (content.get("certifications") or [])
     if awards:
         section("Awards & Certifications")

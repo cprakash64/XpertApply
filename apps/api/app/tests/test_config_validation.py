@@ -355,7 +355,10 @@ def test_enforce_reports_every_problem_at_once() -> None:
         ("SECRET_KEY=Zq7pR2vK9wX4mB6nT1yH8jL5sD3fG0aC loaded", "Zq7pR2vK9wX4mB6nT1yH8jL5sD3fG0aC"),
         ("password: hunter2extra", "hunter2extra"),
         ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc", "eyJhbGciOiJIUzI1NiJ9.abc"),
-        ("using sk-abcdefghijklmnopqrstuvwxyz123456", "sk-abcdefghijklmnopqrstuvwxyz123456"),
+        (
+            "using sk-abcdefghijklmnopqrstuvwxyz123456",  # pragma: allowlist secret
+            "sk-abcdefghijklmnopqrstuvwxyz123456",  # pragma: allowlist secret
+        ),
         ("token=ghp_abcdefghijklmnopqrstuvwxyz1234", "ghp_abcdefghijklmnopqrstuvwxyz1234"),
     ],
 )
