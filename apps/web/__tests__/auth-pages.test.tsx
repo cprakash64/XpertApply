@@ -142,7 +142,7 @@ describe("auth pages", () => {
     for (const link of screen.getAllByRole("link", { name: /^Sign in$/ })) {
       expect(link).toHaveAttribute("href", "/login");
     }
-    for (const link of screen.getAllByRole("link", { name: /^Get started$/ })) {
+    for (const link of screen.getAllByRole("link", { name: /^Get started/ })) {
       expect(link).toHaveAttribute("href", "/signup");
     }
   });

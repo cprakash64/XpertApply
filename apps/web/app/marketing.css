@@ -1,0 +1,2456 @@
+/* ==========================================================================
+ * XpertApply — public marketing page
+ *
+ * Loaded only by the routes that import it (today: the logged-out homepage),
+ * so none of this reaches the authenticated app's bundle.
+ *
+ * WHY A STYLESHEET AND NOT UTILITIES
+ * The marketing surface has its own palette, its own light-only scheme, and a
+ * scroll-driven section whose state is expressed through custom properties that
+ * JavaScript writes once per frame. Utilities can express the layout but not the
+ * interpolated rail colour or the stage state machine, and splitting the design
+ * across both would leave no single place to read it. Everything is namespaced
+ * `.xa-*` under `.xa-page`, so it cannot leak into the product.
+ *
+ * WHY THE PALETTE IS SCOPED
+ * The application's tokens are a warm-neutral, pine-green system that follows
+ * `prefers-color-scheme`. The marketing design is a fixed light navy/cyan one.
+ * Redefining the global tokens would repaint the whole product; these variables
+ * are declared on `.xa-page` instead and shadow nothing outside it.
+ * ========================================================================== */
+
+/*
+ * The token layer.
+ *
+ * Deliberately separate from `.xa-page`, because not everything on this page is
+ * INSIDE the page element: the pricing dialog is a sibling of it (the provider
+ * wraps the page, and the overlay renders after it). Tokens declared on
+ * `.xa-page` alone would not reach the dialog, and every `var(--xa-*)` inside it
+ * would silently fall back to nothing — white text on a white button. Both roots
+ * carry `.xa-theme`, so the palette is defined once and applies to both.
+ */
+.xa-theme {
+  /* --- Brand ------------------------------------------------------------ */
+  --xa-navy: #06245c;
+  --xa-navy-2: #0b3577;
+  --xa-cyan: #14b8c4;
+  --xa-cyan-soft: #63d7dc;
+
+  /* --- Text ------------------------------------------------------------- */
+  --xa-ink: #08182f;
+  --xa-body: #475467;
+  --xa-muted: #667085;
+
+  /* --- Surfaces --------------------------------------------------------- */
+  --xa-surface: #ffffff;
+  --xa-surface-sunken: #f6f9fc;
+  --xa-line: rgb(7 26 51 / 8%);
+  --xa-line-soft: rgb(7 26 51 / 5%);
+  --xa-line-strong: rgb(7 26 51 / 13%);
+
+  /* --- Glass. Used in exactly three places: the navbar, the workflow
+   * controller, and the pricing dialog. ---------------------------------- */
+  --xa-glass: rgb(249 251 253 / 58%);
+  --xa-glass-border: rgb(7 26 51 / 6.5%);
+
+  /* --- Elevation. Restrained: two soft layers, never a drop shadow that
+   * reads as a border. --------------------------------------------------- */
+  --xa-shadow-sm: 0 1px 2px rgb(7 26 51 / 4%);
+  --xa-shadow: 0 1px 2px rgb(7 26 51 / 4%), 0 12px 32px rgb(7 26 51 / 6%);
+  --xa-shadow-lg: 0 2px 6px rgb(7 26 51 / 5%), 0 28px 70px rgb(7 26 51 / 10%);
+
+  /* --- Type. The system stack, with Inter first for anyone who has it: the
+   * page leans on hierarchy rather than a webfont, so nothing here blocks
+   * first paint or costs a network round trip. -------------------------- */
+  --xa-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+
+  /* --- Rhythm ----------------------------------------------------------- */
+  --xa-shell: 1220px;
+  --xa-gutter: clamp(1.25rem, 4vw, 2.5rem);
+  --xa-section-y: clamp(5rem, 11vh, 9rem);
+
+  /* --- Story state. Written by ProductStory once per animation frame; read
+   * by the rail and its markers. Declared here so the section renders
+   * correctly on the server, before any script runs. --------------------- */
+  --xa-progress: 0;
+  --rail-progress-color: var(--xa-cyan);
+  --rail-glow-color: rgb(20 184 196 / 22%);
+
+  font-family: var(--xa-font);
+  color: var(--xa-body);
+  /* Light-only by design: the approved direction is a light page, and the
+   * global stylesheet would otherwise hand a dark-mode visitor dark native
+   * controls and scrollbars inside a white page. */
+  color-scheme: light;
+}
+
+.xa-page {
+  background:
+    linear-gradient(180deg, #f8fafc 0%, #f5f8fb 52%, #f8fafc 100%) fixed;
+  /* `clip` rather than `hidden`: it contains the hero's decorative bleed
+   * without turning the page into a scroll container, which would break the
+   * sticky product column. */
+  overflow-x: clip;
+  min-height: 100vh;
+}
+
+/* The scrolling element is <html>, which no page component can reach, so the
+ * page's marker class is matched from the root — the same technique the
+ * product's own pages use. This keeps over-scroll and first paint on the
+ * marketing palette for a visitor whose OS is in dark mode. */
+html:has(.xa-page) {
+  background: #f8fafc;
+  color-scheme: light;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.xa-page) {
+    scroll-behavior: auto;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Primitives
+ * -------------------------------------------------------------------------- */
+
+.xa-shell {
+  width: 100%;
+  max-width: var(--xa-shell);
+  margin-inline: auto;
+  padding-inline: var(--xa-gutter);
+}
+
+/*
+ * The element reset, wrapped in `:where()` so it carries ZERO specificity.
+ *
+ * Written plainly as `.xa-theme p { margin: 0 }` it scores (0,1,1) and quietly
+ * outranks every single-class rule below it — `.xa-stage__body { margin-top }`,
+ * `.xa-hero__scroll { margin-top }`, and a dozen others — collapsing the page's
+ * vertical rhythm with no error anywhere. A reset should always lose to the
+ * component that styles the element.
+ */
+:where(.xa-theme) h1,
+:where(.xa-theme) h2,
+:where(.xa-theme) h3 {
+  color: var(--xa-ink);
+  font-weight: 600;
+  margin: 0;
+  text-wrap: balance;
+}
+
+:where(.xa-theme) p {
+  margin: 0;
+}
+
+.xa-eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--xa-cyan);
+}
+
+.xa-eyebrow--dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  color: var(--xa-navy);
+}
+
+.xa-eyebrow--dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--xa-cyan);
+  box-shadow: 0 0 0 4px rgb(20 184 196 / 9%);
+}
+
+.xa-section-head {
+  max-width: 44rem;
+}
+
+.xa-section-head h2 {
+  margin-top: 1rem;
+  font-size: clamp(1.9rem, 3.6vw, 2.9rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+
+.xa-section-head p {
+  margin-top: 1.125rem;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--xa-body);
+  max-width: 38rem;
+}
+
+/* --- Buttons -------------------------------------------------------------- */
+
+.xa-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 3rem;
+  padding-inline: 1.375rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.xa-btn--primary {
+  background: var(--xa-navy);
+  color: #fff;
+  box-shadow: 0 1px 2px rgb(6 36 92 / 22%), 0 8px 20px rgb(6 36 92 / 14%);
+}
+
+.xa-btn--primary:hover {
+  background: var(--xa-navy-2);
+}
+
+.xa-btn--ghost {
+  background: rgb(255 255 255 / 62%);
+  border-color: var(--xa-line-strong);
+  color: var(--xa-ink);
+}
+
+.xa-btn--ghost:hover {
+  background: #fff;
+  border-color: rgb(7 26 51 / 20%);
+}
+
+.xa-btn--sm {
+  height: 2.375rem;
+  padding-inline: 0.9375rem;
+  border-radius: 10px;
+  font-size: 0.875rem;
+}
+
+.xa-btn--onnavy {
+  background: #fff;
+  color: var(--xa-navy);
+}
+
+.xa-btn--onnavy:hover {
+  background: var(--xa-cyan-soft);
+  color: var(--xa-navy);
+}
+
+/* A CTA whose destination is not configured yet. Kept focusable and announced
+ * rather than `disabled`, which would remove it from the tab order entirely. */
+.xa-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  background: rgb(7 26 51 / 3.5%);
+  border-color: var(--xa-line-strong);
+  border-style: dashed;
+  color: var(--xa-muted);
+  box-shadow: none;
+}
+
+.xa-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* An unavailable CTA and the sentence explaining why, kept as one unit so the
+ * explanation cannot be separated from the control it describes. */
+.xa-cta-note {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  /* Capped so the explanation wraps under its own button instead of stretching
+   * the flex row and pushing the neighbouring CTA onto a line of its own. */
+  max-width: 15rem;
+}
+
+.xa-cta-note > span {
+  font-size: 0.8125rem;
+  color: var(--xa-muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Wordmark
+ * -------------------------------------------------------------------------- */
+
+.xa-wordmark {
+  display: inline-flex;
+  align-items: center;
+  font-size: 1.22rem;
+  font-weight: 750;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.xa-wordmark__xpert {
+  color: var(--xa-navy);
+}
+
+.xa-wordmark__apply {
+  color: var(--xa-cyan);
+}
+
+/* On the navy trust section and the footer the mark inverts. */
+.xa-wordmark--invert .xa-wordmark__xpert {
+  color: #fff;
+}
+
+/* --------------------------------------------------------------------------
+ * Navbar — floats below the top of the viewport and stays there.
+ * -------------------------------------------------------------------------- */
+
+.xa-navwrap {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  padding-block: 0.875rem 0;
+  pointer-events: none;
+}
+
+.xa-nav {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: min(calc(100% - 30px), 1180px);
+  min-height: 62px;
+  margin-inline: auto;
+  padding: 0.5rem 0.625rem 0.5rem 1.25rem;
+  border: 1px solid var(--xa-glass-border);
+  border-radius: 18px;
+  background: var(--xa-glass);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+  backdrop-filter: blur(26px) saturate(175%);
+  box-shadow: 0 1px 2px rgb(7 26 51 / 4%), 0 10px 30px rgb(7 26 51 / 5%);
+}
+
+/* The sticky bar sits inside the gutter rather than against the edge. */
+.xa-navwrap > .xa-shell {
+  max-width: none;
+  padding-inline: 0;
+}
+
+.xa-nav__links {
+  display: none;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.xa-nav__link {
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--xa-body);
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.xa-nav__link:hover {
+  color: var(--xa-ink);
+  background: rgb(7 26 51 / 4%);
+}
+
+.xa-nav__actions {
+  display: none;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.xa-nav__toggle {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--xa-line-strong);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 55%);
+  color: var(--xa-ink);
+  cursor: pointer;
+}
+
+@media (min-width: 900px) {
+  .xa-nav__links,
+  .xa-nav__actions {
+    display: flex;
+  }
+
+  .xa-nav__toggle {
+    display: none;
+  }
+}
+
+.xa-nav__panel {
+  pointer-events: auto;
+  max-width: var(--xa-shell);
+  margin: 0.5rem auto 0;
+  padding: 0.75rem;
+  border: 1px solid var(--xa-glass-border);
+  border-radius: 18px;
+  background: rgb(252 253 254 / 92%);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+  backdrop-filter: blur(26px) saturate(175%);
+  box-shadow: var(--xa-shadow);
+}
+
+.xa-nav__panel-links {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.xa-nav__panel .xa-nav__link {
+  text-align: left;
+  padding: 0.6875rem 0.75rem;
+}
+
+.xa-nav__panel-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--xa-line);
+}
+
+/* --------------------------------------------------------------------------
+ * Hero
+ * -------------------------------------------------------------------------- */
+
+.xa-hero {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  min-height: 760px;
+  padding: 82px 0 98px;
+  text-align: center;
+}
+
+.xa-hero > .xa-shell {
+  width: 100%;
+}
+
+/* Atmosphere. Three decorative layers, each far below the threshold where it
+ * would compete with the headline: a near-invisible monogram and two very wide,
+ * very faint brand illuminations. Deliberately not blobs — no hard edge, no
+ * saturation, nothing a reader would describe as a shape. */
+.xa-hero__atmos {
+  position: absolute;
+  inset: -10% -20% 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.xa-hero__x {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(28rem, 74vw, 60rem);
+  font-weight: 700;
+  line-height: 0.8;
+  letter-spacing: -0.06em;
+  color: var(--xa-navy);
+  opacity: 0.01;
+  user-select: none;
+}
+
+.xa-hero__glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+}
+
+.xa-hero__glow--cyan {
+  top: 4%;
+  left: 8%;
+  width: min(46rem, 70vw);
+  height: min(26rem, 40vw);
+  background: radial-gradient(closest-side, rgb(20 184 196 / 13%), transparent);
+  animation: xa-aurora 26s ease-in-out infinite alternate;
+}
+
+.xa-hero__glow--navy {
+  top: 22%;
+  right: 6%;
+  width: min(42rem, 66vw);
+  height: min(24rem, 38vw);
+  background: radial-gradient(closest-side, rgb(6 36 92 / 9%), transparent);
+  animation: xa-aurora 32s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes xa-aurora {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(2.5%, 3%, 0) scale(1.06);
+  }
+}
+
+.xa-hero__inner {
+  max-width: 930px;
+  margin-inline: auto;
+}
+
+.xa-hero h1 {
+  margin-top: 1.75rem;
+  font-size: clamp(58px, 7vw, 94px);
+  font-weight: 730;
+  line-height: 0.94;
+  letter-spacing: -0.062em;
+}
+
+.xa-hero h1 span {
+  display: block;
+}
+
+.xa-hero__line-2 {
+  color: var(--xa-cyan);
+}
+
+.xa-hero__lede {
+  margin-top: 2rem;
+  margin-inline: auto;
+  max-width: 760px;
+  font-size: 19px;
+  line-height: 1.66;
+  color: var(--xa-body);
+}
+
+.xa-hero .xa-cta-row {
+  margin-top: 2rem;
+  justify-content: center;
+}
+
+.xa-hero__trust {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem 1.75rem;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-hero__trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--xa-muted);
+}
+
+.xa-hero__trust svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--xa-cyan);
+  flex: none;
+}
+
+.xa-hero__scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 3.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgb(102 112 133 / 78%);
+}
+
+.xa-hero__mouse {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 28px;
+  border: 1.5px solid rgb(6 36 92 / 42%);
+  border-radius: 10px;
+}
+
+.xa-hero__mouse i {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  width: 3px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--xa-cyan);
+  transform: translateX(-50%);
+  animation: xa-wheel 2.2s ease-in-out infinite;
+}
+
+@keyframes xa-wheel {
+  0%, 100% { opacity: 0.35; transform: translate(-50%, 0); }
+  45% { opacity: 1; transform: translate(-50%, 5px); }
+}
+
+@media (max-width: 639px) {
+  .xa-hero {
+    min-height: 760px;
+    padding: 70px 0 72px;
+  }
+
+  .xa-hero h1 {
+    font-size: clamp(50px, 14vw, 62px);
+  }
+
+  .xa-hero__lede {
+    font-size: 17px;
+  }
+
+  .xa-hero__scroll { margin-top: 2.5rem; }
+}
+
+/* --------------------------------------------------------------------------
+ * Story — the scrollytelling section
+ * -------------------------------------------------------------------------- */
+
+.xa-story {
+  padding-block: 112px 104px;
+  scroll-margin-top: 6rem;
+}
+
+.xa-story > .xa-shell {
+  width: min(calc(100% - 48px), 1360px);
+  max-width: none;
+  padding-inline: 0;
+}
+
+.xa-story__intro {
+  max-width: 800px;
+  margin: 0 auto 56px;
+  text-align: center;
+}
+
+.xa-story__intro h2 {
+  margin-top: 1rem;
+  font-size: clamp(40px, 4.6vw, 60px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+}
+
+.xa-story__intro p {
+  max-width: 720px;
+  margin: 1.25rem auto 0;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.xa-story__grid {
+  display: grid;
+  gap: 64px;
+}
+
+/* --- Narrative column ----------------------------------------------------- */
+
+.xa-narrative {
+  position: relative;
+  min-width: 0;
+}
+
+.xa-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 48px 0 48px 34px;
+}
+
+/* Each stage is its own anchor target (the footer links to them), so a heading
+ * must never arrive under the floating navbar. */
+.xa-stage {
+  scroll-margin-top: 6rem;
+}
+
+.xa-stage__index {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--xa-muted);
+}
+
+.xa-stage__index em {
+  font-style: normal;
+  color: var(--xa-cyan);
+}
+
+.xa-stage h3 {
+  max-width: 500px;
+  margin-top: 1rem;
+  font-size: clamp(30px, 2.7vw, 38px);
+  line-height: 1.06;
+  letter-spacing: -0.045em;
+}
+
+.xa-stage__body {
+  margin-top: 1rem;
+  max-width: 500px;
+  font-size: 17px;
+  line-height: 1.68;
+  color: var(--xa-body);
+}
+
+.xa-stage__benefits {
+  max-width: 500px;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.625rem;
+}
+
+.xa-stage__benefits li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--xa-body);
+}
+
+.xa-stage__benefits svg {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  margin-top: 0.0625rem;
+  flex: none;
+  color: var(--xa-cyan);
+}
+
+/* --- Rail ----------------------------------------------------------------
+ * ONE continuous journey, not two stacked bars.
+ *
+ * `track` is the uncompleted remainder — a neutral hairline. `fill` is the
+ * completed portion, and its gradient runs from cyan at the origin to
+ * `--rail-progress-color` at its own moving end. Because that end colour is
+ * interpolated from cyan toward navy by the same progress value that sets the
+ * height, the bar reads as one line maturing rather than as a second colour
+ * drawn over a first.
+ * ------------------------------------------------------------------------- */
+
+.xa-rail {
+  position: absolute;
+  left: 0;
+  top: var(--xa-rail-top, 0);
+  height: var(--xa-rail-height, 100%);
+  width: 2px;
+}
+
+.xa-rail__track {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: rgb(7 26 51 / 7%);
+}
+
+.xa-rail__fill {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--xa-rail-fill-height, calc(var(--xa-progress) * 100%));
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--xa-cyan) 0%,
+    var(--rail-progress-color) 100%
+  );
+  transition: height 80ms linear;
+}
+
+/* Markers sit on the rail at each stage's optical centre. The active one takes
+ * the same interpolated colour as the rail's leading end, so the marker and the
+ * line are visibly the same moment in the journey. */
+.xa-stage__marker {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  /* Centred on the 2px rail, and on the stage's own midline — the same point
+   * the observer and the progress measurement both anchor to. Offsets rather
+   * than a translate, so the active state's scale() is free to apply. */
+  margin-left: -4px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 0 0 2px rgb(7 26 51 / 14%);
+  transition:
+    background-color 260ms ease,
+    box-shadow 260ms ease,
+    transform 260ms ease;
+}
+
+.xa-stage[data-state="done"] .xa-stage__marker {
+  background: var(--rail-progress-color);
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 60%);
+  opacity: 0.55;
+}
+
+.xa-stage[data-state="active"] .xa-stage__marker {
+  background: var(--rail-progress-color);
+  box-shadow: 0 0 0 4px var(--rail-glow-color);
+  transform: scale(1.15);
+}
+
+/* --- Stage focus ----------------------------------------------------------
+ * Only where there is a sticky product to synchronise with. Below the desktop
+ * breakpoint every stage is followed by its own product state and reads as an
+ * ordinary sequence, so dimming five of six would just make the page harder to
+ * read on a phone.
+ * ------------------------------------------------------------------------- */
+
+@media (min-width: 1024px) {
+  .xa-story[data-ready="true"] .xa-stage {
+    opacity: 0.34;
+    transform: translateY(18px) scale(0.985);
+    transform-origin: left center;
+    transition:
+      opacity 380ms cubic-bezier(0.2, 0.78, 0.2, 1),
+      transform 380ms cubic-bezier(0.2, 0.78, 0.2, 1);
+  }
+
+  .xa-story[data-ready="true"] .xa-stage[data-state="done"] {
+    opacity: 0.34;
+  }
+
+  .xa-story[data-ready="true"] .xa-stage[data-state="active"] {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * The selectors above are gated on `data-ready`, which the client component sets
+ * on mount. Before hydration — and with JavaScript off entirely — nothing
+ * dims the stages, so the section reads as six plain blocks rather than as one
+ * legible block and five that look broken.
+ */
+
+/* --- Sticky column -------------------------------------------------------- */
+
+.xa-story__sticky {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .xa-story__grid {
+    grid-template-columns: minmax(320px, 0.68fr) minmax(650px, 1.32fr);
+    align-items: start;
+  }
+
+  .xa-story__sticky {
+    display: block;
+    position: sticky;
+    top: 104px;
+    width: min(95%, 820px);
+    justify-self: end;
+  }
+
+  .xa-story__disclaimer {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .xa-stage {
+    /* The scroll distance one stage occupies. Enough to make the transition
+     * legible, short enough that a laptop never shows an empty column. */
+    min-height: 76vh;
+  }
+}
+
+/* Shorter laptops (1366×768 and friends): tuck the sticky column up, shorten
+ * the stages, and let the mock shrink rather than push the controller off the
+ * bottom of the screen. */
+@media (min-width: 1024px) and (max-height: 800px) {
+  .xa-story__sticky {
+    /* Still clear of the floating bar — the mock's browser chrome sliding under
+     * a translucent navbar reads as a rendering fault, not as depth. */
+    top: 92px;
+    width: min(93%, 790px);
+  }
+
+  .xa-stage {
+    min-height: 76vh;
+    padding-block: 36px;
+  }
+}
+
+@media (min-width: 1600px) {
+  .xa-story > .xa-shell {
+    width: min(calc(100% - 64px), 1460px);
+  }
+
+  .xa-story__grid { gap: 76px; }
+}
+
+@media (max-width: 1023px) {
+  .xa-story { padding-block: 92px; }
+  .xa-story__grid { gap: 0; }
+  .xa-stage { padding-block: 54px; }
+  .xa-rail, .xa-stage__marker { display: none; }
+}
+
+@media (max-width: 639px) {
+  .xa-story > .xa-shell { width: calc(100% - 32px); }
+  .xa-story__intro { margin-bottom: 24px; }
+  .xa-stage { padding: 46px 0; }
+}
+
+/* Tablet and below: the story becomes a plain sequence — narrative, then the
+ * product state it describes. No sticky, no observers driving layout. */
+.xa-stage__inline-demo {
+  margin-top: 1.75rem;
+}
+
+@media (min-width: 1024px) {
+  .xa-stage__inline-demo {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Product demonstration
+ * -------------------------------------------------------------------------- */
+
+.xa-mock {
+  border: 1px solid var(--xa-line);
+  border-radius: 17px;
+  background: var(--xa-surface);
+  box-shadow: var(--xa-shadow);
+  overflow: hidden;
+}
+
+.xa-mock__chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 40px;
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid var(--xa-line);
+  background: var(--xa-surface-sunken);
+}
+
+.xa-mock__dots {
+  display: flex;
+  gap: 0.375rem;
+  flex: none;
+}
+
+.xa-mock__dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgb(7 26 51 / 11%);
+}
+
+.xa-mock__url {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--xa-line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.6875rem;
+  color: var(--xa-muted);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xa-mock__body {
+  display: grid;
+  grid-template-columns: 8.25rem minmax(0, 1fr);
+  height: var(--xa-mock-height);
+}
+
+
+.xa-mock__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.875rem 0.625rem;
+  border-right: 1px solid var(--xa-line);
+  background: var(--xa-surface-sunken);
+}
+
+/* The wordmark at product-chrome scale — it identifies the app inside the
+ * picture, it is not a second logo competing with the page's own. */
+.xa-mock__brand {
+  padding: 0.25rem 0.5rem 0.875rem;
+}
+
+.xa-mock__brand .xa-wordmark {
+  font-size: 0.875rem;
+}
+
+.xa-mock__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  padding: 0.5rem;
+  border-radius: 7px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--xa-muted);
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+.xa-mock__nav-item i {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.55;
+}
+
+.xa-mock__nav-item[data-current="true"] {
+  background: rgb(6 36 92 / 6%);
+  color: var(--xa-navy);
+  font-weight: 600;
+}
+
+/* The panes that actually change between stages. The shell above stays put. */
+.xa-mock__panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1.34fr) minmax(220px, 0.9fr);
+  min-height: 0;
+}
+
+.xa-mock__workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1.25rem;
+  border-right: 1px solid var(--xa-line);
+}
+
+.xa-mock__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.625rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--xa-line-soft);
+}
+
+.xa-mock__head h4 {
+  min-width: 0;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  color: var(--xa-ink);
+}
+
+/* Secondary by definition — it yields its width to the title rather than
+ * forcing it onto a third line. */
+.xa-mock__head span {
+  flex: 0 1 auto;
+  max-width: 45%;
+  font-size: 0.6875rem;
+  color: var(--xa-muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xa-mock__rows {
+  display: grid;
+  /* Explicit, and zero-minimum: a grid item's automatic minimum is its
+   * min-content, which pushes each row a few pixels past the pane and clips its
+   * right border against the divider. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 0.625rem;
+  margin: 1.125rem 0 0;
+  padding: 0;
+  list-style: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.xa-mock__row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--xa-line-soft);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.xa-mock__row[data-state="active"] {
+  border-color: rgb(20 184 196 / 38%);
+  background: rgb(20 184 196 / 5%);
+}
+
+.xa-mock__company {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--xa-line);
+  border-radius: 9px;
+  background: var(--xa-surface-sunken);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--xa-navy);
+}
+
+.xa-mock__row-text {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Blocks, not inline spans: as inline text the title and its meta run together
+ * into one unreadable line ("Technical RecruiterHiring for this team"). */
+.xa-mock__row-title {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--xa-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xa-mock__row-meta {
+  display: block;
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  color: var(--xa-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xa-mock__score {
+  display: grid;
+  gap: 1px;
+  min-width: 32px;
+  text-align: center;
+  flex: none;
+}
+
+.xa-mock__score strong {
+  font-size: 0.875rem;
+  line-height: 1;
+  color: var(--xa-navy);
+}
+
+.xa-mock__score small {
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--xa-muted);
+}
+
+/* --- Detail panel --------------------------------------------------------- */
+
+.xa-mock__panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1.25rem;
+}
+
+.xa-mock__panel h5 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--xa-ink);
+}
+
+.xa-mock__metric {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.xa-mock__metric strong {
+  font-size: 2.5rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--xa-cyan);
+}
+
+.xa-mock__metric span {
+  font-size: 0.6875rem;
+  color: var(--xa-muted);
+}
+
+.xa-mock__meter {
+  margin-top: 0.75rem;
+  height: 4px;
+  border-radius: 4px;
+  background: rgb(7 26 51 / 7%);
+  overflow: hidden;
+}
+
+.xa-mock__meter i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--xa-cyan), var(--xa-navy));
+  transition: width 420ms cubic-bezier(0.2, 0.78, 0.2, 1);
+}
+
+.xa-mock__points {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-mock__points li {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--xa-body);
+}
+
+.xa-mock__points svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  margin-top: 0.125rem;
+  flex: none;
+  color: var(--xa-cyan);
+}
+
+/* Wraps to a second row rather than truncating: in the narrowest desktop
+ * column two side-by-side labels would both become an ellipsis, which tells the
+ * reader nothing about what the product does next. */
+.xa-mock__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
+/* Presentational only — these are pictures of buttons inside a picture of the
+ * product, so they are spans, not controls a keyboard can reach and not do
+ * anything with. */
+.xa-mock__action {
+  flex: 1 1 6.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xa-mock__action--primary {
+  background: var(--xa-navy);
+  color: #fff;
+}
+
+.xa-mock__action--secondary {
+  border: 1px solid var(--xa-line-strong);
+  color: var(--xa-body);
+}
+
+/* Stage change: the CONTENT settles, the shell does not move. */
+.xa-mock__panes {
+  animation: xa-pane-in 320ms cubic-bezier(0.2, 0.78, 0.2, 1);
+}
+
+@keyframes xa-pane-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(4px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Below the desktop breakpoint the mock sits inline underneath the narrative it
+ * illustrates, in a column roughly a third as wide. A 7.75rem sidebar plus two
+ * panes there leaves three unreadable slivers, so the shell collapses to one
+ * stacked column, and on a phone the sidebar — the least informative part —
+ * goes entirely.
+ *
+ * These rules live AFTER the base ones on purpose: same specificity, so source
+ * order is what decides, and putting them next to `.xa-mock__body` at the top of
+ * the section would have left them silently losing to the declarations below.
+ */
+@media (max-width: 1023px) {
+  .xa-mock__body,
+  .xa-mock__panes {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .xa-mock__workspace {
+    border-right: 0;
+    border-bottom: 1px solid var(--xa-line);
+  }
+
+  .xa-mock__sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: 0;
+    border-bottom: 1px solid var(--xa-line);
+  }
+
+  .xa-mock__brand {
+    flex-basis: 100%;
+    padding-bottom: 0.5rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .xa-mock__sidebar {
+    display: none;
+  }
+}
+
+/* Desktop mock height. Sized so a 768px-tall laptop still shows the browser
+ * top, the product content, and the controller underneath it. */
+@media (min-width: 1024px) {
+  .xa-mock__body {
+    --xa-mock-height: 500px;
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 800px) {
+  .xa-mock__body {
+    --xa-mock-height: 470px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Workflow controller
+ * -------------------------------------------------------------------------- */
+
+.xa-controller {
+  display: flex;
+  gap: 0.125rem;
+  position: relative;
+  z-index: 2;
+  width: calc(100% - 36px);
+  margin: -22px auto 0;
+  padding: 0.3125rem;
+  border: 1px solid var(--xa-glass-border);
+  border-radius: 16px;
+  background: var(--xa-glass);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+  backdrop-filter: blur(26px) saturate(175%);
+  box-shadow: var(--xa-shadow-sm);
+  /* On a narrow screen the strip scrolls inside itself rather than widening
+   * the page — the one place horizontal scrolling is allowed, and it is
+   * contained. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.xa-controller::-webkit-scrollbar {
+  display: none;
+}
+
+.xa-controller__item {
+  flex: 1 0 auto;
+  padding: 0.4375rem 0.625rem;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--xa-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+.xa-controller__item:hover {
+  color: var(--xa-ink);
+}
+
+.xa-controller__item[aria-current="true"] {
+  background: var(--xa-navy);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+ * Extension
+ * -------------------------------------------------------------------------- */
+
+.xa-ext {
+  padding: 132px 0 128px;
+  scroll-margin-top: 5rem;
+}
+
+.xa-ext__grid {
+  display: grid;
+  gap: 96px;
+  align-items: center;
+}
+
+@media (min-width: 1024px) {
+  .xa-ext__grid {
+    grid-template-columns: minmax(340px, 0.82fr) minmax(560px, 1.18fr);
+  }
+}
+
+.xa-ext .xa-section-head h2 {
+  font-size: clamp(48px, 4.7vw, 68px);
+  line-height: 0.99;
+  letter-spacing: -0.055em;
+}
+
+.xa-ext__steps {
+  display: grid;
+  gap: 1.25rem;
+  margin: 2.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-ext__step {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.xa-ext__step-n {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgb(20 184 196 / 10%);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--xa-cyan);
+}
+
+.xa-ext__step h3 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.xa-ext__step p {
+  margin-top: 0.3125rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--xa-body);
+}
+
+.xa-ext .xa-cta-row {
+  margin-top: 2.25rem;
+}
+
+/*
+ * The visual is a self-contained block with its own aspect and no dependency on
+ * the copy beside it, so replacing this mock with a short screen recording later
+ * is a matter of swapping the contents of ExtensionVisual and nothing else.
+ */
+.xa-ext__visual {
+  position: relative;
+  border: 1px solid var(--xa-line);
+  min-height: 510px;
+  border-radius: 18px;
+  background: var(--xa-surface);
+  box-shadow: var(--xa-shadow-lg);
+  overflow: hidden;
+}
+
+.xa-ext__chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  min-height: 42px;
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid var(--xa-line);
+  background: var(--xa-surface-sunken);
+}
+
+.xa-ext__url {
+  flex: 1;
+  padding: 0.3125rem 0.75rem;
+  border: 1px solid var(--xa-line);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 0.6875rem;
+  color: var(--xa-muted);
+  text-align: center;
+}
+
+.xa-ext__browser-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(230px, 0.8fr);
+  min-height: 468px;
+}
+
+.xa-ext__form {
+  padding: 2rem 1.75rem;
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  border-right: 1px solid var(--xa-line);
+}
+
+.xa-ext__skeleton {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: rgb(7 26 51 / 10%);
+}
+
+.xa-ext__skeleton--company { width: 35%; }
+.xa-ext__skeleton--title { width: 64%; height: 16px; margin-top: 0.25rem; }
+
+.xa-ext__fields {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.3rem;
+}
+
+.xa-ext__field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.xa-ext__field-label {
+  display: block;
+  width: 42%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgb(7 26 51 / 10%);
+}
+
+.xa-ext__field-input {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 0.75rem;
+  border: 1px solid var(--xa-line-strong);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.xa-ext__field-input i {
+  display: block;
+  height: 7px;
+  border-radius: 999px;
+  background: rgb(61 83 112 / 18%);
+}
+
+.xa-ext__panel {
+  position: static;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--xa-surface-sunken);
+  padding: 1.5rem;
+  box-shadow: none;
+}
+
+.xa-ext__progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1.75rem;
+  font-size: 0.75rem;
+  color: var(--xa-body);
+}
+
+.xa-ext__progress-head strong {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--xa-cyan);
+}
+
+.xa-ext__progress {
+  height: 5px;
+  margin-top: 0.625rem;
+  border-radius: 999px;
+  background: rgb(7 26 51 / 8%);
+  overflow: hidden;
+}
+
+.xa-ext__progress i {
+  display: block;
+  width: 84%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--xa-cyan);
+}
+
+.xa-ext__panel-list {
+  display: grid;
+  gap: 0.625rem;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-ext__panel-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--xa-line);
+  font-size: 0.75rem;
+  color: var(--xa-body);
+}
+
+.xa-ext__panel-list svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  flex: none;
+  color: var(--xa-cyan);
+}
+
+.xa-ext__panel-foot {
+  margin-top: 1.25rem;
+  padding: 0.6875rem;
+  border-radius: 9px;
+  background: var(--xa-navy);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.xa-ext__caption {
+  margin-top: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  text-align: center;
+  color: rgb(102 112 133 / 85%);
+}
+
+@media (max-width: 1023px) {
+  .xa-ext { padding-block: 96px; }
+  .xa-ext__grid { gap: 56px; }
+}
+
+@media (max-width: 639px) {
+  .xa-ext__browser-body { grid-template-columns: 1fr; }
+  .xa-ext__form { border-right: 0; border-bottom: 1px solid var(--xa-line); }
+  .xa-ext__panel { padding: 1.25rem; }
+}
+
+/* --------------------------------------------------------------------------
+ * Trust — the solid navy break
+ * -------------------------------------------------------------------------- */
+
+.xa-trust {
+  background: var(--xa-navy);
+  padding-block: 100px;
+  scroll-margin-top: 5rem;
+}
+
+.xa-trust h2,
+.xa-trust h3 {
+  color: #fff;
+}
+
+.xa-trust .xa-eyebrow {
+  color: var(--xa-cyan-soft);
+}
+
+.xa-trust .xa-section-head p {
+  color: rgb(255 255 255 / 72%);
+}
+
+.xa-trust__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: start;
+  gap: 70px;
+}
+
+.xa-trust .xa-section-head h2 {
+  font-size: clamp(40px, 4vw, 56px);
+  line-height: 1.02;
+  letter-spacing: -0.05em;
+}
+
+.xa-trust__cards {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-trust__card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  padding: 1rem 1.125rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 5%);
+}
+
+.xa-trust__icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  background: rgb(20 184 196 / 14%);
+}
+
+.xa-trust__icon svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--xa-cyan-soft);
+}
+
+.xa-trust__card h3 {
+  margin-top: 0.125rem;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.xa-trust__card p {
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: rgb(255 255 255 / 70%);
+}
+
+/* --------------------------------------------------------------------------
+ * Final CTA
+ * -------------------------------------------------------------------------- */
+
+.xa-final {
+  padding-block: 88px;
+}
+
+.xa-final__card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 30px;
+  align-items: center;
+  padding: 50px;
+  border: 1px solid #dfe5ec;
+  border-radius: 17px;
+  background: radial-gradient(circle at 84% 10%, rgb(20 184 196 / 9%), transparent 34%), #fbfcfd;
+  box-shadow: 0 16px 40px rgb(7 26 51 / 5%);
+}
+
+.xa-final h2 {
+  margin-top: 1rem;
+  max-width: 800px;
+  font-size: clamp(36px, 4vw, 50px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+}
+
+.xa-final p {
+  margin-top: 1.25rem;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--xa-body);
+  max-width: 720px;
+}
+
+/* --------------------------------------------------------------------------
+ * Footer
+ * -------------------------------------------------------------------------- */
+
+.xa-footer {
+  border-top: 1px solid var(--xa-line);
+  background: rgb(255 255 255 / 45%);
+  padding-block: 72px 32px;
+}
+
+.xa-footer__top {
+  display: grid;
+  gap: 2.5rem;
+}
+
+@media (min-width: 768px) {
+  .xa-footer__top {
+    grid-template-columns: minmax(260px, 1.05fr) minmax(0, 2fr);
+    gap: 80px;
+  }
+}
+
+.xa-footer__blurb {
+  margin-top: 1rem;
+  max-width: 20rem;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--xa-muted);
+}
+
+.xa-footer__groups {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .xa-footer__groups {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.xa-footer__groups h3 {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--xa-muted);
+}
+
+.xa-footer__groups ul {
+  display: grid;
+  gap: 0.625rem;
+  margin: 0.9375rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-footer__link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--xa-body);
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.xa-footer__link:hover {
+  color: var(--xa-navy);
+}
+
+/* Items that name a capability rather than link to one. Plain text, because a
+ * link that goes nowhere is worse than no link. */
+.xa-footer__static {
+  font-size: 0.875rem;
+  color: var(--xa-body);
+}
+
+@media (max-width: 767px) {
+  .xa-trust__grid { grid-template-columns: 1fr; gap: 42px; }
+  .xa-final__card { grid-template-columns: 1fr; padding: 34px 28px; }
+  .xa-final__action { justify-self: start; }
+}
+
+.xa-footer__bottom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  justify-content: space-between;
+  margin-top: clamp(2.5rem, 5vh, 3.5rem);
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--xa-line);
+  font-size: 0.8125rem;
+  color: var(--xa-muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Pricing dialog
+ * -------------------------------------------------------------------------- */
+
+.xa-pricing__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 2rem);
+  overflow-y: auto;
+  background: rgb(4 14 32 / 46%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
+  animation: xa-fade 180ms ease both;
+}
+
+.xa-pricing__dialog {
+  position: relative;
+  isolation: isolate;
+  width: min(60rem, 100%);
+  margin-block: auto;
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  border: 1px solid rgb(7 26 51 / 8%);
+  border-radius: 22px;
+  background: #fcfdfe;
+  box-shadow: 0 40px 90px rgb(4 14 32 / 24%);
+  overflow: hidden;
+  animation: xa-dialog-in 240ms cubic-bezier(0.2, 0.78, 0.2, 1) both;
+}
+
+/* One faint cyan illumination, top-left, well under the copy. */
+.xa-pricing__dialog::before {
+  content: "";
+  position: absolute;
+  top: -40%;
+  left: -15%;
+  z-index: -1;
+  width: 34rem;
+  height: 26rem;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(20 184 196 / 12%), transparent);
+  pointer-events: none;
+}
+
+@keyframes xa-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes xa-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.xa-pricing__close {
+  position: absolute;
+  top: 0.875rem;
+  right: 0.875rem;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--xa-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--xa-body);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.xa-pricing__close:hover {
+  color: var(--xa-ink);
+  border-color: var(--xa-line-strong);
+}
+
+.xa-pricing__head {
+  max-width: 34rem;
+  padding-right: 2.5rem;
+}
+
+.xa-pricing__head h2 {
+  margin-top: 0.75rem;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+.xa-pricing__head p {
+  margin-top: 0.75rem;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--xa-body);
+}
+
+.xa-pricing__plans {
+  display: grid;
+  gap: 1rem;
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 768px) {
+  .xa-pricing__plans {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.xa-pricing__plan {
+  display: flex;
+  flex-direction: column;
+  padding: 1.375rem;
+  border: 1px solid var(--xa-line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.xa-pricing__plan[data-featured="true"] {
+  border-color: rgb(6 36 92 / 22%);
+  box-shadow: 0 1px 2px rgb(7 26 51 / 4%), 0 16px 36px rgb(6 36 92 / 8%);
+}
+
+.xa-pricing__plan-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--xa-ink);
+}
+
+.xa-pricing__tag {
+  padding: 0.125rem 0.4375rem;
+  border-radius: 999px;
+  background: rgb(20 184 196 / 12%);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #0e7c85;
+}
+
+.xa-pricing__price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  margin-top: 0.875rem;
+}
+
+.xa-pricing__price strong {
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--xa-navy);
+}
+
+.xa-pricing__price span {
+  font-size: 0.8125rem;
+  color: var(--xa-muted);
+}
+
+.xa-pricing__features {
+  display: grid;
+  gap: 0.5625rem;
+  margin: 1.25rem 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.xa-pricing__features li {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--xa-body);
+}
+
+.xa-pricing__features svg {
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin-top: 0.125rem;
+  flex: none;
+  color: var(--xa-cyan);
+}
+
+.xa-pricing__plan .xa-btn {
+  margin-top: auto;
+  width: 100%;
+}
+
+.xa-pricing__note {
+  margin-top: 1.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--xa-muted);
+}
+
+/* --------------------------------------------------------------------------
+ * Reduced motion
+ *
+ * The global stylesheet already collapses durations. What it cannot do is stop
+ * the aurora from drifting or the scroll indicator from nudging, so those are
+ * removed outright here. Every scroll-driven STATE still works — stages still
+ * activate, the rail still fills, the controller still tracks — they just
+ * arrive without transition.
+ * -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .xa-hero__glow--cyan,
+  .xa-hero__glow--navy,
+  .xa-hero__scroll svg {
+    animation: none;
+  }
+
+  .xa-mock__panes,
+  .xa-pricing__dialog,
+  .xa-pricing__backdrop {
+    animation: none;
+  }
+
+  .xa-stage {
+    transform: none;
+  }
+}
+
+/* ========================================================================
+ * Supplied finished-design parity
+ *
+ * These final declarations mirror the measurements in
+ * XpertApply_finished_design.html while retaining the production routes,
+ * accessible dialog behaviour, and React-driven story state above.
+ * ======================================================================== */
+
+.xa-theme {
+  --xa-line: #e5e9f0;
+  --xa-line-soft: #edf0f4;
+  --xa-line-strong: #d9e1eb;
+  --xa-surface-sunken: #f8fafc;
+  --xa-glass: rgb(249 251 253 / 58%);
+  --xa-shadow: 0 28px 90px rgb(13 35 67 / 12%);
+  --xa-shadow-lg: 0 26px 80px rgb(13 35 67 / 12%);
+}
+
+.xa-shell {
+  width: min(calc(100% - 40px), 1220px);
+  max-width: none;
+  padding-inline: 0;
+}
+
+.xa-btn {
+  min-height: 42px;
+  height: auto;
+  padding-inline: 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.xa-btn:hover { transform: translateY(-1px); }
+.xa-btn--primary { box-shadow: 0 10px 22px rgb(6 36 92 / 17%); }
+.xa-btn--ghost { background: rgb(255 255 255 / 68%); border-color: #d7deea; color: var(--xa-navy); }
+.xa-btn--sm { min-height: 42px; padding-inline: 16px; font-size: 14px; }
+
+.xa-wordmark {
+  gap: 10px;
+  color: var(--xa-navy);
+  font-size: 1.08rem;
+  font-weight: 820;
+  letter-spacing: -0.02em;
+}
+.xa-wordmark > img { width: 36px; height: 36px; object-fit: contain; }
+
+.xa-navwrap { top: 14px; padding: 0; margin-top: 14px; }
+.xa-nav {
+  justify-content: flex-start;
+  gap: 28px;
+  padding: 0 15px;
+  border-color: rgb(255 255 255 / 58%);
+  background: linear-gradient(135deg, rgb(255 255 255 / 58%), rgb(244 248 252 / 40%));
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  backdrop-filter: blur(22px) saturate(165%);
+  box-shadow:
+    0 1px 1px rgb(255 255 255 / 58%) inset,
+    0 1px 2px rgb(7 26 51 / 4%),
+    0 14px 36px rgb(16 24 40 / 7%);
+}
+.xa-nav__links { gap: 28px; margin-left: 26px; }
+.xa-nav__link { padding: 0; font-size: 14.5px; font-weight: 650; color: #344054; }
+.xa-nav__link:hover { background: none; color: var(--xa-navy); }
+.xa-nav__actions { gap: 10px; margin-left: auto; }
+.xa-nav__actions .xa-btn { padding-inline: 18px; font-size: 14.5px; }
+
+.xa-hero { overflow: hidden; }
+.xa-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 50% 20%, rgb(8 183 194 / 10%), transparent 23%),
+    radial-gradient(circle at 78% 34%, rgb(6 36 92 / 6.5%), transparent 24%),
+    radial-gradient(circle at 18% 50%, rgb(8 183 194 / 4.5%), transparent 20%);
+}
+.xa-hero__atmos { inset: 0; overflow: visible; }
+.xa-hero__x {
+  top: 46%;
+  width: 100%;
+  font-size: clamp(320px, 46vw, 760px);
+  line-height: .72;
+  font-weight: 850;
+  letter-spacing: -.08em;
+  opacity: .011;
+}
+.xa-hero__glow--cyan {
+  top: 44%; left: 50%; width: 680px; height: 680px;
+  background:
+    radial-gradient(circle at 38% 36%, rgb(8 183 194 / 11%), transparent 35%),
+    radial-gradient(circle at 64% 58%, rgb(6 36 92 / 8%), transparent 42%);
+  filter: blur(34px);
+  opacity: .9;
+  animation: xa-reference-aurora 12s ease-in-out infinite alternate;
+}
+.xa-hero__glow--navy { display: none; }
+@keyframes xa-reference-aurora {
+  from { transform: translate(-53%, -48%) scale(.96); }
+  to { transform: translate(-47%, -52%) scale(1.05); }
+}
+.xa-eyebrow { font-size: 12px; font-weight: 850; letter-spacing: .08em; }
+.xa-hero .xa-eyebrow { margin-bottom: 18px; }
+.xa-hero h1 { margin-top: 0; }
+.xa-hero__lede { margin-top: 25px; }
+.xa-hero .xa-cta-row { margin-top: 30px; gap: 12px; }
+.xa-hero__trust { gap: 24px; margin-top: 22px; }
+.xa-hero__trust li { gap: 8px; font-size: 13px; font-weight: 650; }
+.xa-hero__trust svg {
+  width: 18px; height: 18px; padding: 4px; border-radius: 50%;
+  background: #e9faf4; color: #087a4f; stroke-width: 3;
+}
+.xa-hero__scroll {
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+  gap: 9px; margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .03em;
+}
+.xa-hero__mouse { width: 19px; height: 29px; border: 1px solid #cfd7e2; background: rgb(255 255 255 / 55%); }
+
+.xa-story { padding: 68px 0 116px; background: linear-gradient(180deg,#fbfcfe 0%,#f8fbfd 55%,#fbfcfe 100%); }
+.xa-story__intro { max-width: 900px; margin-bottom: 38px; }
+.xa-story__intro h2 { max-width: 850px; margin-inline: auto; font-size: clamp(42px,4.25vw,62px); letter-spacing: -.052em; text-wrap: wrap; }
+.xa-story__keep { white-space: nowrap; }
+.xa-story__intro p { margin-top: 18px; line-height: 1.65; }
+.xa-stage { padding-left: 40px; }
+.xa-stage__index { display: block; margin: 0 0 14px; color: var(--xa-cyan); font-size: 11px; font-weight: 900; letter-spacing: .11em; }
+.xa-stage__index em { margin-right: .45em; }
+.xa-stage h3 { margin-top: 0; max-width: 540px; font-size: clamp(39px,2.7vw,44px); line-height: 1.035; letter-spacing: -.047em; }
+.xa-stage__body { max-width: 535px; margin-top: 17px; font-size: 18px; }
+.xa-stage__benefits { margin-top: 20px; gap: 10px; }
+.xa-stage__benefits li { gap: 10px; font-size: 15px; }
+.xa-stage__benefits svg {
+  width: 18px; height: 18px; padding: 4px; border-radius: 50%;
+  background: #e9faf4; color: #087a4f; stroke-width: 3;
+}
+.xa-stage__marker { width: 9px; height: 9px; margin-left: -3.5px; margin-top: -4.5px; }
+.xa-stage[data-state="active"] .xa-stage__marker { box-shadow: 0 0 0 3px var(--rail-glow-color); transform: scale(1.08); }
+
+@media (min-width: 1024px) {
+  .xa-story > .xa-shell { width: min(calc(100% - 40px), 1500px); }
+  .xa-story__grid { grid-template-columns: minmax(340px,.7fr) minmax(700px,1.3fr); gap: clamp(42px,3.4vw,58px); }
+  .xa-story__sticky { top: 96px; width: auto; justify-self: stretch; padding-top: 5px; }
+  .xa-stage { min-height: 70vh; }
+}
+.xa-mock { border-color: #dfe5ed; border-radius: 20px; }
+.xa-mock__chrome { min-height: 46px; padding: 0 14px; gap: 7px; }
+.xa-mock__dots { gap: 7px; }
+.xa-mock__dots span { width: 8px; height: 8px; border: 1px solid #cbd4df; background: #fff; }
+.xa-mock__url { height: 24px; margin-left: 8px; padding: 0 11px; border-color: #e0e6ed; border-radius: 7px; font-size: 10px; text-align: left; }
+.xa-mock__body { grid-template-columns: 180px minmax(0, 1fr); height: auto; min-height: 520px; }
+.xa-mock__sidebar { gap: 0; padding: 18px 12px; background: #fbfcfe; }
+.xa-mock__brand { padding: 0 6px 16px; }
+.xa-mock__brand .xa-wordmark { gap: 8px; font-size: 12px; font-weight: 850; }
+.xa-mock__brand .xa-wordmark > img { width: 25px; height: 25px; }
+.xa-mock__nav-item { height: 36px; gap: 9px; margin: 3px 0; padding: 0 10px; border-radius: 8px; font-size: 11px; font-weight: 700; }
+.xa-mock__nav-item[data-current="true"] { background: #edf5ff; }
+.xa-mock__panes { grid-template-columns: minmax(0, 1.08fr) minmax(250px, .92fr); align-content: start; }
+.xa-mock__workspace { padding: 22px; border-right: 0; }
+.xa-mock__head { padding: 0; margin-bottom: 17px; border: 0; }
+.xa-mock__head span { display: block; max-width: none; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.xa-mock__head h4 { margin-top: 5px; font-size: 21px; letter-spacing: -.033em; }
+.xa-mock__head > i { width: 160px; height: 33px; border: 1px solid #e0e6ed; border-radius: 7px; background: #fbfcfe; }
+.xa-mock__rows { gap: 10px; margin: 0; }
+.xa-mock__row { gap: 11px; padding: 13px; border-color: #e5eaf0; border-radius: 10px; }
+.xa-mock__row[data-state="active"] { border-color: #bdd8f5; background: #fff; box-shadow: 0 8px 22px rgb(16 24 40 / 5%); }
+.xa-mock__company { width: 41px; height: 41px; border-radius: 8px; font-size: 14px; font-weight: 900; }
+.xa-mock__row-title { font-size: 12px; font-weight: 820; }
+.xa-mock__row-meta { margin-top: 4px; font-size: 10px; color: #98a2b3; }
+.xa-mock__score strong { color: #0b8152; font-size: 16px; }
+.xa-mock__score small { font-size: 8.5px; color: #98a2b3; }
+.xa-mock__panel { align-self: start; min-height: 300px; margin: 22px 22px 22px 0; padding: 18px; border: 1px solid #e5eaf0; border-radius: 12px; background: linear-gradient(180deg,#fff,#f8fbfd); }
+.xa-mock__panel h5 { font-size: 14px; font-weight: 800; }
+.xa-mock__metric { margin-top: 15px; }
+.xa-mock__metric strong { font-size: 43px; font-weight: 850; }
+.xa-mock__metric span { display: none; }
+.xa-mock__meter { height: 7px; margin-top: 8px; background: #e9eef3; }
+.xa-mock__meter i { background: linear-gradient(90deg,var(--xa-cyan),var(--xa-cyan-soft)); }
+.xa-mock__points { gap: 9px; margin-top: 13px; }
+.xa-mock__points li { gap: 8px; font-size: 11px; line-height: 1.45; }
+.xa-mock__points svg { width: 16px; height: 16px; padding: 4px; border-radius: 50%; background: #e7faf6; color: #087a4f; stroke-width: 3; }
+.xa-mock__actions { flex-wrap: nowrap; gap: 7px; padding-top: 15px; }
+.xa-mock__action { padding: 10px 7px; font-size: 10px; border-radius: 10px; }
+.xa-controller { width: max-content; max-width: 94%; margin: -27px auto 0; gap: 4px; padding: 7px; }
+.xa-controller__item { flex: 0 0 auto; padding: 10px 13px; font-size: 11.5px; font-weight: 760; }
+
+.xa-ext { padding: 116px 0 118px; background: radial-gradient(circle at 78% 18%,rgb(20 184 196 / 7%),transparent 24%),linear-gradient(180deg,#f8fafc 0%,#f5f8fb 100%); border-top: 1px solid #e8edf3; }
+.xa-ext > .xa-shell { width: min(calc(100% - 40px), 1320px); }
+.xa-ext__grid { grid-template-columns: minmax(430px,.82fr) minmax(600px,1.18fr); gap: 60px; }
+.xa-ext .xa-section-head { max-width: 590px; }
+.xa-ext .xa-section-head h2 { max-width: 460px; font-size: clamp(48px,4.4vw,66px); }
+.xa-ext .xa-section-head h2 > span { display: block; }
+.xa-ext .xa-section-head p { max-width: 510px; margin-top: 24px; font-size: 18px; line-height: 1.72; color: #536174; }
+.xa-ext__steps { gap: 16px; margin-top: 32px; }
+.xa-ext__step { grid-template-columns: 40px 1fr; gap: 14px; }
+.xa-ext__step-n { width: 40px; height: 40px; }
+.xa-ext .xa-cta-row { align-items: flex-start; margin-top: 32px; margin-left: 54px; }
+.xa-ext .xa-cta-note { gap: 8px; max-width: 26rem; }
+.xa-ext .xa-cta-note > span { max-width: 26rem; font-size: 10px; line-height: 1.35; color: #98a2b3; }
+.xa-ext .xa-btn--primary[aria-disabled="true"] {
+  border-color: transparent;
+  border-style: solid;
+  background: var(--xa-navy);
+  color: #fff;
+  box-shadow: 0 10px 22px rgb(6 36 92 / 17%);
+}
+.xa-ext__text-link { color: #475467; font-size: 13px; font-weight: 760; }
+.xa-ext__visual { min-height: 0; border-color: #dfe6ee; border-radius: 22px; }
+.xa-ext__chrome { min-height: 44px; padding: 0 13px; }
+.xa-ext__browser-body { grid-template-columns: 1fr 250px; min-height: 478px; }
+.xa-ext__form { padding: 28px; }
+.xa-ext__panel { padding: 18px; border-left: 1px solid #e3e8ef; background: linear-gradient(180deg,rgb(255 255 255 / 95%),rgb(247 250 252 / 98%)); }
+.xa-ext__panel .xa-wordmark { gap: 8px; font-size: 12px; font-weight: 850; }
+.xa-ext__panel .xa-wordmark > img { width: 25px; height: 25px; }
+.xa-ext__caption { margin-top: 13px; font-size: 11px; line-height: 1.5; }
+
+.xa-final__card { grid-template-columns: minmax(0,1fr) auto; gap: 30px; padding: 36px 44px; background: linear-gradient(120deg,rgb(8 183 194 / 5.5%),transparent 37%),#fbfcfe; }
+.xa-final__copy { max-width: 1040px; }
+.xa-final h2 { max-width: 1040px; font-size: clamp(42px,3.55vw,48px); }
+.xa-final p { max-width: 900px; }
+.xa-footer { padding: 50px 0 48px; background: #fbfcfe; }
+.xa-footer__top { grid-template-columns: 1.28fr repeat(4,.72fr); gap: 44px; }
+.xa-footer__groups { display: contents; }
+.xa-footer__blurb { max-width: 300px; margin-top: 16px; font-size: 14px; line-height: 1.55; }
+.xa-footer__groups h3 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: none; color: #344054; }
+.xa-footer__groups ul { gap: 0; margin-top: 0; }
+.xa-footer__link, .xa-footer__static { display: block; margin: 8px 0; font-size: 13.5px; line-height: 1.5; color: #667085; }
+.xa-footer__bottom { margin-top: 38px; padding-top: 22px; font-size: 12px; color: #98a2b3; }
+
+.xa-pricing__backdrop { padding: 28px; background: rgb(7 26 51 / 28%); backdrop-filter: blur(9px); }
+.xa-pricing__dialog { width: min(1040px,100%); max-height: min(780px,calc(100vh - 48px)); padding: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; background: rgb(250 252 254 / 94%); box-shadow: 0 34px 110px rgb(7 26 51 / 22%); }
+.xa-pricing__dialog::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.xa-pricing__dialog::before { inset: 0; width: auto; height: auto; border-radius: inherit; background: radial-gradient(circle at 72% 0%,rgb(20 184 196 / 10%),transparent 28%),linear-gradient(180deg,rgb(255 255 255 / 28%),transparent 34%); }
+.xa-pricing__close { top: 18px; right: 18px; width: 38px; height: 38px; }
+.xa-pricing__head { max-width: 660px; padding-right: 50px; }
+.xa-pricing__head h2 { margin-top: 10px; font-size: 36px; line-height: 1.04; letter-spacing: -.045em; }
+.xa-pricing__head p { margin-top: 12px; font-size: 15px; line-height: 1.6; }
+.xa-pricing__plans { grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 26px; }
+.xa-pricing__plan { min-height: 400px; padding: 22px; border-color: #dfe5ec; border-radius: 16px; background: rgb(255 255 255 / 78%); }
+.xa-pricing__plan[data-featured="true"] { border-color: rgb(20 184 196 / 48%); background: linear-gradient(180deg,rgb(236 250 251 / 85%),rgb(255 255 255 / 88%)); box-shadow: 0 16px 42px rgb(16 24 40 / 8%); }
+.xa-pricing__plan-name { font-size: 14px; font-weight: 800; color: #344054; }
+.xa-pricing__tag { padding: 5px 8px; font-size: 10px; font-weight: 850; letter-spacing: .04em; }
+.xa-pricing__price { margin-top: 14px; }
+.xa-pricing__price strong { font-size: 38px; }
+.xa-pricing__price span { margin-bottom: 5px; font-size: 12px; }
+.xa-pricing__description { min-height: 44px; margin: 12px 0 18px; color: #667085; font-size: 13px; line-height: 1.55; }
+.xa-pricing__features { gap: 11px; margin: 0 0 22px; }
+.xa-pricing__features li { gap: 9px; font-size: 12px; line-height: 1.45; }
+.xa-pricing__features svg { width: 17px; height: 17px; padding: 4px; border-radius: 50%; background: #eafaf5; color: #087a4f; stroke-width: 3; }
+.xa-pricing__note { margin: 18px 2px 0; font-size: 11px; line-height: 1.55; text-align: center; }
+
+@media (min-width: 1440px) {
+  .xa-story > .xa-shell { width: min(calc(100% - 56px),1560px); }
+  .xa-story__grid { grid-template-columns: minmax(360px,.68fr) minmax(780px,1.32fr); gap: 54px; }
+  .xa-mock { border-radius: 22px; }
+  .xa-mock__body { min-height: 520px; }
+}
+@media (min-width: 1024px) {
+  .xa-final > .xa-shell { width: min(calc(100% - 64px), 1320px); }
+  .xa-final__last-line { display: block; }
+}
+@media (min-width: 1200px) {
+  .xa-final p { white-space: nowrap; }
+}
+@media (max-width: 1180px) and (min-width: 1024px) {
+  .xa-story > .xa-shell { width: min(calc(100% - 40px),1180px); }
+  .xa-story__grid { grid-template-columns: minmax(300px,.72fr) minmax(600px,1.28fr); gap: 34px; }
+  .xa-mock__body { grid-template-columns: 155px minmax(0,1fr); min-height: 470px; }
+  .xa-mock__sidebar { padding: 14px 10px; }
+  .xa-mock__nav-item { height: 31px; font-size: 10px; }
+  .xa-mock__workspace { padding: 17px; }
+  .xa-mock__panel { min-height: 270px; margin: 17px 17px 17px 0; padding: 15px; }
+  .xa-ext__grid { grid-template-columns: minmax(320px,.9fr) minmax(500px,1.1fr); gap: 58px; }
+}
+@media (min-width: 1024px) and (max-height: 800px) {
+  .xa-story__sticky { top: 90px; }
+  .xa-stage { min-height: 68vh; }
+  .xa-mock__chrome { min-height: 42px; }
+  .xa-mock__body { min-height: 455px; }
+  .xa-mock__row { padding: 10px 11px; }
+  .xa-mock__panel { min-height: 255px; }
+  .xa-controller { margin-top: -25px; }
+}
+@media (max-width: 1023px) {
+  .xa-story { padding: 72px 0 120px; }
+  .xa-story__grid { grid-template-columns: 1fr; }
+  .xa-stage { min-height: auto; padding: 22px 0; }
+  .xa-mock__body { min-height: 0; }
+  .xa-ext { padding: 92px 0; }
+  .xa-ext__grid { grid-template-columns: 1fr; gap: 54px; }
+  .xa-pricing__plans { grid-template-columns: 1fr; }
+  .xa-pricing__plan, .xa-pricing__description { min-height: 0; }
+}
+@media (max-width: 767px) {
+  .xa-footer__top { grid-template-columns: 1fr; }
+  .xa-footer__groups { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 700px) {
+  .xa-ext { padding: 74px 0; }
+  .xa-ext__browser-body { grid-template-columns: 1fr; }
+  .xa-ext__panel { border-left: 0; border-top: 1px solid #e3e8ef; }
+  .xa-ext .xa-cta-row { align-items: flex-start; }
+}
+@media (min-width: 701px) {
+  .xa-ext .xa-cta-note > span { white-space: nowrap; }
+}
+@media (max-width: 680px) {
+  .xa-navwrap { top: 8px; margin-top: 8px; }
+  .xa-nav { min-height: 58px; padding: 0 11px; }
+  .xa-wordmark > img { width: 30px; height: 30px; }
+  .xa-hero { min-height: 720px; padding-top: 70px; }
+  .xa-hero h1 { font-size: 52px; }
+  .xa-hero__lede { font-size: 17px; }
+  .xa-hero .xa-cta-row .xa-btn { width: 100%; }
+  .xa-story__intro { text-align: center; }
+  .xa-mock__panes { grid-template-columns: 1fr; }
+  .xa-mock__panel { margin: 0 21px 21px; }
+}
