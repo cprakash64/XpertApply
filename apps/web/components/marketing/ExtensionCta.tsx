@@ -1,8 +1,7 @@
-import { Chrome } from "lucide-react";
 import { PRODUCT_NAME, chromeExtensionUrl } from "@/lib/siteConfig";
 
 /**
- * The Install-extension call to action.
+ * The "Add to Chrome" call to action.
  *
  * One component owns BOTH states so no caller has to know whether a store
  * listing exists yet:
@@ -24,46 +23,26 @@ import { PRODUCT_NAME, chromeExtensionUrl } from "@/lib/siteConfig";
  * NEXT_PUBLIC_CHROME_EXTENSION_URL in production configuration.
  */
 export function ExtensionCta({
-  variant = "secondary",
-  size = "md",
-  label = "Install Chrome Extension",
-  /** Shorter wording for tight spots (the nav). */
-  unavailableLabel = "Chrome extension coming soon",
+  variant = "primary",
+  label = "Add to Chrome →",
   /** Unique within the page — two CTAs must not share a describedby target. */
   id,
   /** Whether to render the visible explanation under an unavailable CTA. */
   showNote = true,
   className = ""
 }: {
-  variant?: "primary" | "secondary";
-  size?: "sm" | "md";
+  variant?: "primary" | "ghost";
   label?: string;
-  unavailableLabel?: string;
   id: string;
   showNote?: boolean;
   className?: string;
 }) {
   const href = chromeExtensionUrl();
-
-  const shape =
-    size === "sm"
-      ? "h-10 rounded-lg px-3.5 text-sm"
-      : "h-12 rounded-xl px-5 text-sm";
-  const base = `focus-ring inline-flex shrink-0 items-center justify-center gap-2 font-semibold transition ${shape}`;
-  const skin =
-    variant === "primary"
-      ? "bg-pine text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]"
-      : "border border-line bg-[var(--surface)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:bg-panel";
+  const base = `xa-btn xa-btn--${variant} ${className}`.trim();
 
   if (href) {
     return (
-      <a
-        className={`${base} ${skin} ${className}`}
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <Chrome className="h-4 w-4" aria-hidden />
+      <a className={base} href={href} target="_blank" rel="noopener noreferrer">
         {label}
         <span className="sr-only"> (opens the Chrome Web Store in a new tab)</span>
       </a>
@@ -76,21 +55,20 @@ export function ExtensionCta({
       type="button"
       id={id}
       aria-disabled="true"
-      aria-label={`${unavailableLabel}. Not available yet.`}
+      aria-label={`${label}. Not available yet.`}
       aria-describedby={showNote ? noteId : undefined}
-      className={`${base} cursor-not-allowed border border-dashed border-line bg-panel text-[var(--text-muted)] ${className}`}
+      className={base}
     >
-      <Chrome className="h-4 w-4" aria-hidden />
-      {unavailableLabel}
+      {label}
     </button>
   );
 
   if (!showNote) return control;
 
   return (
-    <span className="inline-flex flex-col items-start gap-1.5">
+    <span className="xa-cta-note">
       {control}
-      <span id={noteId} className="text-xs text-[var(--text-muted)]">
+      <span id={noteId}>
         The {PRODUCT_NAME} extension is not published to the Chrome Web Store yet.
       </span>
     </span>
