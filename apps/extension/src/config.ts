@@ -1,6 +1,7 @@
 /** Extension configuration. The API base can be overridden via extension
  * storage for staging/production without rebuilding. */
-export const DEFAULT_API_BASE = "http://localhost:8000";
+// export const DEFAULT_API_BASE = "http://localhost:8000";
+export const DEFAULT_API_BASE = "https://api.xpertapply.com";
 
 export async function getApiBase(): Promise<string> {
   try {
