@@ -4,6 +4,64 @@ The MVP runs locally with Docker Compose. Production deployments should use
 managed PostgreSQL, managed Redis, TLS termination, secret management,
 structured logs, and object storage for generated files.
 
+## XpertApply production VPS procedure
+
+The authoritative production checkout is `/home/luna/apps/XpertApply` on
+`srv738314`, operated as user `luna`. Use the tracked
+`scripts/production-compose.sh` wrapper for every production Compose command.
+It rejects another user or checkout path, runs Compose with a minimal inherited
+environment, loads the private `.env` explicitly, and verifies the merged
+configuration before executing a command. This prevents host-global variables
+such as `DATABASE_URL` from overriding XpertApply values.
+
+The tracked production overlay is intentionally secret-free. Its public port
+contract is:
+
+| Service | Host binding | Container port |
+| --- | --- | --- |
+| Web | `127.0.0.1:3000` | `3000` |
+| API | `127.0.0.1:8020` | `8000` |
+
+The wrapper checks both mappings, the `xpertapply` project name, production API
+mode, disabled startup migrations, the credential-free database identity, and
+the public site/API URLs. It refuses to print the fully merged Compose
+configuration because that output contains resolved secrets.
+
+```bash
+# 1. Connect to srv738314, then operate as luna.
+sudo -iu luna
+cd /home/luna/apps/XpertApply
+
+# 2. Require a clean checkout and fast-forward-only update.
+git status --short
+git fetch origin
+git merge --ff-only origin/main
+git status --short
+
+# 3. Validate the deterministic production environment and port contract.
+scripts/production-compose.sh preflight
+
+# 4. Record and verify the schema before changing services.
+scripts/production-compose.sh run --rm api alembic heads
+scripts/production-compose.sh exec -T api alembic current
+
+# 5. Build and recreate only the services required by the reviewed release.
+scripts/production-compose.sh build api worker scheduler web
+scripts/production-compose.sh up -d api worker scheduler web
+
+# 6. Verify services, public health, and bounded logs.
+scripts/production-compose.sh ps
+curl -fsS https://api.xpertapply.com/healthz >/dev/null
+curl -fsS https://api.xpertapply.com/readyz >/dev/null
+curl -fsS https://xpertapply.com >/dev/null
+scripts/production-compose.sh logs --since=10m --tail=100 api worker scheduler web
+```
+
+Run database migrations as a separately reviewed release step after the fresh,
+verified backup described below. Do not run `docker compose` directly, do not
+depend on Bash history, and do not use a base-only recreation to repair port
+drift.
+
 ---
 
 ## 1. Required production settings

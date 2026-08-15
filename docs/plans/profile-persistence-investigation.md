@@ -16,6 +16,16 @@ Stage 5 status (2026-08-14): production-safe legacy profile-URL audit,
 compare-and-set repair, private rollback manifest, and conflict-safe rollback
 utility implemented. It has not been run against production.
 
+Stage 6 closure status (2026-08-15): infrastructure reconciliation proved one
+production deployment and established the intended loopback port contract.
+Final closure adds a tracked, secret-free production Compose overlay and a
+fail-fast deployment wrapper. The wrapper requires the `luna` deployment user
+and authoritative checkout, launches Compose with a minimal environment,
+loads the production `.env` explicitly, and asserts the merged project name,
+web port, and API port before every operation. Backup verification,
+authenticated product smoke testing, and the final URL invariant audit remain
+gated production steps.
+
 ## Objective and scope
 
 Determine why saving **My Profile -> Job preferences** can fail on an unrelated
