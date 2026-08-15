@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import { useProfileEditorData } from "@/lib/profileEditorData";
+import type { ProfilePatchSection } from "@/lib/profileForm";
 import type { FocusedSection } from "@/lib/profileSections";
 import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import { UnsavedChangesDialog } from "@/components/profile/UnsavedChangesDialog";
@@ -19,10 +20,9 @@ import { ApplicationPreferencesEditor } from "./ApplicationPreferencesEditor";
 /**
  * Which endpoint each section commits to.
  *
- * `PUT /profile` and `PUT /profile/career` are both full overwrites of separate
- * documents, so a section saves through exactly one of them. Keeping the map
- * here means the unsaved-changes guard can save on the user's behalf without
- * each editor having to wire that up itself.
+ * Main-profile sections use PATCH with explicit ownership; career sections
+ * still use the whole-document career PUT. Keeping the distinction here lets
+ * the unsaved-changes guard retry the same safe write path as the Save button.
  */
 const CAREER_SECTIONS = new Set<FocusedSection>([
   "education",
@@ -31,6 +31,10 @@ const CAREER_SECTIONS = new Set<FocusedSection>([
   "credentials",
   "publications"
 ]);
+
+function isProfilePatchSection(section: FocusedSection): section is ProfilePatchSection {
+  return !CAREER_SECTIONS.has(section);
+}
 
 /**
  * One data load shared by whichever editor is showing.
@@ -42,17 +46,19 @@ const CAREER_SECTIONS = new Set<FocusedSection>([
  */
 export function SectionEditor({ section }: { section: FocusedSection }) {
   const editor = useProfileEditorData();
-  const { dirty, saveCareer, saveProfile, reload } = editor;
+  const { dirty, saveCareer, saveProfileSection, reload } = editor;
 
   // The guard treats a resolved promise as server-confirmed success, so a
   // `false` return (the editor's "save failed" signal) has to become a
   // rejection — otherwise a failed save would navigate away and lose the edits.
   const save = useCallback(async () => {
-    const ok = CAREER_SECTIONS.has(section) ? await saveCareer() : await saveProfile();
+    const ok = isProfilePatchSection(section)
+      ? await saveProfileSection(section)
+      : await saveCareer();
     if (!ok) {
       throw new Error("Your changes could not be saved. They are still here — try again.");
     }
-  }, [section, saveCareer, saveProfile]);
+  }, [section, saveCareer, saveProfileSection]);
 
   const guard = useUnsavedChangesGuard({ dirty, onSave: save, onDiscard: reload });
 

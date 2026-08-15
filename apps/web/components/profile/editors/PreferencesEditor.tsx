@@ -31,7 +31,7 @@ const WORKPLACE_OPTIONS: [ProfileForm["remote_preference"], string][] = [
  * catalog only appears after Add/Edit.
  */
 export function PreferencesEditor({ editor }: { editor: ProfileEditorState }) {
-  const { data, loading, loadError, reload, save, setForm, saveProfile, dirty } = editor;
+  const { data, loading, loadError, reload, save, setForm, saveProfileSection, dirty } = editor;
   const form = data?.form;
 
   return (
@@ -120,7 +120,12 @@ export function PreferencesEditor({ editor }: { editor: ProfileEditorState }) {
         </div>
       )}
 
-      <SaveBar state={save} dirty={dirty} onSave={() => void saveProfile()} onCancel={reload} />
+      <SaveBar
+        state={save}
+        dirty={dirty}
+        onSave={() => void saveProfileSection("preferences")}
+        onCancel={reload}
+      />
     </EditorShell>
   );
 }

@@ -315,6 +315,43 @@ export type ServerErrorCode =
   | "INTERNAL_ERROR"
   | string;
 
+export type ApiFormErrors = {
+  fieldErrors: Record<string, string>;
+  formError?: string;
+};
+
+function validationMessage(value: string): string {
+  return value.replace(/^Value error,\s*/i, "").trim();
+}
+
+/** Normalize FastAPI/Pydantic's standard 422 detail list at the client boundary. */
+export function validationErrorsFromDetails(details: unknown): ApiFormErrors {
+  const items = Array.isArray(details)
+    ? details
+    : Array.isArray((details as { detail?: unknown })?.detail)
+      ? (details as { detail: unknown[] }).detail
+      : [];
+  const fieldErrors: Record<string, string> = {};
+  const formMessages: string[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const loc = (item as { loc?: unknown }).loc;
+    const rawMessage = (item as { msg?: unknown }).msg;
+    if (!Array.isArray(loc) || typeof rawMessage !== "string") continue;
+    const path = loc.filter((part) => part !== "body").map(String).join(".");
+    const message = validationMessage(rawMessage);
+    if (path) {
+      fieldErrors[path] ??= message;
+    } else if (message) {
+      formMessages.push(message);
+    }
+  }
+  return {
+    fieldErrors,
+    formError: formMessages.length > 0 ? formMessages.join(" ") : undefined
+  };
+}
+
 /** Typed API error so the UI can distinguish a browser-level fetch failure from
  * a real backend response and show an actionable message. Extends Error, so
  * existing `err.message` handling keeps working. */
@@ -327,6 +364,8 @@ export class ApiError extends Error {
   readonly serverCode?: ServerErrorCode;
   readonly stage?: string;
   readonly requestId?: string;
+  readonly fieldErrors: Record<string, string>;
+  readonly formError?: string;
 
   constructor(args: {
     code: ApiErrorCode;
@@ -337,6 +376,8 @@ export class ApiError extends Error {
     serverCode?: ServerErrorCode;
     stage?: string;
     requestId?: string;
+    fieldErrors?: Record<string, string>;
+    formError?: string;
   }) {
     super(args.message);
     this.name = "ApiError";
@@ -347,6 +388,8 @@ export class ApiError extends Error {
     this.serverCode = args.serverCode;
     this.stage = args.stage;
     this.requestId = args.requestId;
+    this.fieldErrors = args.fieldErrors ?? {};
+    this.formError = args.formError;
   }
 }
 
@@ -412,6 +455,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     const body = await response.text();
     let message = body || `Request failed with ${response.status}`;
     let structured: StructuredError | undefined;
+    let details: unknown;
     try {
       const parsed = JSON.parse(body) as { detail?: unknown; error?: StructuredError };
       // Preferred: the backend's structured error envelope.
@@ -422,15 +466,26 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
         // Legacy shape used by most routes.
         message = parsed.detail;
       } else if (parsed.detail && typeof parsed.detail === "object") {
-        // Several guarded endpoints use FastAPI's structured `detail` object.
-        // Preserve its safe code/message just like the preferred envelope.
-        structured = parsed.detail as StructuredError;
-        if (typeof structured.message === "string") message = structured.message;
+        details = parsed.detail;
+        if (Array.isArray(parsed.detail)) {
+          message = "Some fields need attention before this can be saved.";
+        } else {
+          // Several guarded endpoints use FastAPI's structured `detail` object.
+          // Preserve its safe code/message just like the preferred envelope.
+          structured = parsed.detail as StructuredError;
+          if (typeof structured.message === "string") message = structured.message;
+        }
       }
     } catch {
-      // Keep the raw body when the server does not return JSON.
+      // Do not leak an HTML proxy page or malformed payload into the UI.
+      message = `Request failed with ${response.status}`;
     }
     const fallback = codeForStatus(response.status);
+    const normalizedDetails = details ?? structured?.details;
+    const validation =
+      fallback.code === "validation"
+        ? validationErrorsFromDetails(normalizedDetails)
+        : { fieldErrors: {} };
     throw new ApiError({
       code: fallback.code,
       message,
@@ -439,6 +494,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       retryable: typeof structured?.retryable === "boolean" ? structured.retryable : fallback.retryable,
       serverCode: structured?.code,
       stage: structured?.stage,
+      details: normalizedDetails,
+      fieldErrors: validation.fieldErrors,
+      formError: validation.formError,
       // The structured envelope carries it when present; every response also
       // carries the X-Request-ID header (see the API's catch_unhandled_errors
       // middleware), so a plain `detail` error still gets a correlation id the

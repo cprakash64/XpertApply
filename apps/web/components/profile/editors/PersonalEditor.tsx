@@ -16,7 +16,17 @@ import { ProfileLinksFields, linkProblemCount } from "./LinksEditor";
  * it is never displayed or re-collected here.
  */
 export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
-  const { data, loading, loadError, reload, save, setForm, saveProfile, dirty } = editor;
+  const {
+    data,
+    fieldErrors,
+    loading,
+    loadError,
+    reload,
+    save,
+    setForm,
+    saveProfileSection,
+    dirty
+  } = editor;
   const form = data?.form;
 
   const emailProblem = validateApplicationEmail(form?.application_email) ?? "";
@@ -76,7 +86,7 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
               label="Application email"
               type="email"
               value={form.application_email}
-              error={emailProblem || undefined}
+              error={(fieldErrors.application_email ?? emailProblem) || undefined}
               hint={!emailProblem ? "The address employers should reply to." : undefined}
               onChange={(value) =>
                 setForm((current) => ({ ...current, application_email: value }))
@@ -94,6 +104,7 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
               type="tel"
               value={form.phone}
               placeholder="(602) 555-0147"
+              error={fieldErrors.phone}
               onChange={(value) => setForm((current) => ({ ...current, phone: value }))}
             />
             <Field
@@ -113,16 +124,19 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
             <Field
               label="City"
               value={form.location_city}
+              error={fieldErrors.location_city}
               onChange={(value) => setForm((current) => ({ ...current, location_city: value }))}
             />
             <Field
               label="State / region"
               value={form.location_state}
+              error={fieldErrors.location_state}
               onChange={(value) => setForm((current) => ({ ...current, location_state: value }))}
             />
             <Field
               label="Postal code"
               value={form.location_postal_code}
+              error={fieldErrors.location_postal_code}
               onChange={(value) =>
                 setForm((current) => ({ ...current, location_postal_code: value }))
               }
@@ -130,6 +144,7 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
             <Field
               label="Country"
               value={form.location_country}
+              error={fieldErrors.location_country}
               onChange={(value) =>
                 setForm((current) => ({ ...current, location_country: value }))
               }
@@ -143,6 +158,7 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
             <SelectField
               label="Status"
               value={form.work_authorization}
+              error={fieldErrors.work_authorization}
               options={workAuthorizationOptions as readonly (readonly [string, string])[]}
               onChange={(value) =>
                 // Deliberately does not touch requires_sponsorship: deriving a
@@ -177,7 +193,7 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
         state={save}
         dirty={dirty}
         disabled={nameMissing || linkProblems > 0}
-        onSave={() => void saveProfile()}
+        onSave={() => void saveProfileSection("personal")}
         onCancel={reload}
       />
     </EditorShell>

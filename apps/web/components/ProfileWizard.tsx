@@ -100,36 +100,6 @@ type ImportDraft = {
 };
 
 
-/** Turn a FastAPI 422 validation body into per-field messages.
- *
- * FastAPI reports `detail: [{loc: ["body", "field"], msg}]`. Anything that is
- * not that shape yields {} so the caller falls back to a banner. Never returns
- * the submitted VALUE, only the field name and the reason. */
-function fieldErrorsFromApi(error: unknown): Record<string, string> {
-  if (!(error instanceof ApiError) || error.status !== 422) return {};
-  // For an HTTP error the api() helper leaves the raw body in `message` when it
-  // is not a plain `detail` string — which is exactly the FastAPI 422 shape.
-  const raw = error.details ?? error.message;
-  let detail: unknown = raw;
-  if (typeof raw === "string") {
-    try { detail = JSON.parse(raw); } catch { return {}; }
-  }
-  const items = Array.isArray(detail)
-    ? detail
-    : Array.isArray((detail as { detail?: unknown })?.detail)
-      ? (detail as { detail: unknown[] }).detail
-      : [];
-  const result: Record<string, string> = {};
-  for (const item of items) {
-    const loc = (item as { loc?: unknown[] })?.loc;
-    const msg = (item as { msg?: unknown })?.msg;
-    if (!Array.isArray(loc) || typeof msg !== "string") continue;
-    const field = loc.filter((p) => typeof p === "string" && p !== "body").pop();
-    if (typeof field === "string") result[field] = msg;
-  }
-  return result;
-}
-
 export function ProfileWizard({
   /**
    * Which section to open on. The Profile overview's Edit actions route to a
@@ -238,6 +208,13 @@ export function ProfileWizard({
 
   function update<K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) {
     setDirty(true);
+    setFieldErrors((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(
+          ([path]) => path !== key && !path.startsWith(`${String(key)}.`)
+        )
+      )
+    );
     setForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -250,6 +227,10 @@ export function ProfileWizard({
    * "on OPT" does not answer "will you require sponsorship in the future?".
    */
   function updateWorkAuthorization(value: string) {
+    setDirty(true);
+    setFieldErrors((current) =>
+      Object.fromEntries(Object.entries(current).filter(([path]) => path !== "work_authorization"))
+    );
     setForm((current) => ({ ...current, work_authorization: value }));
   }
 
@@ -262,7 +243,14 @@ export function ProfileWizard({
       return;
     }
     if (![form.linkedin_url, form.github_url, form.portfolio_url].every(isValidOptionalUrl)) {
-      setError("Links must start with http:// or https://.");
+      setFieldErrors(
+        Object.fromEntries(
+          (["linkedin_url", "github_url", "portfolio_url"] as const)
+            .filter((key) => !isValidOptionalUrl(form[key]))
+            .map((key) => [key, "Enter a complete HTTP(S) web address."])
+        )
+      );
+      setError("Some links need attention before this can be saved.");
       setStep(WIZARD_STEPS.links);
       return;
     }
@@ -271,13 +259,16 @@ export function ProfileWizard({
     try {
       // profileToWire() is the counterpart of normalizeProfile(): one place
       // that knows the wire shape, so form state and payload cannot drift.
-      await api("/profile", { method: "PUT", body: JSON.stringify(profileToWire(form)) });
+      let profileResult = await api<{ profile: ProfileWire | null }>("/profile", {
+        method: "PUT",
+        body: JSON.stringify(profileToWire(form))
+      });
       // The structured name goes through its own endpoint: PUT /profile is a
       // full overwrite that deliberately does not carry the name parts or the
       // confirmation flag. Editing the name here IS an explicit confirmation of
       // the split, so it is never re-derived from full_name afterwards. Runs
       // after PUT /profile so a first-time save has a profile to attach to.
-      await api("/profile/name", {
+      profileResult = await api<{ profile: ProfileWire | null }>("/profile/name", {
         method: "PUT",
         body: JSON.stringify({
           first_name: form.first_name.trim(),
@@ -298,17 +289,31 @@ export function ProfileWizard({
           publications: career.publications
         })
       });
+      if (profileResult.profile) {
+        setForm(normalizeProfile(profileResult.profile, form.email));
+      }
+      setFieldErrors({});
+      setDirty(false);
       setMessage("Profile saved.");
     } catch (saveError) {
       // Field-level validation (422) is shown against the offending fields
       // rather than as an opaque banner — and never crashes the page.
-      const perField = fieldErrorsFromApi(saveError);
+      const perField = saveError instanceof ApiError ? saveError.fieldErrors : {};
       if (Object.keys(perField).length > 0) {
         setFieldErrors(perField);
         setError("Some fields need attention before this can be saved.");
-        setStep(WIZARD_STEPS.personal);
+        const linkFields = new Set(["linkedin_url", "github_url", "portfolio_url", "x_url"]);
+        setStep(Object.keys(perField).some((field) => linkFields.has(field))
+          ? WIZARD_STEPS.links
+          : WIZARD_STEPS.personal);
       } else {
-        setError(saveError instanceof Error ? saveError.message : "Could not save profile.");
+        setError(
+          saveError instanceof ApiError
+            ? saveError.formError ?? saveError.message
+            : saveError instanceof Error
+              ? saveError.message
+              : "Could not save profile."
+        );
       }
     } finally {
       setSaving(false);
@@ -372,7 +377,20 @@ export function ProfileWizard({
       setStep(WIZARD_STEPS.review);
       setMessage(mode === "all" ? "Imported profile saved successfully." : "Selected imported sections saved successfully.");
     } catch (applyError) {
-      setImportApplyError(applyError instanceof Error ? applyError.message : "Could not save imported profile.");
+      if (applyError instanceof ApiError && Object.keys(applyError.fieldErrors).length > 0) {
+        const fields = Object.keys(applyError.fieldErrors).map((path) =>
+          path.split(".").at(-1)?.replaceAll("_", " ")
+        );
+        setImportApplyError(`Check the imported ${fields.filter(Boolean).join(", ")} fields.`);
+      } else {
+        setImportApplyError(
+          applyError instanceof ApiError
+            ? applyError.formError ?? applyError.message
+            : applyError instanceof Error
+              ? applyError.message
+              : "Could not save imported profile."
+        );
+      }
     } finally {
       setImportSaving(false);
     }
@@ -619,9 +637,9 @@ export function ProfileWizard({
 
           {!loadError && step === 7 && (
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="LinkedIn" value={form.linkedin_url} onChange={(value) => update("linkedin_url", value)} />
-              <Field label="GitHub" value={form.github_url} onChange={(value) => update("github_url", value)} />
-              <Field label="Portfolio" value={form.portfolio_url} onChange={(value) => update("portfolio_url", value)} />
+              <Field label="LinkedIn" value={form.linkedin_url} onChange={(value) => update("linkedin_url", value)} error={fieldErrors.linkedin_url} />
+              <Field label="GitHub" value={form.github_url} onChange={(value) => update("github_url", value)} error={fieldErrors.github_url} />
+              <Field label="Portfolio" value={form.portfolio_url} onChange={(value) => update("portfolio_url", value)} error={fieldErrors.portfolio_url} />
             </div>
           )}
 

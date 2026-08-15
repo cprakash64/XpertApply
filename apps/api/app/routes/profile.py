@@ -46,6 +46,7 @@ from app.schemas.profile import (
     ProfileNameIn,
     SensitiveDemographicsIn,
     UserProfileIn,
+    UserProfilePatch,
     WorkdayCredentialsIn,
 )
 from app.services.document_parser import (
@@ -321,6 +322,45 @@ def upsert_profile(
     return {"profile": serialize_profile(profile)}
 
 
+@router.patch("")
+def patch_profile(
+    payload: UserProfilePatch,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Update only explicitly supplied profile fields.
+
+    Request validation completes before this function runs. In particular, an
+    omitted legacy URL or nullable sponsorship value is never loaded into the
+    input schema and cannot block an unrelated update.
+    """
+
+    profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+    values = payload.model_dump(mode="json", exclude_unset=True)
+    if not values:
+        return {"profile": serialize_profile(profile)}
+
+    # These are dependent columns, not unrelated profile fields. Recompute them
+    # only when one of their source values was explicitly supplied.
+    if "phone" in values or "location_country" in values:
+        raw_phone = values.get("phone", profile.phone if profile else None)
+        country = values.get("location_country", profile.location_country if profile else None)
+        values.update(_phone_columns(raw_phone, country))
+    if "application_email" in values:
+        values.update(_application_email_columns(profile, values["application_email"]))
+
+    if profile is None:
+        profile = UserProfile(user_id=user.id, **values)
+        db.add(profile)
+    else:
+        for key, value in values.items():
+            setattr(profile, key, value)
+    db.commit()
+    db.refresh(profile)
+    _enqueue_profile_rescore(user.id)
+    return {"profile": serialize_profile(profile)}
+
+
 @router.put("/workday-credentials")
 def set_workday_credentials(
     payload: WorkdayCredentialsIn,
@@ -505,8 +545,12 @@ def apply_profile_import(
             profile.requires_sponsorship = bool(draft.basic_info.requires_sponsorship)
 
     if "links" in sections:
-        link_values = draft.links.model_dump()
-        basic_values = draft.basic_info.model_dump()
+        # Import schemas use the same canonical URL types as PUT /profile.
+        # JSON mode converts Pydantic URL objects to ORM-safe strings; request
+        # validation has already rejected malformed/non-HTTP values before this
+        # route can mutate any profile state.
+        link_values = draft.links.model_dump(mode="json")
+        basic_values = draft.basic_info.model_dump(mode="json")
         for field in ["linkedin_url", "github_url", "portfolio_url"]:
             imported = clean_string(link_values.get(field) or basic_values.get(field))
             if should_apply(getattr(profile, field), imported, payload.overwrite):

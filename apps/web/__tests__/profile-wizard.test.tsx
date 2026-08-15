@@ -13,6 +13,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 function mockProfileFetch(existingProfile: Record<string, unknown> | null = null, options: { applyStatus?: number } = {}) {
   const requests: { url: string; init?: RequestInit }[] = [];
+  let savedProfile = existingProfile;
   vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     requests.push({ url: String(input), init });
     const url = String(input);
@@ -80,7 +81,12 @@ function mockProfileFetch(existingProfile: Record<string, unknown> | null = null
       return Promise.resolve(jsonResponse({ education: [], experience: [], projects: [] }));
     }
     if (url.endsWith("/profile") && init?.method === "PUT") {
-      return Promise.resolve(jsonResponse({ profile: JSON.parse(String(init.body)) }));
+      savedProfile = JSON.parse(String(init.body));
+      return Promise.resolve(jsonResponse({ profile: savedProfile }));
+    }
+    if (url.endsWith("/profile/name") && init?.method === "PUT") {
+      savedProfile = { ...(savedProfile ?? {}), ...JSON.parse(String(init.body)) };
+      return Promise.resolve(jsonResponse({ profile: savedProfile }));
     }
     if (url.endsWith("/profile/career")) {
       return Promise.resolve(jsonResponse({ education: [], experience: [], projects: [], certifications: [], awards: [] }));
@@ -89,7 +95,7 @@ function mockProfileFetch(existingProfile: Record<string, unknown> | null = null
       return Promise.resolve(jsonResponse({ demographics: null }));
     }
     if (url.endsWith("/profile")) {
-      return Promise.resolve(jsonResponse({ profile: existingProfile }));
+      return Promise.resolve(jsonResponse({ profile: savedProfile }));
     }
     return Promise.resolve(jsonResponse({}));
   });
@@ -346,5 +352,37 @@ describe("ProfileWizard", () => {
         body: expect.stringContaining("Backend Engineer")
       })
     );
+  });
+
+  it("keeps the full Wizard on PUT and adopts canonical URL values after save", async () => {
+    const requests = mockProfileFetch({
+      first_name: "Test",
+      last_name: "Candidate",
+      full_name: "Test Candidate",
+      location_country: "United States",
+      target_roles: [],
+      target_levels: [],
+      preferred_locations: [],
+      skills: []
+    });
+    const user = userEvent.setup();
+    render(React.createElement(ProfileWizard));
+
+    await user.click(screen.getByRole("button", { name: "8. Links" }));
+    await user.type(await screen.findByLabelText("Portfolio"), "cpandey.com");
+    await user.click(screen.getByRole("button", { name: "Save profile" }));
+
+    await screen.findByText("Profile saved.");
+    const profileWrite = requests.find(
+      ({ url, init }) => url.endsWith("/profile") && init?.method === "PUT"
+    );
+    expect(profileWrite).toBeDefined();
+    expect(JSON.parse(String(profileWrite!.init?.body))).toMatchObject({
+      portfolio_url: "https://cpandey.com/"
+    });
+    expect(screen.getByLabelText("Portfolio")).toHaveValue("https://cpandey.com/");
+    expect(
+      requests.some(({ url, init }) => url.endsWith("/profile") && init?.method === "PATCH")
+    ).toBe(false);
   });
 });

@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import date as Date
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
+
+from app.profile.urls import OptionalProfileUrl, ProfileUrl
 
 PreferNot = "Prefer not to answer"
 
@@ -49,7 +59,7 @@ class AdditionalLinkIn(BaseModel):
     """
 
     label: str = Field(min_length=1, max_length=60)
-    url: HttpUrl
+    url: ProfileUrl
 
 
 class UserProfileIn(BaseModel):
@@ -74,10 +84,10 @@ class UserProfileIn(BaseModel):
     location_state: str | None = None
     location_postal_code: str | None = None
     location_country: str | None = None
-    linkedin_url: HttpUrl | None = None
-    github_url: HttpUrl | None = None
-    portfolio_url: HttpUrl | None = None
-    x_url: HttpUrl | None = None
+    linkedin_url: OptionalProfileUrl = None
+    github_url: OptionalProfileUrl = None
+    portfolio_url: OptionalProfileUrl = None
+    x_url: OptionalProfileUrl = None
     additional_links: list[AdditionalLinkIn] = Field(default_factory=list, max_length=20)
     work_authorization: str | None = Field(
         default=None,
@@ -138,6 +148,41 @@ class UserProfileIn(BaseModel):
         if normalized not in WORK_PREFERENCES:
             raise ValueError("Unsupported work preference")
         return normalized
+
+
+class UserProfilePatch(UserProfileIn):
+    """A validated subset of the canonical profile input contract.
+
+    ``UserProfileIn`` already gives every field a default for full-document PUT
+    compatibility. PATCH uses ``model_fields_set``/``exclude_unset`` at the
+    route boundary, so an inherited default never becomes a write. Explicit
+    values still pass through the exact same URL, email, list, authorization,
+    and workplace validators.
+
+    The canonical list validator historically treats ``null`` like an empty
+    list for PUT compatibility. That is unsafe for a partial contract where a
+    client typo must not become a destructive clear, so PATCH requires callers
+    to send ``[]`` explicitly when they intend to clear a list.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_for_non_nullable_lists(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        non_nullable_lists = {
+            "additional_links",
+            "target_roles",
+            "target_levels",
+            "preferred_locations",
+            "skills",
+        }
+        null_fields = sorted(field for field in non_nullable_lists if field in value and value[field] is None)
+        if null_fields:
+            raise ValueError(f"Profile list fields cannot be null: {', '.join(null_fields)}")
+        return value
 
 
 class UserProfileOut(UserProfileIn):

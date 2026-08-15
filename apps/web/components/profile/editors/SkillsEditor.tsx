@@ -25,7 +25,7 @@ const PREVIEW_PER_GROUP = 5;
  * without altering them, so nothing is renamed or normalised to fit a category.
  */
 export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
-  const { data, loading, loadError, reload, save, setForm, saveProfile, dirty } = editor;
+  const { data, loading, loadError, reload, save, setForm, saveProfileSection, dirty } = editor;
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
@@ -213,7 +213,12 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
         </div>
       )}
 
-      <SaveBar state={save} dirty={dirty} onSave={() => void saveProfile()} onCancel={reload} />
+      <SaveBar
+        state={save}
+        dirty={dirty}
+        onSave={() => void saveProfileSection("skills")}
+        onCancel={reload}
+      />
     </EditorShell>
   );
 }

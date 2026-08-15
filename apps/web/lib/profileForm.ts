@@ -24,6 +24,7 @@
 
 import { composeFullName } from "@/lib/names";
 import { interpretStoredLocations } from "@/lib/locations";
+import { normalizeOptionalProfileUrl } from "@/lib/profileUrls";
 
 export type RemotePreference = "everything" | "remote" | "hybrid" | "onsite";
 
@@ -81,6 +82,13 @@ export type ProfileWire = Partial<Record<keyof ProfileForm, unknown>> & {
   given_name?: unknown;
   family_name?: unknown;
 };
+
+export type ProfilePatchSection =
+  | "personal"
+  | "preferences"
+  | "skills"
+  | "links"
+  | "application-preferences";
 
 export const emptyProfile: ProfileForm = {
   first_name: "",
@@ -253,15 +261,15 @@ export function profileToWire(form: ProfileForm): Record<string, unknown> {
     location_state: form.location_state,
     location_postal_code: form.location_postal_code,
     location_country: form.location_country,
-    linkedin_url: form.linkedin_url || null,
-    github_url: form.github_url || null,
-    portfolio_url: form.portfolio_url || null,
-    x_url: form.x_url || null,
+    linkedin_url: normalizeOptionalProfileUrl(form.linkedin_url) || null,
+    github_url: normalizeOptionalProfileUrl(form.github_url) || null,
+    portfolio_url: normalizeOptionalProfileUrl(form.portfolio_url) || null,
+    x_url: normalizeOptionalProfileUrl(form.x_url) || null,
     // Blank rows are the natural state of a half-filled "add another link"
     // form; they are dropped here rather than rejected by the API.
-    additional_links: form.additional_links.filter(
-      (link) => link.label.trim() !== "" && link.url.trim() !== ""
-    ),
+    additional_links: form.additional_links
+      .filter((link) => link.label.trim() !== "" && link.url.trim() !== "")
+      .map((link) => ({ ...link, url: normalizeOptionalProfileUrl(link.url) })),
     work_authorization: form.work_authorization,
     work_authorization_status: form.work_authorization,
     requires_sponsorship: form.requires_sponsorship,
@@ -273,4 +281,58 @@ export function profileToWire(form: ProfileForm): Record<string, unknown> {
     work_preference: form.remote_preference,
     skills: form.skills
   };
+}
+
+function linksPatch(form: ProfileForm): Record<string, unknown> {
+  return {
+    linkedin_url: normalizeOptionalProfileUrl(form.linkedin_url) || null,
+    github_url: normalizeOptionalProfileUrl(form.github_url) || null,
+    portfolio_url: normalizeOptionalProfileUrl(form.portfolio_url) || null,
+    x_url: normalizeOptionalProfileUrl(form.x_url) || null,
+    additional_links: form.additional_links
+      .filter((link) => link.label.trim() !== "" && link.url.trim() !== "")
+      .map((link) => ({ ...link, url: normalizeOptionalProfileUrl(link.url) }))
+  };
+}
+
+/**
+ * The explicit ownership boundary for focused profile editors.
+ *
+ * This intentionally does not derive a full wire profile and pick keys from it:
+ * each returned object is the complete, inspectable list of fields that screen
+ * is authorized to replace. The full Wizard continues to use profileToWire().
+ */
+export function profilePatchForSection(
+  form: ProfileForm,
+  section: ProfilePatchSection
+): Record<string, unknown> {
+  switch (section) {
+    case "personal":
+      return {
+        application_email: form.application_email || null,
+        phone: form.phone,
+        location_city: form.location_city,
+        location_state: form.location_state,
+        location_postal_code: form.location_postal_code,
+        location_country: form.location_country,
+        work_authorization: form.work_authorization,
+        ...linksPatch(form)
+      };
+    case "preferences":
+      return {
+        target_roles: form.target_roles,
+        target_levels: form.target_levels,
+        preferred_locations: form.preferred_locations,
+        remote_preference: form.remote_preference
+      };
+    case "skills":
+      return { skills: form.skills };
+    case "links":
+      return linksPatch(form);
+    case "application-preferences":
+      return {
+        work_authorization: form.work_authorization,
+        open_to_relocation: form.open_to_relocation
+      };
+  }
 }

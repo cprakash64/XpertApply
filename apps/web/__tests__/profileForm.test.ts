@@ -10,7 +10,13 @@
 
 import { describe, expect, it } from "vitest";
 import { composeFullName } from "../lib/names";
-import { emptyProfile, normalizeProfile, profileToWire, str } from "../lib/profileForm";
+import {
+  emptyProfile,
+  normalizeProfile,
+  profilePatchForSection,
+  profileToWire,
+  str
+} from "../lib/profileForm";
 
 /** Exactly what GET /profile returns for a freshly migrated account. */
 const NULL_HEAVY_WIRE = {
@@ -195,6 +201,67 @@ describe("profileToWire", () => {
     const wire = profileToWire(emptyProfile);
     expect(wire.linkedin_url).toBeNull();
     expect(wire.github_url).toBeNull();
+  });
+});
+
+describe("profilePatchForSection", () => {
+  const form = {
+    ...emptyProfile,
+    application_email: "candidate@example.com",
+    phone: "602-555-0147",
+    portfolio_url: "cpandey.com",
+    target_roles: ["Backend Engineer"],
+    target_levels: ["Staff"],
+    preferred_locations: ["Remote"],
+    remote_preference: "remote" as const,
+    skills: ["Python"],
+    work_authorization: "authorized_us",
+    open_to_relocation: true
+  };
+
+  it("makes every focused editor's ownership explicit", () => {
+    expect(Object.keys(profilePatchForSection(form, "preferences"))).toEqual([
+      "target_roles",
+      "target_levels",
+      "preferred_locations",
+      "remote_preference"
+    ]);
+    expect(profilePatchForSection(form, "skills")).toEqual({ skills: ["Python"] });
+    expect(Object.keys(profilePatchForSection(form, "links"))).toEqual([
+      "linkedin_url",
+      "github_url",
+      "portfolio_url",
+      "x_url",
+      "additional_links"
+    ]);
+    expect(profilePatchForSection(form, "application-preferences")).toEqual({
+      work_authorization: "authorized_us",
+      open_to_relocation: true
+    });
+  });
+
+  it("does not leak unrelated legacy fields into a preference payload", () => {
+    const patch = profilePatchForSection(form, "preferences");
+    expect(patch).not.toHaveProperty("portfolio_url");
+    expect(patch).not.toHaveProperty("skills");
+    expect(patch).not.toHaveProperty("application_email");
+  });
+
+  it("keeps Personal contact, location, authorization, and embedded links together", () => {
+    expect(Object.keys(profilePatchForSection(form, "personal"))).toEqual([
+      "application_email",
+      "phone",
+      "location_city",
+      "location_state",
+      "location_postal_code",
+      "location_country",
+      "work_authorization",
+      "linkedin_url",
+      "github_url",
+      "portfolio_url",
+      "x_url",
+      "additional_links"
+    ]);
   });
 });
 

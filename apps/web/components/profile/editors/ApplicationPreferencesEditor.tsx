@@ -36,7 +36,17 @@ import { FieldGroup, SaveBar, SelectField, Toggle } from "./primitives";
  * pair would put an answer on a real application that the user never gave.
  */
 export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditorState }) {
-  const { data, loading, loadError, reload, save, setForm, saveProfile, dirty } = editor;
+  const {
+    data,
+    fieldErrors,
+    loading,
+    loadError,
+    reload,
+    save,
+    setForm,
+    saveProfileSection,
+    dirty
+  } = editor;
   const form = data?.form;
 
   return (
@@ -50,6 +60,7 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
             <SelectField
               label="Work authorization status"
               value={form.work_authorization}
+              error={fieldErrors.work_authorization}
               options={workAuthorizationOptions as readonly (readonly [string, string])[]}
               onChange={(value) =>
                 // Deliberately does NOT touch the sponsorship answers. Deriving
@@ -109,7 +120,12 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
         </div>
       )}
 
-      <SaveBar state={save} dirty={dirty} onSave={() => void saveProfile()} onCancel={reload} />
+      <SaveBar
+        state={save}
+        dirty={dirty}
+        onSave={() => void saveProfileSection("application-preferences")}
+        onCancel={reload}
+      />
     </EditorShell>
   );
 }

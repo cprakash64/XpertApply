@@ -76,7 +76,7 @@ const CUSTOM_EXAMPLES = [
  * the user hunting for a second screen. One implementation, two hosts.
  */
 export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
-  const { data, setForm } = editor;
+  const { data, fieldErrors, setForm } = editor;
   const form = data?.form;
   if (!form) return null;
 
@@ -97,6 +97,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
           {NAMED_LINKS.map(({ key, label, icon: Icon, placeholder }) => {
             const value = form[key] as string;
             const bad = !isValidOptionalUrl(value);
+            const error = fieldErrors[key] ?? (bad ? "Enter a complete HTTP(S) web address." : undefined);
             return (
               <li key={key} className="flex items-start gap-3">
                 <span
@@ -111,7 +112,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
                     type="url"
                     value={value}
                     placeholder={placeholder}
-                    error={bad ? "Must start with http:// or https://." : undefined}
+                    error={error}
                     onChange={(next) => setForm((current) => ({ ...current, [key]: next }))}
                   />
                 </div>
@@ -162,6 +163,12 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
             {form.additional_links.map((link, index) => {
               const badUrl = link.url.trim() !== "" && !isValidOptionalUrl(link.url);
               const missingLabel = link.url.trim() !== "" && link.label.trim() === "";
+              const urlError =
+                fieldErrors[`additional_links.${index}.url`] ??
+                (badUrl ? "Enter a complete HTTP(S) web address." : undefined);
+              const labelError =
+                fieldErrors[`additional_links.${index}.label`] ??
+                (missingLabel ? "Give this link a name." : undefined);
               return (
                 <li key={index} className="rounded-xl border border-line bg-panel p-3">
                   {/* Stacks on mobile so neither field is squeezed. */}
@@ -170,7 +177,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
                       label="Label"
                       value={link.label}
                       placeholder={CUSTOM_EXAMPLES[index % CUSTOM_EXAMPLES.length]}
-                      error={missingLabel ? "Give this link a name." : undefined}
+                      error={labelError}
                       onChange={(next) => updateLink(index, { label: next })}
                     />
                     <Field
@@ -178,7 +185,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
                       type="url"
                       value={link.url}
                       placeholder="https://..."
-                      error={badUrl ? "Must start with http:// or https://." : undefined}
+                      error={urlError}
                       onChange={(next) => updateLink(index, { url: next })}
                     />
                     <Button
@@ -223,7 +230,10 @@ export function linkProblemCount(editor: ProfileEditorState): number {
   const missingLabels = form.additional_links.filter(
     (link) => link.url.trim() !== "" && link.label.trim() === ""
   ).length;
-  return named + badUrls + missingLabels;
+  const serverErrors = Object.keys(editor.fieldErrors).filter(
+    (path) => NAMED_LINKS.some(({ key }) => key === path) || path.startsWith("additional_links.")
+  ).length;
+  return named + badUrls + missingLabels + serverErrors;
 }
 
 /**
@@ -233,7 +243,7 @@ export function linkProblemCount(editor: ProfileEditorState): number {
  * renders the same fields Personal details embeds.
  */
 export function LinksEditor({ editor }: { editor: ProfileEditorState }) {
-  const { loading, loadError, reload, save, saveProfile, dirty } = editor;
+  const { loading, loadError, reload, save, saveProfileSection, dirty } = editor;
   const problemCount = linkProblemCount(editor);
 
   return (
@@ -250,7 +260,7 @@ export function LinksEditor({ editor }: { editor: ProfileEditorState }) {
         state={save}
         dirty={dirty}
         disabled={problemCount > 0}
-        onSave={() => void saveProfile()}
+        onSave={() => void saveProfileSection("links")}
         onCancel={reload}
       />
     </EditorShell>

@@ -114,26 +114,72 @@ const CAREER = {
 };
 
 let putBodies: Record<string, unknown[]>;
+let writeMethods: Record<string, string[]>;
 
 function mockApi({
   failSave = false,
-  career = CAREER as unknown
-}: { failSave?: boolean; career?: unknown } = {}) {
+  career = CAREER as unknown,
+  profile = PROFILE as unknown,
+  validationFailures = 0,
+  validationFields = ["portfolio_url"]
+}: {
+  failSave?: boolean;
+  career?: unknown;
+  profile?: unknown;
+  validationFailures?: number;
+  validationFields?: string[];
+} = {}) {
   putBodies = {};
+  writeMethods = {};
+  let remainingValidationFailures = validationFailures;
+  let savedProfile = { ...(profile as Record<string, unknown>) };
   return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
-    if (method === "PUT") {
+    if (method === "PUT" || method === "PATCH") {
       const path = url.replace(/^.*?(\/profile.*)$/, "$1");
       (putBodies[path] ??= []).push(JSON.parse(String(init?.body ?? "{}")));
+      (writeMethods[path] ??= []).push(method);
       if (failSave) {
         return Promise.resolve(jsonResponse({ detail: "Server exploded" }, 500));
+      }
+      if (path === "/profile" && method === "PATCH" && remainingValidationFailures > 0) {
+        remainingValidationFailures -= 1;
+        return Promise.resolve(
+          jsonResponse(
+            {
+              detail: validationFields.map((field) => ({
+                type: "url_scheme",
+                loc: [
+                  "body",
+                  ...field.split(".").map((part) => (/^\d+$/.test(part) ? Number(part) : part))
+                ],
+                msg: "URL scheme should be 'http' or 'https'"
+              }))
+            },
+            422
+          )
+        );
+      }
+      if (path === "/profile" && method === "PATCH") {
+        savedProfile = {
+          ...savedProfile,
+          ...(putBodies[path].at(-1) as Record<string, unknown>)
+        };
+        return Promise.resolve(jsonResponse({ profile: savedProfile }));
+      }
+      if (path === "/profile/name") {
+        savedProfile = {
+          ...savedProfile,
+          ...(putBodies[path].at(-1) as Record<string, unknown>)
+        };
+        return Promise.resolve(jsonResponse({ profile: savedProfile }));
       }
       return Promise.resolve(jsonResponse({ ok: true }));
     }
     if (url.endsWith("/profile/career")) return Promise.resolve(jsonResponse(career));
     if (url.endsWith("/auth/me")) return Promise.resolve(jsonResponse({ email: "login@example.test" }));
-    if (url.endsWith("/profile")) return Promise.resolve(jsonResponse({ profile: PROFILE }));
+    if (url.endsWith("/profile")) return Promise.resolve(jsonResponse({ profile: savedProfile }));
     return Promise.resolve(jsonResponse({}));
   });
 }
@@ -818,6 +864,43 @@ describe("focused profile editors", () => {
     expect(remote).toBeChecked();
   });
 
+  it("PATCHes only Job Preferences fields even when a loaded legacy URL is invalid", async () => {
+    const user = userEvent.setup();
+    await renderEditor("preferences", {
+      profile: { ...PROFILE, portfolio_url: "cpandey.com" }
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Remove Machine Learning Engineer" })
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(putBodies["/profile"]).toBeDefined());
+    expect(writeMethods["/profile"]).toEqual(["PATCH"]);
+    expect(putBodies["/profile"][0]).toEqual({
+      target_roles: ["Interplanetary Vibe Officer"],
+      target_levels: ["New Grad"],
+      preferred_locations: ["Phoenix, AZ"],
+      remote_preference: "remote"
+    });
+    expect(putBodies["/profile"][0]).not.toHaveProperty("portfolio_url");
+    expect(putBodies["/profile"][0]).not.toHaveProperty("skills");
+    expect(putBodies["/profile"][0]).not.toHaveProperty("application_email");
+  });
+
+  it("retries a failed Job Preferences save through the same PATCH path", async () => {
+    const user = userEvent.setup();
+    await renderEditor("preferences", { failSave: true });
+    await user.click(
+      screen.getByRole("button", { name: "Remove Machine Learning Engineer" })
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText(/Error saving/);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(writeMethods["/profile"]).toHaveLength(2));
+    expect(writeMethods["/profile"]).toEqual(["PATCH", "PATCH"]);
+  });
+
   // ------------------------------------------------------------------ //
   // Personal + links
   // ------------------------------------------------------------------ //
@@ -866,6 +949,58 @@ describe("focused profile editors", () => {
     expect(saved.x_url).toBe("https://x.com/chandra");
     // The original three are untouched.
     expect(saved.linkedin_url).toBe("https://linkedin.com/in/chandra");
+  });
+
+  it("maps multiple 422 URL errors, retries with PATCH, and adopts canonical response values", async () => {
+    const user = userEvent.setup();
+    await renderEditor("links", {
+      validationFailures: 1,
+      validationFields: ["github_url", "portfolio_url"]
+    });
+    const github = screen.getByLabelText("GitHub");
+    const portfolio = screen.getByLabelText("Website / Portfolio");
+    await user.clear(github);
+    await user.type(github, "github.com/first");
+    await user.type(portfolio, "cpandey.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findAllByText("URL scheme should be 'http' or 'https'")).toHaveLength(2);
+    expect(github).toHaveValue("github.com/first");
+    expect(portfolio).toHaveValue("cpandey.com");
+    expect(github).toHaveAttribute("aria-invalid", "true");
+    expect(portfolio).toHaveAttribute("aria-invalid", "true");
+    expect(writeMethods["/profile"]).toEqual(["PATCH"]);
+
+    await user.clear(github);
+    await user.type(github, "github.com/example");
+    await user.clear(portfolio);
+    await user.type(portfolio, "cpandey.com/projects");
+    expect(screen.queryByText("URL scheme should be 'http' or 'https'")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(github).toHaveValue("https://github.com/example");
+    expect(portfolio).toHaveValue("https://cpandey.com/projects");
+    expect(github).not.toHaveAttribute("aria-invalid");
+    expect(portfolio).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(writeMethods["/profile"]).toEqual(["PATCH", "PATCH"]);
+  });
+
+  it("maps a nested additional-link URL error to its URL control", async () => {
+    const user = userEvent.setup();
+    await renderEditor("links", {
+      validationFailures: 1,
+      validationFields: ["additional_links.0.url"]
+    });
+    await user.click(screen.getByRole("button", { name: /Add another link/ }));
+    await user.type(screen.getByLabelText("Label"), "Blog");
+    await user.type(screen.getByLabelText("URL"), "blog.cpandey.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText("URL scheme should be 'http' or 'https'")).toBeInTheDocument();
+    expect(screen.getByLabelText("URL")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("URL")).toHaveValue("blog.cpandey.com");
   });
 
   it("adds, edits and removes a custom link", async () => {

@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.profile.urls import OptionalProfileUrl
+
 TextSourceType = Literal["resume_text", "linkedin_text", "other_text"]
 FileSourceType = Literal["resume", "linkedin_pdf", "auto"]
 DraftSourceType = Literal["resume", "linkedin_pdf", "resume_text", "linkedin_text", "other_text", "unknown"]
@@ -48,9 +50,9 @@ class BasicInfoDraft(BaseModel):
     location_city: str = ""
     location_state: str = ""
     location_country: str = ""
-    linkedin_url: str = ""
-    github_url: str = ""
-    portfolio_url: str = ""
+    linkedin_url: OptionalProfileUrl = None
+    github_url: OptionalProfileUrl = None
+    portfolio_url: OptionalProfileUrl = None
     work_authorization_status: str = ""
     requires_sponsorship: bool | None = None
 
@@ -148,9 +150,9 @@ class AwardDraft(BaseModel):
 
 
 class LinksDraft(BaseModel):
-    linkedin_url: str = ""
-    github_url: str = ""
-    portfolio_url: str = ""
+    linkedin_url: OptionalProfileUrl = None
+    github_url: OptionalProfileUrl = None
+    portfolio_url: OptionalProfileUrl = None
     other_links: list[str] = Field(default_factory=list)
 
 

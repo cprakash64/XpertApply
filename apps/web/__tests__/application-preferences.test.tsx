@@ -170,9 +170,12 @@ describe("Application preferences page", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => {
-      const put = requests.find((r) => r.method === "PUT" && r.url.endsWith("/profile"));
-      expect(put).toBeDefined();
-      expect((put!.body as Record<string, unknown>).open_to_relocation).toBe(false);
+      const patch = requests.find((r) => r.method === "PATCH" && r.url.endsWith("/profile"));
+      expect(patch).toBeDefined();
+      expect(patch!.body).toEqual({
+        work_authorization: "authorized_us",
+        open_to_relocation: false
+      });
     });
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });

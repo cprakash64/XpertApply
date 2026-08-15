@@ -435,15 +435,18 @@ export function SelectField({
   value,
   options,
   onChange,
+  error,
   className = ""
 }: {
   label: string;
   value: string;
   options: readonly (readonly [string, string])[] | readonly string[];
   onChange: (value: string) => void;
+  error?: string;
   className?: string;
 }) {
   const id = useId();
+  const errorId = useId();
   // Accepts either plain strings or [value, label] pairs, so a caller with a
   // coded option set (work authorization) and one with a simple list (GPA
   // scale) can both use this control.
@@ -458,8 +461,12 @@ export function SelectField({
       <select
         id={id}
         value={value}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1.5 h-10 w-full rounded-xl border border-line bg-[var(--input-background)] px-3 text-sm"
+        className={`mt-1.5 h-10 w-full rounded-xl border bg-[var(--input-background)] px-3 text-sm ${
+          error ? "border-[var(--danger-border)]" : "border-line"
+        }`}
       >
         {pairs.map(([optionValue, optionLabel]) => (
           <option key={optionValue} value={optionValue}>
@@ -467,6 +474,11 @@ export function SelectField({
           </option>
         ))}
       </select>
+      {error && (
+        <p id={errorId} className="mt-1 text-xs text-[var(--danger)]">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
