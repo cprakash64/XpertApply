@@ -4,6 +4,7 @@
  * turn every request into a same-origin path. An empty value means "unset".
  */
 import { readAuthToken } from "@/lib/authToken";
+import { invalidateAuthSession } from "@/lib/authSession";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -297,6 +298,7 @@ export type ApiErrorCode =
   | "network_unreachable"
   | "request_cancelled"
   | "auth_expired"
+  | "forbidden"
   | "not_found"
   | "validation"
   | "rate_limited"
@@ -403,7 +405,8 @@ type StructuredError = {
 };
 
 function codeForStatus(status: number): { code: ApiErrorCode; retryable: boolean } {
-  if (status === 401 || status === 403) return { code: "auth_expired", retryable: false };
+  if (status === 401) return { code: "auth_expired", retryable: false };
+  if (status === 403) return { code: "forbidden", retryable: false };
   if (status === 404) return { code: "not_found", retryable: false };
   if (status === 400 || status === 422) return { code: "validation", retryable: false };
   if (status === 429) return { code: "rate_limited", retryable: true };
@@ -412,8 +415,17 @@ function codeForStatus(status: number): { code: ApiErrorCode; retryable: boolean
   return { code: "request_failed", retryable: false };
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = readAuthToken();
+/**
+ * Authentication-aware transport shared by JSON APIs and binary downloads.
+ * It owns bearer attachment, network classification, and the single 401
+ * invalidation contract; response-body parsing stays with the caller.
+ */
+export async function apiResponse(path: string, options: RequestInit = {}): Promise<Response> {
+  // Login and signup must remain usable when a stale token happens to exist.
+  // They neither need a bearer credential nor participate in session-expiry
+  // redirects when the submitted credentials themselves receive a 401.
+  const publicAuthRequest = path === "/auth/login" || path === "/auth/signup";
+  const token = publicAuthRequest ? null : readAuthToken();
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
   let response: Response;
@@ -450,6 +462,21 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       details: cause instanceof Error ? cause.message : String(cause)
     });
   }
+
+  // A late response from a request made under a previous identity must never
+  // clear a newer login that happened while that request was in flight.
+  if (
+    response.status === 401 &&
+    !publicAuthRequest &&
+    token === readAuthToken()
+  ) {
+    invalidateAuthSession({ reason: "expired" });
+  }
+  return response;
+}
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await apiResponse(path, options);
 
   if (!response.ok) {
     const body = await response.text();
@@ -504,5 +531,6 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       requestId: structured?.request_id ?? response.headers.get("x-request-id") ?? undefined
     });
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

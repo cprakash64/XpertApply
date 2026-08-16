@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { readAuthToken } from "@/lib/authToken";
+import { registerAuthSessionCleanup } from "@/lib/authSession";
 
 /**
  * The Dashboard's single data source.
@@ -153,6 +154,8 @@ export function __resetDashboardSummaryCache(): void {
   cache = null;
   inFlight = null;
 }
+
+registerAuthSessionCleanup(invalidateDashboardSummary);
 
 export type DashboardSummaryState = {
   data: DashboardSummary | null;

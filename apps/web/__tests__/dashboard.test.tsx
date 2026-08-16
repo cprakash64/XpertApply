@@ -166,6 +166,15 @@ describe("DashboardClient", () => {
     expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
   });
 
+  it("keeps the session and retry UI on a browser network failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+    render(React.createElement(DashboardClient));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load your dashboard/i);
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(localStorage.getItem("jobpilot_token")).toBe("token");
+  });
+
   it("keeps showing cached data when a background refresh fails", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
     const first = render(React.createElement(DashboardClient));

@@ -7,7 +7,7 @@ import SignupPage from "../app/signup/page";
 import HomePage from "../app/page";
 
 const routerMock = vi.hoisted(() => ({
-  push: vi.fn()
+  replace: vi.fn()
 }));
 
 vi.mock("next/navigation", () => ({
@@ -36,7 +36,8 @@ describe("auth pages", () => {
   beforeEach(() => {
     cleanup();
     localStorage.clear();
-    routerMock.push.mockClear();
+    routerMock.replace.mockClear();
+    window.history.replaceState({}, "", "/login");
     vi.restoreAllMocks();
   });
 
@@ -50,7 +51,7 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => expect(localStorage.getItem("jobpilot_token")).toBe("signup-token"));
-    expect(routerMock.push).toHaveBeenCalledWith("/dashboard");
+    expect(routerMock.replace).toHaveBeenCalledWith("/dashboard");
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8000/auth/signup",
       expect.objectContaining({ method: "POST" })
@@ -79,7 +80,7 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Log in" }));
 
     await waitFor(() => expect(localStorage.getItem("jobpilot_token")).toBe("login-token"));
-    expect(routerMock.push).toHaveBeenCalledWith("/dashboard");
+    expect(routerMock.replace).toHaveBeenCalledWith("/dashboard");
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8000/auth/login",
       expect.objectContaining({ method: "POST" })
@@ -96,6 +97,41 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Log in" }));
 
     expect(await screen.findByText("Invalid credentials")).toBeInTheDocument();
+  });
+
+  it("returns a successful login to a safe protected deep link", async () => {
+    window.history.replaceState({}, "", "/login?next=%2Fprofile%2Fpreferences");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ access_token: "login-token", token_type: "bearer" })
+    );
+
+    render(React.createElement(LoginPage));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Log in" }));
+
+    await waitFor(() =>
+      expect(routerMock.replace).toHaveBeenCalledWith("/profile/preferences")
+    );
+  });
+
+  it("ignores an external return target and keeps a stale-token login page usable", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/login?next=https%3A%2F%2Fattacker.example%2Fsteal"
+    );
+    localStorage.setItem("jobpilot_token", "stale-token");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ access_token: "fresh-token", token_type: "bearer" })
+    );
+
+    render(React.createElement(LoginPage));
+    expect(screen.getByRole("heading", { name: "Sign in to XpertApply" })).toBeInTheDocument();
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Log in" }));
+
+    await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"));
+    expect(localStorage.getItem("jobpilot_token")).toBe("fresh-token");
   });
 
   /*

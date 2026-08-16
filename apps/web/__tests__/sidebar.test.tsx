@@ -2,12 +2,16 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/AppShell";
 
 const ROOT = join(__dirname, "..");
+const routerMock = vi.hoisted(() => ({ replace: vi.fn() }));
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/tracker" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/tracker",
+  useRouter: () => routerMock
+}));
 
 function renderShell() {
   return render(
@@ -20,6 +24,7 @@ function sidebar(): HTMLElement {
 }
 
 describe("sidebar", () => {
+  beforeEach(() => localStorage.setItem("jobpilot_token", "test-token"));
   afterEach(() => cleanup());
 
   it("presents the search flow in order", () => {

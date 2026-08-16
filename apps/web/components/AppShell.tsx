@@ -1,18 +1,34 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore
+} from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BriefcaseBusiness,
   ClipboardList,
   FileText,
   Gauge,
+  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   UserRound
 } from "lucide-react";
+import {
+  AUTH_SESSION_INVALIDATED_EVENT,
+  hasUsableStoredSession,
+  invalidateAuthSession,
+  subscribeAuthSession,
+  type AuthSessionInvalidationDetail
+} from "@/lib/authSession";
 
 /**
  * Primary navigation, ordered by how a job search actually flows: see where you
@@ -60,6 +76,7 @@ export function AppShell({
   children: React.ReactNode;
   workspace?: boolean;
 }) {
+  const sessionAvailable = useProtectedSession();
   // One state object keeps the two inputs consistent: a new request from the
   // page always clears a stale user override, without a side effect inside an
   // updater.
@@ -94,6 +111,14 @@ export function AppShell({
   }, [immersive]);
 
   const api = useMemo<AppShellApi>(() => ({ collapsed, requestCollapsed }), [collapsed, requestCollapsed]);
+
+  if (!sessionAvailable) {
+    return (
+      <main className="grid min-h-screen place-items-center" aria-busy="true">
+        <p className="sr-only" role="status">Checking your session…</p>
+      </main>
+    );
+  }
 
   return (
     <AppShellContext.Provider value={api}>
@@ -163,6 +188,17 @@ function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         />
         <button
           type="button"
+          onClick={() => invalidateAuthSession({ reason: "logout", returnTo: null })}
+          aria-label={collapsed ? "Log out" : undefined}
+          className={`focus-ring group relative flex w-full items-center rounded-md py-2 text-sm text-[var(--text-muted)] hover:bg-panel ${
+            collapsed ? "justify-center px-0" : "gap-3 px-3"
+          }`}
+        >
+          <LogOut className="h-4 w-4 shrink-0" aria-hidden />
+          {collapsed ? <RailTooltip>Log out</RailTooltip> : <span>Log out</span>}
+        </button>
+        <button
+          type="button"
           onClick={onToggle}
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -180,6 +216,43 @@ function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </div>
     </aside>
   );
+}
+
+/**
+ * Shared client boundary for every authenticated page. Protected chrome is not
+ * rendered until local auth is resolved, and a central 401 event removes it
+ * synchronously before replacement navigation.
+ */
+function useProtectedSession(): boolean {
+  const pathname = usePathname();
+  const router = useRouter();
+  const available = useSyncExternalStore(
+    subscribeAuthSession,
+    hasUsableStoredSession,
+    () => false
+  );
+
+  useEffect(() => {
+    const handleInvalidation = (event: Event) => {
+      const detail = (event as CustomEvent<AuthSessionInvalidationDetail>).detail;
+      router.replace(detail?.loginHref ?? "/login");
+    };
+    window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidation);
+
+    if (!available) {
+      const result = invalidateAuthSession({
+        reason: "expired",
+        returnTo: `${pathname ?? ""}${window.location.search}`
+      });
+      // A 401 may have invalidated the module immediately before this boundary
+      // mounted. In that case no second event is emitted, so navigate here.
+      if (!result.initiated) router.replace(result.loginHref);
+    }
+
+    return () => window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidation);
+  }, [available, pathname, router]);
+
+  return available;
 }
 
 function NavItem({

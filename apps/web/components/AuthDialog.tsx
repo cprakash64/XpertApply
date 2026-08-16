@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/authToken";
+import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 
 export type AuthMode = "login" | "signup";
 
@@ -65,8 +65,12 @@ export function AuthDialog({
         method: "POST",
         body: JSON.stringify({ email, password })
       });
-      localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, result.access_token);
-      router.push("/dashboard");
+      storeAuthToken(result.access_token);
+      const requestedDestination =
+        typeof window === "undefined"
+          ? null
+          : safeReturnPath(new URLSearchParams(window.location.search).get("next"));
+      router.replace(requestedDestination ?? "/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : mode === "login" ? "Login failed." : "Signup failed.");
       setSubmitting(false);

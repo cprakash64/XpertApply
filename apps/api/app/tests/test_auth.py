@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
+from app.core.config import settings
 from app.db.base import Base
 from app.main import app
 from app.models import entities  # noqa: F401
@@ -106,3 +107,28 @@ def test_me_without_token_returns_401(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Missing token"
+
+
+def test_me_with_malformed_token_returns_401(client: TestClient) -> None:
+    response = client.get("/auth/me", headers={"Authorization": "Bearer malformed-token"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid token"
+
+
+def test_me_with_expired_token_returns_401(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "jwt_expires_minutes", -1)
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "expired@example.com", "password": "password123"},
+    )
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {signup.json()['access_token']}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid token"

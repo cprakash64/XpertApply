@@ -6,8 +6,13 @@ import { AppShell } from "../components/AppShell";
 import { JobDiscovery } from "../components/JobDiscovery";
 import { clearPeopleCache } from "../lib/peopleClient";
 
+const routerMock = vi.hoisted(() => ({ replace: vi.fn() }));
+
 // AppShell highlights the active section from the pathname.
-vi.mock("next/navigation", () => ({ usePathname: () => "/jobs" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/jobs",
+  useRouter: () => routerMock
+}));
 
 /**
  * The Jobs master-detail workspace: one screen that holds the list and the open

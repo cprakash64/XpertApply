@@ -4,14 +4,13 @@ import { useEffect, useState } from "react";
 import { Check, Loader2, Save, X } from "lucide-react";
 import {
   api,
-  API_URL,
+  apiResponse,
   type CoverLetterContent,
   type GeneratedDocument,
   type Job,
   type ResumeContent
 } from "@/lib/api";
 import { Button } from "@/components/Button";
-import { readAuthToken } from "@/lib/authToken";
 import { GeneratedResumePreview } from "@/components/GeneratedResumePreview";
 import { GeneratedCoverLetterPreview } from "@/components/GeneratedCoverLetterPreview";
 
@@ -161,10 +160,9 @@ export function DocumentModal({
     setStatus(`Preparing ${fmt.toUpperCase()}…`);
     try {
       await persist(); // ensure the export matches the (possibly edited) preview
-      const token = readAuthToken();
-      const response = await fetch(`${API_URL}/jobs/documents/${doc.document_id}/download/${fmt}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
+      const response = await apiResponse(
+        `/jobs/documents/${doc.document_id}/download/${fmt}`
+      );
       if (!response.ok) {
         throw new Error("download failed");
       }

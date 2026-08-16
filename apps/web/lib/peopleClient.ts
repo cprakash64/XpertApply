@@ -2,6 +2,7 @@
 
 import { api, type PeopleResponse } from "@/lib/api";
 import { readAuthToken } from "@/lib/authToken";
+import { registerAuthSessionCleanup } from "@/lib/authSession";
 
 type JobId = string | number;
 type Listener = (data: PeopleResponse) => void;
@@ -126,3 +127,5 @@ export async function broadenPeople(
 export function clearPeopleCache(): void {
   entries.clear();
 }
+
+registerAuthSessionCleanup(clearPeopleCache);

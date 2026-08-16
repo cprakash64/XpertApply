@@ -6,7 +6,12 @@ import { AppShell } from "../components/AppShell";
 import { JobDiscovery } from "../components/JobDiscovery";
 import { nextSelectionAfterRemoval } from "../lib/markApplied";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/jobs" }));
+const routerMock = vi.hoisted(() => ({ replace: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/jobs",
+  useRouter: () => routerMock
+}));
 
 /**
  * "Successful application moves to Tracker", from the Jobs workspace.
