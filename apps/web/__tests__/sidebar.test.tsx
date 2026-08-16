@@ -1,17 +1,50 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/AppShell";
 
 const ROOT = join(__dirname, "..");
 const routerMock = vi.hoisted(() => ({ replace: vi.fn() }));
+const navigation = vi.hoisted(() => ({ pathname: "/tracker" }));
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/tracker",
+  usePathname: () => navigation.pathname,
   useRouter: () => routerMock
 }));
+
+const mediaState = new Map<string, boolean>();
+const mediaListeners = new Map<string, Set<(event: MediaQueryListEvent) => void>>();
+
+function installMatchMedia() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches() {
+      return mediaState.get(query) ?? false;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+      const listeners = mediaListeners.get(query) ?? new Set();
+      listeners.add(listener);
+      mediaListeners.set(query, listeners);
+    },
+    removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+      mediaListeners.get(query)?.delete(listener);
+    },
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn()
+  }));
+}
+
+function setMedia(query: string, matches: boolean) {
+  mediaState.set(query, matches);
+  for (const listener of mediaListeners.get(query) ?? []) {
+    listener({ matches, media: query } as MediaQueryListEvent);
+  }
+}
 
 function renderShell() {
   return render(
@@ -24,15 +57,26 @@ function sidebar(): HTMLElement {
 }
 
 describe("sidebar", () => {
-  beforeEach(() => localStorage.setItem("jobpilot_token", "test-token"));
-  afterEach(() => cleanup());
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("jobpilot_token", "test-token");
+    navigation.pathname = "/tracker";
+    routerMock.replace.mockClear();
+    mediaState.clear();
+    mediaListeners.clear();
+    installMatchMedia();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   it("presents the search flow in order", () => {
     renderShell();
     const labels = within(sidebar())
       .getAllByRole("link")
-      .map((link) => link.textContent?.trim())
-      .filter((label) => label && label !== "XpertApply");
+      .map((link) => link.getAttribute("aria-label") ?? link.textContent?.trim())
+      .filter((label) => label && label !== "XpertApply home");
     expect(labels).toEqual([
       "Dashboard",
       "Find Jobs",
@@ -84,7 +128,6 @@ describe("sidebar", () => {
   });
 
   it("still supports collapsing to the icon rail", async () => {
-    const userEvent = (await import("@testing-library/user-event")).default;
     renderShell();
     expect(sidebar()).toHaveAttribute("data-collapsed", "false");
 
@@ -95,5 +138,120 @@ describe("sidebar", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(sidebar()).toHaveAttribute("data-collapsed", "false");
+  });
+
+  it("persists only the desktop collapse preference", async () => {
+    const first = renderShell();
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(localStorage.getItem("xpertapply:desktop-sidebar-collapsed")).toBe("true");
+    first.unmount();
+
+    renderShell();
+    await waitFor(() => expect(sidebar()).toHaveAttribute("data-collapsed", "true"));
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+  });
+
+  it("keeps nested routes mapped to their top-level navigation item", () => {
+    navigation.pathname = "/profile/preferences";
+    const first = renderShell();
+    expect(within(sidebar()).getByRole("link", { name: "My Profile" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    first.unmount();
+
+    navigation.pathname = "/matches/42";
+    renderShell();
+    expect(within(sidebar()).getByRole("link", { name: "Find Jobs" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+  });
+
+  it("expands and dismisses the tablet rail without changing desktop preference", async () => {
+    renderShell();
+    await userEvent.click(screen.getByRole("button", { name: "Expand navigation" }));
+    expect(sidebar()).toHaveAttribute("data-tablet-expanded", "true");
+    expect(screen.queryByTestId("mobile-navigation-backdrop")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close expanded navigation" })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(sidebar()).toHaveAttribute("data-tablet-expanded", "false");
+    expect(localStorage.getItem("xpertapply:desktop-sidebar-collapsed")).toBeNull();
+  });
+
+  it("provides an accessible mobile drawer with focus, Escape, backdrop, and scroll cleanup", async () => {
+    const view = renderShell();
+    const trigger = screen.getByRole("button", { name: "Open navigation" });
+    await userEvent.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Application navigation" });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Close navigation" })).toHaveFocus();
+    expect(document.documentElement).toHaveClass("app-drawer-open");
+    expect(view.container.querySelector("[inert]")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(document.documentElement).not.toHaveClass("app-drawer-open");
+
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByTestId("mobile-navigation-backdrop"));
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+    expect(document.documentElement).not.toHaveClass("app-drawer-open");
+
+    await userEvent.click(trigger);
+    expect(document.documentElement).toHaveClass("app-drawer-open");
+    view.unmount();
+    expect(document.documentElement).not.toHaveClass("app-drawer-open");
+  });
+
+  it("closes the mobile drawer on navigation without returning focus to the old trigger", async () => {
+    renderShell();
+    const trigger = screen.getByRole("button", { name: "Open navigation" });
+    await userEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Application navigation" });
+    await userEvent.click(within(dialog).getByRole("link", { name: "Settings" }));
+
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+    expect(trigger).not.toHaveFocus();
+    expect(document.documentElement).not.toHaveClass("app-drawer-open");
+  });
+
+  it("keeps keyboard focus inside the mobile drawer", async () => {
+    renderShell();
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const dialog = screen.getByRole("dialog", { name: "Application navigation" });
+    const first = within(dialog).getByRole("link", { name: "XpertApply home" });
+    const last = within(dialog).getByRole("button", { name: "Log out" });
+
+    last.focus();
+    await userEvent.tab();
+    expect(first).toHaveFocus();
+
+    first.focus();
+    await userEvent.tab({ shift: true });
+    expect(last).toHaveFocus();
+  });
+
+  it("retires transient overlays when crossing responsive modes", async () => {
+    const mobileQuery = "(max-width: 639px)";
+    const tabletQuery = "(min-width: 640px) and (max-width: 1279px)";
+    mediaState.set(mobileQuery, true);
+    renderShell();
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    expect(screen.getByRole("dialog", { name: "Application navigation" })).toBeInTheDocument();
+
+    act(() => {
+      setMedia(mobileQuery, false);
+      setMedia(tabletQuery, true);
+    });
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand navigation" }));
+    expect(sidebar()).toHaveAttribute("data-tablet-expanded", "true");
+    act(() => setMedia(tabletQuery, false));
+    expect(sidebar()).toHaveAttribute("data-tablet-expanded", "false");
   });
 });

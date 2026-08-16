@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore
 } from "react";
@@ -17,10 +18,12 @@ import {
   FileText,
   Gauge,
   LogOut,
+  Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
-  UserRound
+  UserRound,
+  X
 } from "lucide-react";
 import {
   AUTH_SESSION_INVALIDATED_EVENT,
@@ -41,14 +44,50 @@ import {
  * 404. It belongs here once it has its own route.
  */
 const nav = [
-  { href: "/dashboard", label: "Dashboard", icon: Gauge },
-  { href: "/jobs", label: "Find Jobs", icon: BriefcaseBusiness },
-  { href: "/resume", label: "My Resumes", icon: FileText },
-  { href: "/tracker", label: "Applications", icon: ClipboardList },
-  { href: "/profile", label: "My Profile", icon: UserRound }
-];
+  { href: "/dashboard", label: "Dashboard", icon: Gauge, activeRoots: ["/dashboard"] },
+  { href: "/jobs", label: "Find Jobs", icon: BriefcaseBusiness, activeRoots: ["/jobs", "/matches"] },
+  {
+    href: "/resume",
+    label: "My Resumes",
+    icon: FileText,
+    activeRoots: ["/resume", "/cover-letter", "/application-answers"]
+  },
+  { href: "/tracker", label: "Applications", icon: ClipboardList, activeRoots: ["/tracker"] },
+  { href: "/profile", label: "My Profile", icon: UserRound, activeRoots: ["/profile"] }
+] as const;
 
-const settingsItem = { href: "/settings", label: "Settings", icon: Settings };
+const settingsItem = {
+  href: "/settings",
+  label: "Settings",
+  icon: Settings,
+  activeRoots: ["/settings"]
+} as const;
+
+const DESKTOP_SIDEBAR_PREFERENCE_KEY = "xpertapply:desktop-sidebar-collapsed";
+const DESKTOP_SIDEBAR_PREFERENCE_EVENT = "xpertapply:desktop-sidebar-preference";
+const TABLET_MEDIA_QUERY = "(min-width: 640px) and (max-width: 1279px)";
+const MOBILE_MEDIA_QUERY = "(max-width: 639px)";
+
+function readDesktopSidebarPreference(): boolean | null {
+  const saved = window.localStorage.getItem(DESKTOP_SIDEBAR_PREFERENCE_KEY);
+  return saved === "true" ? true : saved === "false" ? false : null;
+}
+
+function subscribeDesktopSidebarPreference(onChange: () => void): () => void {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === DESKTOP_SIDEBAR_PREFERENCE_KEY) onChange();
+  };
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(DESKTOP_SIDEBAR_PREFERENCE_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(DESKTOP_SIDEBAR_PREFERENCE_EVENT, onChange);
+  };
+}
+
+const subscribeHydration = () => () => undefined;
+const getClientHydrationSnapshot = () => true;
+const getServerHydrationSnapshot = () => false;
 
 type AppShellApi = {
   collapsed: boolean;
@@ -77,6 +116,7 @@ export function AppShell({
   workspace?: boolean;
 }) {
   const sessionAvailable = useProtectedSession();
+  const pathname = usePathname();
   // One state object keeps the two inputs consistent: a new request from the
   // page always clears a stale user override, without a side effect inside an
   // updater.
@@ -84,7 +124,29 @@ export function AppShell({
     requested: false,
     override: null
   });
-  const collapsed = state.override ?? state.requested;
+  const persistedDesktopCollapsed = useSyncExternalStore(
+    subscribeDesktopSidebarPreference,
+    readDesktopSidebarPreference,
+    () => null
+  );
+  const desktopCollapsed = state.override ?? (state.requested || persistedDesktopCollapsed === true);
+  const [tabletState, setTabletState] = useState<{ expanded: boolean; pathname: string | null }>({
+    expanded: false,
+    pathname: null
+  });
+  const [mobileState, setMobileState] = useState<{ open: boolean; pathname: string | null }>({
+    open: false,
+    pathname: null
+  });
+  // Route-keyed transient state closes without a follow-up render or effect.
+  const tabletExpanded = tabletState.expanded && tabletState.pathname === pathname;
+  const mobileOpen = mobileState.open && mobileState.pathname === pathname;
+  const mobileTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileCloseRef = useRef<HTMLButtonElement>(null);
+  const mobileDrawerRef = useRef<HTMLDivElement>(null);
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  const mobileWasOpen = useRef(false);
+  const restoreMobileFocus = useRef(true);
   // The page's own request — not the user's sidebar preference — is what says
   // "this screen fills the viewport and manages its own scrolling".
   const immersive = workspace && state.requested;
@@ -95,9 +157,93 @@ export function AppShell({
     );
   }, []);
 
-  const toggle = useCallback(() => {
-    setState((current) => ({ ...current, override: !(current.override ?? current.requested) }));
-  }, []);
+  const toggleDesktop = useCallback(() => {
+    const next = !desktopCollapsed;
+    setState((current) => ({ ...current, override: next }));
+    window.localStorage.setItem(DESKTOP_SIDEBAR_PREFERENCE_KEY, String(next));
+    window.dispatchEvent(new Event(DESKTOP_SIDEBAR_PREFERENCE_EVENT));
+  }, [desktopCollapsed]);
+
+  const closeMobile = useCallback((returnFocus: boolean) => {
+    restoreMobileFocus.current = returnFocus;
+    setMobileState({ open: false, pathname });
+  }, [pathname]);
+
+  // Breakpoint changes are discrete lifecycle events, not a continuous resize
+  // stream. CSS owns layout; these listeners only retire now-invalid overlays.
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const tablet = window.matchMedia(TABLET_MEDIA_QUERY);
+    const mobile = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const reconcile = () => {
+      if (!tablet.matches) setTabletState({ expanded: false, pathname });
+      if (!mobile.matches) closeMobile(false);
+    };
+    tablet.addEventListener("change", reconcile);
+    mobile.addEventListener("change", reconcile);
+    reconcile();
+    return () => {
+      tablet.removeEventListener("change", reconcile);
+      mobile.removeEventListener("change", reconcile);
+    };
+  }, [closeMobile, pathname]);
+
+  // The mobile drawer is a modal interaction: trap keyboard focus, lock the
+  // underlying document, and restore the opener when dismissal stays in place.
+  useEffect(() => {
+    if (!mobileOpen || !sessionAvailable) {
+      if (mobileWasOpen.current && restoreMobileFocus.current) {
+        mobileTriggerRef.current?.focus();
+      }
+      mobileWasOpen.current = false;
+      return;
+    }
+
+    mobileWasOpen.current = true;
+    restoreMobileFocus.current = true;
+    const background = backgroundRef.current;
+    document.documentElement.classList.add("app-drawer-open");
+    background?.setAttribute("inert", "");
+    mobileCloseRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMobile(true);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = mobileDrawerRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.documentElement.classList.remove("app-drawer-open");
+      background?.removeAttribute("inert");
+    };
+  }, [closeMobile, mobileOpen, sessionAvailable]);
+
+  useEffect(() => {
+    if (!tabletExpanded) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTabletState({ expanded: false, pathname });
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [pathname, tabletExpanded]);
 
   // Pinning the document is the only reliable way to guarantee the page itself
   // never contributes a scrollbar behind a viewport-height layout.
@@ -110,7 +256,10 @@ export function AppShell({
     return () => root.classList.remove("workspace-locked");
   }, [immersive]);
 
-  const api = useMemo<AppShellApi>(() => ({ collapsed, requestCollapsed }), [collapsed, requestCollapsed]);
+  const api = useMemo<AppShellApi>(
+    () => ({ collapsed: desktopCollapsed, requestCollapsed }),
+    [desktopCollapsed, requestCollapsed]
+  );
 
   if (!sessionAvailable) {
     return (
@@ -133,88 +282,263 @@ export function AppShell({
         * the layout owns — the job list and the detail panel.
         */}
       <div
-        className={`bg-[var(--background)] ${
+        className={`app-shell bg-[var(--background)] ${
           workspace ? "min-h-[100dvh]" : "min-h-screen"
         } ${immersive ? "h-[100dvh] overflow-hidden" : ""}`}
+        data-desktop-collapsed={desktopCollapsed ? "true" : "false"}
       >
-        <SideBar collapsed={collapsed} onToggle={toggle} />
-        <main className={`${collapsed ? "lg:pl-14" : "lg:pl-64"} ${immersive ? "h-full" : ""}`}>
-          {workspace ? children : <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</div>}
-        </main>
+        <div ref={backgroundRef} className={immersive ? "h-full" : "min-h-[inherit]"}>
+          <MobileHeader
+            menuRef={mobileTriggerRef}
+            open={mobileOpen}
+            onOpen={() => {
+              restoreMobileFocus.current = true;
+              setMobileState({ open: true, pathname });
+            }}
+          />
+          <SideBar
+            desktopCollapsed={desktopCollapsed}
+            tabletExpanded={tabletExpanded}
+            onDesktopToggle={toggleDesktop}
+            onTabletToggle={() =>
+              setTabletState({ expanded: !tabletExpanded, pathname })
+            }
+          />
+          <main
+            className={`app-shell-main ${
+              immersive ? "h-[calc(100dvh-3.5rem)] sm:h-full" : ""
+            }`}
+          >
+            {workspace ? (
+              children
+            ) : (
+              <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+            )}
+          </main>
+        </div>
+
+        {tabletExpanded ? (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Close expanded navigation"
+            className="fixed inset-0 z-20 hidden bg-black/35 sm:block xl:hidden"
+            onClick={() => setTabletState({ expanded: false, pathname })}
+          />
+        ) : null}
+
+        {mobileOpen ? (
+          <MobileDrawer
+            closeRef={mobileCloseRef}
+            drawerRef={mobileDrawerRef}
+            onClose={() => closeMobile(true)}
+            onNavigate={() => closeMobile(false)}
+          />
+        ) : null}
       </div>
     </AppShellContext.Provider>
   );
 }
 
-function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const pathname = usePathname();
-  const isActive = (href: string) => pathname === href || pathname?.startsWith(`${href}/`);
+function MobileHeader({
+  menuRef,
+  open,
+  onOpen
+}: {
+  menuRef: React.RefObject<HTMLButtonElement>;
+  open: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-white px-3 sm:hidden">
+      <button
+        ref={menuRef}
+        type="button"
+        aria-label="Open navigation"
+        aria-expanded={open}
+        aria-controls="mobile-app-navigation"
+        onClick={onOpen}
+        className="focus-ring grid h-11 w-11 place-items-center rounded-md text-ink hover:bg-panel"
+      >
+        <Menu className="h-5 w-5" aria-hidden />
+      </button>
+      <Brand compact={false} />
+    </header>
+  );
+}
 
+function SideBar({
+  desktopCollapsed,
+  tabletExpanded,
+  onDesktopToggle,
+  onTabletToggle
+}: {
+  desktopCollapsed: boolean;
+  tabletExpanded: boolean;
+  onDesktopToggle: () => void;
+  onTabletToggle: () => void;
+}) {
   return (
     <aside
       aria-label="Primary"
-      data-collapsed={collapsed ? "true" : "false"}
-      className={`fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-line bg-white transition-[width] duration-150 lg:flex ${
-        collapsed ? "w-14 px-2 py-3" : "w-64 p-4"
-      }`}
+      data-collapsed={desktopCollapsed ? "true" : "false"}
+      data-tablet-expanded={tabletExpanded ? "true" : "false"}
+      className="app-sidebar"
     >
-      <Link
-        href="/"
-        aria-label="XpertApply home"
-        className={`focus-ring flex items-center rounded-lg font-semibold ${
-          collapsed ? "justify-center py-2" : "mb-6 gap-2 px-1 py-1"
-        }`}
-      >
-        <span
-          aria-hidden
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--success-surface)] text-pine"
-        >
-          <BriefcaseBusiness className="h-4 w-4" />
-        </span>
-        {collapsed ? <span className="sr-only">XpertApply</span> : <span>XpertApply</span>}
-      </Link>
-
-      <nav aria-label="Sections" className={collapsed ? "mt-3 space-y-1" : "space-y-1"}>
-        {nav.map((item) => (
-          <NavItem key={item.href} {...item} collapsed={collapsed} active={Boolean(isActive(item.href))} />
-        ))}
-      </nav>
-
-      <div className={`mt-auto space-y-1 ${collapsed ? "" : "pt-4"}`}>
-        <NavItem
-          {...settingsItem}
-          collapsed={collapsed}
-          active={Boolean(isActive(settingsItem.href))}
-        />
+      <Brand compact />
+      <PrimaryNavigation />
+      <NavigationFooter />
+      <div className="app-sidebar-toggle mt-1">
         <button
           type="button"
-          onClick={() => invalidateAuthSession({ reason: "logout", returnTo: null })}
-          aria-label={collapsed ? "Log out" : undefined}
-          className={`focus-ring group relative flex w-full items-center rounded-md py-2 text-sm text-[var(--text-muted)] hover:bg-panel ${
-            collapsed ? "justify-center px-0" : "gap-3 px-3"
-          }`}
+          onClick={onTabletToggle}
+          aria-expanded={tabletExpanded}
+          aria-label={tabletExpanded ? "Collapse navigation" : "Expand navigation"}
+          className="app-nav-link app-tablet-toggle focus-ring group"
         >
-          <LogOut className="h-4 w-4 shrink-0" aria-hidden />
-          {collapsed ? <RailTooltip>Log out</RailTooltip> : <span>Log out</span>}
+          {tabletExpanded ? (
+            <PanelLeftClose className="h-4 w-4 shrink-0" aria-hidden />
+          ) : (
+            <PanelLeftOpen className="h-4 w-4" aria-hidden />
+          )}
+          <span className="app-nav-label">
+            {tabletExpanded ? "Collapse navigation" : "Expand navigation"}
+          </span>
+          {!tabletExpanded ? <RailTooltip>Expand navigation</RailTooltip> : null}
         </button>
         <button
           type="button"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={`focus-ring group relative flex w-full items-center rounded-md py-2 text-sm text-[var(--text-muted)] hover:bg-panel ${
-            collapsed ? "justify-center px-0" : "gap-3 px-3"
-          }`}
+          onClick={onDesktopToggle}
+          aria-expanded={!desktopCollapsed}
+          aria-label={desktopCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className="app-nav-link app-desktop-toggle focus-ring group"
         >
-          {collapsed ? (
-            <PanelLeftOpen className="h-4 w-4" aria-hidden />
+          {desktopCollapsed ? (
+            <PanelLeftOpen className="h-4 w-4 shrink-0" aria-hidden />
           ) : (
-            <PanelLeftClose className="h-4 w-4" aria-hidden />
+            <PanelLeftClose className="h-4 w-4 shrink-0" aria-hidden />
           )}
-          {collapsed ? <RailTooltip>Expand sidebar</RailTooltip> : <span>Collapse sidebar</span>}
+          <span className="app-nav-label">
+            {desktopCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          </span>
+          {desktopCollapsed ? <RailTooltip>Expand sidebar</RailTooltip> : null}
         </button>
       </div>
     </aside>
+  );
+}
+
+function MobileDrawer({
+  closeRef,
+  drawerRef,
+  onClose,
+  onNavigate
+}: {
+  closeRef: React.RefObject<HTMLButtonElement>;
+  drawerRef: React.RefObject<HTMLDivElement>;
+  onClose: () => void;
+  onNavigate: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 sm:hidden">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="Close navigation"
+        data-testid="mobile-navigation-backdrop"
+        className="absolute inset-0 bg-black/55"
+        onClick={onClose}
+      />
+      <div
+        ref={drawerRef}
+        id="mobile-app-navigation"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Application navigation"
+        className="relative flex h-full w-[min(20rem,86vw)] flex-col overflow-y-auto border-r border-line bg-white p-4 shadow-card"
+      >
+        <div className="mb-6 flex items-center justify-between gap-3">
+          <Brand compact={false} onNavigate={onNavigate} />
+          <button
+            ref={closeRef}
+            type="button"
+            aria-label="Close navigation"
+            onClick={onClose}
+            className="focus-ring grid h-11 w-11 place-items-center rounded-md text-ink hover:bg-panel"
+          >
+            <X className="h-5 w-5" aria-hidden />
+          </button>
+        </div>
+        <PrimaryNavigation onNavigate={onNavigate} />
+        <NavigationFooter onNavigate={onNavigate} />
+      </div>
+    </div>
+  );
+}
+
+function Brand({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
+  return (
+    <Link
+      href="/"
+      aria-label="XpertApply home"
+      onClick={onNavigate}
+      className={`app-brand focus-ring group flex items-center rounded-lg font-semibold ${
+        compact ? "py-2" : "gap-2 px-1 py-1"
+      }`}
+    >
+      <span
+        aria-hidden
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--success-surface)] text-pine"
+      >
+        <BriefcaseBusiness className="h-4 w-4" />
+      </span>
+      <span className={compact ? "app-brand-label" : undefined}>XpertApply</span>
+    </Link>
+  );
+}
+
+function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  return (
+    <nav aria-label="Sections" className="app-primary-nav space-y-1">
+      {nav.map((item) => (
+        <NavItem
+          key={item.href}
+          {...item}
+          active={isItemActive(pathname, item.activeRoots)}
+          onNavigate={onNavigate}
+        />
+      ))}
+    </nav>
+  );
+}
+
+function NavigationFooter({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  return (
+    <div className="app-navigation-footer mt-auto space-y-1 pt-4">
+      <NavItem
+        {...settingsItem}
+        active={isItemActive(pathname, settingsItem.activeRoots)}
+        onNavigate={onNavigate}
+      />
+      <button
+        type="button"
+        onClick={() => invalidateAuthSession({ reason: "logout", returnTo: null })}
+        aria-label="Log out"
+        className="app-nav-link focus-ring group"
+      >
+        <LogOut className="h-4 w-4 shrink-0" aria-hidden />
+        <span className="app-nav-label">Log out</span>
+        <RailTooltip>Log out</RailTooltip>
+      </button>
+    </div>
+  );
+}
+
+function isItemActive(pathname: string | null, roots: readonly string[]): boolean {
+  return roots.some(
+    (root) => pathname === root || pathname?.startsWith(`${root}/`)
   );
 }
 
@@ -226,6 +550,14 @@ function SideBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 function useProtectedSession(): boolean {
   const pathname = usePathname();
   const router = useRouter();
+  // During production hydration, useSyncExternalStore intentionally returns
+  // its server snapshot first. Do not interpret that one frame as a real
+  // logged-out transition and clear a valid token before the client snapshot.
+  const hydrated = useSyncExternalStore(
+    subscribeHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot
+  );
   const available = useSyncExternalStore(
     subscribeAuthSession,
     hasUsableStoredSession,
@@ -239,7 +571,7 @@ function useProtectedSession(): boolean {
     };
     window.addEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidation);
 
-    if (!available) {
+    if (hydrated && !available) {
       const result = invalidateAuthSession({
         reason: "expired",
         returnTo: `${pathname ?? ""}${window.location.search}`
@@ -250,39 +582,40 @@ function useProtectedSession(): boolean {
     }
 
     return () => window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, handleInvalidation);
-  }, [available, pathname, router]);
+  }, [available, hydrated, pathname, router]);
 
-  return available;
+  return hydrated && available;
 }
 
 function NavItem({
   href,
   label,
   icon: Icon,
-  collapsed,
-  active
+  active,
+  onNavigate
 }: {
   href: string;
   label: string;
   icon: typeof Gauge;
-  collapsed: boolean;
+  activeRoots: readonly string[];
   active: boolean;
+  onNavigate?: () => void;
 }) {
   return (
     <Link
       href={href}
-      aria-label={collapsed ? label : undefined}
+      aria-label={label}
       aria-current={active ? "page" : undefined}
-      className={`focus-ring group relative flex items-center rounded-md py-2 text-sm transition-colors ${
-        collapsed ? "justify-center px-0" : "gap-3 px-3"
-      } ${
+      onClick={onNavigate}
+      className={`app-nav-link focus-ring group ${
         active
           ? "bg-[var(--success-surface)] font-medium text-pine"
           : "text-ink hover:bg-panel"
       }`}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden />
-      {collapsed ? <RailTooltip>{label}</RailTooltip> : <span>{label}</span>}
+      <span className="app-nav-label">{label}</span>
+      <RailTooltip>{label}</RailTooltip>
     </Link>
   );
 }
@@ -296,7 +629,7 @@ function RailTooltip({ children }: { children: React.ReactNode }) {
   return (
     <span
       aria-hidden
-      className="pointer-events-none absolute left-full z-40 ml-2 hidden whitespace-nowrap rounded-md border border-line bg-white px-2 py-1 text-xs text-ink shadow-card group-hover:block group-focus-visible:block"
+      className="app-rail-tooltip pointer-events-none absolute left-full z-40 ml-2 whitespace-nowrap rounded-md border border-line bg-white px-2 py-1 text-xs text-ink shadow-card"
     >
       {children}
     </span>

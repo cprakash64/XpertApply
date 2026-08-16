@@ -283,7 +283,6 @@ describe("Jobs workspace", () => {
     await userEvent.click(cardOf("Machine Learning Engineer"));
 
     await waitFor(() => expect(sidebar()).toHaveAttribute("data-collapsed", "true"));
-    expect(sidebar().className).toContain("w-14");
     // Branding and navigation stay reachable, with accessible names.
     expect(within(sidebar()).getByLabelText("XpertApply home")).toBeInTheDocument();
     expect(within(sidebar()).getByRole("link", { name: "Find Jobs" })).toHaveAttribute(

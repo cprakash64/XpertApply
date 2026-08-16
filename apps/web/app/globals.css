@@ -293,6 +293,224 @@ input[type="radio"] {
   overscroll-behavior: none;
 }
 
+/* Authenticated application navigation.
+ *
+ * Tailwind's existing sm (640px) and xl (1280px) boundaries define the three
+ * shell modes in one place: mobile header/drawer, tablet rail/overlay, and the
+ * user-controlled desktop sidebar. Pages never implement their own offsets. */
+.app-drawer-open,
+.app-drawer-open body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.app-sidebar {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  transition:
+    width 150ms ease,
+    padding 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.app-nav-link {
+  position: relative;
+  display: flex;
+  min-height: 44px;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.375rem;
+  padding-inline: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.app-nav-label,
+.app-brand-label {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.app-rail-tooltip {
+  display: none;
+}
+
+.app-desktop-toggle {
+  display: none;
+}
+
+/* At high browser zoom or unusually short landscape heights, the fixed rail
+ * must remain independently scrollable so Settings, Logout, and the mode
+ * control cannot fall into an unreachable area below the viewport. Normal
+ * heights remain overflow-visible so compact-rail tooltips are never clipped. */
+@media (min-width: 640px) and (max-height: 519px) {
+  .app-sidebar {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (min-width: 640px) {
+  .app-sidebar {
+    display: flex;
+    width: 4rem;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .app-shell-main {
+    padding-left: 4rem;
+  }
+
+  .app-sidebar .app-brand,
+  .app-sidebar .app-nav-link {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  .app-sidebar .app-brand-label,
+  .app-sidebar .app-nav-label {
+    display: none;
+  }
+
+  .app-sidebar .app-primary-nav {
+    margin-top: 0.75rem;
+  }
+
+  .app-sidebar:not([data-tablet-expanded="true"]) .group:hover > .app-rail-tooltip,
+  .app-sidebar:not([data-tablet-expanded="true"]) .group:focus-visible > .app-rail-tooltip {
+    display: block;
+  }
+
+  .app-sidebar[data-tablet-expanded="true"] {
+    width: 16rem;
+    padding: 1rem;
+    box-shadow: var(--shadow);
+  }
+
+  .app-sidebar[data-tablet-expanded="true"] .app-brand,
+  .app-sidebar[data-tablet-expanded="true"] .app-nav-link {
+    justify-content: flex-start;
+    gap: 0.75rem;
+    padding-inline: 0.75rem;
+  }
+
+  .app-sidebar[data-tablet-expanded="true"] .app-brand {
+    margin-bottom: 1.5rem;
+    padding-inline: 0.25rem;
+  }
+
+  .app-sidebar[data-tablet-expanded="true"] .app-brand-label,
+  .app-sidebar[data-tablet-expanded="true"] .app-nav-label {
+    display: inline;
+  }
+
+  .app-sidebar[data-tablet-expanded="true"] .app-primary-nav {
+    margin-top: 0;
+  }
+}
+
+@media (min-width: 1280px) {
+  .app-tablet-toggle {
+    display: none;
+  }
+
+  .app-desktop-toggle {
+    display: flex;
+  }
+
+  .app-sidebar,
+  .app-sidebar[data-tablet-expanded="true"] {
+    width: 16rem;
+    padding: 1rem;
+    box-shadow: none;
+  }
+
+  .app-shell-main {
+    padding-left: 16rem;
+  }
+
+  .app-sidebar .app-brand,
+  .app-sidebar .app-nav-link,
+  .app-sidebar[data-tablet-expanded="true"] .app-brand,
+  .app-sidebar[data-tablet-expanded="true"] .app-nav-link {
+    justify-content: flex-start;
+    gap: 0.75rem;
+  }
+
+  .app-sidebar .app-brand,
+  .app-sidebar[data-tablet-expanded="true"] .app-brand {
+    margin-bottom: 1.5rem;
+    padding-inline: 0.25rem;
+  }
+
+  .app-sidebar .app-nav-link,
+  .app-sidebar[data-tablet-expanded="true"] .app-nav-link {
+    padding-inline: 0.75rem;
+  }
+
+  .app-sidebar .app-brand-label,
+  .app-sidebar .app-nav-label,
+  .app-sidebar[data-tablet-expanded="true"] .app-brand-label,
+  .app-sidebar[data-tablet-expanded="true"] .app-nav-label {
+    display: inline;
+  }
+
+  .app-sidebar .app-primary-nav,
+  .app-sidebar[data-tablet-expanded="true"] .app-primary-nav {
+    margin-top: 0;
+  }
+
+  .app-sidebar .app-rail-tooltip {
+    display: none !important;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar {
+    width: 3.5rem;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-shell-main {
+    padding-left: 3.5rem;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-brand,
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-nav-link {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-brand {
+    margin-bottom: 0;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-brand-label,
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-nav-label {
+    display: none;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .app-primary-nav {
+    margin-top: 0.75rem;
+  }
+
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .group:hover > .app-rail-tooltip,
+  .app-shell[data-desktop-collapsed="true"] .app-sidebar .group:focus-visible > .app-rail-tooltip {
+    display: block !important;
+  }
+}
+
 /* "Mark as applied" — the positive confirmation that moves a job to the Tracker.
  *
  * Green, because it is the one affirmative outcome in the apply flow, and shared

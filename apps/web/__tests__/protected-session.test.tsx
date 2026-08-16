@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -131,10 +131,14 @@ describe("protected session boundary", () => {
     render(<AppShell><p>Private dashboard</p></AppShell>);
     await screen.findByText("Private dashboard");
 
-    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const drawer = screen.getByRole("dialog", { name: "Application navigation" });
+    await userEvent.click(within(drawer).getByRole("button", { name: "Log out" }));
 
     expect(localStorage.getItem("jobpilot_token")).toBeNull();
     expect(screen.queryByText("Private dashboard")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Application navigation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(document.documentElement).not.toHaveClass("app-drawer-open"));
     expect(navigation.replace).toHaveBeenCalledWith("/login");
   });
 });
