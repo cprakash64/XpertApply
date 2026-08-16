@@ -24,6 +24,109 @@
    * stylesheet or script runs. */
   color-scheme: light dark;
 
+  /* --------------------------------------------------------------------
+   * XpertApply design-system foundation
+   *
+   * Raw brand values mirror the shipped marketing site. Semantic aliases are
+   * the only values new product primitives consume. Existing product tokens
+   * below remain unchanged until their call sites are migrated deliberately;
+   * in particular, the legacy pine accent is NOT rebound to cyan because it
+   * still carries real success meaning in several workflows.
+   * ------------------------------------------------------------------ */
+  --xa-navy: #06245c;
+  --xa-navy-hover: #0b3577;
+  --xa-cyan: #14b8c4;
+  --xa-cyan-highlight: #63d7dc;
+  --xa-cyan-dark: #0e7c85;
+  --xa-ink: #08182f;
+  --xa-neutral-secondary: #475467;
+  --xa-neutral-muted: #667085;
+  --xa-light-page: #f8fafc;
+  --xa-light-card: #ffffff;
+  --xa-light-border-subtle: #edf0f4;
+  --xa-light-border: #e5e9f0;
+  --xa-light-border-strong: #d9e1eb;
+
+  /* Brand and actions. Canonical cyan is an accent, not a white-text fill. */
+  --color-brand-primary: var(--xa-navy);
+  --color-brand-primary-hover: var(--xa-navy-hover);
+  --color-brand-accent: var(--xa-cyan);
+  --color-brand-accent-highlight: var(--xa-cyan-highlight);
+  --color-brand-accent-foreground: var(--xa-ink);
+  --color-brand-accent-text: var(--xa-cyan-dark);
+  --color-action-primary-background: var(--xa-navy);
+  --color-action-primary-foreground: var(--xa-light-card);
+  --color-action-primary-hover: var(--xa-navy-hover);
+  --color-action-secondary-background: var(--xa-light-card);
+  --color-action-secondary-foreground: var(--xa-ink);
+  --color-action-secondary-border: var(--xa-light-border-strong);
+  --color-action-ghost-foreground: var(--xa-neutral-secondary);
+  --color-action-ghost-hover: var(--xa-light-page);
+  --color-action-destructive-background: #9f3d28;
+  --color-action-destructive-foreground: #ffffff;
+  --color-action-destructive-hover: #7f2f1e;
+
+  /* Product surfaces and text. */
+  --color-surface-page: var(--xa-light-page);
+  --color-surface-shell: var(--xa-light-card);
+  --color-surface-card: var(--xa-light-card);
+  --color-surface-raised: var(--xa-light-card);
+  --color-surface-subtle: var(--xa-light-page);
+  --color-surface-selected: rgb(20 184 196 / 10%);
+  --color-surface-overlay: rgb(8 24 47 / 52%);
+  --color-surface-disabled: #f1f2ee;
+  --color-text-primary: var(--xa-ink);
+  --color-text-secondary: var(--xa-neutral-secondary);
+  --color-text-muted: var(--xa-neutral-muted);
+  --color-text-disabled: #5d675f;
+  --color-text-inverse: var(--xa-light-card);
+  --color-text-link: var(--xa-cyan-dark);
+
+  /* Border and focus hierarchy. Default card lines remain intentionally
+   * subtle; controls and selected states use stronger dedicated roles. */
+  --color-border-subtle: var(--xa-light-border-subtle);
+  --color-border-default: var(--xa-light-border);
+  --color-border-strong: var(--xa-light-border-strong);
+  --color-border-interactive: #b8c5d6;
+  --color-border-selected: var(--xa-cyan-dark);
+  --color-border-error: #f0b4a4;
+  --color-focus-ring: var(--xa-cyan-dark);
+  --color-focus-ring-offset: var(--xa-light-card);
+  --color-focus-ring-error: #9f3d28;
+
+  /* Status is independent from brand. Existing accessible product families
+   * are retained, with an explicit cool-blue information family. */
+  --color-status-neutral: var(--xa-neutral-secondary);
+  --color-status-neutral-surface: var(--xa-light-page);
+  --color-status-neutral-border: var(--xa-light-border-strong);
+  --color-status-info: #2f6f9f;
+  --color-status-info-surface: #edf5ff;
+  --color-status-info-border: #bdd8f5;
+  --color-status-success: #1f6b4a;
+  --color-status-success-surface: #eef8f1;
+  --color-status-success-border: #b9d7c3;
+  --color-status-warning: #7a5d12;
+  --color-status-warning-surface: #fff9e8;
+  --color-status-warning-border: #ead191;
+  --color-status-danger: #9f3d28;
+  --color-status-danger-strong: #7f2f1e;
+  --color-status-danger-surface: #fff3ef;
+  --color-status-danger-border: #f0b4a4;
+
+  /* Shape, depth, and restrained product motion. Tailwind consumes these
+   * directly; the existing 4px spacing scale remains canonical. */
+  --radius-control: 8px;
+  --radius-field: 12px;
+  --radius-card: 16px;
+  --radius-panel: 20px;
+  --radius-pill: 999px;
+  --shadow-subtle: 0 1px 2px rgb(7 26 51 / 4%);
+  --shadow-raised: 0 1px 2px rgb(7 26 51 / 4%), 0 12px 32px rgb(7 26 51 / 6%);
+  --shadow-overlay: 0 26px 80px rgb(13 35 67 / 12%);
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --easing-standard: cubic-bezier(.2, .78, .2, 1);
+
   /* Surfaces — warm neutrals, matching the established XpertApply identity. */
   --background: #fbfbf8;
   --surface: #ffffff;
@@ -89,6 +192,73 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    /* Canonical primitives keep the proven charcoal product surfaces. Navy is
+     * not placed on charcoal: cyan with dark ink becomes the dark primary
+     * action, while lighter cyan is reserved for links and focus. */
+    --color-brand-primary: var(--xa-cyan);
+    --color-brand-primary-hover: var(--xa-cyan-highlight);
+    --color-brand-accent: var(--xa-cyan);
+    --color-brand-accent-highlight: var(--xa-cyan-highlight);
+    --color-brand-accent-foreground: var(--xa-ink);
+    --color-brand-accent-text: var(--xa-cyan-highlight);
+    --color-action-primary-background: var(--xa-cyan);
+    --color-action-primary-foreground: var(--xa-ink);
+    --color-action-primary-hover: var(--xa-cyan-highlight);
+    --color-action-secondary-background: #23282c;
+    --color-action-secondary-foreground: #eef1ed;
+    --color-action-secondary-border: #4a5357;
+    --color-action-ghost-foreground: #c3cbc5;
+    --color-action-ghost-hover: #21262a;
+    --color-action-destructive-background: #f08a70;
+    --color-action-destructive-foreground: #08182f;
+    --color-action-destructive-hover: #f5a692;
+
+    --color-surface-page: #14171a;
+    --color-surface-shell: #1b1f22;
+    --color-surface-card: #1b1f22;
+    --color-surface-raised: #23282c;
+    --color-surface-subtle: #21262a;
+    --color-surface-selected: rgb(20 184 196 / 14%);
+    --color-surface-overlay: rgb(0 0 0 / 62%);
+    --color-surface-disabled: #262b2e;
+    --color-text-primary: #eef1ed;
+    --color-text-secondary: #c3cbc5;
+    --color-text-muted: #98a29b;
+    --color-text-disabled: #98a29b;
+    --color-text-inverse: #08182f;
+    --color-text-link: #63d7dc;
+
+    --color-border-subtle: #2b3136;
+    --color-border-default: #333a3d;
+    --color-border-strong: #4a5357;
+    --color-border-interactive: #647075;
+    --color-border-selected: #14b8c4;
+    --color-border-error: #6b3527;
+    --color-focus-ring: #63d7dc;
+    --color-focus-ring-offset: #1b1f22;
+    --color-focus-ring-error: #f08a70;
+
+    --color-status-neutral: #c3cbc5;
+    --color-status-neutral-surface: #21262a;
+    --color-status-neutral-border: #4a5357;
+    --color-status-info: #7db8e8;
+    --color-status-info-surface: rgb(125 184 232 / 12%);
+    --color-status-info-border: rgb(125 184 232 / 40%);
+    --color-status-success: #6cc196;
+    --color-status-success-surface: #172b22;
+    --color-status-success-border: #2c5c45;
+    --color-status-warning: #e0b95f;
+    --color-status-warning-surface: #2b2415;
+    --color-status-warning-border: #5c4a1f;
+    --color-status-danger: #f08a70;
+    --color-status-danger-strong: #f5a692;
+    --color-status-danger-surface: #2e1a15;
+    --color-status-danger-border: #6b3527;
+
+    --shadow-subtle: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 38%);
+    --shadow-overlay: 0 26px 80px rgb(0 0 0 / 52%);
+
     /* Charcoal/graphite with a warm cast — deliberately not pure black, which
      * flattens elevation and reads as a void. */
     --background: #14171a;
@@ -234,6 +404,30 @@ textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* Canonical primitives use the new design-system focus roles without
+ * repainting legacy call sites before their staged migration. */
+.ds-focus-ring:focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.ds-field[aria-invalid="true"]:focus-visible {
+  outline-color: var(--color-focus-ring-error);
+}
+
+.ds-touch-target:disabled,
+.ds-field:disabled {
+  background-color: var(--color-surface-disabled);
+  color: var(--color-text-disabled);
+}
+
+@media (pointer: coarse) {
+  .ds-touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
 
 /* Native controls follow the scheme (checkbox ticks, select arrows, spinners). */
