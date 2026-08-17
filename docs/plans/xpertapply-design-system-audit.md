@@ -550,9 +550,73 @@ Independently re-measured shell contrast from live computed styles: light muted 
 
 The increased-density gap was closed as effective-viewport validation, not browser-chrome zoom: a 1152×720 CSS viewport at `deviceScaleFactor` 1.25 reproduces the layout and raster conditions of 125% zoom on a 1440×900 display. In both schemes the shell resolves to the 64px tablet rail with no horizontal overflow, no brand/navigation or navigation/footer overlap, Settings and Logout in the viewport, working rail tooltips, and a 256px overlay whose labels are all visible and unclipped. Short heights were re-checked at 900×400 and 1280×400, and a breakpoint sweep from 320px to 1920px confirmed exactly one usable navigation mode at every width with no horizontal overflow.
 
-The compact mark is a tight but complete crop: the mark occupies x 545–918, y 204–558 of the 1448×1086 source, and the rendered window retains it in full with roughly 0.5–2px of margin at 32px. The flat leg terminations are the asset's own geometry, not clipping. It is tight enough that the cyan swoosh grazes the corner radius, which is noted for the human visual review rather than treated as a defect.
+The compact mark is a very tight crop: the mark occupies x 545–918, y 204–558 of the 1448×1086 source. The flat leg terminations are the asset's own geometry, not clipping. Corrected after production measurement: `overflow: hidden` clips at the *padding* box, so the visible window is 30px rather than the plate's 32px, and roughly 1.5px of the cyan swoosh's outer tip is cut inside the corner radius. The mark stays complete enough to read correctly at its rendered size and was accepted for release, but it is genuinely (marginally) clipped rather than fully contained as first recorded.
 
 The focused shell/design-system/auth suite passed 64 tests. The complete web suite passed 44 files / 843 tests, ESLint, TypeScript, and production build. The responsive AppShell Playwright suite passed 9/9, including exact breakpoint geometry, persisted collapse, overlays, focus/dismissal, short-height utilities, protected-session invalidation, core-page compatibility, and the semantic light/dark visual contract. The extension gate passed 56 files / 819 tests plus typecheck/build. `docker compose config` passed. The host API gate could not start because the existing virtualenv contains cloud-placeholdered package files; a container fallback collected all 1,787 tests with current source mounted read-only but was stopped after filesystem stalls made it impractical. No backend code changed in Stage 3.
+
+## 21B. Stage 4 Dashboard migration record
+
+Status: implemented for visual review on 2026-08-17; data flow, routes, and fetch/cache semantics frozen.
+
+Runtime scope is a single file, `components/DashboardClient.tsx`. It is imported only by `app/dashboard/page.tsx`, so no other route can be reached by this change. `lib/dashboardSummary.ts` was not touched: the page still renders one `/dashboard/summary` request behind the same module cache, stale time, token binding, and auth-cleanup registration.
+
+### Strategy
+
+The Dashboard is where the product expression is established, so the rule applied throughout was that colour must carry meaning. Navy is the primary action, cyan marks progress and the promoted next action, and green is spent only where the domain genuinely means success.
+
+| Dashboard concern | Migrated treatment |
+| --- | --- |
+| page canvas | unchanged — owned by the AppShell (see exception below) |
+| cards | `surface-card` + `line-default` + `radius-card`, border-first, no shadow |
+| page heading | `text-foreground`, 36px display exception retained |
+| supporting copy, labels | `foreground-muted` |
+| primary action ("Find jobs", next-action CTA) | `action-primary` navy fill with `action-primary-foreground` |
+| section links ("Open tracker", "View all") | `foreground-link` dark cyan |
+| metric icons | `foreground-muted` — a metric is a number, not a status |
+| metric values | `foreground`, tabular numerals |
+| pipeline track | `surface-subtle`; unreached stages `line-strong` |
+| pipeline current stage | `brand-accent`, except *Offer* which uses `status-success` |
+| recent application status | `StatusBadge` with the Tracker's domain tone mapping |
+| fit score | `getFitScoreTone` — the real score band |
+| promoted next action | `surface-selected` + `line-selected`, brand-primary eyebrow |
+| error | `Alert` tone `danger` + secondary `Button` retry |
+| empty states | `surface-subtle` + `line-subtle` panel, muted copy, one link |
+| focus | canonical `ds-focus-ring` throughout |
+
+### Legacy green removed, semantic green kept
+
+Removed as brand/action/selection: the `bg-pine` "Find jobs" and next-action CTAs, `text-pine` section links and empty-state links, `text-pine` metric icons, the `text-pine` pipeline bar, the `text-pine` due-date line, and the `--success-surface`/`--success-border` next-action card. Per §7 of this document the promoted next action was never a success state; it had merely borrowed the success surface, which made every visit look like an achievement.
+
+Kept or newly made semantic: an *Offer* application status is `status-success`, a *rejected* one is `status-danger`, *interview* is `status-info`, and in-flight states are `status-warning`/neutral — the Dashboard previously flattened all of these to one neutral pill and now matches the Tracker. The pipeline's furthest-reached stage is green only when that stage is Offer. Fit scores now use the existing `lib/fitScore.ts` bands, so a 47% match reads orange instead of the flat success green every score used to wear; `lib/fitScore.ts` itself was not modified, because it is shared with the unmigrated Jobs surfaces.
+
+### Known duplication: application status tones
+
+The Dashboard's status→tone map lives in `DashboardClient.tsx` as a local `statusTone()` returning canonical `StatusTone` values. The Tracker's equivalent lives in `TrackerClient.tsx` as a local `StatusBadge` that emits legacy colour classes directly (`--success-*`, `border-sky-300/40`, `--danger-*`, `--warning-*`, `border-line bg-panel`). The two agree on the domain rule — offer is success, interview is info, rejected is danger, applied/applying is warning, everything else neutral — but express it in two different vocabularies.
+
+This duplication is deliberate for Stage 4. There is no shared mapping anywhere in `lib/` to consume, and extracting one now is not a safe visual-migration change: the Tracker emits raw legacy classes rather than tones, so it cannot adopt a `StatusTone` map without also migrating its visual vocabulary, which is precisely the Tracker/Applications stage. `TrackerStatus` is also exported from `TrackerClient.tsx` — a component that pulls in `lib/api` and the Dashboard cache invalidator — so importing it here would couple two page components and drag the Tracker module graph into the Dashboard bundle. The data layer types the Dashboard's `status` as a plain `string`, not `TrackerStatus`, so the signatures differ as well.
+
+**Consolidation target:** during the Tracker/Applications migration, lift the status union and its tone mapping into a shared pure module (`lib/applicationStatus.ts` or similar) and have both screens consume it. Until then, every branch of the Dashboard map is covered by a parameterised test so the two screens cannot drift silently. Note one pre-existing wording difference that consolidation should settle: the Tracker labels an offer "Offer / selected" while the Dashboard labels it "Offer".
+
+### Deliberate exceptions
+
+- **Page canvas.** `--background` is painted by the AppShell for every authenticated route. Repainting it here would recolour Jobs, Tracker, Profile, and Settings at the same time, so the warm canvas stays until a later stage retires it. Dashboard-owned surfaces are canonical; only the canvas behind them is not.
+- **Skeleton fill.** Placeholders use `line-subtle` rather than the legacy `--skeleton` token, which is a warm neutral that reads yellow against cool cards. Migrating the token itself would change skeletons on every unmigrated page.
+- **Next-action skeleton surface.** The loading card uses the neutral card surface, not the brand tint: placeholder blocks are lighter than the tint and disappear into it, which reads as an empty panel instead of content arriving.
+- **Primitive adoption.** `Alert`, `Button`, and `StatusBadge` are used directly. The card contract is applied to the `section`/`aside` elements the page already uses rather than wrapping them in `Card`, which would have cost the landmark and heading structure for no visual gain.
+
+### Responsive and state decisions
+
+Metrics reflow 2×2 on phones instead of four stacked full-width rows, using a 1px grid gap over the border colour so the separators stay correct at both column counts. The main grid is two columns from `xl` and one below. The next-action card is `self-start` so it sizes to its content instead of stretching into a tall empty tint. The header action is full width on phones and inline from `sm`.
+
+Loading keeps sectional skeletons matched to final geometry — no full-page spinner, no layout jump. The error state keeps the existing distinction: a failed first load says it could not load, a failed background refresh says the numbers may be out of date and leaves the previous values on screen. `401` still leaves through the central session invalidation and never reaches this component's error branch.
+
+### Validation
+
+Measured contrast, light then dark: page heading 17.14 / 15.80, subtitle 4.80 / 6.83, section heading 17.77 / 14.57, metric value 17.77 / 14.57, metric label 4.97 / 6.30, primary action 14.84 / 7.35, section link 4.95 / 9.71, next-action eyebrow 13.12 / 5.95, next-action title 15.71 / 12.64, pipeline label 7.69 / 10.01, pipeline value 17.77 / 14.57. The eyebrow was first drawn in `brand-accent-text` and measured 4.38:1 on the tinted surface — under AA at 12px — and was moved to `brand-primary`.
+
+Real Chromium against a local production build covered 1440×900, 900×900, 390×844, and 390×667 in both schemes, plus loading, empty, and error states. No horizontal overflow at any size. Keyboard traversal of the Dashboard's own controls showed a 3px `focus-ring` outline with `:focus-visible` on every link and button.
+
+The complete web suite passed 44 files / 848 tests, including five new Dashboard tests asserting the semantic contracts rather than markup. The responsive AppShell suite passed 9/9, confirming the shell is unchanged. TypeScript, ESLint, and the production build passed.
 
 ## 22. Stage 2 implementation record
 

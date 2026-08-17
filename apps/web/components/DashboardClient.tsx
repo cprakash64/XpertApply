@@ -16,6 +16,8 @@ import {
   Trophy
 } from "lucide-react";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { Alert, Button, StatusBadge, type StatusTone } from "@/components/ui";
+import { getFitScoreTone } from "@/lib/fitScore";
 import {
   useDashboardSummary,
   type DashboardApplicationCounts,
@@ -36,7 +38,21 @@ import {
  * Everything on the page comes from one `/dashboard/summary` request. The
  * pipeline, the metrics and the next-best-action are all views over that single
  * payload — none of them fetches anything of its own.
+ *
+ * Visually this page speaks the canonical XpertApply system: navy is the
+ * primary action, cyan marks progress and the promoted next action, and green
+ * is reserved for outcomes that genuinely mean success (an offer). The page
+ * canvas is still owned by the AppShell and is deliberately left alone here —
+ * repainting it would recolour every unmigrated page at once.
  */
+
+/** The shared card contract, applied to the semantic element each region needs. */
+const CARD = "rounded-card border border-line-default bg-surface-card";
+
+/** Section title + description + trailing link, repeated by the two big panels. */
+const SECTION_LINK =
+  "ds-focus-ring inline-flex shrink-0 items-center gap-1 rounded-control text-sm font-semibold text-foreground-link";
+
 export function DashboardClient() {
   const { data, loading, error, reload } = useDashboardSummary();
 
@@ -44,41 +60,40 @@ export function DashboardClient() {
     <div className="pb-10">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+          {/* The 36px welcome is the documented display exception for this page. */}
+          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
             <Greeting firstName={data?.nextAction.firstName} loading={loading} />
           </h1>
-          <p className="mt-2 text-[var(--text-muted)]">Here’s where your job search stands.</p>
+          <p className="mt-2 text-foreground-muted">Here’s where your job search stands.</p>
         </div>
         <Link
           href="/jobs"
-          className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-pine px-4 text-sm font-semibold text-white hover:bg-[var(--accent-hover)]"
+          className="ds-focus-ring inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
         >
-          <BriefcaseBusiness className="h-4 w-4" /> Find jobs
+          <BriefcaseBusiness className="h-4 w-4" aria-hidden /> Find jobs
         </Link>
       </header>
 
       {error && (
-        <div
-          role="alert"
-          className="mt-6 flex flex-col gap-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-4 py-3 text-sm text-[var(--danger)] sm:flex-row sm:items-center sm:justify-between"
-        >
-          <span>
-            {data
-              ? "We couldn’t refresh your dashboard, so these numbers may be out of date."
-              : "We couldn’t load your dashboard."}
-          </span>
-          <button
-            type="button"
-            onClick={reload}
-            className="focus-ring shrink-0 rounded-lg border border-[var(--danger-border)] px-3 py-1.5 font-semibold"
-          >
-            Try again
-          </button>
-        </div>
+        <Alert tone="danger" className="mt-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {data
+                ? "We couldn’t refresh your dashboard, so these numbers may be out of date."
+                : "We couldn’t load your dashboard."}
+            </span>
+            <Button variant="secondary" size="sm" onClick={reload} className="self-start sm:self-auto">
+              Try again
+            </Button>
+          </div>
+        </Alert>
       )}
 
-      <section className="mt-8 overflow-hidden rounded-2xl border border-line bg-white" aria-label="Search metrics">
-        <div className="grid divide-y divide-line sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+      <section className={`mt-8 overflow-hidden ${CARD}`} aria-label="Search metrics">
+        {/* A 1px gap over the border colour draws the separators, which keeps
+            them correct in both the 2×2 phone grid and the 4-up row — `divide-*`
+            cannot express a grid that changes column count. */}
+        <div className="grid grid-cols-2 gap-px bg-line-default sm:grid-cols-4">
           <Metric icon={<Sparkles />} label="Fresh matches" value={data?.freshMatches} loading={loading} />
           <Metric
             icon={<CheckCircle2 />}
@@ -97,23 +112,25 @@ export function DashboardClient() {
       </section>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_.75fr]">
-        <section className="rounded-2xl border border-line bg-white p-5 sm:p-6">
+        <section className={`${CARD} p-5 sm:p-6`}>
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold tracking-[-0.02em]">Application pipeline</h2>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
+                Application pipeline
+              </h2>
+              <p className="mt-1 text-sm text-foreground-muted">
                 How your applications are progressing.
               </p>
             </div>
-            <Link href="/tracker" className="focus-ring inline-flex items-center gap-1 text-sm font-semibold text-pine">
-              Open tracker <ChevronRight className="h-4 w-4" />
+            <Link href="/tracker" className={SECTION_LINK}>
+              Open tracker <ChevronRight className="h-4 w-4" aria-hidden />
             </Link>
           </div>
 
           <Pipeline counts={data?.applications} loading={loading} />
 
-          <div className="mt-7 border-t border-line pt-5">
-            <h3 className="text-sm font-semibold">Recently updated</h3>
+          <div className="mt-7 border-t border-line-subtle pt-5">
+            <h3 className="text-sm font-semibold text-foreground">Recently updated</h3>
             <RecentApplications applications={data?.recentApplications} loading={loading} />
           </div>
         </section>
@@ -121,14 +138,16 @@ export function DashboardClient() {
         <NextActionCard action={data?.nextAction} loading={loading} />
       </div>
 
-      <section className="mt-6 rounded-2xl border border-line bg-white p-5 sm:p-6">
+      <section className={`mt-6 ${CARD} p-5 sm:p-6`}>
         <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold tracking-[-0.02em]">Best matches this week</h2>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">Highest-fit roles that are still open.</p>
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
+              Best matches this week
+            </h2>
+            <p className="mt-1 text-sm text-foreground-muted">Highest-fit roles that are still open.</p>
           </div>
-          <Link href="/jobs" className="focus-ring inline-flex items-center gap-1 text-sm font-semibold text-pine">
-            View all <ChevronRight className="h-4 w-4" />
+          <Link href="/jobs" className={SECTION_LINK}>
+            View all <ChevronRight className="h-4 w-4" aria-hidden />
           </Link>
         </div>
         <TopMatches matches={data?.topMatches} loading={loading} />
@@ -150,6 +169,11 @@ function Greeting({ firstName, loading }: { firstName?: string; loading: boolean
   return <>Welcome back{firstName ? `, ${firstName}` : ""}.</>;
 }
 
+/**
+ * A metric is a number, not a colour. The four icons stay muted so the values
+ * carry the hierarchy — tinting each tile would turn the row into decoration
+ * and spend the status palette on things that are not statuses.
+ */
 function Metric({
   icon,
   label,
@@ -162,15 +186,15 @@ function Metric({
   loading: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 px-5 py-5">
-      <span className="h-5 w-5 text-pine">{icon}</span>
+    <div className="flex items-center gap-3 bg-surface-card px-4 py-4 sm:px-5 sm:py-5">
+      <span className="h-5 w-5 shrink-0 text-foreground-muted">{icon}</span>
       <div>
         {/* The number and its skeleton share a line box, so the row height is
             identical before and after the value arrives. */}
-        <p className="text-2xl font-semibold leading-none">
+        <p className="text-2xl font-semibold leading-none tabular-nums text-foreground">
           {loading || value === undefined ? <Skeleton className="h-6 w-10" /> : value}
         </p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">{label}</p>
+        <p className="mt-1 text-xs text-foreground-muted">{label}</p>
       </div>
     </div>
   );
@@ -213,7 +237,7 @@ function Pipeline({
         {PIPELINE_STAGES.map((stage) => (
           <div key={stage.key} className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-3">
             <Skeleton className="h-4 w-20" />
-            <Skeleton className="h-2 w-full rounded-full" />
+            <Skeleton className="h-2 w-full rounded-pill" />
             <Skeleton className="h-4 w-6" />
           </div>
         ))}
@@ -236,29 +260,38 @@ function Pipeline({
     );
   }
 
+  const reached = lastReachedStage(counts);
+
   return (
     <dl role="group" className="mt-6 grid gap-3" aria-label="Application pipeline">
       {PIPELINE_STAGES.map((stage, index) => {
         const value = counts[stage.key];
+        const isCurrent = value > 0 && index === reached;
         return (
           <div key={stage.key} className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-3">
-            <dt className="truncate text-sm text-[var(--text-secondary)]">{stage.label}</dt>
+            <dt className="truncate text-sm text-foreground-secondary">{stage.label}</dt>
             <div
               aria-hidden
-              className="h-2 overflow-hidden rounded-full bg-panel"
+              className="h-2 overflow-hidden rounded-pill bg-surface-subtle"
               // Stage bars are relative to the busiest stage, so an empty stage
               // reads as empty rather than as a rounding artefact.
             >
               <span
-                className={`block h-full rounded-full transition-[width] duration-300 ${
+                className={`block h-full rounded-pill transition-[width] duration-normal ease-standard ${
                   // Only the furthest stage the user has actually reached is
-                  // accented, so green stays meaningful instead of filling the card.
-                  value > 0 && index === lastReachedStage(counts) ? "bg-pine" : "bg-[var(--border-strong)]"
+                  // accented. Reaching *Offer* is a genuine positive outcome, so
+                  // that one stage earns semantic green; every earlier stage is
+                  // progress, which is brand cyan rather than success.
+                  isCurrent
+                    ? stage.key === "offers"
+                      ? "bg-status-success"
+                      : "bg-brand-accent"
+                    : "bg-line-strong"
                 }`}
                 style={{ width: value === 0 ? "0%" : `${Math.max((value / peak) * 100, 4)}%` }}
               />
             </div>
-            <dd className="text-right text-sm font-semibold tabular-nums">{value}</dd>
+            <dd className="text-right text-sm font-semibold tabular-nums text-foreground">{value}</dd>
           </div>
         );
       })}
@@ -288,15 +321,15 @@ function RecentApplications({
 }) {
   if (loading || applications === undefined) {
     return (
-      <div className="mt-2 divide-y divide-line" data-testid="recent-applications-skeleton">
+      <div className="mt-2 divide-y divide-line-subtle" data-testid="recent-applications-skeleton">
         {[0, 1, 2].map((row) => (
           <div key={row} className="flex items-center gap-3 py-3.5">
-            <Skeleton className="h-9 w-9 shrink-0 rounded-xl" />
+            <Skeleton className="h-9 w-9 shrink-0 rounded-control" />
             <div className="min-w-0 flex-1">
               <Skeleton className="h-4 w-48 max-w-full" />
               <Skeleton className="mt-1.5 h-3 w-28 max-w-full" />
             </div>
-            <Skeleton className="h-6 w-16 shrink-0 rounded-full" />
+            <Skeleton className="h-6 w-16 shrink-0 rounded-pill" />
           </div>
         ))}
         <span className="sr-only">Loading recent applications</span>
@@ -309,24 +342,52 @@ function RecentApplications({
   }
 
   return (
-    <ul className="mt-2 divide-y divide-line">
+    <ul className="mt-2 divide-y divide-line-subtle">
       {applications.map((application) => (
         <li key={application.id}>
-          <Link href="/tracker" className="focus-ring flex items-center gap-3 py-3.5">
+          <Link
+            href="/tracker"
+            className="ds-focus-ring -mx-2 flex items-center gap-3 rounded-control px-2 py-3.5 transition-colors duration-fast ease-standard hover:bg-surface-subtle"
+          >
             <CompanyLogo company={application.company} proxyPath={application.logoUrl} size={36} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold">{application.title}</span>
-              <span className="mt-0.5 block truncate text-xs text-[var(--text-muted)]">
+              <span className="block truncate text-sm font-semibold text-foreground">
+                {application.title}
+              </span>
+              <span className="mt-0.5 block truncate text-xs text-foreground-muted">
                 {application.company}
                 {application.updatedAt ? ` · ${relativeDate(application.updatedAt)}` : ""}
               </span>
             </span>
-            <StatusPill status={application.status} />
+            <StatusBadge tone={statusTone(application.status)} className="shrink-0">
+              {statusLabel(application.status)}
+            </StatusBadge>
           </Link>
         </li>
       ))}
     </ul>
   );
+}
+
+/**
+ * Domain status tone, matching the Tracker's existing mapping so the same
+ * application reads the same way on both screens. These are outcomes, not
+ * brand: an offer is success, a rejection is danger, and everything still in
+ * flight stays informational rather than being recoloured navy.
+ */
+function statusTone(status: string): StatusTone {
+  if (status === "offer") return "success";
+  if (status === "interview") return "info";
+  if (status === "rejected") return "danger";
+  if (status === "applied" || status === "applying") return "warning";
+  return "neutral";
+}
+
+/** Unchanged from the pre-migration Dashboard — the wording is a data contract. */
+function statusLabel(status: string): string {
+  return status === "ready_to_apply"
+    ? "Saved"
+    : status.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 /** "Today" / "3d ago" / a date — short enough for a dense row. */
@@ -353,6 +414,12 @@ const NEXT_ACTION_ICONS: Record<DashboardNextActionKind, typeof Target> = {
   discover: Compass
 };
 
+/** The promoted next action sits on the brand selection surface, not on the
+ * success surface it used to borrow: being told what to do next is not an
+ * achievement, and green here made every visit look like a win. */
+const NEXT_ACTION_SURFACE =
+  "self-start rounded-card border border-line-selected bg-surface-selected";
+
 /**
  * The next best action.
  *
@@ -369,17 +436,18 @@ function NextActionCard({
   loading: boolean;
 }) {
   if (loading || !action) {
+    // Deliberately the neutral card, not the tinted one: placeholder blocks are
+    // a hair lighter than the brand tint and vanish into it, which reads as an
+    // empty panel rather than as content arriving. The tint appears with the
+    // action it is promoting.
     return (
-      <aside
-        className="rounded-2xl border border-[var(--success-border)] bg-[var(--success-surface)] p-6"
-        data-testid="next-action-skeleton"
-      >
-        <Skeleton className="h-11 w-11 rounded-xl" />
+      <aside className={`self-start ${CARD} p-6`} data-testid="next-action-skeleton">
+        <Skeleton className="h-11 w-11 rounded-control" />
         <Skeleton className="mt-8 h-3 w-32" />
         <Skeleton className="mt-3 h-7 w-52 max-w-full" />
         <Skeleton className="mt-3 h-4 w-full" />
         <Skeleton className="mt-1.5 h-4 w-3/4" />
-        <Skeleton className="mt-6 h-11 w-40 rounded-xl" />
+        <Skeleton className="mt-6 h-11 w-40 rounded-control" />
         <span className="sr-only">Loading your next action</span>
       </aside>
     );
@@ -391,26 +459,32 @@ function NextActionCard({
     <aside
       aria-labelledby="next-action-title"
       data-action-kind={action.kind}
-      className="rounded-2xl border border-[var(--success-border)] bg-[var(--success-surface)] p-6"
+      className={`${NEXT_ACTION_SURFACE} p-6`}
     >
-      <span className="grid h-11 w-11 place-items-center rounded-xl bg-white/70 text-pine">
+      <span className="grid h-11 w-11 place-items-center rounded-control border border-line-default bg-surface-card text-brand-primary">
         <Icon className="h-5 w-5" aria-hidden />
       </span>
-      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.12em] text-pine">
+      {/* Brand primary, not the cyan text role: at 12px the dark-cyan sits at
+          4.4:1 on this tinted surface, just under AA. Navy (cyan in dark) keeps
+          the brand voice and clears the bar comfortably in both themes. */}
+      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.12em] text-brand-primary">
         {action.eyebrow}
       </p>
-      <h2 id="next-action-title" className="mt-2 text-2xl font-semibold tracking-[-0.03em]">
+      <h2
+        id="next-action-title"
+        className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-foreground"
+      >
         {action.title}
       </h2>
-      <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">{action.body}</p>
+      <p className="mt-2 text-sm leading-6 text-foreground-muted">{action.body}</p>
       {action.dueOn && (
-        <p className="mt-2 text-sm font-medium text-pine">{formatDueDate(action.dueOn)}</p>
+        <p className="mt-2 text-sm font-medium text-foreground-secondary">{formatDueDate(action.dueOn)}</p>
       )}
       <Link
         href={action.href}
-        className="focus-ring mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-pine px-4 text-sm font-semibold text-white"
+        className="ds-focus-ring mt-6 inline-flex h-11 items-center gap-2 rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
       >
-        {action.cta} <ArrowRight className="h-4 w-4" />
+        {action.cta} <ArrowRight className="h-4 w-4" aria-hidden />
       </Link>
     </aside>
   );
@@ -439,14 +513,14 @@ function formatDueDate(value: string): string {
 function TopMatches({ matches, loading }: { matches?: DashboardTopMatch[]; loading: boolean }) {
   if (loading || matches === undefined) {
     return (
-      <div className="mt-4 divide-y divide-line" data-testid="top-matches-skeleton">
+      <div className="mt-4 divide-y divide-line-subtle" data-testid="top-matches-skeleton">
         {[0, 1, 2].map((row) => (
           <div key={row} className="flex items-center gap-4 py-4">
             <div className="min-w-0 flex-1">
               <Skeleton className="h-5 w-56 max-w-full" />
               <Skeleton className="mt-1.5 h-4 w-40 max-w-full" />
             </div>
-            <Skeleton className="h-10 w-20 shrink-0 rounded-xl" />
+            <Skeleton className="h-10 w-20 shrink-0 rounded-control" />
           </div>
         ))}
         <span className="sr-only">Loading your best matches</span>
@@ -459,23 +533,33 @@ function TopMatches({ matches, loading }: { matches?: DashboardTopMatch[]; loadi
   }
 
   return (
-    <ul className="mt-4 divide-y divide-line">
-      {matches.map((job) => (
-        <li key={job.id}>
-          <Link href={`/jobs?job=${job.id}`} className="focus-ring flex items-center gap-4 py-4">
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold">{job.title}</p>
-              <p className="mt-1 truncate text-sm text-[var(--text-muted)]">
-                {job.company}
-                {job.location ? ` · ${job.location}` : ""}
-              </p>
-            </div>
-            <span className="rounded-xl border border-[var(--success-border)] bg-[var(--success-surface)] px-3 py-2 text-sm font-semibold text-pine">
-              {Math.round(job.fitScore ?? 0)}% fit
-            </span>
-          </Link>
-        </li>
-      ))}
+    <ul className="mt-4 divide-y divide-line-subtle">
+      {matches.map((job) => {
+        // The score's own band carries its meaning — a 46% match must not wear
+        // the same green as a 91% one just because the Dashboard shows both.
+        const fit = getFitScoreTone(job.fitScore);
+        return (
+          <li key={job.id}>
+            <Link
+              href={`/jobs?job=${job.id}`}
+              className="ds-focus-ring -mx-2 flex items-center gap-4 rounded-control px-2 py-4 transition-colors duration-fast ease-standard hover:bg-surface-subtle"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-foreground">{job.title}</p>
+                <p className="mt-1 truncate text-sm text-foreground-muted">
+                  {job.company}
+                  {job.location ? ` · ${job.location}` : ""}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 rounded-control border px-3 py-2 text-sm font-semibold tabular-nums ${fit.container}`}
+              >
+                {Math.round(job.fitScore ?? 0)}% fit
+              </span>
+            </Link>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -484,29 +568,34 @@ function TopMatches({ matches, loading }: { matches?: DashboardTopMatch[]; loadi
 /* Shared                                                                 */
 /* ---------------------------------------------------------------------- */
 
-function StatusPill({ status }: { status: string }) {
-  return (
-    <span className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-[var(--text-muted)]">
-      {status === "ready_to_apply" ? "Saved" : status.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase())}
-    </span>
-  );
-}
-
 function EmptyLine({ text, href, label }: { text: string; href: string; label: string }) {
   return (
-    <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl bg-panel px-4 py-4 sm:flex-row sm:items-center">
-      <p className="text-sm text-[var(--text-muted)]">{text}</p>
-      <Link href={href} className="focus-ring shrink-0 text-sm font-semibold text-pine">{label}</Link>
+    <div className="mt-4 flex flex-col items-start justify-between gap-3 rounded-field border border-line-subtle bg-surface-subtle px-4 py-4 sm:flex-row sm:items-center">
+      <p className="text-sm text-foreground-muted">{text}</p>
+      <Link
+        href={href}
+        className="ds-focus-ring shrink-0 rounded-control text-sm font-semibold text-foreground-link"
+      >
+        {label}
+      </Link>
     </div>
   );
 }
 
-/** A neutral placeholder block. Inline-block so it occupies a text line's box. */
+/**
+ * A neutral placeholder block. Inline-block so it occupies a text line's box.
+ *
+ * Filled with the subtle border role rather than the legacy `--skeleton`
+ * token: that value is a warm neutral from the pre-migration palette and reads
+ * yellow against these cool card surfaces. Migrating the token itself would
+ * change every unmigrated page's skeletons, so this page uses the cool role and
+ * the token is retired with the rest of the canvas later.
+ */
 function Skeleton({ className = "" }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`inline-block animate-pulse rounded bg-[var(--skeleton)] align-middle ${className}`}
+      className={`inline-block animate-pulse rounded bg-line-subtle align-middle ${className}`}
     />
   );
 }

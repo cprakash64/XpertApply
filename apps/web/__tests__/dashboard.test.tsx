@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +8,8 @@ import {
   __resetDashboardSummaryCache,
   invalidateDashboardSummary
 } from "../lib/dashboardSummary";
+
+const ROOT = join(__dirname, "..");
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -489,5 +493,93 @@ describe("DashboardClient", () => {
 
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------ //
+  // Brand migration — colour must carry meaning, not decoration
+  // ------------------------------------------------------------------ //
+  describe("semantic colour", () => {
+    /** The badge element for the single top match in a summary. */
+    async function renderMatchWithScore(fitScore: number) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        jsonResponse({
+          ...SUMMARY,
+          topMatches: [{ ...SUMMARY.topMatches[0], fitScore }]
+        })
+      );
+      render(React.createElement(DashboardClient));
+      return await screen.findByText(`${fitScore}% fit`);
+    }
+
+    it("bands a weak match by its own score rather than the strong-fit colour", async () => {
+      const badge = await renderMatchWithScore(42);
+      // A 42% match is a low fit; painting it the strong-fit green would make
+      // the score meaningless.
+      expect(badge.className).toMatch(/red/);
+      expect(badge.className).not.toMatch(/emerald/);
+    });
+
+    it("keeps a strong match on the semantic strong-fit band", async () => {
+      const badge = await renderMatchWithScore(91);
+      expect(badge.className).toMatch(/emerald/);
+    });
+
+    /**
+     * Every branch of the Dashboard's status→tone map.
+     *
+     * This mapping is deliberately duplicated from the Tracker rather than
+     * shared: the Tracker still emits legacy colour classes instead of design
+     * system tones, so there is nothing canonical to consume until it migrates.
+     * Because the duplication is intentional, the guard covers every branch —
+     * this test is what will catch the two screens drifting apart.
+     */
+    it.each([
+      ["offer", "Offer", "status-success"],
+      ["interview", "Interview", "status-info"],
+      ["rejected", "Rejected", "status-danger"],
+      ["applied", "Applied", "status-warning"],
+      ["applying", "Applying", "status-warning"],
+      ["ready_to_apply", "Saved", "status-neutral"],
+      ["withdrawn", "Withdrawn", "status-neutral"]
+    ])("tones a %s application as %s / %s", async (status, label, tone) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        jsonResponse({
+          ...SUMMARY,
+          recentApplications: [{ ...SUMMARY.recentApplications[0], id: "a", status }]
+        })
+      );
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+
+      // Scoped to the recent list: "Offer" and "Saved" are also pipeline stage
+      // labels, and this is asserting the badge tone, not the funnel.
+      const recent = within(screen.getByText("Recently updated").parentElement!);
+      const badge = recent.getByText(label);
+      expect(badge.className).toMatch(new RegExp(tone));
+      // Meaning never rests on colour alone — the label is always present.
+      expect(badge).toHaveTextContent(label);
+    });
+
+    it("promotes the next action on the brand surface, not the success surface", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+
+      const card = document.querySelector("[data-action-kind]");
+      expect(card).not.toBeNull();
+      // Being told what to do next is not an achievement.
+      expect(card!.className).toMatch(/surface-selected/);
+      expect(card!.className).not.toMatch(/success/);
+    });
+
+    it("no longer styles Dashboard brand, action or selection with legacy green", () => {
+      const source = readFileSync(join(ROOT, "components/DashboardClient.tsx"), "utf8");
+      expect(source).not.toMatch(/text-pine|bg-pine|border-pine|--success-surface|--success-border/);
+      // The legacy `focus-ring` recipe, but not the canonical `ds-focus-ring`.
+      expect(source).not.toMatch(/(?<!ds-)\bfocus-ring\b/);
+      // The primary action is the canonical navy action, never cyan-on-white.
+      expect(source).toContain("bg-action-primary");
+      expect(source).not.toMatch(/bg-brand-accent\s+text-white|bg-cyan/);
+    });
   });
 });
