@@ -11,6 +11,7 @@ import {
   useSyncExternalStore
 } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BriefcaseBusiness,
@@ -322,7 +323,7 @@ export function AppShell({
             type="button"
             tabIndex={-1}
             aria-label="Close expanded navigation"
-            className="fixed inset-0 z-20 hidden bg-black/35 sm:block xl:hidden"
+            className="fixed inset-0 z-20 hidden bg-surface-overlay sm:block xl:hidden"
             onClick={() => setTabletState({ expanded: false, pathname })}
           />
         ) : null}
@@ -350,7 +351,7 @@ function MobileHeader({
   onOpen: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-white px-3 sm:hidden">
+    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line-default bg-surface-shell px-3 shadow-subtle sm:hidden">
       <button
         ref={menuRef}
         type="button"
@@ -358,7 +359,7 @@ function MobileHeader({
         aria-expanded={open}
         aria-controls="mobile-app-navigation"
         onClick={onOpen}
-        className="focus-ring grid h-11 w-11 place-items-center rounded-md text-ink hover:bg-panel"
+        className="ds-focus-ring grid h-11 w-11 place-items-center rounded-control text-foreground-secondary transition-colors duration-fast hover:bg-surface-subtle hover:text-foreground"
       >
         <Menu className="h-5 w-5" aria-hidden />
       </button>
@@ -394,7 +395,7 @@ function SideBar({
           onClick={onTabletToggle}
           aria-expanded={tabletExpanded}
           aria-label={tabletExpanded ? "Collapse navigation" : "Expand navigation"}
-          className="app-nav-link app-tablet-toggle focus-ring group"
+          className="app-nav-link app-tablet-toggle ds-focus-ring group"
         >
           {tabletExpanded ? (
             <PanelLeftClose className="h-4 w-4 shrink-0" aria-hidden />
@@ -411,7 +412,7 @@ function SideBar({
           onClick={onDesktopToggle}
           aria-expanded={!desktopCollapsed}
           aria-label={desktopCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="app-nav-link app-desktop-toggle focus-ring group"
+          className="app-nav-link app-desktop-toggle ds-focus-ring group"
         >
           {desktopCollapsed ? (
             <PanelLeftOpen className="h-4 w-4 shrink-0" aria-hidden />
@@ -446,7 +447,7 @@ function MobileDrawer({
         tabIndex={-1}
         aria-label="Close navigation"
         data-testid="mobile-navigation-backdrop"
-        className="absolute inset-0 bg-black/55"
+        className="absolute inset-0 bg-surface-overlay"
         onClick={onClose}
       />
       <div
@@ -455,7 +456,7 @@ function MobileDrawer({
         role="dialog"
         aria-modal="true"
         aria-label="Application navigation"
-        className="relative flex h-full w-[min(20rem,86vw)] flex-col overflow-y-auto border-r border-line bg-white p-4 shadow-card"
+        className="relative flex h-full w-[min(20rem,86vw)] flex-col overflow-y-auto border-r border-line-default bg-surface-shell p-4 shadow-overlay"
       >
         <div className="mb-6 flex items-center justify-between gap-3">
           <Brand compact={false} onNavigate={onNavigate} />
@@ -464,7 +465,7 @@ function MobileDrawer({
             type="button"
             aria-label="Close navigation"
             onClick={onClose}
-            className="focus-ring grid h-11 w-11 place-items-center rounded-md text-ink hover:bg-panel"
+            className="ds-focus-ring grid h-11 w-11 place-items-center rounded-control text-foreground-secondary transition-colors duration-fast hover:bg-surface-subtle hover:text-foreground"
           >
             <X className="h-5 w-5" aria-hidden />
           </button>
@@ -482,17 +483,23 @@ function Brand({ compact, onNavigate }: { compact: boolean; onNavigate?: () => v
       href="/"
       aria-label="XpertApply home"
       onClick={onNavigate}
-      className={`app-brand focus-ring group flex items-center rounded-lg font-semibold ${
+      className={`app-brand ds-focus-ring group flex items-center rounded-control font-semibold ${
         compact ? "py-2" : "gap-2 px-1 py-1"
       }`}
     >
-      <span
-        aria-hidden
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--success-surface)] text-pine"
-      >
-        <BriefcaseBusiness className="h-4 w-4" />
+      <span aria-hidden className="app-brand-mark">
+        <Image
+          src="/brand/xpertapply-logo.png"
+          alt=""
+          width={116}
+          height={87}
+          unoptimized
+        />
       </span>
-      <span className={compact ? "app-brand-label" : undefined}>XpertApply</span>
+      <span className={compact ? "app-brand-label" : undefined} aria-hidden>
+        <span className="text-foreground">Xpert</span>
+        <span className="text-brand-accent">Apply</span>
+      </span>
     </Link>
   );
 }
@@ -516,7 +523,7 @@ function PrimaryNavigation({ onNavigate }: { onNavigate?: () => void }) {
 function NavigationFooter({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
-    <div className="app-navigation-footer mt-auto space-y-1 pt-4">
+    <div className="app-navigation-footer mt-auto space-y-1 border-t border-line-subtle pt-4">
       <NavItem
         {...settingsItem}
         active={isItemActive(pathname, settingsItem.activeRoots)}
@@ -526,7 +533,7 @@ function NavigationFooter({ onNavigate }: { onNavigate?: () => void }) {
         type="button"
         onClick={() => invalidateAuthSession({ reason: "logout", returnTo: null })}
         aria-label="Log out"
-        className="app-nav-link focus-ring group"
+        className="app-nav-link app-logout-link ds-focus-ring group"
       >
         <LogOut className="h-4 w-4 shrink-0" aria-hidden />
         <span className="app-nav-label">Log out</span>
@@ -607,10 +614,10 @@ function NavItem({
       aria-label={label}
       aria-current={active ? "page" : undefined}
       onClick={onNavigate}
-      className={`app-nav-link focus-ring group ${
+      className={`app-nav-link ds-focus-ring group ${
         active
-          ? "bg-[var(--success-surface)] font-medium text-pine"
-          : "text-ink hover:bg-panel"
+          ? "bg-surface-selected font-semibold text-brand-primary"
+          : "text-foreground-muted hover:bg-surface-subtle hover:text-foreground"
       }`}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden />
@@ -629,7 +636,7 @@ function RailTooltip({ children }: { children: React.ReactNode }) {
   return (
     <span
       aria-hidden
-      className="app-rail-tooltip pointer-events-none absolute left-full z-40 ml-2 whitespace-nowrap rounded-md border border-line bg-white px-2 py-1 text-xs text-ink shadow-card"
+      className="app-rail-tooltip pointer-events-none absolute left-full z-40 ml-2 whitespace-nowrap rounded-control border border-line-default bg-surface-raised px-2.5 py-1.5 text-xs font-medium text-foreground shadow-raised"
     >
       {children}
     </span>

@@ -505,12 +505,41 @@ input[type="radio"] {
   z-index: 30;
   display: none;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
+  border-right: 1px solid var(--color-border-default);
+  background: var(--color-surface-shell);
   transition:
-    width 150ms ease,
-    padding 150ms ease,
-    box-shadow 150ms ease;
+    width var(--duration-normal) var(--easing-standard),
+    padding var(--duration-normal) var(--easing-standard),
+    box-shadow var(--duration-normal) var(--easing-standard);
+}
+
+.app-brand {
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
+}
+
+.app-brand-mark {
+  position: relative;
+  display: block;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: var(--xa-light-card);
+  box-shadow: var(--shadow-subtle);
+}
+
+/* The supplied source asset contains the complete lockup. This crop exposes
+ * its existing compact X mark without redrawing or inventing a rail logo. */
+.app-brand-mark img {
+  position: absolute;
+  top: -0.875rem;
+  left: -2.625rem;
+  width: 7.25rem;
+  height: 5.4375rem;
+  max-width: none;
 }
 
 .app-nav-link {
@@ -520,13 +549,37 @@ input[type="radio"] {
   width: 100%;
   align-items: center;
   gap: 0.75rem;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-control);
   padding-inline: 0.75rem;
   font-size: 0.875rem;
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   transition:
-    color 120ms ease,
-    background-color 120ms ease;
+    color var(--duration-fast) var(--easing-standard),
+    background-color var(--duration-fast) var(--easing-standard);
+}
+
+/* Selection marker. In the collapsed rail the label — and with it the weight
+ * cue — is hidden, so this edge is the only non-colour indicator of the current
+ * page and has to clear the 3:1 non-text contrast bar on its own. Raw cyan is
+ * 2.2:1 on the light selected surface, so the canonical selected-border role is
+ * used instead: it is the darker cyan in light mode and stays cyan in dark. */
+.app-nav-link[aria-current="page"]::before {
+  position: absolute;
+  left: 0.25rem;
+  width: 0.1875rem;
+  height: 1.25rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-border-selected);
+  content: "";
+}
+
+.app-nav-link[aria-current="page"] {
+  color: var(--color-brand-primary);
+}
+
+.app-logout-link:hover {
+  background: var(--color-status-danger-surface);
+  color: var(--color-status-danger);
 }
 
 .app-nav-label,
@@ -590,7 +643,7 @@ input[type="radio"] {
   .app-sidebar[data-tablet-expanded="true"] {
     width: 16rem;
     padding: 1rem;
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-overlay);
   }
 
   .app-sidebar[data-tablet-expanded="true"] .app-brand,

@@ -505,6 +505,55 @@ Rollout should use normal reversible commits per stage. Roll back the affected s
 
 XpertApply has a solid behavioral and accessibility base worth preserving. The marketing identity is sufficiently explicit to support a controlled migration: navy is the dependable primary-action and hierarchy color; cyan is an accent requiring careful foreground/focus pairing; cool neutrals can replace the warm product foundation in light mode; and product-specific dark semantic values must be retained or separately derived. The safest next step is the isolated token/primitive foundation described above, not page recoloring.
 
+## 21A. Stage 3 AppShell migration record
+
+Status: implemented for visual review on 2026-08-16; responsive and authentication behavior frozen.
+
+The authenticated shell now consumes the Stage 2 semantic system directly. No new token was required. The page canvas remains on the compatibility `--background` token so unmigrated Dashboard, Jobs, Applications, Profile, and Settings content continues to meet its existing surface assumptions; only navigation-owned chrome moved to canonical shell roles.
+
+| Shell concern | Canonical treatment |
+| --- | --- |
+| sidebar, mobile header, drawer | `surface-shell` with `line-default` separation |
+| default navigation | `foreground-muted`; icons inherit the label tone |
+| hover | `surface-subtle` plus `foreground`; quieter than selection |
+| active navigation | `surface-selected`, semibold `brand-primary`, and a persistent `border-selected` edge marker |
+| keyboard focus | canonical `ds-focus-ring`, visually stronger than hover |
+| overlay/backdrop | `surface-overlay`; tablet elevation uses `shadow-overlay` |
+| Settings | normal secondary navigation, separated with the utility group |
+| Logout | neutral by default; `status-danger-surface`/`status-danger` only on hover |
+| collapse/expand and mobile controls | neutral navigation/ghost hierarchy with semantic hover and focus |
+| rail tooltip | `surface-raised`, `line-default`, `foreground`, and `shadow-raised` |
+
+Expanded desktop, tablet overlay, mobile header, and mobile drawer use a compact two-part XpertApply wordmark: “Xpert” follows theme-correct primary foreground and “Apply” retains the cyan brand accent. Collapsed desktop and tablet rails show a crop of the existing supplied XpertApply mark; no logo or monogram was generated. The crop is shared across every shell mode.
+
+Legacy shell branding removed from `AppShell.tsx`: the green success-surface/`text-pine` briefcase tile and the green success-surface/`text-pine` active item. The former generic `border-line`, `bg-white`, `text-ink`, `bg-panel`, `focus-ring`, and hard-coded black backdrop combinations were compatibility styling and have been replaced only inside the shell with canonical semantic roles. No genuine success styling outside the shell changed.
+
+Light mode uses a white shell, cool borders, ink/navy hierarchy, a restrained cyan selection tint and marker, and a navy current label. Dark mode keeps the Stage 2 charcoal shell, light neutral hierarchy, a translucent cyan selection tint, and cyan/highlight selection and focus treatments; it does not introduce a saturated navy dark sidebar. Cyan is never used as a white-text control fill.
+
+The active state remains semantic (`aria-current="page"`) and is distinguishable by surface, font weight, and marker in addition to color. Tooltips remain presentational because every rail control retains its accessible name. All existing widths, breakpoints, offsets, overlays, focus trapping/restoration, Escape and backdrop dismissal, inertness, scroll locks, resize cleanup, route mapping, collapse persistence, and session invalidation code remain unchanged.
+
+Runtime scope is limited to `AppShell.tsx` plus its existing global shell recipe. Zero application page files were visually migrated. Remaining work follows the page order in the migration matrix, beginning with Dashboard only after this shell is reviewed. Browser screenshots are temporary review artifacts and are not repository deliverables.
+
+### Stage 3 validation record
+
+Real Chromium rendering was inspected in light and dark at 1440×900, 900×900, 390×844, and 390×667. The review covered desktop expanded/collapsed, tablet rail/expanded overlay, phone header/drawer, and the short phone drawer. Dashboard, Find Jobs, Applications (`/tracker`), Profile, and Settings were also rendered at desktop and phone sizes to verify the staged shell/page boundary without migrating page content. A 1152×720 increased-zoom-equivalent check was attempted in the in-app browser but its reload was blocked by browser URL policy; the existing 900×400 short-tablet check and exact breakpoint tests cover the relevant reachability/layout risk.
+
+Measured shell contrast (foreground/background): light muted navigation, Settings, and default Logout 4.97:1; light active text/icon on selected surface 13.59:1; light tooltip 17.77:1; light focus/shell 4.95:1; light Logout hover 6.09:1. Dark muted navigation, Settings, and default Logout 6.30:1; dark active text/icon on selected surface 5.45:1; dark tooltip 13.07:1; dark focus/shell 9.71:1; dark Logout hover 6.73:1.
+
+### Stage 3 takeover review
+
+An independent review of the above implementation kept it intact apart from one correction, and closed the outstanding verification gap.
+
+Correction: the active-item edge marker was drawn in `--color-brand-accent`. Measured against its own composited selected surface that is 2.21:1 in light mode (2.42:1 against the bare shell), below the 3:1 WCAG 1.4.11 bar for a state indicator. The marker is load-bearing specifically in the collapsed rail, where the hidden label removes the font-weight cue and leaves the marker as the only non-colour indicator of the current page. It now uses `--color-border-selected`, the canonical selected-edge role, which resolves to the darker cyan in light mode and stays cyan in dark: 4.53:1 light and 5.42:1 dark against the selected surface. No other rule, token, or component changed.
+
+Independently re-measured shell contrast from live computed styles: light muted navigation/Settings/Logout 4.97:1, light active text/icon on selected surface 13.57:1, light tooltip 17.77:1, light focus ring against shell 4.95:1, light Logout hover 6.09:1; dark muted navigation/Settings/Logout 6.30:1, dark active text/icon 5.42:1, dark tooltip 13.07:1, dark focus ring 9.71:1, dark Logout hover 6.73:1. Keyboard focus resolves to a 3px `--color-focus-ring` outline at 2px offset in both schemes, measurably stronger than the hover surface shift. The two-part wordmark is `aria-hidden` beside the link's own accessible name and is exempt from text contrast as a logotype.
+
+The increased-density gap was closed as effective-viewport validation, not browser-chrome zoom: a 1152×720 CSS viewport at `deviceScaleFactor` 1.25 reproduces the layout and raster conditions of 125% zoom on a 1440×900 display. In both schemes the shell resolves to the 64px tablet rail with no horizontal overflow, no brand/navigation or navigation/footer overlap, Settings and Logout in the viewport, working rail tooltips, and a 256px overlay whose labels are all visible and unclipped. Short heights were re-checked at 900×400 and 1280×400, and a breakpoint sweep from 320px to 1920px confirmed exactly one usable navigation mode at every width with no horizontal overflow.
+
+The compact mark is a tight but complete crop: the mark occupies x 545–918, y 204–558 of the 1448×1086 source, and the rendered window retains it in full with roughly 0.5–2px of margin at 32px. The flat leg terminations are the asset's own geometry, not clipping. It is tight enough that the cyan swoosh grazes the corner radius, which is noted for the human visual review rather than treated as a defect.
+
+The focused shell/design-system/auth suite passed 64 tests. The complete web suite passed 44 files / 843 tests, ESLint, TypeScript, and production build. The responsive AppShell Playwright suite passed 9/9, including exact breakpoint geometry, persisted collapse, overlays, focus/dismissal, short-height utilities, protected-session invalidation, core-page compatibility, and the semantic light/dark visual contract. The extension gate passed 56 files / 819 tests plus typecheck/build. `docker compose config` passed. The host API gate could not start because the existing virtualenv contains cloud-placeholdered package files; a container fallback collected all 1,787 tests with current source mounted read-only but was stopped after filesystem stalls made it impractical. No backend code changed in Stage 3.
+
 ## 22. Stage 2 implementation record
 
 Status: implemented and locally validated on 2026-08-16; no page adoption, commit, push, or deployment.

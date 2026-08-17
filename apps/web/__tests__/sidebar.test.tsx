@@ -98,6 +98,17 @@ describe("sidebar", () => {
     );
   });
 
+  it("uses canonical selection roles instead of legacy success branding", () => {
+    renderShell();
+    const active = within(sidebar()).getByRole("link", { name: "Applications" });
+    expect(active).toHaveClass("bg-surface-selected", "text-brand-primary");
+    expect(active).not.toHaveClass("text-pine");
+
+    const source = readFileSync(join(ROOT, "components/AppShell.tsx"), "utf8");
+    expect(source).not.toMatch(/success-surface|text-pine|bg-pine|border-pine/);
+    expect(source).toContain("bg-surface-overlay");
+  });
+
   it("never links to a route that does not exist", () => {
     renderShell();
     const hrefs = within(sidebar())

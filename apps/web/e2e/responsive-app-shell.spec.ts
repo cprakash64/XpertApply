@@ -305,3 +305,80 @@ test("core authenticated pages keep shell geometry within desktop and phone view
     }
   }
 });
+
+test("XpertApply shell visuals stay semantic across themes and responsive modes", async ({
+  page
+}) => {
+  await authenticate(page);
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/dashboard");
+    await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([1440, 900]);
+
+    const sidebar = page.getByRole("complementary", { name: "Primary" });
+    const active = sidebar.getByRole("link", { name: "Dashboard" });
+    await expect(sidebar).toHaveCSS("width", "256px");
+    await expect(active).toHaveAttribute("aria-current", "page");
+    await expect.poll(() => active.evaluate((element) => {
+      const root = getComputedStyle(document.documentElement);
+      return {
+        foreground: getComputedStyle(element).color,
+        expectedForeground: root.getPropertyValue("--color-brand-primary").trim(),
+        surface: getComputedStyle(element).backgroundColor,
+        expectedSurface: root.getPropertyValue("--color-surface-selected").trim()
+      };
+    })).toEqual(colorScheme === "light" ? {
+      foreground: "rgb(6, 36, 92)",
+      expectedForeground: "#06245c",
+      surface: "rgba(20, 184, 196, 0.1)",
+      expectedSurface: "rgb(20 184 196/10%)"
+    } : {
+      foreground: "rgb(20, 184, 196)",
+      expectedForeground: "#14b8c4",
+      surface: "rgba(20, 184, 196, 0.14)",
+      expectedSurface: "rgb(20 184 196/14%)"
+    });
+    await capture(page, `${colorScheme}-desktop-expanded`);
+
+    await sidebar.getByRole("button", { name: "Collapse sidebar" }).click();
+    await expect(sidebar).toHaveCSS("width", "56px");
+    await expect(active).toBeVisible();
+    await capture(page, `${colorScheme}-desktop-collapsed`);
+    await sidebar.getByRole("button", { name: "Expand sidebar" }).click();
+
+    await page.setViewportSize({ width: 900, height: 900 });
+    await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([900, 900]);
+    await expect(sidebar).toHaveCSS("width", "64px");
+    await capture(page, `${colorScheme}-tablet-rail`);
+    await sidebar.getByRole("button", { name: "Expand navigation" }).click();
+    await expect(sidebar).toHaveCSS("width", "256px");
+    await expect(page.getByRole("button", { name: "Close expanded navigation" })).toBeVisible();
+    await capture(page, `${colorScheme}-tablet-overlay`);
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([390, 844]);
+    const mobileMenu = page.getByRole("button", { name: "Open navigation" });
+    await expect(mobileMenu).toBeVisible();
+    await capture(page, `${colorScheme}-phone-header`);
+    await mobileMenu.click();
+    const drawer = page.getByRole("dialog", { name: "Application navigation" });
+    await expect(drawer).toBeVisible();
+    await capture(page, `${colorScheme}-phone-drawer`);
+    await page.keyboard.press("Escape");
+
+    await page.setViewportSize({ width: 390, height: 667 });
+    await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([390, 667]);
+    await mobileMenu.click();
+    const shortDrawer = page.getByRole("dialog", { name: "Application navigation" });
+    const logout = shortDrawer.getByRole("button", { name: "Log out" });
+    await logout.scrollIntoViewIfNeeded();
+    await expect(logout).toBeInViewport();
+    await expect(shortDrawer.getByRole("link", { name: "Settings" })).toBeVisible();
+    await capture(page, `${colorScheme}-phone-short-drawer`);
+    await page.keyboard.press("Escape");
+  }
+});
