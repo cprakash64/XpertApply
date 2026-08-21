@@ -10,7 +10,7 @@ import {
   Upload,
   X
 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import {
   ImportProfilePreview,
   type EditableImportDraft,
@@ -398,12 +398,12 @@ export function ProfileWizard({
 
   return (
     <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-      <ol className="rounded-lg border border-line bg-white p-3">
+      <ol className="rounded-control border border-line-default bg-surface-card p-3">
         {steps.map((label, index) => (
           <li key={label}>
             <button
-              className={`focus-ring w-full rounded-md px-3 py-2 text-left text-sm ${
-                index === step ? "bg-panel font-medium text-pine" : "text-[var(--text-muted)]"
+              className={`ds-focus-ring w-full rounded-control px-3 py-2 text-left text-sm ${
+                index === step ? "bg-surface-selected font-semibold text-brand-primary" : "text-foreground-muted"
               }`}
               onClick={() => setStep(index)}
               type="button"
@@ -414,11 +414,11 @@ export function ProfileWizard({
         ))}
       </ol>
 
-      <section className="rounded-lg border border-line bg-white p-5">
-        <div className="flex flex-col gap-3 border-b border-line pb-4 md:flex-row md:items-start md:justify-between">
+      <section className="rounded-control border border-line-default bg-surface-card p-5">
+        <div className="flex flex-col gap-3 border-b border-line-default pb-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-xl font-semibold">{steps[step]}</h2>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
+            <p className="mt-1 text-sm text-foreground-muted">
               {loading ? "Loading saved profile..." : "Update any section and save when ready."}
             </p>
           </div>
@@ -429,10 +429,10 @@ export function ProfileWizard({
         </div>
 
         {message && (
-          <p className="mt-4 rounded-md border border-[var(--success-border)] bg-[var(--success-surface)] px-3 py-2 text-sm text-pine">{message}</p>
+          <p className="mt-4 rounded-control border border-status-success-border bg-status-success-surface px-3 py-2 text-sm text-status-success">{message}</p>
         )}
         {error && (
-          <p className="mt-4 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-sm text-[var(--danger)]">{error}</p>
+          <p className="mt-4 rounded-control border border-status-danger-border bg-status-danger-surface px-3 py-2 text-sm text-status-danger">{error}</p>
         )}
 
         <div className="mt-5">
@@ -500,7 +500,7 @@ export function ProfileWizard({
               <label>
                 <span className="text-sm font-medium">Phone country</span>
                 <select
-                  className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] px-3 text-[var(--text-primary)]"
+                  className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-raised px-3 text-foreground"
                   value={form.phone_country_iso2}
                   onChange={(event) => update("phone_country_iso2", event.target.value)}
                 >
@@ -529,7 +529,7 @@ export function ProfileWizard({
               <label>
                 <span className="text-sm font-medium">Work authorization</span>
                 <select
-                  className="mt-2 h-10 w-full rounded-md border border-line bg-white px-3"
+                  className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-card px-3"
                   value={form.work_authorization}
                   onChange={(event) => updateWorkAuthorization(event.target.value)}
                 >
@@ -543,7 +543,7 @@ export function ProfileWizard({
                   Will you now or in the future require company sponsorship to retain or extend your work authorization?
                 </span>
                 <select
-                  className="mt-2 h-10 w-full rounded-md border border-line bg-white px-3"
+                  className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-card px-3"
                   value={form.requires_sponsorship ? "yes" : "no"}
                   onChange={(event) => update("requires_sponsorship", event.target.value === "yes")}
                 >
@@ -589,7 +589,7 @@ export function ProfileWizard({
               <label>
                 <span className="text-sm font-medium">Preference</span>
                 <select
-                  className="mt-2 h-10 w-full rounded-md border border-line bg-white px-3"
+                  className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-card px-3"
                   value={form.remote_preference}
                   onChange={(event) => update("remote_preference", event.target.value as ProfileForm["remote_preference"])}
                 >
@@ -651,7 +651,7 @@ export function ProfileWizard({
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-3 border-t border-line pt-4">
+        <div className="mt-6 flex flex-wrap gap-3 border-t border-line-default pt-4">
           <Button variant="secondary" type="button" onClick={() => setStep(Math.max(0, step - 1))}>Back</Button>
           <Button variant="secondary" type="button" onClick={() => setStep(Math.min(steps.length - 1, step + 1))}>Next</Button>
         </div>
@@ -686,15 +686,15 @@ function ImportIntro({
 }) {
   return (
     <div className="grid gap-4">
-      <div className="rounded-lg border border-line bg-panel p-5">
+      <div className="rounded-control border border-line-default bg-surface-subtle p-5">
         <h3 className="text-lg font-semibold">Import your profile faster</h3>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-muted">
           Upload a resume, upload your LinkedIn PDF, or paste your profile text. XpertApply will extract a draft profile that you can review and edit.
         </p>
-        <p className="mt-3 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
+        <p className="mt-3 rounded-control border border-line-default bg-surface-card px-3 py-2 text-sm font-medium">
           We do not log into LinkedIn or scrape your account. You control what you upload or paste.
         </p>
-        <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+        <p className="mt-3 text-sm leading-6 text-foreground-muted">
           On LinkedIn, open your profile, choose More, then Save to PDF. Upload that file here.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
@@ -714,7 +714,7 @@ function ImportIntro({
             <ClipboardPaste className="h-4 w-4" /> Paste profile text
           </Button>
         </div>
-        {loadingLabel && <p className="mt-3 text-sm font-medium text-pine">{loadingLabel}</p>}
+        {loadingLabel && <p className="mt-3 text-sm font-medium text-foreground-muted">{loadingLabel}</p>}
       </div>
     </div>
   );
@@ -732,7 +732,7 @@ function FileUploadButton({
   onFile: (file: File) => void;
 }) {
   return (
-    <label className="focus-ring inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-medium text-ink hover:bg-panel">
+    <label className="ds-focus-ring inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-control border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground hover:bg-surface-subtle">
       <Upload className="h-4 w-4" /> {label}
       <input
         className="sr-only"
@@ -800,28 +800,28 @@ function ImportProfileModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 p-4">
-      <div className="mx-auto mt-4 flex max-h-[92vh] max-w-[1100px] flex-col overflow-hidden rounded-lg bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-line bg-white px-5 py-3">
-          <p className="text-xs text-[var(--text-muted)]">
+      <div className="mx-auto mt-4 flex max-h-[92vh] max-w-[1100px] flex-col overflow-hidden rounded-control bg-surface-card shadow-overlay">
+        <div className="flex items-start justify-between gap-4 border-b border-line-default bg-surface-card px-5 py-3">
+          <p className="text-xs text-foreground-muted">
             We do not log into LinkedIn or scrape your account. You control what you upload or paste.
           </p>
-          <button className="focus-ring rounded-md p-1.5" type="button" onClick={onClose} aria-label="Close import modal">
+          <button className="ds-focus-ring rounded-control p-1.5" type="button" onClick={onClose} aria-label="Close import modal">
             <X className="h-5 w-5" />
           </button>
         </div>
         {applyError && (
-          <p className="mx-5 mt-4 rounded-md border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-sm text-[var(--danger)]">
+          <p className="mx-5 mt-4 rounded-control border border-status-danger-border bg-status-danger-surface px-3 py-2 text-sm text-status-danger">
             {applyError}
           </p>
         )}
         {!draft ? (
           <div className="overflow-auto p-5">
             <h3 className="text-xl font-semibold">Paste profile text</h3>
-            <p className="mb-3 mt-1 text-sm text-[var(--text-muted)]">
+            <p className="mb-3 mt-1 text-sm text-foreground-muted">
               Paste your resume or LinkedIn “Save to PDF” text and we will extract a reviewable draft.
             </p>
             <textarea
-              className="min-h-48 w-full rounded-md border border-line p-3 text-sm"
+              className="min-h-48 w-full rounded-control border border-line-default p-3 text-sm"
               placeholder="Paste resume text, LinkedIn Save to PDF text, or profile notes."
               value={text}
               onChange={(event) => setText(event.target.value)}
@@ -831,7 +831,7 @@ function ImportProfileModal({
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardPaste className="h-4 w-4" />}
                 Extract draft profile
               </Button>
-              {loadingLabel && <p className="self-center text-sm font-medium text-pine">{loadingLabel}</p>}
+              {loadingLabel && <p className="self-center text-sm font-medium text-foreground-muted">{loadingLabel}</p>}
             </div>
           </div>
         ) : (
@@ -895,7 +895,7 @@ function MultiSelect({
       <label>
         <span className="text-sm font-medium">{label}</span>
         <input
-          className="mt-2 h-10 w-full rounded-md border border-line px-3"
+          className="mt-2 h-10 w-full rounded-control border border-line-default px-3"
           placeholder={placeholder}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -903,20 +903,20 @@ function MultiSelect({
       </label>
       <ChipList values={selected} onRemove={(value) => onChange(selected.filter((item) => item !== value))} />
       {allowCustom && query.trim() && (
-        <button className="mt-3 rounded-md border border-line px-3 py-2 text-sm" type="button" onClick={addCustom}>
+        <button className="mt-3 rounded-control border border-line-default px-3 py-2 text-sm" type="button" onClick={addCustom}>
           Add custom role: {query.trim()}
         </button>
       )}
       <div className="mt-3 grid gap-3">
         {visibleGroups.map((group) => (
           <div key={group.label}>
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{group.label}</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground-muted">{group.label}</h4>
             <div className="mt-2 flex flex-wrap gap-2">
               {group.options.map((option) => (
                 <button
                   key={option}
                   className={`rounded-full border px-3 py-1 text-sm ${
-                    selected.includes(option) ? "border-pine bg-pine text-white" : "border-line bg-white"
+                    selected.includes(option) ? "border-line-selected bg-surface-selected font-semibold text-brand-primary" : "border-line-default bg-surface-card"
                   }`}
                   type="button"
                   onClick={() => toggle(option)}
@@ -959,7 +959,7 @@ function ChipInput({
         <span className="text-sm font-medium">{label}</span>
         <div className="mt-2 flex gap-2">
           <input
-            className="h-10 min-w-0 flex-1 rounded-md border border-line px-3"
+            className="h-10 min-w-0 flex-1 rounded-control border border-line-default px-3"
             placeholder={placeholder}
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -981,7 +981,7 @@ function ChipInput({
           {quickOptions.slice(0, 16).map((option) => (
             <button
               key={option}
-              className="rounded-full border border-line px-3 py-1 text-sm"
+              className="rounded-full border border-line-default px-3 py-1 text-sm"
               type="button"
               onClick={() => add(option)}
             >
@@ -1001,7 +1001,7 @@ function ChipList({ values, onRemove }: { values: string[]; onRemove: (value: st
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {values.map((value) => (
-        <span key={value} className="inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-sm">
+        <span key={value} className="inline-flex items-center gap-2 rounded-full border border-line-default bg-surface-subtle px-3 py-1 text-sm">
           {value}
           <button type="button" onClick={() => onRemove(value)} aria-label={`Remove ${value}`}>
             <X className="h-3.5 w-3.5" />
@@ -1129,14 +1129,14 @@ function RepeatableSection<T>({
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--text-muted)]">Add, edit, or delete {title} records. Save persists all changes.</p>
+        <p className="text-sm text-foreground-muted">Add, edit, or delete {title} records. Save persists all changes.</p>
         <Button type="button" onClick={() => onChange([...records, newRecord()])}>
           <Plus className="h-4 w-4" /> Add {title}
         </Button>
       </div>
       {records.length === 0 && (
         <button
-          className="rounded-lg border border-dashed border-line bg-panel p-8 text-center text-sm font-medium text-[var(--text-muted)]"
+          className="rounded-control border border-dashed border-line-default bg-surface-subtle p-8 text-center text-sm font-medium text-foreground-muted"
           type="button"
           onClick={() => onChange([newRecord()])}
         >
@@ -1144,11 +1144,11 @@ function RepeatableSection<T>({
         </button>
       )}
       {records.map((record, index) => (
-        <div key={index} className="rounded-lg border border-line p-4">
+        <div key={index} className="rounded-control border border-line-default p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="font-semibold">{title[0].toUpperCase() + title.slice(1)} {index + 1}</h3>
             <Button
-              variant="danger"
+              variant="destructive"
               type="button"
               onClick={() => onChange(records.filter((_, itemIndex) => itemIndex !== index))}
             >
@@ -1189,15 +1189,15 @@ function Field({
   const safeValue = value ?? "";
   return (
     <label className="block">
-      <span className="text-sm font-medium text-[var(--text-primary)]">
+      <span className="text-sm font-medium text-foreground">
         {label}
         {required ? <span aria-hidden="true"> *</span> : null}
         {required ? <span className="sr-only"> (required)</span> : null}
       </span>
       <input
-        className={`mt-2 h-10 w-full rounded-md border px-3 bg-[var(--input-background)] text-[var(--text-primary)] ${
-          error ? "border-[var(--danger)]" : "border-[var(--border)]"
-        } ${readOnly ? "bg-[var(--disabled-background)] text-[var(--text-secondary)]" : ""}`}
+        className={`mt-2 h-10 w-full rounded-control border px-3 bg-surface-raised text-foreground ${
+          error ? "border-status-danger" : "border-line-default"
+        } ${readOnly ? "bg-surface-disabled text-foreground-secondary" : ""}`}
         type={type}
         value={safeValue}
         placeholder={placeholder}
@@ -1209,12 +1209,12 @@ function Field({
       />
       {/* Errors are announced and prefixed, never signalled by colour alone. */}
       {error && (
-        <span id={`${label}-error`} role="alert" className="mt-1 block text-xs text-[var(--danger)]">
+        <span id={`${label}-error`} role="alert" className="mt-1 block text-xs text-status-danger">
           Error: {error}
         </span>
       )}
       {!error && hint && (
-        <span id={`${label}-hint`} className="mt-1 block text-xs text-[var(--text-muted)]">
+        <span id={`${label}-hint`} className="mt-1 block text-xs text-foreground-muted">
           {hint}
         </span>
       )}
@@ -1236,9 +1236,9 @@ function SelectField({
   const displayedOptions = value && !options.includes(value) ? [value, ...options] : options;
   return (
     <label className="block">
-      <span className="text-sm font-medium text-[var(--text-primary)]">{label}</span>
+      <span className="text-sm font-medium text-foreground">{label}</span>
       <select
-        className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] px-3 text-[var(--text-primary)]"
+        className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-raised px-3 text-foreground"
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -1269,7 +1269,7 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
   return (
     <label>
       <span className="text-sm font-medium">{label}</span>
-      <textarea className="mt-2 min-h-28 w-full rounded-md border border-line p-3" value={value} onChange={(event) => onChange(event.target.value)} />
+      <textarea className="mt-2 min-h-28 w-full rounded-control border border-line-default p-3" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -1286,7 +1286,7 @@ function TextList({ label, values, onChange }: { label: string; values: string[]
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <label className="flex min-h-10 items-center gap-3 rounded-md border border-line p-3">
+    <label className="flex min-h-10 items-center gap-3 rounded-control border border-line-default p-3">
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <span className="text-sm font-medium">{label}</span>
     </label>
@@ -1297,7 +1297,7 @@ function ReviewBlock({ title, data }: { title: string; data: unknown }) {
   return (
     <section>
       <h3 className="mb-2 font-semibold">{title}</h3>
-      <pre className="overflow-auto rounded-md bg-[var(--text-primary)] p-4 text-xs text-white">
+      <pre className="overflow-auto rounded-control bg-surface-subtle p-4 text-xs text-foreground">
         {JSON.stringify(data, null, 2)}
       </pre>
     </section>

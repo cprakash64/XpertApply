@@ -6,7 +6,7 @@ import { postedLabel, sourceLabel } from "@/components/jobs/format";
 export function Meta({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="text-[var(--text-muted)]">{icon}</span>
+      <span aria-hidden className="text-foreground-muted">{icon}</span>
       {children}
     </span>
   );
@@ -17,7 +17,7 @@ export function SourceBadge({ source }: { source: string | null }) {
   if (!label) {
     return null;
   }
-  return <span className="rounded-full border border-line px-2 py-0.5 text-xs text-[var(--text-muted)]">{label}</span>;
+  return <span className="rounded-pill border border-line-default px-2 py-0.5 text-xs text-foreground-muted">{label}</span>;
 }
 
 export function WorkplaceBadge({ type }: { type: string | null }) {
@@ -25,8 +25,8 @@ export function WorkplaceBadge({ type }: { type: string | null }) {
     return null;
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs">
-      <MapPin className="h-3 w-3" /> {type[0].toUpperCase() + type.slice(1)}
+    <span className="inline-flex items-center gap-1 rounded-pill border border-line-default px-2 py-0.5 text-xs text-foreground-secondary">
+      <MapPin aria-hidden className="h-3 w-3" /> {type[0].toUpperCase() + type.slice(1)}
     </span>
   );
 }
@@ -36,7 +36,7 @@ export function PostedBadge({ postedAt }: { postedAt: string | null }) {
   if (!label) {
     return null;
   }
-  return <span className="rounded-full bg-panel px-2 py-0.5 text-xs text-[var(--text-muted)]">{label}</span>;
+  return <span className="rounded-pill bg-surface-subtle px-2 py-0.5 text-xs text-foreground-muted">{label}</span>;
 }
 
 /**
@@ -47,12 +47,12 @@ export function PostedBadge({ postedAt }: { postedAt: string | null }) {
 export function SalaryChip({ value, size = "md" }: { value: string; size?: "md" | "lg" }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-[var(--surface-raised)] font-semibold text-[var(--text-primary)] ${
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-control border border-line-default bg-surface-subtle font-semibold text-foreground ${
         size === "lg" ? "h-11 px-3.5 text-[15px]" : "h-7 px-2.5 text-[13px]"
       }`}
     >
       <Banknote
-        className={`${size === "lg" ? "h-4 w-4" : "h-3.5 w-3.5"} text-[var(--text-muted)]`}
+        className={`${size === "lg" ? "h-4 w-4" : "h-3.5 w-3.5"} text-foreground-muted`}
         aria-hidden
       />
       <span className="sr-only">Salary range </span>
@@ -84,7 +84,7 @@ export function FitBadge({
       <div
         data-fit-tone="none"
         data-score-state={scoreState ?? "pending"}
-        className="w-24 shrink-0 rounded-xl border border-line bg-panel px-2 py-2 text-center text-[var(--text-muted)]"
+        className="w-24 shrink-0 rounded-card border border-line-default bg-surface-subtle px-2 py-2 text-center text-foreground-muted"
         title={display.helper}
       >
         <p className="text-[10px] font-medium uppercase tracking-wide opacity-70">Fit score</p>
@@ -105,7 +105,7 @@ export function FitBadge({
     <div
       data-fit-tone={tone.key}
       data-score-state="scored"
-      className={`w-24 shrink-0 rounded-xl border px-2 py-2 text-center ${tone.container}`}
+      className={`w-24 shrink-0 rounded-card border px-2 py-2 text-center ${tone.container}`}
       title={tone.description}
     >
       <p className="text-[10px] font-medium uppercase tracking-wide opacity-70">Fit score</p>
@@ -135,7 +135,7 @@ export function FitPill({
       <span
         data-fit-tone="none"
         data-score-state={scoreState ?? "pending"}
-        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-line bg-panel px-2 text-[11px] font-medium text-[var(--text-muted)]"
+        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-pill border border-line-default bg-surface-subtle px-2 text-[11px] font-medium text-foreground-muted"
       >
         {display.kind === "calculating" ? (
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -150,7 +150,7 @@ export function FitPill({
     <span
       data-fit-tone={tone.key}
       data-score-state="scored"
-      className={`inline-flex h-6 shrink-0 items-center rounded-full border px-2 text-[11px] font-semibold ${tone.container}`}
+      className={`inline-flex h-6 shrink-0 items-center rounded-pill border px-2 text-[11px] font-semibold ${tone.container}`}
       title={tone.description}
     >
       <span aria-hidden>{rounded}</span>

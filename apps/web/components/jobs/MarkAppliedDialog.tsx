@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 
 /**
  * Explicit confirmation before a job moves to the Tracker.
@@ -55,16 +55,16 @@ export function MarkAppliedDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="px-6 pt-6">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--success-surface)] text-pine">
+          <span className="grid h-11 w-11 place-items-center rounded-card bg-status-success-surface text-status-success">
             <CheckCircle2 className="h-5 w-5" />
           </span>
           <h3 className="mt-4 text-lg font-semibold tracking-[-0.02em]">
             Did you successfully submit this application?
           </h3>
-          <p className="mt-1.5 truncate text-sm text-[var(--text-muted)]">
+          <p className="mt-1.5 truncate text-sm text-foreground-muted">
             {jobTitle} · {company}
           </p>
-          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+          <p className="mt-3 text-sm leading-6 text-foreground-secondary">
             Confirming moves this job out of Jobs and into your Tracker under Applied. Only confirm
             if the employer&apos;s site showed you a completed or submitted confirmation.
           </p>
@@ -72,7 +72,7 @@ export function MarkAppliedDialog({
           {error && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-3 text-sm text-[var(--danger)]"
+              className="mt-4 flex items-start gap-2 rounded-card border border-status-danger-border bg-status-danger-surface p-3 text-sm text-status-danger"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
@@ -80,7 +80,7 @@ export function MarkAppliedDialog({
           )}
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center justify-end gap-2.5 border-t border-line px-6 py-4">
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-2.5 border-t border-line-default px-6 py-4">
           <Button variant="secondary" type="button" onClick={onCancel} disabled={submitting}>
             Not yet
           </Button>

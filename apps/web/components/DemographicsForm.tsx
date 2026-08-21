@@ -19,7 +19,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { SectionError, toSectionError, type SectionErrorInfo } from "@/components/SectionError";
 import { api } from "@/lib/api";
 import {
@@ -138,8 +138,8 @@ export function DemographicsForm() {
 
   if (loading) {
     return (
-      <section className="rounded-lg border border-line bg-white p-5">
-        <p className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+      <section className="rounded-card border border-line-default bg-surface-card p-5">
+        <p className="flex items-center gap-2 text-sm text-foreground-muted">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading your settings…
         </p>
@@ -148,8 +148,8 @@ export function DemographicsForm() {
   }
 
   return (
-    <section className="rounded-lg border border-line bg-white p-5">
-      <div className="rounded-md border border-line bg-panel p-4 text-sm leading-6 text-[var(--text-secondary)]">
+    <section className="rounded-card border border-line-default bg-surface-card p-5">
+      <div className="rounded-control border border-line-default bg-surface-subtle p-4 text-sm leading-6 text-foreground-secondary">
         This information is optional and entirely up to you. &ldquo;Prefer not to answer&rdquo; is always
         available. It is stored separately from your career profile, is <strong>never</strong> used for
         job-fit scoring, ranking, resumes or cover letters, and you can delete it at any time.
@@ -158,7 +158,7 @@ export function DemographicsForm() {
       {needsReview && (
         <p
           role="status"
-          className="mt-4 rounded-md border border-[var(--warning-border)] bg-[var(--warning-surface)] px-3 py-2 text-sm text-[var(--warning)]"
+          className="mt-4 rounded-control border border-status-warning-border bg-status-warning-surface px-3 py-2 text-sm text-status-warning"
         >
           Some previously stored answers used options that are no longer valid, so they were cleared.
           Please re-answer any questions you want on file.
@@ -218,13 +218,13 @@ export function DemographicsForm() {
         {/* Multi-select: people identify with more than one category, and
             collapsing that to one value loses real information. */}
         <fieldset className="border-0 p-0">
-          <legend className="text-sm font-medium text-[var(--text-primary)]">Race and ethnicity</legend>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">Select all that apply.</p>
+          <legend className="text-sm font-medium text-foreground">Race and ethnicity</legend>
+          <p className="mt-1 text-xs text-foreground-muted">Select all that apply.</p>
           <div className="mt-3 grid gap-2">
             {RACE_ETHNICITY_OPTIONS.map((option) => (
               <label
                 key={option.value}
-                className="flex items-start gap-3 text-sm text-[var(--text-primary)]"
+                className="ds-touch-target flex items-start gap-3 py-1 text-sm text-foreground"
               >
                 <input
                   type="checkbox"
@@ -248,14 +248,14 @@ export function DemographicsForm() {
         )}
 
         {/* Unchecked by default. Saving is not consent. */}
-        <label className="flex items-start gap-3 rounded-md border border-line bg-[var(--surface-muted)] p-4">
+        <label className="ds-touch-target flex items-start gap-3 rounded-control border border-line-default bg-surface-subtle p-4">
           <input
             type="checkbox"
             className="mt-1"
             checked={form.consent_to_store}
             onChange={(event) => set("consent_to_store", event.target.checked)}
           />
-          <span className="text-sm text-[var(--text-primary)]">
+          <span className="text-sm text-foreground">
             I consent to XpertApply securely storing this optional demographic information for assisted
             application filling.
           </span>
@@ -267,11 +267,11 @@ export function DemographicsForm() {
           {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
           Save settings
         </Button>
-        <Button variant="danger" type="button" onClick={remove} disabled={saving}>
+        <Button variant="destructive" type="button" onClick={remove} disabled={saving}>
           <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete EEO data
         </Button>
         {message && (
-          <p role="status" className="text-sm text-[var(--success)]">
+          <p role="status" className="text-sm text-status-success">
             {message}
           </p>
         )}
@@ -301,12 +301,12 @@ function ChoiceQuestion({
 }) {
   return (
     <fieldset className="border-0 p-0">
-      <legend className="text-sm font-medium text-[var(--text-primary)]">{legend}</legend>
+      <legend className="text-sm font-medium text-foreground">{legend}</legend>
       <div className="mt-3 grid gap-2">
         {options.map((option) => (
           <label
             key={option.value}
-            className="flex items-start gap-3 text-sm text-[var(--text-primary)]"
+            className="ds-touch-target flex items-start gap-3 py-1 text-sm text-foreground"
           >
             <input
               type="radio"
@@ -335,14 +335,14 @@ function SelfDescribe({
 }) {
   return (
     <label className="block">
-      <span className="text-sm font-medium text-[var(--text-primary)]">{label}</span>
+      <span className="text-sm font-medium text-foreground">{label}</span>
       <input
-        className="mt-2 h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] px-3 text-[var(--text-primary)]"
+        className="ds-focus-ring mt-2 h-10 w-full rounded-field border border-line-strong bg-surface-raised px-3 text-foreground"
         value={value}
         maxLength={200}
         onChange={(event) => onChange(event.target.value)}
       />
-      <span className="mt-1 block text-xs text-[var(--text-muted)]">
+      <span className="mt-1 block text-xs text-foreground-muted">
         Stored only if you consent below, and never used for matching.
       </span>
     </label>

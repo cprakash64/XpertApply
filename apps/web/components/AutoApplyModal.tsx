@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Check, Download, ExternalLink, FileText, Loader2, Mail, RefreshCw, ShieldCheck, X } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import {
   type CreatedApplicationSession,
   type ExtensionState,
@@ -250,14 +250,14 @@ export function AutoApplyModal({
         aria-label="Assisted application"
         aria-modal="true"
       >
-        <div className="assisted-application-glass-bar flex items-start justify-between gap-5 border-b border-line px-6 py-5 sm:px-7">
+        <div className="assisted-application-glass-bar flex items-start justify-between gap-5 border-b border-line-default px-6 py-5 sm:px-7">
           <div className="min-w-0">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-pine">Ready to apply</p>
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-brand-primary">Ready to apply</p>
             <h3 className="text-xl font-semibold tracking-[-0.025em] sm:text-2xl">Assisted application</h3>
-            <p className="mt-1 truncate text-sm text-[var(--text-muted)]">{jobTitle} · {company}</p>
+            <p className="mt-1 truncate text-sm text-foreground-muted">{jobTitle} · {company}</p>
           </div>
           <button
-            className="focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line bg-[var(--glass-surface)] text-[var(--text-secondary)] transition hover:bg-panel hover:text-ink"
+            className="ds-focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line-default bg-[var(--glass-surface)] text-foreground-secondary transition hover:bg-surface-subtle hover:text-foreground"
             type="button"
             onClick={onClose}
             aria-label="Close"
@@ -270,28 +270,28 @@ export function AutoApplyModal({
           {phase === "preparing" && <PreparingChecklist />}
 
           {phase === "error" && error && (
-            <div className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-4 text-sm text-[var(--danger)]">
+            <div className="rounded-card border border-status-danger-border bg-status-danger-surface p-4 text-sm text-status-danger">
               <p className="font-semibold">We couldn’t prepare your application.</p>
               <p className="mt-1">{error.message}</p>
               {error.profileLink && (
-                <Link href="/profile" className="mt-2 inline-flex items-center gap-1 font-medium text-pine underline">
+                <Link href="/profile" className="mt-2 inline-flex items-center gap-1 font-medium text-foreground-link underline">
                   <ExternalLink className="h-3.5 w-3.5" /> Go to your profile
                 </Link>
               )}
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
+              <p className="mt-2 text-xs text-foreground-muted">
                 {error.retryable
                   ? "You can retry, or open the official application and apply manually below."
                   : "You can still open the official application and apply manually below."}
               </p>
               {error.requestId && (
-                <p className="mt-2 text-[11px] text-[var(--text-muted)]">Reference: {error.requestId}</p>
+                <p className="mt-2 text-[11px] text-foreground-muted">Reference: {error.requestId}</p>
               )}
             </div>
           )}
 
           {session && phase !== "error" && (
             <div className="grid gap-5">
-              <div className="grid gap-3 rounded-2xl border border-line bg-[var(--glass-surface)] p-4 shadow-sm">
+              <div className="grid gap-3 rounded-card border border-line-default bg-[var(--glass-surface)] p-4 shadow-sm">
                 <ReadyRow icon={<FileText className="h-4 w-4" />} label="Tailored resume"
                           ok={session.resume.status === "ready"} />
                 <ReadyRow icon={<Mail className="h-4 w-4" />} label="Tailored cover letter"
@@ -307,7 +307,7 @@ export function AutoApplyModal({
               </div>
 
               {session.warnings.length > 0 && (
-                <ul className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-xs text-[var(--warning)]">
+                <ul className="rounded-card border border-status-warning-border bg-status-warning-surface p-4 text-xs text-status-warning">
                   {session.warnings.map((w) => (
                     <li key={w} className="list-inside list-disc">{w}</li>
                   ))}
@@ -315,11 +315,11 @@ export function AutoApplyModal({
               )}
 
               {extConnected && (
-                <div className="rounded-2xl border border-[var(--success-border)] bg-[var(--success-surface)] p-4 text-xs text-[var(--accent)]">
-                  <p className="flex items-center gap-1.5 font-medium text-[var(--accent)]">
+                <div className="rounded-card border border-status-success-border bg-status-success-surface p-4 text-xs text-status-success">
+                  <p className="flex items-center gap-1.5 font-semibold text-status-success">
                     <ShieldCheck className="h-4 w-4" /> {PRODUCT_NAME} extension connected
                   </p>
-                  <p className="mt-1 text-[var(--text-secondary)]">
+                  <p className="mt-1 text-foreground-secondary">
                     We’ll open the application, fill verified fields, upload your tailored documents, and leave the final
                     review and submission to you.
                   </p>
@@ -327,26 +327,26 @@ export function AutoApplyModal({
               )}
 
               {extOutdated && (
-                <div className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-xs text-[var(--warning)]">
+                <div className="rounded-card border border-status-warning-border bg-status-warning-surface p-4 text-xs text-status-warning">
                   <p className="font-medium">Your XpertApply extension needs an update.</p>
                   <p className="mt-1">
                     Reload XpertApply after installing or updating the extension — an XpertApply tab that was already
                     open when the extension last updated won&apos;t pick up the new version until it&apos;s
                     reloaded.{" "}
-                    <a className="font-medium text-pine underline" href={EXTENSION_INSTALL_URL}
+                    <a className="font-medium text-foreground-link underline" href={EXTENSION_INSTALL_URL}
                        target="_blank" rel="noopener noreferrer">Update instructions</a>.
                   </p>
                 </div>
               )}
 
               {extState?.present === false && (
-                <div className="rounded-2xl border border-line bg-[var(--glass-surface)] p-4 text-xs text-[var(--text-muted)]">
-                  <p className="font-medium text-[var(--text-secondary)]">
+                <div className="rounded-card border border-line-default bg-[var(--glass-surface)] p-4 text-xs text-foreground-muted">
+                  <p className="font-medium text-foreground-secondary">
                     Install the XpertApply browser extension to automatically fill employer applications.
                   </p>
                   <p className="mt-1">
                     Without it you can still open the official application and apply manually below.{" "}
-                    <a className="font-medium text-pine underline" href={EXTENSION_INSTALL_URL}
+                    <a className="font-medium text-foreground-link underline" href={EXTENSION_INSTALL_URL}
                        target="_blank" rel="noopener noreferrer">Install extension</a>. Already installed? Reload
                     this page — the extension may have been updated after this tab was opened.
                   </p>
@@ -354,15 +354,15 @@ export function AutoApplyModal({
               )}
 
               {popupBlocked && canOpen && (
-                <div className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-xs text-[var(--warning)]">
+                <div className="rounded-card border border-status-warning-border bg-status-warning-surface p-4 text-xs text-status-warning">
                   Your browser blocked the new tab.{" "}
-                  <a className="font-medium text-pine underline" href={manualUrl}
+                  <a className="font-medium text-foreground-link underline" href={manualUrl}
                      target="_blank" rel="noopener noreferrer">Open the official application manually</a>.
                 </div>
               )}
 
               {launchError && (
-                <div className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-4 text-xs text-[var(--danger)]" role="alert">
+                <div className="rounded-card border border-status-danger-border bg-status-danger-surface p-4 text-xs text-status-danger" role="alert">
                   <p className="font-medium">Could not open the application automatically.</p>
                   <p className="mt-1">{launchError.message}</p>
                   <p className="mt-1 font-mono text-[11px]">{launchError.code}</p>
@@ -370,11 +370,11 @@ export function AutoApplyModal({
               )}
 
               {phase === "opened" && (
-                <div className="rounded-2xl border border-line bg-[var(--glass-surface)] p-4">
-                  <p className="text-sm font-medium text-[var(--text-secondary)]">
+                <div className="rounded-card border border-line-default bg-[var(--glass-surface)] p-4">
+                  <p className="text-sm font-medium text-foreground-secondary">
                     Finished applying on the employer’s site?
                   </p>
-                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                  <p className="mt-1 text-xs leading-relaxed text-foreground-muted">
                     If the XpertApply extension confirms your submission, this happens automatically. If it
                     can’t, tell us here and we’ll move this job to your Tracker.
                   </p>
@@ -385,14 +385,14 @@ export function AutoApplyModal({
                     /* Visible text first, so voice control can activate it by
                      * what is on screen (WCAG 2.5.3). */
                     aria-label={`Mark as applied: ${jobTitle} at ${company}`}
-                    className="mark-applied-action mt-3 inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm font-medium"
+                    className="mark-applied-action mt-3 inline-flex h-9 items-center gap-2 rounded-control px-3.5 text-sm font-medium"
                   >
                     <Check className="h-4 w-4" aria-hidden /> Mark as applied
                   </button>
                 </div>
               )}
 
-              <p className="border-t border-line px-1 pt-5 text-xs leading-relaxed text-[var(--text-muted)]">
+              <p className="border-t border-line-default px-1 pt-5 text-xs leading-relaxed text-foreground-muted">
                 Your application is prepared for review. XpertApply fills the form on the employer’s site but{" "}
                 <span className="font-semibold">never submits it</span> — you review everything and click Submit yourself.
               </p>
@@ -400,7 +400,7 @@ export function AutoApplyModal({
           )}
         </div>
 
-        <div className="assisted-application-glass-bar flex flex-wrap items-center gap-2.5 border-t border-line px-6 py-4 sm:px-7 sm:py-5">
+        <div className="assisted-application-glass-bar flex flex-wrap items-center gap-2.5 border-t border-line-default px-6 py-4 sm:px-7 sm:py-5">
           {phase === "error" ? (
             <>
               {error?.retryable && (
@@ -416,7 +416,7 @@ export function AutoApplyModal({
             </>
           ) : (
             <Button
-              className="h-11 rounded-xl px-5 shadow-[0_8px_20px_rgb(31_94_69_/_18%)]"
+              className="h-11 rounded-card px-5"
               type="button"
               onClick={openSite}
               disabled={phase === "preparing" || !canOpen || launching}
@@ -429,13 +429,13 @@ export function AutoApplyModal({
           )}
           {extState?.present === false && phase !== "error" && (
             <a
-              className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-[var(--text-secondary)]"
+              className="ds-focus-ring inline-flex items-center gap-1.5 rounded-control border border-line-default px-3 py-2 text-sm font-medium text-foreground-secondary"
               href={EXTENSION_INSTALL_URL} target="_blank" rel="noopener noreferrer"
             >
               <Download className="h-4 w-4" /> Install extension
             </a>
           )}
-          <Button className="h-11 rounded-xl px-5" variant="secondary" type="button" onClick={onClose}>Close</Button>
+          <Button className="h-11 rounded-card px-5" variant="secondary" type="button" onClick={onClose}>Close</Button>
         </div>
       </div>
     </div>
@@ -455,20 +455,20 @@ function PreparingChecklist() {
   return (
     <div>
       <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--success-surface)] text-pine">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-card bg-status-success-surface text-status-success">
           <Loader2 className="h-5 w-5 animate-spin" />
         </span>
         <div>
           <h4 className="font-semibold">Getting everything ready</h4>
-          <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
+          <p className="mt-1 text-sm leading-6 text-foreground-muted">
             We’re tailoring your documents and packaging verified answers for the employer’s form.
           </p>
         </div>
       </div>
 
-      <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-panel" aria-hidden="true">
+      <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-surface-subtle" aria-hidden="true">
         <div
-          className="h-full rounded-full bg-pine transition-[width] duration-700"
+          className="h-full rounded-full bg-brand-accent transition-[width] duration-700"
           style={{ width: `${Math.min(90, 12 + activeStep * 19)}%` }}
         />
       </div>
@@ -480,11 +480,11 @@ function PreparingChecklist() {
           return (
             <li
               key={step}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm ${
-                active ? "bg-[var(--success-surface)] text-[var(--text-primary)]" : "text-[var(--text-muted)]"
+              className={`flex items-center gap-3 rounded-card px-3 py-2.5 text-sm ${
+                active ? "bg-status-success-surface text-foreground" : "text-foreground-muted"
               }`}
             >
-              <span className={`grid h-5 w-5 place-items-center rounded-full ${complete ? "bg-pine text-white" : active ? "text-pine" : "border border-line"}`}>
+              <span className={`grid h-5 w-5 place-items-center rounded-full ${complete ? "bg-status-success text-status-success-surface" : active ? "text-brand-primary" : "border border-line-default"}`}>
                 {complete ? <Check className="h-3 w-3" /> : active ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               </span>
               <span className={active ? "font-medium" : ""}>{step}{active ? "…" : ""}</span>
@@ -492,19 +492,19 @@ function PreparingChecklist() {
           );
         })}
       </ul>
-      <p className="mt-4 text-xs text-[var(--text-muted)]">This usually takes less than a minute.</p>
+      <p className="mt-4 text-xs text-foreground-muted">This usually takes less than a minute.</p>
     </div>
   );
 }
 
 function ReadyRow({ icon, label, ok, warn }: { icon: React.ReactNode; label: string; ok?: boolean; warn?: boolean }) {
-  const tone = warn ? "text-[var(--warning)]" : ok ? "text-[var(--accent)]" : "text-[var(--text-muted)]";
+  const tone = warn ? "text-status-warning" : ok ? "text-status-success" : "text-foreground-muted";
   return (
     <div className="flex items-center gap-3 text-sm">
       <span className={tone}>{icon}</span>
-      <span className="flex-1 text-[var(--text-secondary)]">{label}</span>
-      {ok && !warn && <Check className="h-4 w-4 text-[var(--success)]" />}
-      {warn && <AlertTriangle className="h-4 w-4 text-[var(--warning)]" />}
+      <span className="flex-1 text-foreground-secondary">{label}</span>
+      {ok && !warn && <Check className="h-4 w-4 text-status-success" />}
+      {warn && <AlertTriangle className="h-4 w-4 text-status-warning" />}
     </div>
   );
 }

@@ -10,7 +10,7 @@ import {
   type Job,
   type ResumeContent
 } from "@/lib/api";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { GeneratedResumePreview } from "@/components/GeneratedResumePreview";
 import { GeneratedCoverLetterPreview } from "@/components/GeneratedCoverLetterPreview";
 
@@ -51,26 +51,26 @@ export function DocumentGenerationModal({ type, job }: { type: DocType; job: Job
         aria-modal="true"
         aria-labelledby="document-generation-title"
       >
-        <div className="border-b border-line px-6 py-5 sm:px-7">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pine">Preparing your application</p>
+        <div className="border-b border-line-default px-6 py-5 sm:px-7">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-brand-primary">Preparing your application</p>
           <h3 id="document-generation-title" className="mt-1.5 text-2xl font-semibold tracking-[-0.03em]">
             {title}
           </h3>
           {job && (
-            <p className="mt-1.5 text-sm text-[var(--text-muted)]">
+            <p className="mt-1.5 text-sm text-foreground-muted">
               {job.title} · {job.company}
             </p>
           )}
         </div>
 
         <div className="px-6 py-6 sm:px-7">
-          <div className="h-1.5 overflow-hidden rounded-full bg-panel" aria-hidden="true">
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-subtle" aria-hidden="true">
             <div
-              className="h-full rounded-full bg-pine transition-[width] duration-700 ease-out"
+              className="h-full rounded-full bg-brand-accent transition-[width] duration-700 ease-out"
               style={{ width: `${Math.min(88, 18 + activeStep * 22)}%` }}
             />
           </div>
-          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+          <p className="mt-3 text-sm leading-6 text-foreground-secondary">
             We’re using only facts from your saved profile and the employer’s job description.
           </p>
 
@@ -81,15 +81,15 @@ export function DocumentGenerationModal({ type, job }: { type: DocType; job: Job
               return (
                 <li
                   key={step}
-                  className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 text-sm transition ${
+                  className={`flex items-center gap-3 rounded-card border px-3.5 py-3 text-sm transition ${
                     active
-                      ? "border-[var(--success-border)] bg-[var(--success-surface)] text-[var(--text-primary)]"
-                      : "border-transparent text-[var(--text-muted)]"
+                      ? "border-status-success-border bg-status-success-surface text-foreground"
+                      : "border-transparent text-foreground-muted"
                   }`}
                 >
                   <span
                     className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${
-                      complete ? "bg-pine text-white" : active ? "bg-white text-pine" : "border border-line"
+                      complete ? "bg-status-success text-status-success-surface" : active ? "bg-surface-card text-brand-primary" : "border border-line-default"
                     }`}
                   >
                     {complete ? <Check className="h-3.5 w-3.5" /> : active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -100,7 +100,7 @@ export function DocumentGenerationModal({ type, job }: { type: DocType; job: Job
             })}
           </ol>
 
-          <p className="mt-5 text-xs text-[var(--text-muted)]">
+          <p className="mt-5 text-xs text-foreground-muted">
             Usually ready in under a minute. You’ll be able to preview, edit, and download it before applying.
           </p>
         </div>
@@ -182,14 +182,14 @@ export function DocumentModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/40 p-4" onClick={onClose}>
       <div
-        className="mx-auto mt-4 flex max-h-[92vh] w-full max-w-[1000px] flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+        className="mx-auto mt-4 flex max-h-[92vh] w-full max-w-[1000px] flex-col overflow-hidden rounded-control bg-surface-card shadow-overlay"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-line-default px-6 py-4">
           <div className="min-w-0">
             <h3 className="text-xl font-semibold">{isResume ? "Tailored Resume" : "Cover Letter"}</h3>
-            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">{subtitle}</p>
-            <p className="text-xs text-[var(--text-muted)]">Generated from your saved profile and this job description.</p>
+            <p className="mt-0.5 text-sm text-foreground-secondary">{subtitle}</p>
+            <p className="text-xs text-foreground-muted">Generated from your saved profile and this job description.</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {isResume && quality.ats_friendly && <QualityBadge label="ATS-friendly" />}
               {quality.job_tailored && <QualityBadge label="Tailored to job" />}
@@ -197,11 +197,11 @@ export function DocumentModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="inline-flex overflow-hidden rounded-md border border-line text-sm">
+            <div className="inline-flex overflow-hidden rounded-control border border-line-default text-sm">
               <button
                 type="button"
                 aria-pressed={mode === "preview"}
-                className={`px-3 py-1.5 ${mode === "preview" ? "bg-pine text-white" : "bg-white text-[var(--text-secondary)]"}`}
+                className={`px-3 py-1.5 ${mode === "preview" ? "bg-surface-selected font-semibold text-brand-primary" : "bg-surface-card text-foreground-secondary"}`}
                 onClick={() => setMode("preview")}
               >
                 Preview
@@ -209,21 +209,21 @@ export function DocumentModal({
               <button
                 type="button"
                 aria-pressed={mode === "edit"}
-                className={`px-3 py-1.5 ${mode === "edit" ? "bg-pine text-white" : "bg-white text-[var(--text-secondary)]"}`}
+                className={`px-3 py-1.5 ${mode === "edit" ? "bg-surface-selected font-semibold text-brand-primary" : "bg-surface-card text-foreground-secondary"}`}
                 onClick={() => setMode("edit")}
               >
                 Edit
               </button>
             </div>
-            <button className="focus-ring rounded-md p-2" type="button" onClick={onClose} aria-label="Close document">
+            <button className="ds-focus-ring rounded-control p-2" type="button" onClick={onClose} aria-label="Close document">
               <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto bg-panel/50 p-6">
+        <div className="flex-1 overflow-auto bg-surface-subtle p-6">
           {(warnings.length > 0 || (quality.missing_job_skills_not_claimed?.length ?? 0) > 0) && (
-            <div className="mx-auto mb-4 max-w-[820px] rounded-md border border-[var(--warning-border)] bg-[var(--warning-surface)] px-3 py-2 text-xs text-[var(--warning)]">
+            <div className="mx-auto mb-4 max-w-[820px] rounded-control border border-status-warning-border bg-status-warning-surface px-3 py-2 text-xs text-status-warning">
               {warnings.map((warning) => (
                 <p key={warning}>{warning}</p>
               ))}
@@ -245,13 +245,13 @@ export function DocumentModal({
           )}
         </div>
 
-        <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-line bg-white px-6 py-3">
+        <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-line-default bg-surface-card px-6 py-3">
           <Button type="button" onClick={save}><Save className="h-4 w-4" /> Save document</Button>
           <Button variant="secondary" type="button" onClick={copy}>Copy text</Button>
           <Button variant="secondary" type="button" onClick={() => download("docx")}>Download DOCX</Button>
           <Button variant="secondary" type="button" onClick={() => download("pdf")}>Download PDF</Button>
           <Button variant="secondary" type="button" onClick={onClose}>Close</Button>
-          {status && <span className="text-sm text-[var(--text-muted)]">{status}</span>}
+          {status && <span className="text-sm text-foreground-muted">{status}</span>}
         </div>
       </div>
     </div>
@@ -260,7 +260,7 @@ export function DocumentModal({
 
 function QualityBadge({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-[var(--success-border)] bg-[var(--success-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent)]">
+    <span className="inline-flex items-center rounded-full border border-status-success-border bg-status-success-surface px-2 py-0.5 text-[11px] font-medium text-status-success">
       {label}
     </span>
   );
@@ -271,12 +271,12 @@ function ResumeEditor({ content, onChange }: { content: ResumeContent; onChange:
     onChange({ ...content, [key]: value });
   }
   return (
-    <div className="mx-auto grid max-w-[820px] gap-4 rounded-md bg-white p-5 text-sm shadow-sm">
+    <div className="mx-auto grid max-w-[820px] gap-4 rounded-control bg-surface-card p-5 text-sm shadow-sm">
       <label className="grid gap-1">
         <span className="font-medium">Professional summary</span>
         <textarea
           aria-label="Edit summary"
-          className="min-h-20 rounded-md border border-line p-2"
+          className="min-h-20 rounded-control border border-line-default p-2"
           value={content.summary}
           onChange={(event) => set("summary", event.target.value)}
         />
@@ -285,7 +285,7 @@ function ResumeEditor({ content, onChange }: { content: ResumeContent; onChange:
         <span className="font-medium">Core skills (comma separated)</span>
         <input
           aria-label="Edit skills"
-          className="h-10 rounded-md border border-line px-2"
+          className="h-10 rounded-control border border-line-default px-2"
           value={(content.skills?.[0]?.items ?? []).join(", ")}
           onChange={(event) =>
             set("skills", [{ category: content.skills?.[0]?.category ?? "Core Skills", items: splitCommas(event.target.value) }])
@@ -297,7 +297,7 @@ function ResumeEditor({ content, onChange }: { content: ResumeContent; onChange:
           <span className="font-medium">{exp.title} — {exp.company} · bullets (one per line)</span>
           <textarea
             aria-label={`Edit experience ${index + 1} bullets`}
-            className="min-h-24 rounded-md border border-line p-2"
+            className="min-h-24 rounded-control border border-line-default p-2"
             value={exp.bullets.join("\n")}
             onChange={(event) => {
               const experience = content.experience.map((item, itemIndex) =>
@@ -313,7 +313,7 @@ function ResumeEditor({ content, onChange }: { content: ResumeContent; onChange:
           <span className="font-medium">{proj.name} · bullets (one per line)</span>
           <textarea
             aria-label={`Edit project ${index + 1} bullets`}
-            className="min-h-20 rounded-md border border-line p-2"
+            className="min-h-20 rounded-control border border-line-default p-2"
             value={proj.bullets.join("\n")}
             onChange={(event) => {
               const projects = content.projects.map((item, itemIndex) =>
@@ -330,12 +330,12 @@ function ResumeEditor({ content, onChange }: { content: ResumeContent; onChange:
 
 function CoverLetterEditor({ content, onChange }: { content: CoverLetterContent; onChange: (c: CoverLetterContent) => void }) {
   return (
-    <div className="mx-auto grid max-w-[820px] gap-3 rounded-md bg-white p-5 text-sm shadow-sm">
+    <div className="mx-auto grid max-w-[820px] gap-3 rounded-control bg-surface-card p-5 text-sm shadow-sm">
       <label className="grid gap-1">
         <span className="font-medium">Greeting</span>
         <input
           aria-label="Edit greeting"
-          className="h-10 rounded-md border border-line px-2"
+          className="h-10 rounded-control border border-line-default px-2"
           value={content.greeting}
           onChange={(event) => onChange({ ...content, greeting: event.target.value })}
         />
@@ -345,7 +345,7 @@ function CoverLetterEditor({ content, onChange }: { content: CoverLetterContent;
           <span className="font-medium">Paragraph {index + 1}</span>
           <textarea
             aria-label={`Edit paragraph ${index + 1}`}
-            className="min-h-24 rounded-md border border-line p-2"
+            className="min-h-24 rounded-control border border-line-default p-2"
             value={paragraph}
             onChange={(event) => {
               const paragraphs = content.paragraphs.map((item, itemIndex) => (itemIndex === index ? event.target.value : item));
@@ -358,7 +358,7 @@ function CoverLetterEditor({ content, onChange }: { content: CoverLetterContent;
         <span className="font-medium">Signature</span>
         <input
           aria-label="Edit signature"
-          className="h-10 rounded-md border border-line px-2"
+          className="h-10 rounded-control border border-line-default px-2"
           value={content.signature}
           onChange={(event) => onChange({ ...content, signature: event.target.value })}
         />

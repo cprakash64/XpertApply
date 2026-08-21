@@ -124,6 +124,7 @@ type Options = {
   peopleDiscovered?: unknown;
   jobById?: Record<number, unknown>;
   jobByIdStatus?: number;
+  trackerApplications?: unknown[];
 };
 
 function mockApi(options: Options = {}) {
@@ -134,7 +135,7 @@ function mockApi(options: Options = {}) {
     calls.push(`${method} ${url.pathname}`);
 
     if (url.pathname.startsWith("/jobs/tracker/")) {
-      return Promise.resolve(jsonResponse({ applications: [] }));
+      return Promise.resolve(jsonResponse({ applications: options.trackerApplications ?? [] }));
     }
     if (url.pathname === "/jobs") {
       return Promise.resolve(
@@ -653,5 +654,30 @@ describe("Jobs workspace", () => {
     await waitFor(() => expect(api.calls).toContain("POST /jobs/1/save"));
     expect((await screen.findAllByText("Saved")).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /Apply on official site/ }).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The detail header used to render every tracker state in the success
+   * colour, so a closed application was announced in green. Tone now comes
+   * from the shared application-status module while the wording stays this
+   * screen's own.
+   */
+  it.each([
+    ["saved", "Saved", "status-neutral"],
+    ["applied", "Applied", "status-warning"],
+    ["interview", "Interview", "status-info"],
+    ["offer", "Offer", "status-success"],
+    ["rejected", "Closed", "status-danger"],
+    ["withdrawn", "Withdrawn", "status-neutral"]
+  ])("gives a %s application its canonical tone in the detail header", async (status, label, tone) => {
+    mockApi({ trackerApplications: [{ id: 1, job_id: 1, status }] });
+    renderWorkspace("?job=1");
+
+    const heading = await screen.findByRole("heading", { level: 1, name: "Machine Learning Engineer" });
+    const badge = await within(heading.parentElement as HTMLElement).findByText(label);
+    expect(badge.className).toMatch(new RegExp(tone));
+    if (tone !== "status-success") {
+      expect(badge.className).not.toMatch(/status-success/);
+    }
   });
 });

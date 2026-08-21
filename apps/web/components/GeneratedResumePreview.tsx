@@ -5,17 +5,23 @@ import type { ResumeContent } from "@/lib/api";
 /**
  * Renders the structured resume content as a clean, ATS-friendly document page:
  * single column, standard section names, simple bullets, no icons/tables/colors.
+ *
+ * The document BODY is a facsimile of printed paper and is deliberately fixed
+ * in both themes: it has to match the DOCX/PDF the same content is exported to,
+ * and a charcoal sheet would misrepresent what the employer receives. Only the
+ * surrounding modal chrome follows the active theme. The `document-*` tokens
+ * exist for exactly this and must not be used for product chrome.
  */
 export function GeneratedResumePreview({ content }: { content: ResumeContent }) {
   const header = content.header ?? { full_name: "", email: "", phone: "", location: "", links: [] };
   const contact = [header.email, header.phone, header.location, ...(header.links ?? [])].filter(Boolean);
 
   return (
-    <div className="mx-auto w-full max-w-[820px] bg-white px-10 py-9 text-[13px] leading-relaxed text-[var(--text-primary)] shadow-sm ring-1 ring-black/5 print:shadow-none [font-family:Georgia,'Times_New_Roman',serif]">
-      <header className="border-b border-[var(--text-primary)] pb-3 text-center">
+    <div className="mx-auto w-full max-w-[820px] bg-document-paper px-10 py-9 text-[13px] leading-relaxed text-document-ink shadow-sm ring-1 ring-black/5 print:shadow-none [font-family:Georgia,'Times_New_Roman',serif]">
+      <header className="border-b border-document-ink pb-3 text-center">
         <h1 className="text-2xl font-bold uppercase tracking-wide">{header.full_name || "Your Name"}</h1>
         {contact.length > 0 && (
-          <p className="mt-1 text-[12px] text-[var(--text-secondary)]">{contact.join("  |  ")}</p>
+          <p className="mt-1 text-[12px] text-document-ink-muted">{contact.join("  |  ")}</p>
         )}
       </header>
 
@@ -49,9 +55,9 @@ export function GeneratedResumePreview({ content }: { content: ResumeContent }) 
                   {exp.title}
                   {exp.company ? ` — ${exp.company}` : ""}
                 </p>
-                {exp.dates && <p className="text-[12px] text-[var(--text-secondary)]">{exp.dates}</p>}
+                {exp.dates && <p className="text-[12px] text-document-ink-muted">{exp.dates}</p>}
               </div>
-              {exp.location && <p className="text-[12px] italic text-[var(--text-secondary)]">{exp.location}</p>}
+              {exp.location && <p className="text-[12px] italic text-document-ink-muted">{exp.location}</p>}
               <BulletList items={exp.bullets} />
             </div>
           ))}
@@ -65,7 +71,7 @@ export function GeneratedResumePreview({ content }: { content: ResumeContent }) 
               <p className="font-bold">
                 {proj.name}
                 {proj.technologies?.length ? (
-                  <span className="font-normal text-[var(--text-secondary)]"> — {proj.technologies.join(", ")}</span>
+                  <span className="font-normal text-document-ink-muted"> — {proj.technologies.join(", ")}</span>
                 ) : null}
               </p>
               <BulletList items={proj.bullets} />
@@ -83,7 +89,7 @@ export function GeneratedResumePreview({ content }: { content: ResumeContent }) 
                 {edu.degree ? `, ${edu.degree}` : ""}
                 {edu.details ? ` — ${edu.details}` : ""}
               </p>
-              {edu.dates && <p className="text-[12px] text-[var(--text-secondary)]">{edu.dates}</p>}
+              {edu.dates && <p className="text-[12px] text-document-ink-muted">{edu.dates}</p>}
             </div>
           ))}
         </Section>
@@ -107,7 +113,7 @@ export function GeneratedResumePreview({ content }: { content: ResumeContent }) 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-4">
-      <h2 className="mb-1.5 border-b border-[var(--text-muted)] pb-0.5 text-[12px] font-bold uppercase tracking-wide text-[var(--text-primary)]">
+      <h2 className="mb-1.5 border-b border-document-rule pb-0.5 text-[12px] font-bold uppercase tracking-wide text-document-ink">
         {title}
       </h2>
       {children}

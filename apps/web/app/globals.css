@@ -27,11 +27,10 @@
   /* --------------------------------------------------------------------
    * XpertApply design-system foundation
    *
-   * Raw brand values mirror the shipped marketing site. Semantic aliases are
-   * the only values new product primitives consume. Existing product tokens
-   * below remain unchanged until their call sites are migrated deliberately;
-   * in particular, the legacy pine accent is NOT rebound to cyan because it
-   * still carries real success meaning in several workflows.
+   * Raw brand values mirror the shipped marketing site. These semantic roles
+   * are the only values any component consumes. The legacy names further down
+   * are now aliases onto them, so light and dark are one value set rather than
+   * two — see the alias block for why they still exist at all.
    * ------------------------------------------------------------------ */
   --xa-navy: #06245c;
   --xa-navy-hover: #0b3577;
@@ -113,6 +112,23 @@
   --color-status-danger-surface: #fff3ef;
   --color-status-danger-border: #f0b4a4;
 
+  /* Loading placeholders. A dedicated role rather than a border colour: a
+   * skeleton has to stay perceivable on the page, on a card, and on a tinted
+   * selected row, which is a stronger requirement than any line token carries.
+   * Deliberately subdued — around 1.2:1 in light and 1.35:1 in dark against
+   * their host surfaces — so a loading screen never reads as real content. */
+  --color-skeleton: #e3e8ef;
+
+  /* Generated resumes and cover letters are facsimiles of a printed page, not
+   * product chrome. They are FIXED in both themes: the preview has to match the
+   * DOCX/PDF the same content is exported to, and a charcoal "sheet of paper"
+   * would misrepresent what the employer receives. Never reuse these outside a
+   * document body. */
+  --color-document-paper: #ffffff;
+  --color-document-ink: #17202a;
+  --color-document-ink-muted: #4a5560;
+  --color-document-rule: #c2cad2;
+
   /* Shape, depth, and restrained product motion. Tailwind consumes these
    * directly; the existing 4px spacing scale remains canonical. */
   --radius-control: 8px;
@@ -127,20 +143,25 @@
   --duration-normal: 180ms;
   --easing-standard: cubic-bezier(.2, .78, .2, 1);
 
-  /* Surfaces — warm neutrals, matching the established XpertApply identity. */
-  --background: #fbfbf8;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-muted: #f6f7f2;
+  /* ------------------------------------------------------------------
+   * Legacy token names, now ALIASES onto the canonical roles above.
+   *
+   * These names are still referenced by unmigrated public surfaces and by the
+   * Tailwind compatibility palette (`bg-white`, `bg-panel`, `border-line`,
+   * `text-ink`), so they cannot simply be deleted. Pointing them at the
+   * canonical variables is what retires the warm pre-migration canvas
+   * everywhere at once, without a route-by-route background override: an alias
+   * resolves against whichever value the active colour scheme computed, so the
+   * dark block below no longer has to restate any of them.
+   * ------------------------------------------------------------------ */
+  --background: var(--color-surface-page);
+  --surface: var(--color-surface-card);
+  --surface-raised: var(--color-surface-raised);
+  --surface-muted: var(--color-surface-subtle);
 
-  /* Text */
-  --text-primary: #17211b;
-  --text-secondary: #33403a;
-  --text-muted: #5d675f;
-
-  /* Placeholder fill for loading skeletons. Sits between the page and the
-   * surface so a skeleton reads as "content pending" rather than as a control. */
-  --skeleton: #e7eae3;
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
 
   /* LinkedIn brand. A vendor colour, not a theme colour: it identifies one
    * specific outbound action and must never be reused for anything else.
@@ -154,40 +175,55 @@
   --email-action: #EA4335;
   --email-action-surface: rgba(234, 67, 53, 0.08);
 
-  /* Lines */
-  --border: #d8ddd2;
-  --border-strong: #b6bfb4;
+  /* Lines. `--border-strong` maps to the interactive role rather than the
+   * strong line role: its real consumers are scrollbar thumbs and hover edges,
+   * which need a visible, not a hairline, contrast. */
+  --border: var(--color-border-default);
+  --border-strong: var(--color-border-interactive);
 
-  /* Brand — deep pine green */
+  /* The pre-migration brand green.
+   *
+   * It is NOT the brand any more — brand is navy in light and cyan in dark,
+   * and nothing in the runtime references `--accent` or `--accent-hover`; the
+   * `pine` Tailwind alias likewise has zero call sites. Both names stay
+   * defined deliberately: `--accent-foreground` is still the paired foreground
+   * for the green *success* fill behind "Mark as applied", and deleting the
+   * palette name would turn a stray `bg-pine` into a class that silently does
+   * nothing instead of a test failure.
+   *
+   * `design-system-contracts.test.ts` forbids using any of them. Green in this
+   * product now means success, a fit band, or a vendor — never XpertApply. */
   --accent: #1f5e45;
   --accent-hover: #174935;
   --accent-foreground: #ffffff;
 
-  /* Focus: a distinct, non-brand hue so it reads as an affordance. */
-  --focus-ring: #2f6f9f;
+  /* Focus. One ring for the whole product: the legacy `.focus-ring` helper and
+   * the canonical `.ds-focus-ring` now resolve to the same colour. */
+  --focus-ring: var(--color-focus-ring);
 
-  /* Status */
-  --success: #1f6b4a;
-  --success-surface: #eef8f1;
-  --success-border: #b9d7c3;
-  --warning: #7a5d12;
-  --warning-surface: #fff9e8;
-  --warning-border: #ead191;
-  --danger: #9f3d28;
-  --danger-hover: #7f2f1e;
-  --danger-surface: #fff3ef;
-  --danger-border: #f0b4a4;
+  /* Status. Identical values to the canonical families — aliased so there is a
+   * single place to change a status hue. */
+  --success: var(--color-status-success);
+  --success-surface: var(--color-status-success-surface);
+  --success-border: var(--color-status-success-border);
+  --warning: var(--color-status-warning);
+  --warning-surface: var(--color-status-warning-surface);
+  --warning-border: var(--color-status-warning-border);
+  --danger: var(--color-status-danger);
+  --danger-hover: var(--color-status-danger-strong);
+  --danger-surface: var(--color-status-danger-surface);
+  --danger-border: var(--color-status-danger-border);
 
   /* Chrome */
-  --overlay: rgb(23 33 27 / 45%);
+  --overlay: var(--color-surface-overlay);
   --shadow: 0 1px 2px rgb(23 33 27 / 6%), 0 8px 24px rgb(23 33 27 / 8%);
   --glass-surface: rgb(255 255 255 / 90%);
   --glass-surface-strong: rgb(255 255 255 / 94%);
   --glass-border: rgb(23 33 27 / 14%);
   --glass-shadow: 0 24px 64px rgb(23 33 27 / 18%), 0 3px 12px rgb(23 33 27 / 8%);
   --glass-input: rgb(255 255 255 / 66%);
-  --input-background: #ffffff;
-  --disabled-background: #f1f2ee;
+  --input-background: var(--color-surface-raised);
+  --disabled-background: var(--color-surface-disabled);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -255,22 +291,17 @@
     --color-status-danger-surface: #2e1a15;
     --color-status-danger-border: #6b3527;
 
+    /* Lifted off the dark page/card rather than darkened, so a placeholder is
+     * a soft grey block and never a hole punched in the surface. Document
+     * paper/ink roles are deliberately NOT redefined here. */
+    --color-skeleton: #2f363b;
+
     --shadow-subtle: 0 1px 2px rgb(0 0 0 / 40%);
     --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 38%);
     --shadow-overlay: 0 26px 80px rgb(0 0 0 / 52%);
 
-    /* Charcoal/graphite with a warm cast — deliberately not pure black, which
-     * flattens elevation and reads as a void. */
-    --background: #14171a;
-    --surface: #1b1f22;
-    --surface-raised: #23282c;
-    --surface-muted: #21262a;
-
-    --text-primary: #eef1ed;
-    --text-secondary: #c3cbc5;
-    --text-muted: #98a29b;
-
-    --skeleton: #2b3136;
+    /* The legacy surface/text/line/status names are aliases now (see :root), so
+     * they follow the canonical charcoal roles above without being restated. */
 
     /* Brand hue is fixed; lightened for contrast on a dark surface. */
     --linkedin: #5ea9f0;
@@ -279,37 +310,17 @@
     --email-action: #f4796b;
     --email-action-surface: rgba(244, 121, 107, 0.14);
 
-    --border: #333a3d;
-    --border-strong: #4a5357;
-
-    /* Lifted from the light pine so it stays legible on a dark surface — still
-     * unmistakably the same brand green, never a bright green panel. */
+    /* Retained only so the pair above stays complete in both schemes. */
     --accent: #4c9e7a;
     --accent-hover: #5fb28d;
     --accent-foreground: #0d1310;
 
-    --focus-ring: #7db8e8;
-
-    --success: #6cc196;
-    --success-surface: #172b22;
-    --success-border: #2c5c45;
-    --warning: #e0b95f;
-    --warning-surface: #2b2415;
-    --warning-border: #5c4a1f;
-    --danger: #f08a70;
-    --danger-hover: #f5a692;
-    --danger-surface: #2e1a15;
-    --danger-border: #6b3527;
-
-    --overlay: rgb(0 0 0 / 62%);
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
     --glass-surface: rgb(27 31 34 / 88%);
     --glass-surface-strong: rgb(27 31 34 / 93%);
     --glass-border: rgb(255 255 255 / 13%);
     --glass-shadow: 0 24px 64px rgb(0 0 0 / 48%), 0 3px 12px rgb(0 0 0 / 30%);
     --glass-input: rgb(255 255 255 / 8%);
-    --input-background: #23282c;
-    --disabled-background: #262b2e;
   }
 }
 
@@ -357,8 +368,12 @@ body {
   backdrop-filter: blur(16px);
 }
 
+/* Auth chrome. The glass surface/border/shadow tokens below are SHARED with
+ * the authenticated assisted-application modal and are deliberately untouched;
+ * only this backdrop is auth-owned, and it was the last hard-coded warm black
+ * on a public surface. */
 .auth-backdrop {
-  background: rgb(9 13 11 / 52%);
+  background: var(--color-surface-overlay);
   -webkit-backdrop-filter: blur(16px) saturate(108%);
   backdrop-filter: blur(16px) saturate(108%);
 }
@@ -438,15 +453,28 @@ button {
   color-scheme: inherit;
 }
 
-/* Placeholders stay legible instead of fading into the field. */
-::placeholder {
-  color: var(--text-muted);
+/* Placeholders stay legible instead of fading into the field.
+ *
+ * Tailwind's preflight ships `input::placeholder, textarea::placeholder` with
+ * gray-400 — specificity (0,0,2), which silently outranked a bare
+ * `::placeholder` rule and left placeholder text at 2.6:1 on a white field.
+ * Matching the same element+pseudo pairs is what makes this rule actually
+ * apply; the muted text role then carries it to ~5:1 in light and ~6:1 in
+ * dark. Placeholders remain supplementary here — every control has a real
+ * label — but supplementary is not an excuse for unreadable. */
+::placeholder,
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
   opacity: 1;
 }
 
+/* Native checkboxes and radios are "selected" states, not success states. They
+ * follow the canonical primary role — navy in light, cyan in dark — so no form
+ * control in the product is still tinted with the legacy pine green. */
 input[type="checkbox"],
 input[type="radio"] {
-  accent-color: var(--accent);
+  accent-color: var(--color-brand-primary);
 }
 
 :disabled {

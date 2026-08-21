@@ -20,7 +20,7 @@ import {
   loadPeople,
   subscribeToPeople
 } from "@/lib/peopleClient";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import {
   derivePeopleView,
   formatResetTime,
@@ -484,7 +484,7 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
     <section aria-labelledby={titleId} className="mt-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <h2 id={titleId} className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+          <h2 id={titleId} className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground-muted">
             People Who Can Help
           </h2>
           {/* Provenance, scope, freshness and allowance live here — available on
@@ -512,15 +512,15 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
       {/* One concise state, and only when there is something to say. */}
       <div aria-live="polite" className="mt-3 empty:mt-0">
         {loading && !data ? (
-          <p className="text-sm text-[var(--text-muted)]">Checking for saved results…</p>
+          <p className="text-sm text-foreground-muted">Checking for saved results…</p>
         ) : null}
         {discovering || data?.status === "in_progress" ? (
-          <p className="text-sm text-[var(--text-muted)]">Finding reliable professional matches…</p>
+          <p className="text-sm text-foreground-muted">Finding reliable professional matches…</p>
         ) : null}
-        {availableMessage ? <p className="text-sm text-[var(--text-muted)]">{availableMessage}</p> : null}
+        {availableMessage ? <p className="text-sm text-foreground-muted">{availableMessage}</p> : null}
         {error ? (
           <div>
-            <p role="alert" className="text-sm text-[var(--danger)]">{error}</p>
+            <p role="alert" className="text-sm text-status-danger">{error}</p>
             {errorCanRetry ? (
               <Button variant="secondary" className="mt-3" onClick={() => void controller.load(true)}>
                 Retry
@@ -530,16 +530,16 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
         ) : null}
         {!PEOPLE_FAILURE_STATUSES.includes(data?.status ?? "") && !discovering
           ? data?.warnings.map((warning) => (
-              <p key={warning} className="text-sm text-[var(--text-muted)]">{warning}</p>
+              <p key={warning} className="text-sm text-foreground-muted">{warning}</p>
             ))
           : null}
         {data?.status === "not_started" && !discovering ? (
-          <p className="text-sm text-[var(--text-muted)]">
+          <p className="text-sm text-foreground-muted">
             Find recruiters and referral candidates. Discovery runs only when you choose Find people.
           </p>
         ) : null}
         {view.cached && view.state !== "loading" ? (
-          <p className="text-xs text-[var(--text-muted)]">
+          <p className="text-xs text-foreground-muted">
             Showing previously saved results while the people provider is unavailable.
           </p>
         ) : null}
@@ -549,9 +549,9 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
           * nothing at all in that case leaves the panel silently blank. */}
         {showEmptyState ? (
           <div>
-            <p className="text-sm text-[var(--text-muted)]">{PEOPLE_MESSAGES.empty}</p>
+            <p className="text-sm text-foreground-muted">{PEOPLE_MESSAGES.empty}</p>
             {canBroaden ? (
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
+              <p className="mt-2 text-xs text-foreground-muted">
                 A broader search may include wider titles or evidence-backed related-company matches, and uses{" "}
                 {broadenedSearchCost} additional people search.
               </p>
@@ -561,7 +561,7 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
         {/* Every enabled provider is unavailable. One sentence, no provider
           * names, no credit accounting. */}
         {data && PEOPLE_FAILURE_STATUSES.includes(data.status) ? (
-          <p className="text-sm text-[var(--text-muted)]">
+          <p className="text-sm text-foreground-muted">
             {providerFailureMessage(data)}
           </p>
         ) : null}
@@ -573,7 +573,7 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
             <section key={key} aria-labelledby={`${titleId}-${key}`}>
               <h3
                 id={`${titleId}-${key}`}
-                className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]"
+                className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted"
               >
                 {heading}
               </h3>
@@ -645,7 +645,7 @@ function AboutTheseResults({ data }: { data: PeopleResponse | null }) {
         aria-label="About these results"
         title="About these results"
         onClick={() => setOpen((current) => !current)}
-        className="focus-ring inline-flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-panel hover:text-[var(--text-secondary)]"
+        className="ds-focus-ring inline-flex h-6 w-6 items-center justify-center rounded-full text-foreground-muted transition-colors hover:bg-surface-subtle hover:text-foreground-secondary"
       >
         <Info className="h-3.5 w-3.5" aria-hidden />
       </button>
@@ -654,9 +654,9 @@ function AboutTheseResults({ data }: { data: PeopleResponse | null }) {
           id={panelId}
           role="group"
           aria-label="About these results"
-          className="absolute left-0 top-8 z-20 w-[19rem] rounded-xl border border-line bg-white p-3.5 text-xs leading-5 text-[var(--text-muted)] shadow-card"
+          className="absolute left-0 top-8 z-20 w-[19rem] rounded-card border border-line-default bg-surface-card p-3.5 text-xs leading-5 text-foreground-muted shadow-card"
         >
-          <p className="text-[var(--text-secondary)]">
+          <p className="text-foreground-secondary">
             Contacts found at the hiring company from professional data sources. Roles are potential matches, not
             confirmed assignments, and employment is not independently verified.
           </p>
@@ -772,17 +772,17 @@ function PersonCard({
   }
 
   return (
-    <article className="rounded-2xl border border-line bg-white p-4 transition-colors hover:border-border-strong sm:p-5">
+    <article className="rounded-card border border-line-default bg-surface-card p-4 transition-colors hover:border-border-strong sm:p-5">
       <div className="flex items-start gap-3.5">
         <PersonAvatar name={person.full_name} />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h4 className="truncate text-[15px] font-semibold leading-tight text-[var(--text-primary)]">
+              <h4 className="truncate text-[15px] font-semibold leading-tight text-foreground">
                 {person.full_name}
               </h4>
-              <p className="mt-1 truncate text-sm text-[var(--text-secondary)]">{person.current_title}</p>
-              <p className="truncate text-sm text-[var(--text-muted)]">{person.current_company}</p>
+              <p className="mt-1 truncate text-sm text-foreground-secondary">{person.current_title}</p>
+              <p className="truncate text-sm text-foreground-muted">{person.current_company}</p>
             </div>
             <CategoryBadge person={person} />
           </div>
@@ -790,24 +790,24 @@ function PersonCard({
       </div>
 
       {/* Confidence and freshness in one line instead of four. */}
-      <p className="mt-3.5 text-xs leading-5 text-[var(--text-muted)]">{evidenceLine(person)}</p>
+      <p className="mt-3.5 text-xs leading-5 text-foreground-muted">{evidenceLine(person)}</p>
       {/* The caveats stay — quietly. A grey line is still read; four amber
         * paragraphs per card were skipped. */}
       {[person.employment_warning, person.limitations[0]].filter(Boolean).map((note) => (
-        <p key={note} className="mt-1.5 flex gap-1.5 text-xs leading-5 text-[var(--text-muted)]">
+        <p key={note} className="mt-1.5 flex gap-1.5 text-xs leading-5 text-foreground-muted">
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>{note}</span>
         </p>
       ))}
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/70 pt-3.5">
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line-subtle pt-3.5">
         {profileUrl ? (
           /* LinkedIn brand colour on hover and keyboard focus, applied to the
            * anchor itself so focus-visible actually receives it — a wrapper
            * would never see either state. Only this one action is branded;
            * colouring neighbouring buttons would imply they are LinkedIn too. */
           <a
-            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--linkedin)] hover:bg-[var(--linkedin-surface)] hover:text-[var(--linkedin)] focus-visible:border-[var(--linkedin)] focus-visible:bg-[var(--linkedin-surface)] focus-visible:text-[var(--linkedin)]"
+            className="ds-focus-ring group inline-flex h-9 items-center gap-2 rounded-control border border-line-default bg-surface-card px-3 text-sm font-medium text-foreground-secondary transition-colors hover:border-[var(--linkedin)] hover:bg-[var(--linkedin-surface)] hover:text-[var(--linkedin)] focus-visible:border-[var(--linkedin)] focus-visible:bg-[var(--linkedin-surface)] focus-visible:text-[var(--linkedin)]"
             href={profileUrl}
             target="_blank"
             rel="noopener noreferrer"
@@ -830,7 +830,7 @@ function PersonCard({
             type="button"
             disabled={busy}
             onClick={() => void openEmail()}
-            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
+            className="ds-focus-ring group inline-flex h-9 items-center gap-2 rounded-control border border-line-default bg-surface-card px-3 text-sm font-medium text-foreground-secondary transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden />}
             Email
@@ -840,14 +840,14 @@ function PersonCard({
             type="button"
             disabled={busy}
             onClick={() => void onAction(person, "email")}
-            className="focus-ring group inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
+            className="ds-focus-ring group inline-flex h-9 items-center gap-2 rounded-control border border-line-default bg-surface-card px-3 text-sm font-medium text-foreground-secondary transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden />}
             {person.email_status === "provider_error" ? "Retry work email" : "Find work email"}
           </button>
         ) : (
           <span
-            className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded-lg border border-line/70 px-3 text-sm text-[var(--text-muted)] opacity-70"
+            className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded-control border border-line-subtle px-3 text-sm text-foreground-muted opacity-70"
             title={emailNote ?? "No verified work email is available for this contact."}
           >
             <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden /> No email
@@ -859,7 +859,7 @@ function PersonCard({
             type="button"
             disabled={busy}
             onClick={() => void onDraft(person, "linkedin_message")}
-            className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm font-medium text-pine transition-colors hover:bg-[var(--success-surface)] disabled:opacity-50"
+            className="ds-focus-ring inline-flex h-9 items-center gap-2 rounded-control px-2.5 text-sm font-semibold text-foreground-link transition-colors duration-fast ease-standard hover:bg-surface-subtle disabled:opacity-50"
           >
             <MessageSquareText className="h-4 w-4" aria-hidden /> Draft message
           </button>
@@ -869,13 +869,13 @@ function PersonCard({
       {/* A disabled control needs a reason the user can actually read — a title
         * attribute alone is invisible to keyboard and touch. */}
       {emailNote && !verifiedEmail ? (
-        <p className="mt-2.5 text-xs text-[var(--text-muted)]">{emailNote}</p>
+        <p className="mt-2.5 text-xs text-foreground-muted">{emailNote}</p>
       ) : null}
       {verifiedEmail ? (
-        <p className="mt-2.5 truncate text-xs text-[var(--text-muted)]">Verified work email: {verifiedEmail}</p>
+        <p className="mt-2.5 truncate text-xs text-foreground-muted">Verified work email: {verifiedEmail}</p>
       ) : null}
       {status ? (
-        <p aria-live="polite" className="mt-2 text-xs text-[var(--text-muted)]">
+        <p aria-live="polite" className="mt-2 text-xs text-foreground-muted">
           {status}
         </p>
       ) : null}
@@ -884,7 +884,7 @@ function PersonCard({
         type="button"
         disabled={busy}
         onClick={() => void onAction(person, "incorrect")}
-        className="focus-ring mt-3 rounded text-xs text-[var(--text-muted)] underline-offset-2 hover:underline disabled:opacity-50"
+        className="ds-focus-ring mt-3 rounded text-xs text-foreground-muted underline-offset-2 hover:underline disabled:opacity-50"
       >
         Report incorrect information
       </button>
@@ -908,7 +908,7 @@ function PersonAvatar({ name }: { name: string }) {
   return (
     <span
       aria-hidden
-      className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line bg-panel text-sm font-semibold text-[var(--text-secondary)]"
+      className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line-default bg-surface-subtle text-sm font-semibold text-foreground-secondary"
     >
       {initials || "?"}
     </span>
@@ -929,8 +929,8 @@ function CategoryBadge({ person }: { person: PeopleRecommendation }) {
       title={person.category_label}
       className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
         recruiter
-          ? "bg-[var(--success-surface)] text-[var(--success)]"
-          : "border border-line text-[var(--text-muted)]"
+          ? "bg-status-success-surface text-status-success"
+          : "border border-line-default text-foreground-muted"
       }`}
     >
       {label}
@@ -1125,18 +1125,18 @@ function OutreachDraft({
 
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="outreach-draft-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-full w-full max-w-xl overflow-y-auto rounded-xl bg-[var(--surface)] p-5 shadow-xl">
+      <div className="max-h-full w-full max-w-xl overflow-y-auto rounded-card bg-surface-card p-5 shadow-overlay">
         <div className="flex items-center justify-between">
           <div>
             <h3 id="outreach-draft-title" className="text-lg font-semibold">Review outreach draft</h3>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
+            <p className="mt-1 text-sm text-foreground-muted">
               {channelLabel} to {recipient}
             </p>
           </div>
           <button aria-label="Close outreach draft" onClick={close}><X /></button>
         </div>
         {draft.generation_path === "deterministic_template" ? (
-          <p className="mt-2 text-xs text-[var(--text-muted)]">
+          <p className="mt-2 text-xs text-foreground-muted">
             Generated from a verified template.
           </p>
         ) : null}
@@ -1145,7 +1145,7 @@ function OutreachDraft({
             Tone
             <select
               aria-label="Draft tone"
-              className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] p-2"
+              className="mt-1 w-full rounded-control border border-line-default bg-surface-raised p-2"
               value={context.tone}
               onChange={(event) => setContext({
                 ...context,
@@ -1161,7 +1161,7 @@ function OutreachDraft({
             Optional guidance
             <input
               aria-label="Draft guidance"
-              className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] p-2"
+              className="mt-1 w-full rounded-control border border-line-default bg-surface-raised p-2"
               value={context.guidance}
               onChange={(event) => setContext({ ...context, guidance: event.target.value })}
               placeholder="Add a fact or preference"
@@ -1174,7 +1174,7 @@ function OutreachDraft({
               Subject
               <input
                 aria-label="Outreach subject"
-                className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] p-2"
+                className="mt-1 w-full rounded-control border border-line-default bg-surface-raised p-2"
                 value={draft.subject}
                 onChange={(event) => setDraft({ ...draft, subject: event.target.value })}
               />
@@ -1190,7 +1190,7 @@ function OutreachDraft({
         ) : null}
         <textarea
           aria-label="Outreach draft"
-          className="mt-4 min-h-56 w-full rounded-md border border-[var(--border)] bg-[var(--input-background)] p-3"
+          className="mt-4 min-h-56 w-full rounded-control border border-line-default bg-surface-raised p-3"
           value={draft.body}
           onChange={(event) => setDraft({
             ...draft,
@@ -1198,18 +1198,18 @@ function OutreachDraft({
             character_count: event.target.value.length
           })}
         />
-        <p className="mt-1 text-xs text-[var(--text-muted)]">{draft.character_count} characters</p>
+        <p className="mt-1 text-xs text-foreground-muted">{draft.character_count} characters</p>
 
         {/* The AI action is announced politely rather than replacing the
           * controls, so Email, LinkedIn, editing and closing stay usable while
           * a refinement is running. */}
         {AI_IMPROVE_MESSAGE[aiState] ? (
-          <p aria-live="polite" className="mt-2 text-xs text-[var(--text-muted)]">
+          <p aria-live="polite" className="mt-2 text-xs text-foreground-muted">
             {aiState === "improved" ? "✓ " : ""}{AI_IMPROVE_MESSAGE[aiState]}
           </p>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-line-default pt-4">
           {aiEnabled ? (
             <Button
               variant="secondary"
@@ -1258,7 +1258,7 @@ function OutreachDraft({
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => void copy("body", draft.body)}
-              className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-medium text-ink transition hover:bg-panel"
+              className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground transition hover:bg-surface-subtle"
             >
               <ExternalLink className="h-4 w-4" /> Copy and open LinkedIn
             </a>
@@ -1281,17 +1281,17 @@ function OutreachDraft({
           <Button variant="secondary" onClick={close}>Close</Button>
         </div>
         {isEmail && !emailAddress ? (
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          <p className="mt-2 text-sm text-foreground-secondary">
             Verified email unavailable. You can still copy this message and send it yourself.
           </p>
         ) : null}
         {!isEmail && !linkedInUrl ? (
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          <p className="mt-2 text-sm text-foreground-secondary">
             LinkedIn profile URL is unavailable for this contact. You can still copy this message.
           </p>
         ) : null}
         {!isEmail && linkedInUrl ? (
-          <p className="mt-2 text-sm text-[var(--text-muted)]">
+          <p className="mt-2 text-sm text-foreground-muted">
             LinkedIn does not accept a prefilled message in a profile link, so the draft is copied to your
             clipboard for you to paste.
           </p>
@@ -1306,7 +1306,7 @@ function OutreachDraft({
           * diagnostics endpoint and structured logs. A collapsible section
           * would not have fixed this: the problem is that the strings are
           * internal, not that they took up space. */}
-        <p className="mt-2 text-sm text-[var(--text-muted)]">
+        <p className="mt-2 text-sm text-foreground-muted">
           Review and edit before manually sending. XpertApply never sends this message automatically.
         </p>
       </div>

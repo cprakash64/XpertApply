@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, KeyRound, Loader2, ShieldCheck } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { api } from "@/lib/api";
 
 /**
@@ -119,17 +119,17 @@ export function ApplicationAccounts() {
       <h2 id="application-accounts-heading" className="text-lg font-semibold tracking-[-0.02em]">
         Application accounts
       </h2>
-      <p className="mt-1 max-w-2xl text-sm text-[var(--text-muted)]">
+      <p className="mt-1 max-w-2xl text-sm text-foreground-muted">
         XpertApply uses this only when an application requires authentication.
       </p>
 
-      <div className="mt-4 rounded-2xl border border-line bg-white p-5">
+      <div className="mt-4 rounded-card border border-line-default bg-surface-card p-5">
         {loading ? (
-          <p className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)]">
+          <p className="inline-flex items-center gap-2 text-sm text-foreground-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…
           </p>
         ) : loadError ? (
-          <div role="alert" className="text-sm text-[var(--danger)]">
+          <div role="alert" className="text-sm text-status-danger">
             <p>{loadError}</p>
             <Button type="button" variant="secondary" className="mt-3" onClick={load}>
               Try again
@@ -141,13 +141,13 @@ export function ApplicationAccounts() {
               <div className="flex min-w-0 items-start gap-3">
                 <span
                   aria-hidden
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-panel text-[var(--text-muted)]"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-card bg-surface-subtle text-foreground-muted"
                 >
                   <KeyRound className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">Workday</p>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  <p className="mt-0.5 text-xs text-foreground-muted">
                     {configured
                       ? "Password stored securely"
                       : "No password stored"}
@@ -155,7 +155,7 @@ export function ApplicationAccounts() {
                   {/* A fixed-length mask, never the stored value — the browser
                       is never given the password, so this cannot reveal it. */}
                   {configured && (
-                    <p aria-hidden className="mt-2 font-mono text-sm tracking-[0.2em] text-[var(--text-muted)]">
+                    <p aria-hidden className="mt-2 font-mono text-sm tracking-[0.2em] text-foreground-muted">
                       ••••••••••
                     </p>
                   )}
@@ -163,10 +163,10 @@ export function ApplicationAccounts() {
               </div>
 
               <span
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-control border px-2 py-1 text-xs font-medium ${
                   configured
-                    ? "border-[var(--success-border)] bg-[var(--success-surface)] text-pine"
-                    : "border-line text-[var(--text-muted)]"
+                    ? "border-status-success-border bg-status-success-surface text-status-success"
+                    : "border-line-default text-foreground-muted"
                 }`}
               >
                 {/* Status carries an icon and a word, not colour alone. */}
@@ -179,11 +179,11 @@ export function ApplicationAccounts() {
               </span>
             </div>
 
-            <div className="mt-5 border-t border-line pt-4">
+            <div className="mt-5 border-t border-line-default pt-4">
               <label htmlFor="workday-password" className="block text-sm font-medium">
                 {configured ? "Replace password" : "Workday password"}
               </label>
-              <p id="workday-password-hint" className="mt-1 text-xs text-[var(--text-muted)]">
+              <p id="workday-password-hint" className="mt-1 text-xs text-foreground-muted">
                 At least 8 characters. Stored encrypted — XpertApply never displays it again and
                 never returns it to this page.
               </p>
@@ -195,7 +195,7 @@ export function ApplicationAccounts() {
                   autoComplete="new-password"
                   aria-describedby="workday-password-hint"
                   onChange={(event) => setPassword(event.target.value)}
-                  className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-[var(--input-background)] px-3 text-sm"
+                  className="ds-field ds-focus-ring h-10 min-w-0 flex-1 rounded-field border border-line-interactive bg-surface-card px-3 text-sm text-foreground transition duration-fast ease-standard hover:border-line-strong"
                 />
                 <Button type="button" onClick={() => void save()} disabled={saving || !password}>
                   {saving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
@@ -217,19 +217,19 @@ export function ApplicationAccounts() {
                 <div
                   role="alertdialog"
                   aria-labelledby="remove-credential-title"
-                  className="mt-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] p-4"
+                  className="mt-4 rounded-card border border-status-danger-border bg-status-danger-surface p-4"
                 >
-                  <p id="remove-credential-title" className="text-sm font-semibold text-[var(--danger)]">
+                  <p id="remove-credential-title" className="text-sm font-semibold text-status-danger">
                     Remove the stored Workday password?
                   </p>
-                  <p className="mt-1 text-xs text-[var(--danger)]">
+                  <p className="mt-1 text-xs text-status-danger">
                     Applications that need it will ask you to sign in yourself.
                   </p>
                   <div className="mt-3 flex gap-2">
                     <Button type="button" variant="secondary" onClick={() => setConfirmRemove(false)}>
                       Cancel
                     </Button>
-                    <Button type="button" variant="danger" onClick={() => void remove()} disabled={removing}>
+                    <Button type="button" variant="destructive" onClick={() => void remove()} disabled={removing}>
                       {removing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
                       Remove password
                     </Button>
@@ -239,12 +239,12 @@ export function ApplicationAccounts() {
 
               <p aria-live="polite" className="mt-3 min-h-5 text-sm">
                 {status && (
-                  <span className="inline-flex items-center gap-2 text-pine">
+                  <span className="inline-flex items-center gap-2 text-status-success">
                     <Check className="h-3.5 w-3.5" aria-hidden /> {status}
                   </span>
                 )}
                 {error && (
-                  <span role="alert" className="inline-flex items-center gap-2 text-[var(--danger)]">
+                  <span role="alert" className="inline-flex items-center gap-2 text-status-danger">
                     <AlertTriangle className="h-3.5 w-3.5" aria-hidden /> {error}
                   </span>
                 )}

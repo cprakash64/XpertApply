@@ -38,10 +38,12 @@ export function CompanyLogo({
 
   return (
     <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-white"
-      // The app supports a dark theme and some company favicons (RTX is one)
-      // are black-on-transparent. Pin the logo canvas to real white so a valid
-      // image never looks like an empty dark square.
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-card border border-line-default"
+      // VENDOR IDENTITY EXCEPTION. The app supports a dark theme and some
+      // company favicons (RTX is one) are black-on-transparent. Pin the logo
+      // canvas to real white so a valid image never looks like an empty dark
+      // square. This inline value is the single source of truth for the tile —
+      // no theme token belongs here.
       style={{ width: size, height: size, backgroundColor: "#ffffff" }}
     >
       {src ? (

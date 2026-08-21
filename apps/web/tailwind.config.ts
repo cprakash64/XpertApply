@@ -81,6 +81,15 @@ const config: Config = {
         "status-danger-strong": "var(--color-status-danger-strong)",
         "status-danger-surface": "var(--color-status-danger-surface)",
         "status-danger-border": "var(--color-status-danger-border)",
+        skeleton: "var(--color-skeleton)",
+
+        // Printed-document facsimile. Fixed in both themes on purpose — see the
+        // token definitions in globals.css. Only a generated resume / cover
+        // letter body may use these.
+        "document-paper": "var(--color-document-paper)",
+        "document-ink": "var(--color-document-ink)",
+        "document-ink-muted": "var(--color-document-ink-muted)",
+        "document-rule": "var(--color-document-rule)",
 
         // Semantic tokens
         background: "var(--background)",

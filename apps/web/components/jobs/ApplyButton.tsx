@@ -20,7 +20,7 @@ export function AssistedApplyButton({
   const height = size === "lg" ? "h-11 px-5" : "h-10 px-4";
   if (!isValidApplyUrl(url)) {
     return (
-      <span className={`inline-flex ${height} items-center rounded-md bg-panel text-sm text-[var(--text-muted)]`}>
+      <span className={`inline-flex ${height} items-center rounded-control bg-surface-subtle text-sm text-foreground-muted`}>
         No official link available
       </span>
     );
@@ -32,9 +32,9 @@ export function AssistedApplyButton({
         event.stopPropagation();
         onApply();
       }}
-      className={`focus-ring inline-flex ${height} items-center gap-2 rounded-md bg-pine text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)]`}
+      className={`ds-focus-ring inline-flex ${height} shrink-0 items-center gap-2 rounded-control bg-action-primary text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px`}
     >
-      Apply on official site <ExternalLink className="h-4 w-4" />
+      Apply on official site <ExternalLink aria-hidden className="h-4 w-4" />
     </button>
   );
 }

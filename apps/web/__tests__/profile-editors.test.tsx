@@ -1078,7 +1078,9 @@ describe("focused profile editors", () => {
     // Every card and its inner wrappers opt out of min-width:auto, which is
     // what lets long company names and tech lists truncate instead of pushing
     // the page wider than the screen.
-    const cards = document.querySelectorAll("li.rounded-2xl");
+    // `rounded-card` is the design-system name for the same card radius the
+    // legacy `rounded-2xl` expressed; the claim below is unchanged.
+    const cards = document.querySelectorAll("li.rounded-card");
     expect(cards.length).toBeGreaterThan(0);
     for (const card of cards) {
       expect(card.querySelector(".min-w-0")).not.toBeNull();

@@ -589,7 +589,9 @@ Removed as brand/action/selection: the `bg-pine` "Find jobs" and next-action CTA
 
 Kept or newly made semantic: an *Offer* application status is `status-success`, a *rejected* one is `status-danger`, *interview* is `status-info`, and in-flight states are `status-warning`/neutral — the Dashboard previously flattened all of these to one neutral pill and now matches the Tracker. The pipeline's furthest-reached stage is green only when that stage is Offer. Fit scores now use the existing `lib/fitScore.ts` bands, so a 47% match reads orange instead of the flat success green every score used to wear; `lib/fitScore.ts` itself was not modified, because it is shared with the unmigrated Jobs surfaces.
 
-### Known duplication: application status tones
+### Known duplication: application status tones (RESOLVED in Stage 5)
+
+> Superseded by the Stage 5 record below: the shared module this section names as its consolidation target now exists at `lib/applicationStatus.ts`, and both screens consume it. The description below is kept as the record of why the duplication was accepted at the time.
 
 The Dashboard's status→tone map lives in `DashboardClient.tsx` as a local `statusTone()` returning canonical `StatusTone` values. The Tracker's equivalent lives in `TrackerClient.tsx` as a local `StatusBadge` that emits legacy colour classes directly (`--success-*`, `border-sky-300/40`, `--danger-*`, `--warning-*`, `border-line bg-panel`). The two agree on the domain rule — offer is success, interview is info, rejected is danger, applied/applying is warning, everything else neutral — but express it in two different vocabularies.
 
@@ -617,6 +619,545 @@ Measured contrast, light then dark: page heading 17.14 / 15.80, subtitle 4.80 / 
 Real Chromium against a local production build covered 1440×900, 900×900, 390×844, and 390×667 in both schemes, plus loading, empty, and error states. No horizontal overflow at any size. Keyboard traversal of the Dashboard's own controls showed a 3px `focus-ring` outline with `:focus-visible` on every link and button.
 
 The complete web suite passed 44 files / 848 tests, including five new Dashboard tests asserting the semantic contracts rather than markup. The responsive AppShell suite passed 9/9, confirming the shell is unchanged. TypeScript, ESLint, and the production build passed.
+
+## 21C. Stage 5 Tracker migration record
+
+Status: implemented for visual review on 2026-08-17; read and mutation behaviour frozen.
+
+### Strategy
+
+The Tracker is an operational list, not a dashboard: the job is to scan many applications and move one along. So the migration spends its budget on legibility and density rather than decoration — border-first cards, no shadows, muted icons, and colour reserved for the one thing being scanned, which is the stage an application is in.
+
+What the Tracker actually is, confirmed by reading the implementation rather than assuming: a single `GET /jobs/tracker/submitted` read into local state, a stage filter, a text search, four summary counts, and a per-card `<select>` that issues `PUT /jobs/{job_id}/tracker`. **There is no kanban board, no drag and drop, no detail drawer, no sorting, no pagination, and no delete/archive.** None of those were invented for this stage.
+
+### Canonical application status semantics
+
+Stage 4 recorded the Dashboard/Tracker status mapping as knowingly duplicated and named this stage as the place to fix it. It is now fixed.
+
+`lib/applicationStatus.ts` is the single source of truth. It follows the `lib/fitScore.ts` precedent exactly — a pure domain module with no React, no API client and no component imports, so either screen can consume it without dragging the other's module graph along.
+
+| Status | Tone | Meaning |
+| --- | --- | --- |
+| `saved` | neutral | parked, no judgement |
+| `ready_to_apply` | neutral | parked, no judgement |
+| `applying` | warning | in flight, may need attention |
+| `applied` | warning | in flight, may need attention |
+| `interview` | info | progress worth noticing, not yet an outcome |
+| `offer` | success | the one genuine positive outcome |
+| `rejected` | danger | the one genuine negative outcome |
+| `withdrawn` | neutral | closed without judgement |
+| *anything else* | neutral | unknown degrades safely |
+
+`getApplicationStatusTone()` accepts a bare string because the Dashboard payload types `status` as `string` and because the backend may add a status this build has never seen. Unknown values return `neutral` rather than throwing — neutral reads as "no judgement", which is the only honest thing to show for a status the frontend cannot interpret.
+
+`ApplicationStatusTone` is declared in `lib/` rather than imported from `components/ui`, so the directory keeps the UI-free layering every other module in it follows. A contract test asserts the two unions stay mutually assignable, so the deliberate duplication of the union cannot silently drift.
+
+### Label decision: "Offer / selected" vs "Offer"
+
+Resolved as **case A — same domain state, different context.** Both are correct and both are kept.
+
+On the Tracker the value names a stage you *move an application into*, and "Offer / selected" says that some employers call it an offer and some call it being selected; it is also the confirmation wording ("Moved to Offer / selected."). The Dashboard's dense badge has no room for that nuance and says "Offer".
+
+So the shared module owns `formatApplicationStatus()` — the compact, neutral label, including the `ready_to_apply` → "Saved" translation that both screens already agreed on — and the Tracker keeps a three-line local override for `offer` only. Domain semantic is shared; presentation copy stays with the page that owns the context.
+
+### Legacy styling removed
+
+`text-pine` / `bg-pine` (filter selection, summary-card icon tiles, spinners, links, empty-state CTA, confirmation text), `--success-surface` on the summary-card icon tiles, the hand-written status colours including the raw `border-sky-300/40 bg-sky-500/10 text-sky-500` interview treatment, `rounded-2xl`, `bg-white`, `border-line`, `shadow-sm`/`hover:shadow-md`, and the legacy `focus-ring`.
+
+Semantic green is preserved and is now *more* meaningful, not less: green appears only on the offer badge and the stage-move confirmation. The old build spent the success palette on "Total tracked", which is not an achievement.
+
+### Component treatment
+
+| Region | Treatment |
+| --- | --- |
+| page header | Dashboard hierarchy — 36px desktop / 30px mobile, muted supporting line |
+| summary counts | neutral `surface-card`, muted icon in a subtle tile, `tabular-nums` value |
+| stage filters | canonical `Chip` with `aria-pressed`, in a labelled `role="group"` |
+| search | custom markup retained for the inset icon, borrowing the canonical field visual contract |
+| application card | `surface-card`, `line-default`, canonical radius, restrained `hover:border-line-interactive` |
+| status badge | canonical `StatusBadge` + shared tone, label always present |
+| status select | native `<select>` retained with its `aria-label`, restyled with field tokens |
+| "View job" | secondary action, not primary — leaving for the posting is a normal step |
+| load error | canonical `Alert tone="danger"` |
+| stage confirmation | `status-success` text |
+| loading | sectional skeletons in the shape of the real content |
+| empty | dashed card; the primary CTA appears only when the tracker is genuinely empty, since a search that matched nothing needs a different query, not a new job |
+
+### Deliberate decisions
+
+**Fit score stays plain metadata.** The Tracker shows `NN% fit` as uncoloured text among the card metadata. The fit bands are a Jobs/Dashboard signal; in a dense tracker row the stage is what is being scanned, and a second coloured chip competes with it. `lib/fitScore.ts` is untouched.
+
+**Chips over custom buttons.** A stage filter is a toggle, and the primitive carries `aria-pressed`, so the active stage is announced rather than only coloured.
+
+**Skeletons over the spinner.** The previous loading state replaced the whole section with a centred spinner, so everything jumped when data landed. The skeletons occupy the eventual geometry. Request timing, caching and the early return are unchanged.
+
+### Responsive
+
+The Tracker is a stacked list at every size, so there is no board to scroll and **no intentional horizontal scrolling anywhere** — any document overflow would be a defect. The summary grid runs 1-up on phones, 2-up from `sm`, and 4-up from `xl`; the toolbar stacks above the search field until `lg`; the card's action row wraps below the content until `lg`.
+
+### Found, not fixed
+
+The per-card `<select>` offers only Applied / Interview / Offer / Rejected, but an application can hold `saved`, `ready_to_apply`, `applying` or `withdrawn`. For those the control falls back to displaying the first option, so a `withdrawn` application appears to read "Applied" until it is changed. This is pre-existing behaviour, unchanged by this stage, and fixing it means deciding which transitions the product actually allows — a workflow question, not a visual one. Recorded here as a Tracker-specific follow-up.
+
+## 21D. Stage 6 Find Jobs / Job Discovery migration record
+
+Status: implemented for visual review on 2026-08-20; search, filter, and job data behaviour frozen.
+
+### Implementation map
+
+`/jobs` renders `<AppShell workspace>` around `JobDiscovery`, which owns the list, the selection and the detail split in one component because opening a job never unmounts the list. Discovery-owned pieces migrated in this stage:
+
+| File | Role |
+| --- | --- |
+| `components/JobDiscovery.tsx` | header, action bar, alerts, result summary, skeletons, empty/error states |
+| `components/jobs/JobsFilterBar.tsx` | search + four selects + clear |
+| `components/jobs/JobCard.tsx` | full result card, compact list card, secondary actions, tracker pill |
+| `components/jobs/badges.tsx` | source/workplace/posted/salary/fit indicators |
+| `components/jobs/ApplyButton.tsx` | the primary apply action |
+
+Untouched and deferred to Stage 7: `JobDetailPanel.tsx`, `documents.tsx`, `MarkAppliedDialog.tsx`, `AutoApplyModal.tsx`.
+
+### Data flow (unchanged)
+
+Read: `GET /jobs?posted_within_days=N` into local state, re-requested only when the posted-within window changes; every other filter (`q`, `workplace`, `minFit`, `sort`) is applied client-side over that list, and all of them live in the URL so a filtered list is shareable. Tracker decoration comes from `GET /jobs/tracker/...`, and the list stays fully usable if that call fails. Mutations — save, assisted apply, document generation, mark-applied — were not touched.
+
+### Legacy styling removed
+
+`bg-pine` on the primary apply action, `text-pine` on match-reason bullets, the profile link and the selected compact card, `--success-surface` on the selected compact card and the tracker pill, plus the usual `bg-white` / `bg-panel` / `border-line` / `rounded-2xl` / `focus-ring` / `--text-muted` / `--text-secondary` / `text-ink` family across the five discovery files.
+
+### Domain semantics preserved
+
+**Fit score** still comes from `lib/fitScore.ts` and nowhere else; the four bands render distinctly (92 emerald, 68 lime, 47 orange, 31 red) and always carry the number plus the band label, with a screen-reader sentence on the compact pill. No page-local thresholds were introduced.
+
+**Application status** now consumes `lib/applicationStatus.ts`. The card previously collapsed every post-save state into a green "In tracker", which spent the success colour on merely having applied and hid which stage the application had reached. It now shows the real stage with the canonical tone, so green appears only for an offer and a rejection finally looks like one — the same vocabulary the Tracker and the Dashboard use.
+
+**Saved** is a neutral state, not a success: `saved` and `ready_to_apply` render neutral, and the selected compact card uses the brand selection surface rather than the success surface.
+
+### Action hierarchy
+
+One primary per result — "Apply on official site", now navy in light and cyan-on-ink in dark. Save, Resume, Cover Letter and Find people are secondary outline controls of equal weight; the page-level "Find fresh jobs" is primary and "Refresh matches" secondary. The card is click-to-open but is not itself a control: the title is the single keyboard stop and the action buttons are siblings, not nested interactives.
+
+### Filters
+
+Five URL-synced controls kept exactly as they are — a text search plus selects for workplace, minimum fit, posted-within and sort. Selects were deliberately *not* converted to chips: these are single-choice pickers from fixed lists, which is what a select is for. Only the search field and the selects were restyled onto the canonical field contract. Selection uses brand semantics; "Clear filters" appears only when a filter is set.
+
+### Mobile
+
+The filter row wraps to a search field above a 2×2 block of selects (154px total) — the existing wrap architecture was kept rather than replaced with a filter sheet, because five controls fit legibly without hiding anything behind a trigger.
+
+**Defect found and fixed:** the result cards overflowed the document horizontally at 390px. The cards are grid items, whose default `min-width: auto` refuses to shrink below min-content, so a long role title pushed a card ~130px past the viewport and gave the whole document a horizontal scrollbar. The results grid now uses an explicit `minmax(0,1fr)` track and the card carries `min-w-0`. This was pre-existing — the AppShell responsive spec exercises `/jobs` with an empty list, so no card was ever rendered at phone width. The fit badge also moves below the identity block on phones and sits beside it from `sm` up, so the role and company lead the scan.
+
+### Loading, empty, error
+
+Skeletons now mirror the real card geometry (logo, title, meta, score block). The error state keeps its retry and is a canonical danger surface with `role="alert"`. Empty states are now two distinct states: when jobs are loaded but the filters exclude all of them the card says so and offers **Clear filters**; when the workspace itself is empty it keeps the original discovery guidance, because offering to clear filters there would be a dead end.
+
+### Deliberate exceptions
+
+`components/Button.tsx`, the legacy adapter, is untouched — it is still used by unmigrated pages, so discovery imports the canonical `components/ui` Button instead. `AssistedApplyButton` is shared with the detail panel; migrating it necessarily restyles the detail panel's apply control, which is the minimum boundary work Stage 6 allows. The pre-existing unused `Banknote` import in `JobCard.tsx` was left alone as out of scope.
+
+### Remaining for Stage 7
+
+The job detail panel (tabs, overview, networking, insights), the document generation and preview modals, the assisted-apply modal, and the mark-applied dialog.
+
+## 21E. Stage 7 Job Detail / application preparation migration record
+
+Status: implemented for visual review on 2026-08-20; job data, generation, apply and tracking behaviour frozen.
+
+### Implementation map
+
+Everything after a job is opened lives inside the Jobs workspace — `/jobs/[id]` is only a permalink that redirects to `/jobs?job=N`.
+
+| File | Role |
+| --- | --- |
+| `components/jobs/JobDetailPanel.tsx` | shell, header, four tabs, fit, strengths/gaps, description, materials |
+| `components/jobs/documents.tsx` | generation progress modal, document preview/edit modal |
+| `components/jobs/MarkAppliedDialog.tsx` | records an application against the tracker |
+| `components/AutoApplyModal.tsx` | assisted-apply flow |
+| `components/PeopleWhoCanHelp.tsx` | the Networking tab's integration surface |
+
+### Boundaries checked before editing
+
+`AutoApplyModal` is **live**, not dead code: `JobDiscovery` renders it whenever `applyJobId` is set, which is what `AssistedApplyButton` triggers. It was therefore migrated.
+
+`PeopleWhoCanHelp` is imported **only** by `JobDetailPanel`, and no `/people` route exists — it is the Job Detail-owned networking surface rather than a standalone People product, so migrating it stays inside the stage boundary. The People/referrals product itself remains a later stage.
+
+### Tabs
+
+Four sections — Overview, Job description, Application materials, Networking — already carried correct ARIA (`role="tablist"`, `aria-selected`, `aria-controls`, roving `tabIndex`, arrow/Home/End keys) and a `scroll-strip`. Only the colour changed: the selected tab moved from the legacy green underline to `border-brand-accent` with `text-brand-primary`. On phones the tab strip scrolls at component level; the document never does.
+
+### Status semantics — the defect this stage fixes
+
+The detail header rendered **every** tracker state in the success surface, so a closed application announced itself in green. Tone now comes from `lib/applicationStatus.ts`, while the page keeps its own wording (`TRACKER_LABELS`), which Stage 5 established as legitimate presentation copy. Verified in the browser across the whole lifecycle:
+
+| Status | Detail header label | Tone |
+| --- | --- | --- |
+| `saved` | Saved | neutral |
+| `applying` | Applying | warning |
+| `applied` | Applied | warning |
+| `interview` | Interview | info |
+| `offer` | Offer | success |
+| `rejected` | **Closed** | **danger** |
+| `withdrawn` | Withdrawn | neutral |
+
+Green now appears only for an offer, and the detail header agrees with the compact list card beside it.
+
+### Fit
+
+`lib/fitScore.ts` remains the only source; no local thresholds were added. One correction: the band label next to the score (`fit_label`) was painted green regardless of band, so "Low fit" rendered in the success colour. It is now neutral — the score block already carries the band's colour.
+
+### Meaning-first colour decisions
+
+*What is working for you* (strengths, matched skills) keeps semantic success: these are genuinely positive assessments, not decoration. *What is holding it back* stays neutral with a muted alert icon. The **Tailoring angle** moved from a success box to an informational one — it is advice, not an achievement. Generation progress moved from brand green to `status-info`; a finished document keeps success, because successful generation is a real positive outcome.
+
+### Documents
+
+The backend exposes three states and no more, so three are rendered: not generated (neutral), generating (info, with a live region), ready (success). No "outdated" or per-document error state was invented — generation failures surface through the workspace error path. Action hierarchy: **Generate** is primary when nothing exists; once ready, **Preview and download** is primary and **Regenerate** drops to secondary. The preview modal's preview/edit switch became a selection toggle rather than two filled buttons.
+
+### Responsive
+
+Verified at 1440×900, 900×900, 390×844 and 390×667 in both themes with representative fixtures (long title, long company, missing salary, strong and low fit, tracked and untracked, long description, bulleted requirements, networking results). **Zero document-level horizontal overflow at every size.** The only intentional component-level scrolling is the tab strip on phones. Desktop keeps the dense compact list beside a readable detail column; the workspace collapses the AppShell to a slim rail, which is existing Stage 3 behaviour.
+
+### Deliberate exceptions
+
+Vendor brand colours are preserved, not tokenised: `--linkedin` and `--email-action` in the networking surface identify external networks and must stay recognisable, exactly as company logos are never tinted. Two `people-who-can-help` assertions were updated from the raw legacy variable to the equivalent semantic token — the same claim in the new vocabulary, not a weakened assertion.
+
+### Remaining
+
+The standalone **My Resumes** library, the **People/referrals** product, Profile, Settings, the global warm canvas and the global `--skeleton` token.
+
+## 21F. Stage 8 standalone document routes — findings and migration record
+
+Status: investigated and migrated on 2026-08-20. **The standalone My Resumes / document-management product does not exist.**
+
+### What is actually there
+
+`My Resumes` in the sidebar maps to `activeRoots: ["/resume", "/cover-letter", "/application-answers"]`. All three routes are 13-line placeholders that render `AppShell` plus a static heading and one sentence. They import nothing but `AppShell`, have no client component, no data fetching, no state, and no tests. Measured in a real browser at four viewports in both themes, each page contains **zero** links, buttons, inputs, selects or textareas.
+
+They are identical to their committed state at `ced7562` — this is the product's shape, not regression or damage.
+
+Their own copy says where the functionality lives: *"Generate tailored, ATS-friendly resumes **from the job discovery page**."* The real document workflow is the job-specific one migrated in Stage 7 (`JobDetailPanel` materials tab, `documents.tsx` generation and preview modals).
+
+So none of the features Stage 8 was scoped around exist to migrate: no library or list, no base/default resume, no per-document status lifecycle, no editor, no download or delete, no search/filter/sort, no standalone cover-letter or application-answers management. Inventing them would be building a product, not migrating a design system.
+
+### What Stage 8 changed
+
+Only what genuinely exists: the three placeholder headers now use the same hierarchy as every migrated product page — `text-3xl … sm:text-4xl` with `tracking-[-0.035em] text-foreground`, and `text-foreground-muted` supporting copy in place of the legacy `--text-muted` variable. Verified: 36px desktop / 30px mobile, zero legacy tokens remaining, zero document-level overflow at 1440×900, 900×900, 390×844 and 390×667 in both themes. Contrast: heading 17.14 light / 15.80 dark, supporting copy 4.80 / 6.83.
+
+### Deliberately not changed
+
+`GeneratedResumePreview.tsx` and `GeneratedCoverLetterPreview.tsx` render the document facsimile inside Stage 7's preview modal, and are imported only by `components/jobs/documents.tsx`. They still use the legacy `--text-primary` / `--text-secondary` variables and a literal paper surface with a Georgia serif face and `print:shadow-none`.
+
+They were left alone on purpose. The legacy `--text-primary` (`#17211b`) and the canonical `--color-text-primary` (`--xa-ink`, `#08182f`) resolve to **different** colours, so a token swap would visibly change how a generated resume renders — and these components represent a printed artefact rather than product chrome. Whether a resume preview should stay white paper in dark mode is a product decision, not a token cleanup. Recorded as a Stage 7 follow-up for a human to decide.
+
+### Remaining
+
+Profile, Settings, the People/referrals product, the global warm canvas, the global `--skeleton` token, and the document-facsimile decision above. If a real My Resumes library is wanted, it is a product build, not a migration stage.
+
+## 21G. Stage 9 Profile migration record
+
+Status: implemented for visual review on 2026-08-20; every profile persistence contract frozen.
+
+### Active routes and implementation map
+
+`/profile` (overview), `/profile/[section]` (nine focused editors through one dynamic route), `/profile/application-preferences` and `/profile/eeo` (their own segments). `/profile/[section]` opens the existing wizard at the matching step, so there is exactly one implementation of every profile form.
+
+| Area | Files |
+| --- | --- |
+| Overview | `profile/ProfileOverview.tsx`, `profile/primitives.tsx`, `profile/BrandIcons.tsx` |
+| Editors | `profile/editors/` — 11 editors plus `primitives.tsx` (758 lines), `EditorShell.tsx`, `SectionEditor.tsx` |
+| Wizard / import | `ProfileWizard.tsx`, `ImportProfilePreview.tsx`, `profile/UnsavedChangesDialog.tsx` |
+| Routes | `app/profile/page.tsx`, `app/profile/[section]/page.tsx`, `app/profile/application-preferences/page.tsx`, `app/profile/eeo/page.tsx` |
+
+About 7,000 lines — the largest surface in the migration so far.
+
+### Persistence contract — untouched
+
+**Zero files under `lib/` changed.** `profileOverview.ts`, `profileEditorData.ts`, `profileForm.ts`, `profileUrls.ts`, `profileSections.ts`, `profileCatalog.ts`, `authSession.ts` and `api.ts` are all byte-identical. Focused `PATCH /profile` field ownership, canonical server-response adoption, URL normalisation, structured `fieldErrors`/`formError`, import validation and session behaviour are therefore unchanged by construction, not merely by inspection. The 2026 production incident — a legacy `portfolio_url` blocking unrelated saves through whole-document PUT — cannot regress from a Stage 9 change, because no code on that path was edited.
+
+### Meaning-first colour decisions
+
+**Progress is not success.** Profile completion and autofill readiness meters moved from brand green to `brand-accent`, and stay brand at 100% because the product does not treat completion as a success event. Verified live at 72% and 100%.
+
+**Selections are not success.** Every selected preference — target roles, target levels, locations, workplace mode, wizard multi-selects — moved from `border-pine bg-[var(--success-surface)] text-pine` to the canonical selection treatment (`border-line-selected bg-surface-selected text-brand-primary`). This was the single largest source of misused green on the surface.
+
+**A completed save is success.** The editor's "Saved" indicator keeps `status-success`; "Saving…" stays muted with a spinner and errors stay `status-danger`.
+
+**Identity is not an achievement.** The overview's initials tile dropped the success tint for a neutral bordered chip, and the contact-row phone chip moved off the success surface to a brand tint. LinkedIn and the email action keep their vendor brand tokens, exactly as company logos are never re-tinted.
+
+### Buttons
+
+Thirteen Profile files imported the legacy `components/Button` adapter, whose primary variant is `bg-pine text-white`. They now import the canonical `components/ui` Button; only `variant="danger"` needed renaming to `variant="destructive"` (3 occurrences), since `primary` and `secondary` map one-to-one. **`components/Button.tsx` itself is untouched** — Settings and other unmigrated pages still depend on it.
+
+Hierarchy on the editors is now explicit: Save changes primary, Cancel secondary, section Edit actions quiet links, remove actions destructive.
+
+### Responsive and accessibility
+
+Verified across `/profile`, `/profile/personal` and `/profile/preferences` at 1440×900, 900×900, 390×844 and 390×667 in both themes — 24 combinations, **zero document-level horizontal overflow and zero legacy classes remaining in the rendered DOM**. A deliberately long employer name wraps rather than widening the page. One `h1` per page; **18 of 18 inputs on the personal editor carry a real label**; focus-visible is the canonical 3px ring throughout.
+
+Contrast (light / dark): page heading 15.95 / 15.80 · supporting copy 4.80 / 6.83 · section heading 16.54 / 14.57 · field label 16.54 / 14.57 · input text 16.54 / 13.07 · preferences label 7.69 / 10.01. Lowest measured 4.80.
+
+### Deferred product concerns — still real, not solved here
+
+**Target roles are equally weighted.** The editor stores a flat list, so "Machine Learning Engineer" and "Platform Engineer" carry identical matching weight. No primary/secondary role concept exists in the model, and inventing one during a visual migration would change matching semantics.
+
+**Target level mixes seniority with experience.** "Junior" is stored as a target *level* while the surrounding copy talks about seniority; the product has not separated years-of-experience from seniority band. Recorded, not redefined.
+
+Both remain product-model debt for a product decision, not design-system work.
+
+### Remaining
+
+Settings is the last unmigrated product surface. After it, the global warm canvas and the global `--skeleton` token can finally be retired, along with the legacy `components/Button` adapter once nothing imports it.
+
+## 21H. Stage 10 Settings migration record
+
+Status: implemented for visual review on 2026-08-20; all settings behaviour frozen. **Two pre-existing functional findings are recorded below and were deliberately not fixed.**
+
+### What Settings actually is
+
+`/settings` renders two components and nothing else: `ApplicationAccounts` (employer-portal credentials) and `PrivacyControls` (data export + account deletion). There is **no** theme/appearance control, no notification settings, no connected-accounts list, no session management and no logout — logout stays canonical in the AppShell. The route has no dedicated test file.
+
+| Setting | Ownership |
+| --- | --- |
+| Workday password | server, write-only; `GET /profile` reports only `workday_password_configured`, the value is never returned to the browser |
+| Data export | server, `GET /privacy/export`, rendered in-page |
+| Account deletion | server, `DELETE /privacy/account`, then `invalidateAuthSession({ reason: "account_deleted" })` |
+
+Nothing is browser-local or session-backed, so no ownership could change.
+
+### Visual migration
+
+Both components and the route header moved onto canonical tokens, and all three now import the canonical `components/ui` Button (`variant="danger"` → `"destructive"`). A configured credential keeps semantic success — it is a genuine positive state, and it already carried an icon and a word, not colour alone.
+
+`PrivacyControls` needed structure rather than recolouring. It previously rendered a bare card with **Export JSON and Delete account side by side as equally prominent buttons**, no heading and no explanation. It is now two labelled regions: *Your data* (export, secondary action) and an isolated *Danger zone* with a danger-toned heading, an explicit "This cannot be undone" description, a danger boundary on the card, and a destructive CTA. The danger tone sits on the boundary and the control rather than flooding a red panel.
+
+Verified with scoped assertions — naming each control rather than taking the first button on the page: Delete is inside the danger section and uses `action-destructive`; Export is inside the data section and uses `action-secondary`; the credential Save/Update uses `action-primary`.
+
+### Responsive and accessibility
+
+Eight viewport/theme combinations at 1440×900, 900×900, 390×844 and 390×667, in both the configured and unconfigured credential states: **zero document-level horizontal overflow and zero legacy classes in the rendered DOM**. One `h1`, three `aria-labelledby` sections (`Application accounts`, `Your data`, `Danger zone`), 1 of 1 inputs labelled with a described hint, keyboard traversal reaching the password field, Remove, Export and Delete with the canonical 3px focus ring on each.
+
+The credential-removal flow already had proper friction and keeps it: `role="alertdialog"`, `aria-labelledby`, Cancel plus a destructive confirm.
+
+Contrast (light / dark): h1 17.14 / 15.80 · supporting 4.80 / 6.83 · section heading 17.14 / 15.80 · danger heading 6.39 / 7.35 · danger copy 4.80 / 6.83 · field label 16.54 / 14.57 · hint 4.97 / 6.30 · delete CTA 6.62 / 7.25 · export CTA 17.77 / 13.07 · credential status 5.93 / 6.91. Lowest 4.80.
+
+### Findings NOT fixed — they change behaviour
+
+**1. Account deletion has no confirmation.** `deleteAccount()` issues `DELETE /privacy/account` directly from the click handler. There is no dialog, no typed confirmation and no undo. The irony is local: removing a *stored Workday password* opens an `alertdialog` with Cancel, while deleting the entire account — profile, applications, generated documents — does not. Stage 10 isolated the control and made it unmistakably destructive, which reduces accidental-click risk, but adding friction changes the flow and is a product decision.
+
+**2. Export and delete have no error handling.** Neither call is wrapped. Verified against a mocked 500: the click produces an unhandled rejection, no visible error, and nothing rendered — the button appears inert. The user cannot tell the difference between "failed" and "nothing happened".
+
+Both are pre-existing and outside a visual migration's remit.
+
+### Legacy Button status — not yet retirable
+
+`components/Button.tsx` is untouched and still has **6 importers**, of which **7 call sites use the default (primary) variant and therefore still render `bg-pine` green**:
+
+| File | Green primaries | Stage |
+| --- | --- | --- |
+| `jobs/documents.tsx` | 1 | 7 |
+| `jobs/MarkAppliedDialog.tsx` | 1 | 7 |
+| `AutoApplyModal.tsx` | 2 | 7 |
+| `PeopleWhoCanHelp.tsx` | 1 | 7 |
+| `DemographicsForm.tsx` | 1 | — |
+| `SectionError.tsx` | 1 | — |
+
+Stage 7 migrated those files' tokens but left the Button import, so their primary CTAs are still legacy green. This is a genuine Stage 7 gap, recorded here rather than fixed, because re-opening approved surfaces mid-stage would blur the accounting. It belongs in the closing stage alongside Button retirement.
+
+### Remaining for the closing stage
+
+Global authenticated canvas · global `--skeleton` token · legacy `Button` retirement plus the 7 green primaries above · the dead-end **My Resumes** navigation decision · product-wide responsive/accessibility regression.
+
+## 21I. Stage 10B Settings safety hardening
+
+Status: implemented for review on 2026-08-20. Narrow functional correction of two pre-existing defects found during Stage 10; no visual redesign.
+
+### Why this was not part of the visual migration
+
+Stage 10 recorded both defects and deliberately left them, because fixing either changes behaviour and the visual stage was under a functional freeze. They are corrected here as safety hardening, with their own tests, so the change is reviewable on its own terms rather than buried in a token sweep.
+
+### Defect 1 — account deletion was one click
+
+`deleteAccount()` issued `DELETE /privacy/account` straight from the button's click handler. No dialog, no second action, no undo. The same file already removed a *Workday password* behind an `alertdialog` with Cancel, so the far more destructive action was the less guarded one.
+
+The request now issues only from inside a confirmation dialog, and only once the user has typed `DELETE` exactly. The dialog follows the repository's established prompt contract from `profile/UnsavedChangesDialog`: `role="alertdialog"`, `aria-modal="true"`, `aria-labelledby` / `aria-describedby`, focus trapped on Tab, Escape resolving to the safe choice, focus returned to the trigger, and a backdrop that is `role="presentation"` rather than a dismiss target. Initial focus lands on the labelled confirmation input, which is safe because the destructive button stays disabled until the phrase matches.
+
+A typed phrase was chosen over a second click because a second click is exactly the reflex this needs to defeat. Password re-entry was rejected: no backend verification endpoint exists for it, and inventing one was out of scope.
+
+Duplicate submissions are prevented at both ends — the handler returns early while a request is pending, and the confirm button is disabled — verified as exactly one `DELETE` under three rapid clicks.
+
+### Defect 2 — export and delete swallowed failures
+
+Neither call was wrapped, so a failure produced an unhandled rejection and a button that simply looked inert. Both now surface the message from the shared `ApiError`, which the transport already normalises for humans, inside `role="alert"` regions. A response body is never rendered.
+
+Failure keeps the delete dialog open and retryable, and a retry that succeeds completes normally. Export clears any stale result on failure, so a previous payload cannot be mistaken for a fresh one.
+
+### Auth semantics unchanged
+
+`lib/authSession.ts` and `lib/api.ts` are untouched. The transport still owns the single 401 invalidation contract, and no page-local session logic was added. Ordinary 403 / 422 / 500 / network failures keep the user signed in — asserted directly. Success still calls `invalidateAuthSession({ reason: "account_deleted", returnTo: null })`, unchanged.
+
+### Verification
+
+Fifteen focused tests in `__tests__/settings-privacy-controls.test.tsx` cover: the trigger firing no request, the phrase gate rejecting `delete` and `DELETE ME`, Cancel and Escape closing without deleting, focus returning to the trigger, exactly one `DELETE` on confirm, no duplicates while pending, 500 / 403 / 422 / network keeping the dialog open with a visible non-JSON error and no session invalidation, retry succeeding, and export success, failure and recovery.
+
+Browser-verified with mocks only — no production deletion was ever issued. Both themes at 1440×900 and both phone sizes: dialog fits width and height, Cancel and confirm reachable, no document overflow, and **zero page errors in either failure path**, confirming no unhandled rejection remains. Contrast (light / dark): title 17.77 / 14.57 · body 4.97 / 6.30 · confirmation label 17.77 / 14.57 · input 17.77 / 14.57 · dialog error 6.09 / 6.73 · destructive confirm 6.62 / 7.25 · Cancel 17.77 / 13.07.
+
+`ApplicationAccounts` was not touched, so Workday credential behaviour is unchanged by construction.
+
+## 21J. Stage 11 global unification and legacy retirement
+
+Status: implemented for review on 2026-08-20. The closing stage. It owns what no single page could: the canvas underneath all of them, the loading token they share, the last legacy component, and one navigation entry that promised a product that does not exist.
+
+### The seam this stage closed
+
+Every authenticated page had been migrated, and the product still did not read as one system. The reason was underneath the pages: `--background` was `#fbfbf8`, a warm neutral from the pre-migration palette, painted on `html`, `body` and `.app-shell`. A migrated navy/cyan page sat on a faintly yellow sheet, and the mismatch was most visible exactly where the design system was strongest — cool cards on a warm canvas.
+
+### Canvas ownership — a token, not a route list
+
+The fix is a single alias rather than a background class on every page:
+
+```css
+--background: var(--color-surface-page);
+```
+
+An alias resolves against the value the active colour scheme computed, so one declaration follows light and dark, and every surface that already referenced `--background` — `html`, `body`, `.app-shell`, the Jobs workspace columns, the error boundary, and the Stage 8 placeholder routes — became canonical at once. No route-by-route exception exists, and none can be introduced, because there is no per-page background to set.
+
+The same reasoning retired the rest of the legacy names. `--surface`, `--surface-raised`, `--surface-muted`, `--text-primary/secondary/muted`, `--border`, `--border-strong`, `--focus-ring`, `--overlay`, `--input-background`, `--disabled-background` and the four status families are now aliases onto their `--color-*` roles. Because Tailwind's compatibility palette (`bg-white`, `bg-panel`, `border-line`, `text-ink`) is defined in terms of those names, unmigrated markup became canonical without being edited.
+
+In dark mode every aliased value was already identical to its canonical role, so the dark block's restatements were deleted rather than rewritten — and `theme.test.ts` now asserts their *absence*, since a restated alias is exactly how light and dark drift apart again. `--border-strong` maps to the *interactive* line role, not the strong one: its real consumers are scrollbar thumbs and hover edges, which need a visible contrast rather than a hairline.
+
+Marketing is untouched by construction. `marketing.css` declares its palette on `.xa-theme` and paints `html:has(.xa-page)` itself; verified identical in both colour schemes after the change.
+
+### Global skeleton
+
+`--skeleton` was the warm `#e7eae3`. Two migrated pages had already routed around it with local `bg-line-subtle` blocks and a comment saying the token would be retired later. It is retired here, replaced by a dedicated `--color-skeleton` role (`#e3e8ef` / `#2f363b`) and a `bg-skeleton` utility, and the local workarounds were folded back into it. A border colour was deliberately *not* reused: a skeleton has to stay perceptible on the page, on a card and on a tinted selected row, which is a stronger requirement than any line token carries.
+
+Measured, composited: 1.23:1 against a card and 1.18:1 against the page in light; 1.35:1 and 1.47:1 in dark. Present without competing with real content, and never dependent on the pulse animation alone.
+
+### The last seven green primaries
+
+`components/Button.tsx` — the pre-migration adapter, a green fill with no destructive or ghost role — had six runtime importers and seven primary call sites left. Each was re-read for its actual semantic role rather than bulk-replaced:
+
+| Call site | Action | Treatment |
+| --- | --- | --- |
+| `jobs/documents.tsx` | Save document | primary — the panel's one forward action |
+| `jobs/MarkAppliedDialog.tsx` | Yes, mark as applied | primary — success stays in the dialog's icon and the tinted trigger |
+| `AutoApplyModal.tsx` | Apply on official site | primary — plus removal of a hard-coded pine drop shadow |
+| `AutoApplyModal.tsx` | Retry preparation | primary — the only forward action in the failed phase |
+| `PeopleWhoCanHelp.tsx` | Find people / Broaden search | primary |
+| `DemographicsForm.tsx` | Save settings | primary; **Delete EEO data** moved `danger` → `destructive` |
+| `SectionError.tsx` | Retry | **secondary**, with the way back as `ghost` |
+
+`SectionError` is the deliberate exception. It is a `role="alert"` card that can appear several times on one screen; a navy primary there would out-rank the page's real call to action and make a failure look like the thing to do next. Recovery stays emphasised without borrowing brand weight.
+
+With every call site moved, `components/Button.tsx` was deleted. Importer count: 6 before, 0 after.
+
+### Other green that meant "brand"
+
+- `ApplicationEligibility` (inside Profile → Application preferences) painted the *selected* Yes/No answer in `--accent` on the success surface — green telling the user a plain factual answer was good. Now the canonical selected treatment. Its "Saved" confirmation keeps green, because that one is a real success.
+- `input[type=checkbox|radio] { accent-color: var(--accent) }` tinted every native control in the product pine. Now `--color-brand-primary`: navy in light, cyan in dark.
+- `app/error.tsx` — the app-wide error boundary, which renders inside the product — had a green primary "Try again".
+- `lib/fitScore.ts`'s not-scored tier used `border-line bg-panel`; now the canonical neutral. The emerald/lime/orange/red bands are the documented FIT family and were not touched.
+- `app/matches/[id]` is a real authenticated route no earlier stage reached: `text-pine`, `bg-white`, `border-line`. Migrated.
+
+### Document facsimiles were not actually paper
+
+Stage 17 of the brief records the product decision that generated resumes and cover letters stay white-paper facsimiles in both themes. They did not. Both previews used `bg-white`, which the Tailwind compatibility palette maps to the *card surface* — so in dark mode the "sheet of paper" rendered charcoal, misrepresenting the DOCX/PDF the same content exports to.
+
+Four fixed tokens now exist for this and nothing else: `--color-document-paper`, `--color-document-ink`, `--color-document-ink-muted`, `--color-document-rule`. They are declared once and deliberately **not** redefined in the dark block. Verified rendered: `rgb(255,255,255)` paper with `rgb(23,32,42)` ink in Georgia, identically in both themes, while the surrounding modal chrome follows the theme (`#f8fafc` / `#14171a`).
+
+### My Resumes
+
+`/resume`, `/cover-letter` and `/application-answers` are Stage 8 headings that explain where document generation actually happens — inside the Jobs workspace, against a specific job. There is no standalone document-management product behind them, so a top-level "My Resumes" entry advertised one and delivered a paragraph.
+
+The entry was removed rather than repointed: sending "My Resumes" to `/jobs` under the same label would be a different kind of lie. The three routes stay reachable by direct URL for existing links and bookmarks, inherit the canonical canvas, and gained no compensating UI. Their `activeRoots` mapping went with the entry, so a directly opened placeholder route now shows *no* active primary item — correct, and asserted.
+
+### Errors that were written for an operator
+
+`DELETE /privacy/account` and `/jobs/tracker/*` define no user-facing failure wording of their own. What reaches the client is either the API's safe catch-all ("Something went wrong. Please try again.") or an infrastructure `detail` — and the shared auth dependency answers a database outage with `"Database unavailable or not migrated. Run alembic upgrade head."`, an operator runbook instruction. Stage 10B rendered the normalised `ApiError` message verbatim on the account-deletion dialog; the Tracker did the same above someone's application list.
+
+Both now own stable copy. Export still passes the server message through — its endpoint returns data the user asked for and the wording there is worth showing. The backend was read only; nothing about it changed.
+
+### Two defects the fixture data exposed
+
+Empty-state testing would have missed both.
+
+**Dashboard mobile overflow.** With realistic job titles the document scrolled to 683px inside a 320px viewport. A grid item's automatic minimum is its min-content width, and `truncate` reports min-content as the width of the *untruncated* string — so the two-column row was sized to the longest job title. `min-w-0` on the grid children fixes it. Pre-existing from the committed Dashboard migration; the layout markup is untouched by Stages 5–11.
+
+**Placeholder contrast.** `globals.css` carried a rule to keep placeholders legible. It never applied: Tailwind's preflight ships `input::placeholder, textarea::placeholder` at specificity (0,0,2) and outranked the bare `::placeholder` selector, leaving placeholder text at 2.6:1 on a white field. Matching the same element-qualified pairs makes the rule real — 4.97:1 light, 5.65:1 dark.
+
+### Coarse-pointer targets
+
+Section links ("Open tracker", "View all"), the EEO option rows, the EEO back link and the profile "+N more" link were 17–20px tall on a touch screen. Each took `ds-touch-target`, which is scoped to `@media (pointer: coarse)`, so desktop layout is unchanged. Every remaining sub-40px hit resolves to a documented WCAG 2.5.8 exception — a stretched-link anchor whose `::after` covers its whole card, a native checkbox inside a full-width `<label>`, or a link inline in a sentence — and the audit encodes those exceptions rather than waiving them.
+
+### Static contracts
+
+`__tests__/design-system-contracts.test.ts` is new and deliberately narrow — a broad "no green anywhere" scan would reject the things that are supposed to be green and be deleted the first time it cried wolf. It resolves each import specifier to a repo-relative path so the retired `components/Button` cannot return while `components/ui/Button` and third-party `Button` symbols stay legal; it forbids `*-pine` utilities in authenticated chrome with the pre-auth surfaces listed explicitly; it asserts one canonical application-status source and one fit-score source; it asserts the skeleton token; and it asserts the document facsimile is fixed in both themes.
+
+### Verification
+
+292 fixture-backed browser checks passed in both colour schemes: 13 authenticated surfaces × 7 viewports (1440×900, 1280×800, 900×900, 640×800, 390×844, 390×667, 320×700) with zero unintended document overflow; the Tracker's nine statuses with badge and select agreeing and transition targets still exactly applied/interview/offer/rejected; the Job Detail header status measured by role — rejected renders "Closed" in danger, never success; every fit band; account-deletion, mark-applied and unsaved-changes dialogs; the keyboard journey with a visible 3px ring on every stop; navigation destinations and active state including the three placeholder routes; short-height layouts at 900×400 and 390×667; marketing and login regression; empty and mocked-error states on Dashboard, Jobs and Tracker.
+
+934 unit tests across 47 files, typecheck, lint and a clean production build all pass. The repository Playwright suite passes 34 with 20 self-skipping without a stack; against a local stub API 52 pass, the two remaining requiring real sign-up and persistence a stub cannot provide.
+
+## 21K. Stage 11B public entry surface cleanup
+
+Status: implemented for review on 2026-08-20. The last visual migration stage. Narrow by design: the authenticated product is frozen, and nothing here touches it.
+
+### The seam
+
+Stage 11 finished the authenticated product and recorded what it deliberately left alone — the pre-authentication surfaces. A visitor moved from the canonical navy/cyan marketing homepage, clicked "Sign in", and landed on a green sign-in form. The old brand had one place left to live, and it was the doorway.
+
+### AuthDialog
+
+`components/AuthDialog.tsx` is the whole of `/login` and `/signup` (both render it with `presentation="page"`; the `modal` path is live code but unused today). Six legacy constructs, each classified before it was changed:
+
+| Element | Was | Now | Why |
+| --- | --- | --- | --- |
+| Brand mark badge | `bg-[var(--success-surface)] text-pine` | `bg-surface-selected text-brand-primary` | It identifies XpertApply. That is brand, not success — a green surface said "something went well" on a form nobody had submitted yet. |
+| Submit | `bg-pine text-white` | `bg-action-primary text-action-primary-foreground` | Navy on white in light, cyan on ink in dark. The paired foreground token is what makes cyan-under-white structurally impossible. |
+| Mode switch | `text-pine` | `text-foreground-link` | "Create an account" / "Sign in" is a link. Destinations unchanged. |
+| Privacy lock icon | `text-pine` | `text-brand-accent-text` | A reassurance, not an outcome. Restrained brand accent rather than borrowing success green. |
+| Error | `--danger-*` vars | `status-danger-*` roles | Same values; canonical vocabulary. |
+| Fields, close, divider | `border-line`, `bg-white/50`, `text-[var(--text-muted)]` | canonical roles | Same weight and geometry; vocabulary only. |
+
+Radii moved onto the scale where the value was already identical (`rounded-xl` → `rounded-field`, `rounded-lg` → `rounded-control`). The card's deliberate `rounded-[28px]` silhouette was left alone.
+
+One behavioural-adjacent change: the password reveal was a 36px icon-only chip floated inside the field. It now fills the 48px gutter the field already reserves with `pr-12`, so the target is 48×48 — measured — without altering the field's geometry. Verified: it toggles `type` between `password` and `text` and back, and keeps its accessible name.
+
+The submit button stays a raw `<button>` rather than the canonical `<Button>`: this is a full-width 48px auth CTA, a different pattern from the product's `sm/md/lg` action sizes, and wrapping it would add indirection without changing a pixel. It consumes the same action tokens.
+
+### Auth behaviour is untouched
+
+`submit()`, `api()`, `storeAuthToken`, `safeReturnPath`, the `next` parameter, redirect target, error handling and the `submitting` guard are byte-for-byte unchanged. `lib/authSession.ts` and `lib/api.ts` were not opened. Field names, `type`, `autocomplete`, `required`, `minLength`, labels and ids are all verified identical in the browser — including that neither field has a `placeholder`, so a placeholder never stands in for a label.
+
+### Static public pages
+
+`/pricing`, `/privacy`, `/opensource` each carried one `text-pine` back-link and one legacy `--text-muted` paragraph. Both migrated; the `href="/"` destination is asserted unchanged and every word of the pricing, legal and open-source copy is byte-for-byte identical.
+
+### Two leftovers from the Stage 11 canvas move
+
+Neither is green, both were found by sweeping for the retired warm hex:
+
+- **`app/layout.tsx` `themeColor`** still declared `#fbfbf8` for light. That is the colour the mobile browser paints its own chrome with, so on the public entry surfaces — where mobile visitors land — the browser frame was warm against a cool page. Now `#f8fafc`, the canonical page surface.
+- **`app/global-error.tsx`** inlines its own palette, because it replaces the entire document and cannot rely on the stylesheet having loaded. That inlining is a real and permanent exception — but the *values* were the complete pre-migration palette, including a pine "Reload" button on a warm sheet. The values now mirror the canonical roles in both schemes (navy action in light, cyan on ink in dark), and its hard-coded focus outline became a per-scheme variable.
+
+### The pine end state
+
+Zero `*-pine` utilities and zero `var(--accent)` references remain in the entire runtime — public and authenticated.
+
+`--accent` and `--accent-hover` are now defined with **no consumers**, and the `pine` Tailwind alias has **no call sites**. Both stay defined on purpose rather than being quietly deleted: `--accent-foreground` is still the paired foreground for the green success fill behind "Mark as applied", and removing the palette name would downgrade a stray `bg-pine` from a test failure to a class that silently does nothing. The token comments were rewritten to say exactly this, replacing a Stage 1 note claiming pine "still carries real success meaning" — which stopped being true.
+
+`design-system-contracts.test.ts` was tightened accordingly: the pine rule lost its public-surface allow-list and now covers every runtime file, a second rule blocks `bg-[var(--accent)]`-style smuggling, and a third pins the auth submit to the canonical action role and forbids white text on it.
+
+### Verification
+
+74 public browser checks passed in both colour schemes: the primary action's exact composited paint on `/login` and `/signup`; a whole-page scan proving no element renders any legacy pine value; the mode switch reading as a link and actually switching; the full field contract; the reveal control's 48×48 box and toggle behaviour; a mocked 401 producing styled danger with no payload, token or trace, leaving the form retryable; `/pricing`, `/privacy`, `/opensource` link colour, destination and contrast; keyboard reaching every control with a visible 3px ring and wrapping without a trap; reduced motion; and the marketing homepage measured identical in light and dark.
+
+Responsive at 1440×900, 900×900, 390×844, 390×667 and 320×700 across all five public routes: zero unintended document overflow, submit always fully inside the viewport.
+
+Contrast, measured composited (light / dark): heading 17.69 / 14.72 · secondary copy 4.95 / 6.37 · label 17.69 / 14.72 · input text 17.74 / 11.67 · primary action 14.84 / 7.35 · switch link 4.93 / 9.81 · error 6.09 / 6.73 · footer note 4.95 / 6.37. Public pages: heading 16.98 / 15.80 · body 4.75 / 6.83 · brand link 4.73 / 10.52.
+
+The authenticated product was re-verified unchanged: the full Stage 11 harness passed 292/292, canvas, skeleton and document facsimile readings identical to Stage 11. 936 unit tests across 47 files, typecheck, lint and a clean production build pass. Repository Playwright is unchanged at 34 passed / 20 self-skipped without a stack, 52 passed / 2 stack-dependent against a stub.
 
 ## 22. Stage 2 implementation record
 

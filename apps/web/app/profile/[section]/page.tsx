@@ -103,12 +103,12 @@ export default async function ProfileSectionPage({
       <header className="mb-6">
         <Link
           href="/profile"
-          className="focus-ring inline-flex items-center gap-1.5 text-sm font-medium text-[var(--text-muted)] transition hover:text-pine"
+          className="ds-focus-ring inline-flex items-center gap-1.5 rounded-control text-sm font-medium text-foreground-muted transition hover:text-foreground-link"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden /> Back to profile
         </Link>
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">{meta.title}</h1>
-        <p className="mt-2 max-w-2xl text-[var(--text-muted)]">{meta.description}</p>
+        <p className="mt-2 max-w-2xl text-foreground-muted">{meta.description}</p>
       </header>
 
       {focused ? (

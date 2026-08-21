@@ -9,7 +9,6 @@ import {
   Briefcase,
   Building2,
   CalendarDays,
-  CheckCircle2,
   FileText,
   Loader2,
   Mail,
@@ -21,6 +20,11 @@ import { getScoreDisplay } from "@/lib/fitScore";
 import { peopleActionSummary } from "@/lib/peopleState";
 import { getCachedPeople, subscribeToPeople } from "@/lib/peopleClient";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { StatusBadge } from "@/components/ui";
+import {
+  formatApplicationStatus,
+  getApplicationStatusTone
+} from "@/lib/applicationStatus";
 import { FitBadge, FitPill, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
 import { AssistedApplyButton } from "@/components/jobs/ApplyButton";
 import {
@@ -94,11 +98,15 @@ export const JobCard = memo(function JobCard({
       onClick={(event) => {
         if (cardClickOpens(event)) actions.onSelect(job.id);
       }}
-      className="group relative cursor-pointer rounded-2xl border border-line bg-white p-5 transition-[border-color,background-color] duration-150 hover:border-border-strong hover:bg-[var(--surface-raised)] has-[:focus-visible]:border-pine sm:p-6"
+      // `min-w-0`: the card is a grid item, whose default `min-width: auto`
+      // refuses to shrink below the content's min-content width. Without it a
+      // long role title pushed the whole card ~130px past a 390px viewport and
+      // gave the document a horizontal scrollbar.
+      className="group relative min-w-0 cursor-pointer rounded-card border border-line-default bg-surface-card p-4 transition-[border-color,background-color] duration-fast ease-standard hover:border-line-interactive hover:bg-surface-subtle has-[:focus-visible]:border-line-selected sm:p-6"
     >
       {/* Two columns so the score card never pushes the title down: identity and
         * context stay one continuous block on the left. */}
-      <div className="flex items-start gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-3">
             <CompanyLogo
@@ -109,10 +117,10 @@ export const JobCard = memo(function JobCard({
               size={40}
             />
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium text-[var(--text-muted)]">{job.company}</p>
+              <p className="truncate text-[13px] font-medium text-foreground-muted">{job.company}</p>
               <h2
                 id={titleId}
-                className="mt-0.5 text-[1.15rem] font-semibold leading-snug tracking-[-0.01em] text-ink"
+                className="mt-0.5 text-[1.15rem] font-semibold leading-snug tracking-[-0.01em] text-foreground"
               >
                 <button
                   type="button"
@@ -130,7 +138,7 @@ export const JobCard = memo(function JobCard({
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-[var(--text-muted)]">
+          <div className="mt-3 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-foreground-muted">
             {job.location && (
               <Meta icon={<MapPin className="h-3.5 w-3.5" />}>{job.location_display || job.location}</Meta>
             )}
@@ -149,20 +157,20 @@ export const JobCard = memo(function JobCard({
           </div>
 
           {reasons.length > 0 ? (
-            <ul className="mt-3.5 grid gap-1.5 text-sm leading-6 text-[var(--text-secondary)]">
+            <ul className="mt-3.5 grid gap-1.5 text-sm leading-6 text-foreground-secondary">
               {reasons.map((reason) => (
                 <li key={reason} className="flex gap-2.5">
-                  <span aria-hidden className="mt-2 h-1 w-1 shrink-0 rounded-full bg-pine" />
+                  <span aria-hidden className="mt-2 h-1 w-1 shrink-0 rounded-pill bg-brand-accent" />
                   <span className="line-clamp-2">{reason}</span>
                 </li>
               ))}
             </ul>
           ) : scoreDisplay.kind !== "score" ? (
-            <p className="mt-3.5 flex items-center gap-2 text-sm text-[var(--text-muted)]">
+            <p className="mt-3.5 flex items-center gap-2 text-sm text-foreground-muted">
               {scoreDisplay.kind === "calculating" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{scoreDisplay.helper}</span>
               {scoreDisplay.kind === "profile_incomplete" && (
-                <Link href="/profile" className="font-medium text-pine underline" onClick={stop}>
+                <Link href="/profile" className="ds-focus-ring rounded-control font-medium text-foreground-link underline" onClick={stop}>
                   Complete profile
                 </Link>
               )}
@@ -170,10 +178,14 @@ export const JobCard = memo(function JobCard({
           ) : null}
         </div>
 
-        <FitBadge score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
+        {/* Below the identity block on a phone, beside it from `sm` up: the
+          * role and the company are what a scan is looking for first. */}
+        <div>
+          <FitBadge score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
+        </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line/60 pt-4">
+      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line-subtle pt-4">
         <AssistedApplyButton url={job.application_url} onApply={() => actions.onApply(job.id)} />
         <CardAction
           label={trackerStatus ? "Saved" : "Save"}
@@ -218,7 +230,7 @@ function CardAction({
         event.stopPropagation();
         onClick();
       }}
-      className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50"
+      className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover disabled:cursor-not-allowed disabled:opacity-50"
     >
       {icon}
       {label}
@@ -252,7 +264,7 @@ function PeopleAction({ jobId, onOpen }: { jobId: number; onOpen: () => void }) 
         onOpen();
       }}
       data-people-state={summary.state}
-      className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel"
+      className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
     >
       {summary.state === "loading" ? (
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -264,22 +276,25 @@ function PeopleAction({ jobId, onOpen }: { jobId: number; onOpen: () => void }) 
   );
 }
 
+/**
+ * The job's place in the tracker, told with the same vocabulary as the Tracker
+ * and the Dashboard.
+ *
+ * This used to collapse every post-save state into a green "In tracker", which
+ * spent the success colour on merely having applied and hid which stage the
+ * application had actually reached. Tone and wording now come from the shared
+ * application-status module, so an offer is the only green here and a rejection
+ * finally looks like one.
+ */
 function TrackerPill({ status }: { status: TrackerStatus | null }) {
   if (!status) {
     return null;
   }
-  const applied = status !== "saved" && status !== "ready_to_apply";
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-        applied
-          ? "bg-[var(--success-surface)] text-[var(--success)]"
-          : "border border-line text-[var(--text-muted)]"
-      }`}
-    >
-      {applied ? <CheckCircle2 className="h-3 w-3" aria-hidden /> : <BookmarkCheck className="h-3 w-3" aria-hidden />}
-      {applied ? "In tracker" : "Saved"}
-    </span>
+    <StatusBadge tone={getApplicationStatusTone(status)} className="gap-1">
+      <BookmarkCheck aria-hidden className="h-3 w-3" />
+      {formatApplicationStatus(status)}
+    </StatusBadge>
   );
 }
 
@@ -317,10 +332,10 @@ export const CompactJobCard = memo(function CompactJobCard({
         data-selected={selected ? "true" : "false"}
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(job.id)}
-        className={`focus-ring block w-full rounded-xl border px-3 py-3 text-left transition-colors duration-150 ${
+        className={`ds-focus-ring block w-full rounded-control border px-3 py-3 text-left transition-colors duration-fast ease-standard ${
           selected
-            ? "border-pine bg-[var(--success-surface)]"
-            : "border-transparent bg-transparent hover:border-line hover:bg-panel/60"
+            ? "border-line-selected bg-surface-selected"
+            : "border-transparent bg-transparent hover:border-line-default hover:bg-surface-subtle"
         }`}
       >
         <div className="flex items-start gap-3">
@@ -333,24 +348,24 @@ export const CompactJobCard = memo(function CompactJobCard({
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
-              <p className="truncate text-xs font-medium text-[var(--text-muted)]">{job.company}</p>
+              <p className="truncate text-xs font-medium text-foreground-muted">{job.company}</p>
               <FitPill
                 score={job.match?.fit_score ?? null}
                 label={job.match?.fit_label ?? null}
                 scoreState={job.match?.score_state ?? null}
               />
             </div>
-            <p className={`mt-0.5 line-clamp-2 text-sm font-semibold leading-snug ${selected ? "text-pine" : "text-ink"}`}>
+            <p className={`mt-0.5 line-clamp-2 text-sm font-semibold leading-snug ${selected ? "text-brand-primary" : "text-foreground"}`}>
               {job.title}
             </p>
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-[var(--text-muted)]">
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-foreground-muted">
               {place && <span className="truncate">{place}</span>}
               {place && posted && <span aria-hidden>·</span>}
               {posted && <span>{posted}</span>}
               {salary && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="font-medium text-[var(--text-secondary)]">
+                  <span className="font-medium text-foreground-secondary">
                     <span className="sr-only">Salary range </span>
                     {salary}
                   </span>

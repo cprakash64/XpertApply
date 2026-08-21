@@ -62,8 +62,8 @@ export const FIT_SCORE_STYLES: Record<FitToneKey, Omit<FitScoreTone, "key">> = {
   },
   none: {
     label: "Not scored",
-    container: "border-line bg-panel text-[var(--text-muted)]",
-    number: "text-[var(--text-muted)]",
+    container: "border-line-default bg-surface-subtle text-foreground-muted",
+    number: "text-foreground-muted",
     description: "Refresh matches after completing your profile for a fit score."
   }
 };

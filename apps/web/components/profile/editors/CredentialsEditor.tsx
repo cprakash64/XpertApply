@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import {
   blankAward,
   blankCertification,
@@ -147,7 +147,7 @@ export function CredentialsEditor({ editor }: { editor: ProfileEditorState }) {
                           <p className="truncate text-sm font-semibold">
                             {record.name || "Untitled certification"}
                           </p>
-                          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+                          <p className="mt-0.5 truncate text-xs text-foreground-muted">
                             {[record.issuer, certificationPeriod(record)]
                               .filter(Boolean)
                               .join(" · ")}
@@ -266,7 +266,7 @@ export function CredentialsEditor({ editor }: { editor: ProfileEditorState }) {
                           <p className="truncate text-sm font-semibold">
                             {record.name || "Untitled award"}
                           </p>
-                          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+                          <p className="mt-0.5 truncate text-xs text-foreground-muted">
                             {[record.issuer, yearRange(record.date, "")].filter(Boolean).join(" · ")}
                           </p>
                         </div>

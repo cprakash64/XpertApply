@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Check, Plus, Search, X } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { roleGroups, targetLevelOptions } from "@/lib/profileCatalog";
 import { searchLocations } from "@/lib/locations";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
@@ -78,9 +78,9 @@ export function PreferencesEditor({ editor }: { editor: ProfileEditorState }) {
             }
           />
 
-          <fieldset className="rounded-2xl border border-line bg-white p-4">
+          <fieldset className="rounded-card border border-line-default bg-surface-card p-4">
             <legend className="px-1 text-sm font-semibold">Workplace</legend>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
+            <p className="mt-1 text-xs text-foreground-muted">
               How you want to work day to day.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -89,10 +89,10 @@ export function PreferencesEditor({ editor }: { editor: ProfileEditorState }) {
                 return (
                   <label
                     key={value}
-                    className={`focus-within:ring-2 focus-within:ring-[var(--focus-ring)] inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                    className={`focus-within:ring-2 focus-within:ring-[var(--ds-focus-ring)] inline-flex cursor-pointer items-center gap-2 rounded-card border px-3 py-2 text-sm transition ${
                       active
-                        ? "border-pine bg-[var(--success-surface)] font-semibold text-pine"
-                        : "border-line text-[var(--text-secondary)] hover:border-[var(--border-strong)]"
+                        ? "border-line-selected bg-surface-selected font-semibold text-brand-primary"
+                        : "border-line-default text-foreground-secondary hover:border-line-interactive"
                     }`}
                   >
                     <input
@@ -204,11 +204,11 @@ function SelectionCard({
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-4">
+    <section className="rounded-card border border-line-default bg-surface-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{title}</h2>
-          <p className="mt-0.5 text-xs text-[var(--text-muted)]">{description}</p>
+          <p className="mt-0.5 text-xs text-foreground-muted">{description}</p>
         </div>
         <Button
           type="button"
@@ -225,14 +225,14 @@ function SelectionCard({
           {selected.map((value) => (
             <li
               key={value}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-pine bg-[var(--success-surface)] px-2 py-1 text-xs font-medium text-pine"
+              className="inline-flex max-w-full items-center gap-1.5 rounded-control border border-line-selected bg-surface-selected px-2 py-1 text-xs font-medium text-brand-primary"
             >
               <span className="truncate">{value}</span>
               <button
                 type="button"
                 aria-label={`Remove ${value}`}
                 onClick={() => onChange(selected.filter((item) => item !== value))}
-                className="focus-ring shrink-0 rounded transition hover:text-[var(--danger)]"
+                className="ds-focus-ring shrink-0 rounded transition hover:text-status-danger"
               >
                 <X className="h-3 w-3" aria-hidden />
               </button>
@@ -240,18 +240,18 @@ function SelectionCard({
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-xs text-[var(--text-muted)]">{emptyHint}</p>
+        <p className="mt-3 text-xs text-foreground-muted">{emptyHint}</p>
       )}
 
       {picking && (
-        <div className="mt-4 border-t border-line pt-3">
+        <div className="mt-4 border-t border-line-default pt-3">
           <label htmlFor={`${title}-search`} className="sr-only">
             {searchPlaceholder}
           </label>
           <div className="relative">
             <Search
               aria-hidden
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
             />
             <input
               id={`${title}-search`}
@@ -264,7 +264,7 @@ function SelectionCard({
                   addCustom();
                 }
               }}
-              className="h-10 w-full rounded-xl border border-line bg-[var(--input-background)] pl-9 pr-3 text-sm"
+              className="h-10 w-full rounded-card border border-line-default bg-surface-raised pl-9 pr-3 text-sm"
             />
           </div>
 
@@ -272,7 +272,7 @@ function SelectionCard({
             <button
               type="button"
               onClick={addCustom}
-              className="focus-ring mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2.5 py-1.5 text-xs font-medium text-pine"
+              className="ds-focus-ring mt-2 inline-flex items-center gap-1 rounded-control border border-dashed border-line-default px-2.5 py-1.5 text-xs font-medium text-foreground-link"
             >
               <Plus className="h-3 w-3" aria-hidden /> Add “{query.trim()}”
             </button>
@@ -281,7 +281,7 @@ function SelectionCard({
           <div className="mt-3 grid max-h-72 gap-3 overflow-y-auto">
             {groups.map((group) => (
               <div key={group.label}>
-                <h3 className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <h3 className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
                   {group.label}
                 </h3>
                 <ul className="mt-1.5 flex flex-wrap gap-1.5">
@@ -293,10 +293,10 @@ function SelectionCard({
                           type="button"
                           aria-pressed={active}
                           onClick={() => toggle(option)}
-                          className={`focus-ring inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs transition ${
+                          className={`ds-focus-ring inline-flex items-center gap-1 rounded-control border px-2 py-1 text-xs transition ${
                             active
-                              ? "border-pine bg-[var(--success-surface)] font-medium text-pine"
-                              : "border-line text-[var(--text-secondary)] hover:border-[var(--border-strong)]"
+                              ? "border-line-selected bg-surface-selected font-medium text-brand-primary"
+                              : "border-line-default text-foreground-secondary hover:border-line-interactive"
                           }`}
                         >
                           {/* Selection is marked, not just tinted. */}
@@ -314,7 +314,7 @@ function SelectionCard({
               </div>
             ))}
             {groups.length === 0 && (
-              <p className="text-xs text-[var(--text-muted)]">
+              <p className="text-xs text-foreground-muted">
                 Nothing in the catalog matches “{query.trim()}”.
                 {allowCustom ? " You can still add it as your own." : ""}
               </p>

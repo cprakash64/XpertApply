@@ -13,7 +13,7 @@ import {
   type RefreshSummary
 } from "@/lib/api";
 import { useJobsQuery, type JobsQuery } from "@/lib/jobsQuery";
-import { Button } from "@/components/Button";
+import { Alert, Button } from "@/components/ui";
 import { useAppShell } from "@/components/AppShell";
 import { AutoApplyModal } from "@/components/AutoApplyModal";
 import type { TrackerApplication, TrackerStatus } from "@/components/TrackerClient";
@@ -614,7 +614,7 @@ export function JobDiscovery() {
           <div
             role="status"
             aria-live="polite"
-            className="shrink-0 border-b border-line bg-[var(--success-surface)] px-5 py-2 text-sm text-[var(--accent)]"
+            className="shrink-0 border-b border-status-success-border bg-status-success-surface px-5 py-2 text-sm text-status-success"
           >
             {message}
           </div>
@@ -622,15 +622,15 @@ export function JobDiscovery() {
         <div className="flex min-h-0 flex-1">
           <aside
             aria-label="Job results"
-            className="hidden w-[304px] shrink-0 flex-col border-r border-line bg-[var(--background)] md:flex lg:w-[340px]"
+            className="hidden w-[304px] shrink-0 flex-col border-r border-line-default bg-surface-page md:flex lg:w-[340px]"
           >
             <div className="shrink-0 px-3 pb-2.5 pt-3">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
+                  <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-foreground-muted" />
                   <input
                     aria-label="Role or skill"
-                    className="h-9 w-full rounded-lg border border-line bg-panel/40 pl-9 pr-3 text-sm"
+                    className="ds-focus-ring ds-field h-9 w-full rounded-control border border-line-strong bg-surface-card pl-9 pr-3 text-sm text-foreground"
                     placeholder="Search role or skill"
                     value={query.q}
                     onChange={(event) => onFilterChange({ q: event.target.value })}
@@ -641,12 +641,12 @@ export function JobDiscovery() {
                   onClick={closeJob}
                   aria-label="Show all jobs"
                   title="Show all jobs"
-                  className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-panel hover:text-[var(--text-secondary)]"
+                  className="ds-focus-ring inline-flex h-9 w-9 items-center justify-center rounded-control text-foreground-muted transition-colors duration-fast hover:bg-surface-subtle hover:text-foreground-secondary"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <p className="mt-2.5 px-0.5 text-xs text-[var(--text-muted)]">{resultSummary}</p>
+              <p className="mt-2.5 px-0.5 text-xs text-foreground-muted">{resultSummary}</p>
             </div>
             <CompactJobList
               jobs={filtered}
@@ -658,7 +658,7 @@ export function JobDiscovery() {
             />
           </aside>
 
-          <section className="min-w-0 flex-1 bg-[var(--background)]">
+          <section className="min-w-0 flex-1 bg-surface-page">
             <JobDetailPanel
               key={selectedId}
               job={selectedJob}
@@ -698,71 +698,65 @@ export function JobDiscovery() {
     <div className="mx-auto w-full max-w-[1080px] px-5 pb-16 pt-8 sm:px-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[1.75rem] font-semibold tracking-[-0.02em]">Jobs</h1>
-          <p className="mt-1.5 text-[15px] text-[var(--text-muted)]">
+          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">Jobs</h1>
+          <p className="mt-1.5 text-[15px] text-foreground-muted">
             Fresh roles matched to your profile, from official application sources.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={findFreshJobs} disabled={busy}>
-            {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Find fresh jobs
+          <Button type="button" size="lg" onClick={findFreshJobs} disabled={busy}>
+            {discovering ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Search aria-hidden className="h-4 w-4" />} Find fresh jobs
           </Button>
-          <Button variant="secondary" type="button" onClick={refreshMatches} disabled={busy}>
-            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Refresh matches
+          <Button variant="secondary" size="lg" type="button" onClick={refreshMatches} disabled={busy}>
+            {refreshing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden className="h-4 w-4" />} Refresh matches
           </Button>
         </div>
       </header>
 
       {(message || error) && (
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          {message && <p className="text-sm text-[var(--text-muted)]">{message}</p>}
-          {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
+          {message && <p className="text-sm text-foreground-muted">{message}</p>}
+          {error && <p className="text-sm font-medium text-status-danger">{error}</p>}
         </div>
       )}
 
       {!profileComplete && (
-        <div className="mt-5 rounded-xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-sm text-[var(--warning)]">
-          <p className="font-semibold">Complete your profile to discover better jobs.</p>
-          <p className="mt-1 leading-6">
-            Add target roles and skills on your <Link className="font-medium text-pine underline" href="/profile">profile</Link> so we can
-            match jobs to you. You can still run a basic search with what you have.
-          </p>
-        </div>
+        <Alert tone="warning" className="mt-5" title="Complete your profile to discover better jobs.">
+          Add target roles and skills on your{" "}
+          <Link className="ds-focus-ring rounded-control font-semibold underline" href="/profile">
+            profile
+          </Link>{" "}
+          so we can match jobs to you. You can still run a basic search with what you have.
+        </Alert>
       )}
 
       {warnings.length > 0 && (
-        <div className="mt-5 rounded-xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--warning)]" />
-            <div className="text-sm text-[var(--warning)]">
-              <p className="font-semibold">A small number of sources are temporarily unavailable</p>
-              <ul className="mt-1 list-disc pl-5 leading-6">
-                {warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
+        <Alert tone="warning" className="mt-5" title="A small number of sources are temporarily unavailable">
+          <ul className="mt-1 list-disc pl-5 leading-6">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </Alert>
       )}
 
       <div className="mt-6">
         <JobsFilterBar query={query} onChange={onFilterChange} dateRefreshing={dateRefreshing} />
       </div>
 
-      <div className="mt-5 flex flex-wrap items-baseline justify-between gap-2 text-sm text-[var(--text-muted)]">
+      <div className="mt-5 flex flex-wrap items-baseline justify-between gap-2 text-sm text-foreground-muted">
         <p>
-          <span className="font-medium text-[var(--text-secondary)]">{resultSummary}</span>
+          <span className="font-semibold text-foreground">{resultSummary}</span>
           {` · Posted in the last ${query.postedWithin === 1 ? "24 hours" : `${query.postedWithin} days`}`}
         </p>
         {hasDiscovered && filtered.length > 0 && filtered.length < 10 && (
-          <p className="text-[var(--text-muted)]">
+          <p className="text-foreground-muted">
             Only a few strict matches — add target roles or locations to broaden results.
           </p>
         )}
       </div>
 
-      <div className="mt-3.5 grid gap-3">
+      <div className="mt-3.5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
         {/* Bootstrapping renders a skeleton, never an empty state: telling the
           * user "no jobs matched" before the first response has landed is the
           * cold-refresh defect, and it is indistinguishable from a broken page. */}
@@ -772,11 +766,17 @@ export function JobDiscovery() {
               key={row}
               data-testid="job-card-skeleton"
               aria-hidden="true"
-              className="animate-pulse rounded-2xl border border-line bg-white p-5"
+              className="animate-pulse rounded-card border border-line-default bg-surface-card p-5"
             >
-              <div className="h-3.5 w-28 rounded bg-line" />
-              <div className="mt-3 h-5 w-2/3 rounded bg-line" />
-              <div className="mt-3 h-3.5 w-1/2 rounded bg-line" />
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 shrink-0 rounded-control bg-skeleton" />
+                <div className="min-w-0 flex-1">
+                  <div className="h-3.5 w-28 rounded bg-skeleton" />
+                  <div className="mt-3 h-5 w-2/3 rounded bg-skeleton" />
+                  <div className="mt-3 h-3.5 w-1/2 rounded bg-skeleton" />
+                </div>
+                <div className="h-16 w-24 shrink-0 rounded-card bg-skeleton" />
+              </div>
             </div>
           ))}
 
@@ -792,26 +792,50 @@ export function JobDiscovery() {
           ))}
 
         {workspaceState === "error" && (
-          <div className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-6 py-10 text-center">
-            <p className="text-sm font-medium text-[var(--danger)]">We couldn’t load your jobs.</p>
-            <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-[var(--text-muted)]">
+          <div
+            role="alert"
+            className="rounded-card border border-status-danger-border bg-status-danger-surface px-6 py-10 text-center"
+          >
+            <p className="text-sm font-semibold text-status-danger">We couldn’t load your jobs.</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-foreground-muted">
               This is usually temporary. Your saved and applied jobs are unaffected.
             </p>
             <Button className="mt-4" variant="secondary" type="button" onClick={reloadJobs}>
-              <RefreshCw className="h-4 w-4" /> Try again
+              <RefreshCw aria-hidden className="h-4 w-4" /> Try again
             </Button>
           </div>
         )}
 
+        {/* Two different problems, told apart by whether the *filters* emptied
+          * the list. Jobs were loaded and the filters excluded all of them is a
+          * one-click fix; an empty workspace is not, and offering "Clear
+          * filters" there would be a dead end. */}
         {!bootstrapping && workspaceState !== "error" && filtered.length === 0 && (
-          <div className="rounded-2xl border border-line bg-white px-6 py-14 text-center">
-            <p className="mx-auto max-w-sm text-sm leading-6 text-[var(--text-muted)]">
-              {!profileComplete
-                ? "Complete your profile to discover better jobs."
-                : hasDiscovered
-                  ? "No fresh jobs matched your selected roles, level, and locations. Try broadening your target roles or locations."
-                  : "Click “Find fresh jobs” to pull recent postings matched to your profile."}
-            </p>
+          <div className="rounded-card border border-dashed border-line-default bg-surface-card px-6 py-14 text-center">
+            {jobs.length > 0 ? (
+              <>
+                <p className="font-semibold text-foreground">No jobs match these filters</p>
+                <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-foreground-muted">
+                  {`${jobs.length} job${jobs.length === 1 ? " is" : "s are"} loaded, but none match the filters you have set.`}
+                </p>
+                <Button
+                  className="mt-4"
+                  variant="secondary"
+                  type="button"
+                  onClick={() => onFilterChange({ q: "", workplace: "", minFit: 0 })}
+                >
+                  Clear filters
+                </Button>
+              </>
+            ) : (
+              <p className="mx-auto max-w-sm text-sm leading-6 text-foreground-muted">
+                {!profileComplete
+                  ? "Complete your profile to discover better jobs."
+                  : hasDiscovered
+                    ? "No fresh jobs matched your selected roles, level, and locations. Try broadening your target roles or locations."
+                    : "Click “Find fresh jobs” to pull recent postings matched to your profile."}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -858,10 +882,10 @@ function CompactJobList({
       >
         {[0, 1, 2, 3, 4].map((row) => (
           <li key={row} data-testid="compact-job-skeleton" className="px-1 py-1.5">
-            <div className="animate-pulse rounded-lg border border-line bg-panel/40 p-3">
-              <div className="h-3 w-1/3 rounded bg-line" />
-              <div className="mt-2 h-3.5 w-4/5 rounded bg-line" />
-              <div className="mt-2 h-3 w-1/2 rounded bg-line" />
+            <div className="animate-pulse rounded-card border border-line-default bg-surface-card p-3">
+              <div className="h-3 w-1/3 rounded bg-skeleton" />
+              <div className="mt-2 h-3.5 w-4/5 rounded bg-skeleton" />
+              <div className="mt-2 h-3 w-1/2 rounded bg-skeleton" />
             </div>
           </li>
         ))}
@@ -884,19 +908,19 @@ function CompactJobList({
         />
       ))}
       {state === "error" && jobs.length === 0 && (
-        <li className="px-3 py-6 text-sm text-[var(--text-muted)]">
-          <p className="text-[var(--danger)]">Could not load jobs.</p>
+        <li className="px-3 py-6 text-sm text-foreground-muted">
+          <p className="text-status-danger">Could not load jobs.</p>
           <button
             type="button"
             onClick={onRetry}
-            className="focus-ring mt-2 inline-flex h-8 items-center rounded-lg border border-line bg-white px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-panel"
+            className="ds-focus-ring mt-2 inline-flex h-8 items-center rounded-control border border-line-strong bg-surface-card px-3 text-sm font-medium text-foreground-secondary hover:bg-surface-subtle"
           >
             Try again
           </button>
         </li>
       )}
       {state !== "error" && jobs.length === 0 && (
-        <li className="px-3 py-6 text-sm text-[var(--text-muted)]">No jobs match the current filters.</li>
+        <li className="px-3 py-6 text-sm text-foreground-muted">No jobs match the current filters.</li>
       )}
     </ul>
   );

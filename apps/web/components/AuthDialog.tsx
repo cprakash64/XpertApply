@@ -88,7 +88,7 @@ export function AuthDialog({
     >
       <div className="px-7 pb-5 pt-7 sm:px-9 sm:pt-9">
         <div className="flex items-start justify-between gap-5">
-          <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--glass-border)] bg-[var(--success-surface)] text-pine">
+          <span className="grid h-10 w-10 place-items-center rounded-field border border-[var(--glass-border)] bg-surface-selected text-brand-primary">
             <BriefcaseBusiness className="h-5 w-5" />
           </span>
           {presentation === "modal" && (
@@ -96,7 +96,7 @@ export function AuthDialog({
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line bg-white/50 text-[var(--text-secondary)] transition hover:bg-panel"
+              className="ds-focus-ring ds-touch-target grid h-10 w-10 shrink-0 place-items-center rounded-pill border border-line-default bg-surface-card/50 text-foreground-secondary transition duration-fast ease-standard hover:bg-surface-subtle"
               aria-label="Close authentication"
             >
               <X className="h-[18px] w-[18px]" />
@@ -106,7 +106,7 @@ export function AuthDialog({
         <h1 id="auth-dialog-title" className="mt-7 text-3xl font-semibold tracking-[-0.04em]">
           {isLogin ? "Sign in to XpertApply" : "Create your account"}
         </h1>
-        <p className="mt-2 text-sm text-[var(--text-muted)]">
+        <p className="mt-2 text-sm text-foreground-muted">
           {isLogin ? "Continue your job search." : "One profile for every application."}
         </p>
       </div>
@@ -115,7 +115,7 @@ export function AuthDialog({
         <label className="block text-sm font-medium" htmlFor="auth-email">Email address</label>
         <input
           id="auth-email"
-          className="auth-input mt-2 h-12 w-full rounded-xl border border-line px-4 text-sm"
+          className="auth-input ds-field mt-2 h-12 w-full rounded-field border border-line-default px-4 text-sm text-foreground"
           type="email"
           inputMode="email"
           autoComplete="email"
@@ -131,7 +131,7 @@ export function AuthDialog({
         <div className="relative mt-2">
           <input
             id="auth-password"
-            className="auth-input h-12 w-full rounded-xl border border-line px-4 pr-12 text-sm"
+            className="auth-input ds-field h-12 w-full rounded-field border border-line-default px-4 pr-12 text-sm text-foreground"
             type={showPassword ? "text" : "password"}
             autoComplete={isLogin ? "current-password" : "new-password"}
             minLength={8}
@@ -140,7 +140,7 @@ export function AuthDialog({
             onChange={(event) => setPassword(event.target.value)}
           />
           <button
-            className="focus-ring absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-lg text-[var(--text-muted)] hover:bg-panel"
+            className="ds-focus-ring absolute inset-y-0 right-0 grid w-12 place-items-center rounded-r-field text-foreground-muted transition duration-fast ease-standard hover:text-foreground"
             type="button"
             onClick={() => setShowPassword((visible) => !visible)}
             aria-label={showPassword ? "Hide password" : "Show password"}
@@ -150,13 +150,13 @@ export function AuthDialog({
         </div>
 
         {error && (
-          <p className="mt-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2.5 text-sm text-[var(--danger)]" role="alert">
+          <p className="mt-4 rounded-field border border-status-danger-border bg-status-danger-surface px-3 py-2.5 text-sm text-status-danger" role="alert">
             {error}
           </p>
         )}
 
         <button
-          className="focus-ring mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-pine px-5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-70"
+          className="ds-focus-ring mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-field bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover disabled:opacity-70"
           type="submit"
           disabled={submitting}
         >
@@ -164,19 +164,19 @@ export function AuthDialog({
           {submitting ? (isLogin ? "Logging in…" : "Creating account…") : (isLogin ? "Log in" : "Create account")}
         </button>
 
-        <div className="mt-5 flex items-center justify-center gap-1.5 text-sm text-[var(--text-muted)]">
+        <div className="mt-5 flex items-center justify-center gap-1.5 text-sm text-foreground-muted">
           <span>{isLogin ? "New to XpertApply?" : "Already have an account?"}</span>
           <button
             type="button"
-            className="focus-ring rounded-md px-1 py-0.5 font-semibold text-pine"
+            className="ds-focus-ring rounded-control px-1 py-0.5 font-semibold text-foreground-link"
             onClick={() => changeMode(isLogin ? "signup" : "login")}
           >
             {isLogin ? "Create an account" : "Sign in"}
           </button>
         </div>
 
-        <p className="mt-6 flex items-center justify-center gap-2 border-t border-line/70 pt-5 text-center text-xs text-[var(--text-muted)]">
-          <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-pine" />
+        <p className="mt-6 flex items-center justify-center gap-2 border-t border-line-subtle pt-5 text-center text-xs text-foreground-muted">
+          <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-brand-accent-text" />
           Private by default. You stay in control.
         </p>
       </form>

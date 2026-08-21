@@ -1,7 +1,7 @@
 "use client";
 
 import { ExternalLink, Globe, Plus, Trash2 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { GitHubIcon, LinkedInIcon, XIcon } from "@/components/profile/BrandIcons";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
 import type { ProfileForm, ProfileLink } from "@/lib/profileForm";
@@ -91,7 +91,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
 
   return (
     <div className="grid gap-4">
-      <section className="rounded-2xl border border-line bg-white p-4">
+      <section className="rounded-card border border-line-default bg-surface-card p-4">
         <h2 className="text-sm font-semibold">Professional links</h2>
         <ul className="mt-3 grid gap-3">
           {NAMED_LINKS.map(({ key, label, icon: Icon, placeholder }) => {
@@ -102,7 +102,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
               <li key={key} className="flex items-start gap-3">
                 <span
                   aria-hidden
-                  className="mt-6 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-panel text-[var(--text-muted)]"
+                  className="mt-6 grid h-9 w-9 shrink-0 place-items-center rounded-card bg-surface-subtle text-foreground-muted"
                 >
                   <Icon className="h-4 w-4" />
                 </span>
@@ -123,7 +123,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={`Open your ${label} profile in a new tab`}
-                    className="focus-ring mt-6 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-[var(--text-muted)] transition hover:bg-panel hover:text-pine"
+                    className="ds-focus-ring mt-6 grid h-9 w-9 shrink-0 place-items-center rounded-card text-foreground-muted transition hover:bg-surface-subtle hover:text-foreground-link"
                   >
                     <ExternalLink className="h-4 w-4" aria-hidden />
                   </a>
@@ -134,11 +134,11 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
         </ul>
       </section>
 
-      <section className="rounded-2xl border border-line bg-white p-4">
+      <section className="rounded-card border border-line-default bg-surface-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Other links</h2>
-            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+            <p className="mt-0.5 text-xs text-foreground-muted">
               Anything else worth showing — Google Scholar, Kaggle, a blog.
             </p>
           </div>
@@ -157,7 +157,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
         </div>
 
         {form.additional_links.length === 0 ? (
-          <p className="mt-3 text-xs text-[var(--text-muted)]">No other links yet.</p>
+          <p className="mt-3 text-xs text-foreground-muted">No other links yet.</p>
         ) : (
           <ul className="mt-3 grid gap-3">
             {form.additional_links.map((link, index) => {
@@ -170,7 +170,7 @@ export function ProfileLinksFields({ editor }: { editor: ProfileEditorState }) {
                 fieldErrors[`additional_links.${index}.label`] ??
                 (missingLabel ? "Give this link a name." : undefined);
               return (
-                <li key={index} className="rounded-xl border border-line bg-panel p-3">
+                <li key={index} className="rounded-card border border-line-default bg-surface-subtle p-3">
                   {/* Stacks on mobile so neither field is squeezed. */}
                   <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] sm:items-start">
                     <Field
@@ -251,7 +251,7 @@ export function LinksEditor({ editor }: { editor: ProfileEditorState }) {
       <ProfileLinksFields editor={editor} />
 
       {problemCount > 0 && (
-        <p role="alert" className="mt-4 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-4 text-sm text-status-danger">
           Fix the highlighted link{problemCount === 1 ? "" : "s"} before saving.
         </p>
       )}

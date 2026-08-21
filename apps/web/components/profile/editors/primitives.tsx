@@ -10,7 +10,7 @@ import {
   Plus,
   X
 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import type { SaveState } from "@/lib/profileEditorData";
 
 /**
@@ -72,7 +72,7 @@ export function RecordCard({
   }, [expanded]);
 
   return (
-    <li className="rounded-2xl border border-line bg-white transition duration-150 hover:border-[var(--border-strong)]">
+    <li className="rounded-card border border-line-default bg-surface-card transition duration-150 hover:border-line-interactive">
       <div className="flex items-start gap-2 p-4">
         <button
           ref={triggerRef}
@@ -81,12 +81,12 @@ export function RecordCard({
           onClick={onToggle}
           aria-expanded={expanded}
           aria-controls={bodyId}
-          className="focus-ring -m-1 flex min-w-0 flex-1 items-start gap-3 rounded-xl p-1 text-left"
+          className="ds-focus-ring -m-1 flex min-w-0 flex-1 items-start gap-3 rounded-card p-1 text-left"
         >
           <span className="min-w-0 flex-1">{summary}</span>
           <ChevronDown
             aria-hidden
-            className={`mt-1 h-4 w-4 shrink-0 text-[var(--text-muted)] transition-transform duration-150 ${
+            className={`mt-1 h-4 w-4 shrink-0 text-foreground-muted transition-transform duration-150 ${
               expanded ? "rotate-180" : ""
             }`}
           />
@@ -108,7 +108,7 @@ export function RecordCard({
           ref={bodyRef}
           role="region"
           aria-labelledby={triggerId}
-          className="border-t border-line p-4"
+          className="border-t border-line-default p-4"
         >
           {children}
         </div>
@@ -169,14 +169,14 @@ function RecordMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="focus-ring grid h-8 w-8 place-items-center rounded-lg text-[var(--text-muted)] transition hover:bg-panel hover:text-ink"
+        className="ds-focus-ring grid h-8 w-8 place-items-center rounded-control text-foreground-muted transition hover:bg-surface-subtle hover:text-foreground"
       >
         <MoreHorizontal className="h-4 w-4" aria-hidden />
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-card"
+          className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-card border border-line-default bg-surface-card py-1 shadow-card"
         >
           {onEdit && (
             <MenuItem onSelect={() => { setOpen(false); onEdit(); }}>Edit</MenuItem>
@@ -210,8 +210,8 @@ function MenuItem({
       role="menuitem"
       type="button"
       onClick={onSelect}
-      className={`focus-ring block w-full px-3 py-2 text-left text-sm transition hover:bg-panel ${
-        destructive ? "text-[var(--danger)]" : "text-ink"
+      className={`ds-focus-ring block w-full px-3 py-2 text-left text-sm transition hover:bg-surface-subtle ${
+        destructive ? "text-status-danger" : "text-foreground"
       }`}
     >
       {children}
@@ -268,24 +268,24 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--overlay)] p-4">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-surface-overlay p-4">
       <div
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={bodyId}
-        className="w-full max-w-md rounded-2xl border border-line bg-white p-5 shadow-card"
+        className="w-full max-w-md rounded-card border border-line-default bg-surface-card p-5 shadow-card"
       >
         <div className="flex items-start gap-3">
           <span
             aria-hidden
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--danger-surface)] text-[var(--danger)]"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-card bg-status-danger-surface text-status-danger"
           >
             <AlertTriangle className="h-4 w-4" />
           </span>
           <div className="min-w-0">
             <h2 id={titleId} className="text-base font-semibold">{title}</h2>
-            <p id={bodyId} className="mt-1 text-sm text-[var(--text-muted)]">{body}</p>
+            <p id={bodyId} className="mt-1 text-sm text-foreground-muted">{body}</p>
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -295,11 +295,11 @@ export function ConfirmDialog({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="focus-ring inline-flex h-10 items-center justify-center rounded-md border border-line bg-white px-4 text-sm font-medium text-ink transition hover:bg-panel"
+            className="ds-focus-ring inline-flex h-10 items-center justify-center rounded-control border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground transition hover:bg-surface-subtle"
           >
             Cancel
           </button>
-          <Button type="button" variant="danger" onClick={onConfirm}>
+          <Button type="button" variant="destructive" onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>
@@ -336,26 +336,26 @@ export function SaveBar({
   disabled?: boolean;
 }) {
   return (
-    <div className="mt-6 flex flex-col gap-3 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mt-6 flex flex-col gap-3 border-t border-line-default pt-4 sm:flex-row sm:items-center sm:justify-between">
       <p aria-live="polite" className="min-h-5 text-sm">
         {state.status === "saving" && (
-          <span className="inline-flex items-center gap-2 text-[var(--text-muted)]">
+          <span className="inline-flex items-center gap-2 text-foreground-muted">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Saving…
           </span>
         )}
         {state.status === "saved" && (
-          <span className="inline-flex items-center gap-2 text-pine">
+          <span className="inline-flex items-center gap-2 text-status-success">
             <Check className="h-3.5 w-3.5" aria-hidden /> Saved
           </span>
         )}
         {state.status === "error" && (
-          <span className="inline-flex items-center gap-2 text-[var(--danger)]">
+          <span className="inline-flex items-center gap-2 text-status-danger">
             <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
             Error saving — {state.message}
           </span>
         )}
         {state.status === "idle" && dirty && (
-          <span className="text-[var(--text-muted)]">Unsaved changes</span>
+          <span className="text-foreground-muted">Unsaved changes</span>
         )}
       </p>
       <div className="flex shrink-0 gap-2">
@@ -414,14 +414,14 @@ export function Field({
         aria-invalid={error ? true : undefined}
         aria-describedby={error || hint ? messageId : undefined}
         onChange={(event) => onChange(event.target.value)}
-        className={`mt-1.5 h-10 w-full rounded-xl border bg-[var(--input-background)] px-3 text-sm transition disabled:bg-[var(--disabled-background)] disabled:text-[var(--text-muted)] ${
-          error ? "border-[var(--danger-border)]" : "border-line"
+        className={`mt-1.5 h-10 w-full rounded-card border bg-surface-raised px-3 text-sm transition disabled:bg-surface-disabled disabled:text-foreground-muted ${
+          error ? "border-status-danger-border" : "border-line-default"
         }`}
       />
       {(error || hint) && (
         <p
           id={messageId}
-          className={`mt-1 text-xs ${error ? "text-[var(--danger)]" : "text-[var(--text-muted)]"}`}
+          className={`mt-1 text-xs ${error ? "text-status-danger" : "text-foreground-muted"}`}
         >
           {error || hint}
         </p>
@@ -464,8 +464,8 @@ export function SelectField({
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         onChange={(event) => onChange(event.target.value)}
-        className={`mt-1.5 h-10 w-full rounded-xl border bg-[var(--input-background)] px-3 text-sm ${
-          error ? "border-[var(--danger-border)]" : "border-line"
+        className={`mt-1.5 h-10 w-full rounded-card border bg-surface-raised px-3 text-sm ${
+          error ? "border-status-danger-border" : "border-line-default"
         }`}
       >
         {pairs.map(([optionValue, optionLabel]) => (
@@ -475,7 +475,7 @@ export function SelectField({
         ))}
       </select>
       {error && (
-        <p id={errorId} className="mt-1 text-xs text-[var(--danger)]">
+        <p id={errorId} className="mt-1 text-xs text-status-danger">
           {error}
         </p>
       )}
@@ -512,10 +512,10 @@ export function TextArea({
         placeholder={placeholder}
         aria-describedby={hint ? hintId : undefined}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1.5 w-full rounded-xl border border-line bg-[var(--input-background)] px-3 py-2 text-sm"
+        className="mt-1.5 w-full rounded-card border border-line-default bg-surface-raised px-3 py-2 text-sm"
       />
       {hint && (
-        <p id={hintId} className="mt-1 text-xs text-[var(--text-muted)]">
+        <p id={hintId} className="mt-1 text-xs text-foreground-muted">
           {hint}
         </p>
       )}
@@ -564,9 +564,9 @@ export function BulletList({
               .filter(Boolean)
           )
         }
-        className="mt-1.5 w-full rounded-xl border border-line bg-[var(--input-background)] px-3 py-2 text-sm leading-6"
+        className="mt-1.5 w-full rounded-card border border-line-default bg-surface-raised px-3 py-2 text-sm leading-6"
       />
-      <p id={hintId} className="mt-1 text-xs text-[var(--text-muted)]">
+      <p id={hintId} className="mt-1 text-xs text-foreground-muted">
         {hint}
       </p>
     </div>
@@ -642,14 +642,14 @@ export function TagField({
               commit(pasted);
             }
           }}
-          className="h-10 min-w-0 flex-1 rounded-xl border border-line bg-[var(--input-background)] px-3 text-sm"
+          className="h-10 min-w-0 flex-1 rounded-card border border-line-default bg-surface-raised px-3 text-sm"
         />
         <Button type="button" variant="secondary" onClick={() => commit(input)}>
           <Plus className="h-4 w-4" aria-hidden /> Add
         </Button>
       </div>
       {hint && (
-        <p id={hintId} className="mt-1 text-xs text-[var(--text-muted)]">
+        <p id={hintId} className="mt-1 text-xs text-foreground-muted">
           {hint}
         </p>
       )}
@@ -671,14 +671,14 @@ export function TagList({
       {values.map((value) => (
         <li
           key={value}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs text-[var(--text-secondary)]"
+          className="inline-flex max-w-full items-center gap-1.5 rounded-control border border-line-default bg-surface-subtle px-2 py-1 text-xs text-foreground-secondary"
         >
           <span className="truncate">{value}</span>
           <button
             type="button"
             onClick={() => onRemove(value)}
             aria-label={`Remove ${value}`}
-            className="focus-ring shrink-0 rounded text-[var(--text-muted)] transition hover:text-[var(--danger)]"
+            className="ds-focus-ring shrink-0 rounded text-foreground-muted transition hover:text-status-danger"
           >
             <X className="h-3 w-3" aria-hidden />
           </button>
@@ -711,14 +711,14 @@ export function Toggle({
           checked={checked}
           aria-describedby={hint ? hintId : undefined}
           onChange={(event) => onChange(event.target.checked)}
-          className="h-4 w-4 rounded border-line accent-[var(--accent)]"
+          className="h-4 w-4 rounded border-line-default accent-brand-primary"
         />
         <label htmlFor={id} className="text-sm font-medium">
           {label}
         </label>
       </div>
       {hint && (
-        <p id={hintId} className="mt-1 text-xs text-[var(--text-muted)]">
+        <p id={hintId} className="mt-1 text-xs text-foreground-muted">
           {hint}
         </p>
       )}
@@ -737,9 +737,9 @@ export function FieldGroup({
   children: React.ReactNode;
 }) {
   return (
-    <fieldset className="min-w-0 rounded-2xl border border-line bg-white p-5">
+    <fieldset className="min-w-0 rounded-card border border-line-default bg-surface-card p-5">
       <legend className="px-1 text-sm font-semibold">{title}</legend>
-      {description && <p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p>}
+      {description && <p className="mt-1 text-xs text-foreground-muted">{description}</p>}
       <div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-2">{children}</div>
     </fieldset>
   );
@@ -748,8 +748,8 @@ export function FieldGroup({
 /** The "no records yet" prompt. */
 export function EmptyRecords({ text, actionLabel, onAdd }: { text: string; actionLabel: string; onAdd: () => void }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line bg-panel px-5 py-8 text-center">
-      <p className="text-sm text-[var(--text-muted)]">{text}</p>
+    <div className="rounded-card border border-dashed border-line-default bg-surface-subtle px-5 py-8 text-center">
+      <p className="text-sm text-foreground-muted">{text}</p>
       <Button type="button" className="mx-auto mt-3" onClick={onAdd}>
         <Plus className="h-4 w-4" aria-hidden /> {actionLabel}
       </Button>

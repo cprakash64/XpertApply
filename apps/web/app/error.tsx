@@ -31,16 +31,16 @@ export default function ErrorBoundary({
   }, [error]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--background)] p-6">
+    <main className="flex min-h-screen items-center justify-center bg-surface-page p-6">
       <div
         role="alert"
-        className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-card"
+        className="w-full max-w-md rounded-card border border-line-default bg-surface-card p-6 shadow-raised"
       >
-        <AlertTriangle aria-hidden="true" className="h-6 w-6 text-[var(--danger)]" />
-        <h1 className="mt-3 text-xl font-semibold text-[var(--text-primary)]">
+        <AlertTriangle aria-hidden="true" className="h-6 w-6 text-status-danger" />
+        <h1 className="mt-3 text-xl font-semibold text-foreground">
           Something went wrong
         </h1>
-        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+        <p className="mt-2 text-sm text-foreground-secondary">
           This section failed to load. Trying again usually fixes it — your saved data is unaffected.
         </p>
 
@@ -48,20 +48,20 @@ export default function ErrorBoundary({
           <button
             type="button"
             onClick={reset}
-            className="focus-ring inline-flex h-10 items-center rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]"
+            className="ds-focus-ring inline-flex h-10 items-center rounded-control bg-action-primary px-4 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover"
           >
             Try again
           </button>
           <a
             href="/dashboard"
-            className="focus-ring inline-flex h-10 items-center rounded-md border border-[var(--border)] px-4 text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+            className="ds-focus-ring inline-flex h-10 items-center rounded-control border border-line-strong px-4 text-sm font-semibold text-foreground hover:bg-surface-subtle"
           >
             Back to dashboard
           </a>
         </div>
 
         {error.digest && (
-          <p className="mt-4 text-xs text-[var(--text-muted)]">
+          <p className="mt-4 text-xs text-foreground-muted">
             Reference: <code className="font-mono">{error.digest}</code>
           </p>
         )}

@@ -178,13 +178,13 @@ export function PersonalEditor({ editor }: { editor: ProfileEditorState }) {
       )}
 
       {nameMissing && (
-        <p role="alert" className="mt-4 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-4 text-sm text-status-danger">
           First and last name are required before this section can be saved.
         </p>
       )}
 
       {linkProblems > 0 && (
-        <p role="alert" className="mt-4 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-4 text-sm text-status-danger">
           Fix the highlighted link{linkProblems === 1 ? "" : "s"} before saving.
         </p>
       )}

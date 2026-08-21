@@ -79,9 +79,9 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
             />
           </FieldGroup>
 
-          <section className="rounded-2xl border border-line bg-white p-4">
+          <section className="rounded-card border border-line-default bg-surface-card p-4">
             <h2 className="text-sm font-semibold">Reusable application answers</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
+            <p className="mt-1 text-xs text-foreground-muted">
               Answer once and XpertApply can reuse these. Each question is stored separately —
               “now” and “in the future” are different questions, and “Answer during each
               application” is a real choice, not a blank.
@@ -94,16 +94,16 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
             </div>
           </section>
 
-          <section className="rounded-2xl border border-line bg-white p-4">
+          <section className="rounded-card border border-line-default bg-surface-card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="flex items-center gap-2 text-sm font-semibold">
                   Optional demographic information
-                  <span className="inline-flex items-center gap-1 rounded-lg border border-line px-1.5 py-0.5 text-xs font-medium text-[var(--text-muted)]">
+                  <span className="inline-flex items-center gap-1 rounded-control border border-line-default px-1.5 py-0.5 text-xs font-medium text-foreground-muted">
                     <Lock className="h-3 w-3" aria-hidden /> Private · Optional
                   </span>
                 </h2>
-                <p className="mt-1 max-w-xl text-xs text-[var(--text-muted)]">
+                <p className="mt-1 max-w-xl text-xs text-foreground-muted">
                   Used only to help complete voluntary demographic questions on applications.
                   Never used for job matching, fit scoring, ranking, resume generation, or
                   cover-letter generation.
@@ -111,7 +111,7 @@ export function ApplicationPreferencesEditor({ editor }: { editor: ProfileEditor
               </div>
               <Link
                 href="/profile/eeo"
-                className="focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-4 text-sm font-medium text-ink transition hover:border-[var(--border-strong)] hover:bg-panel"
+                className="ds-focus-ring inline-flex h-10 shrink-0 items-center gap-2 rounded-card border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground transition hover:border-line-interactive hover:bg-surface-subtle"
               >
                 Manage optional information <ArrowRight className="h-3.5 w-3.5" aria-hidden />
               </Link>

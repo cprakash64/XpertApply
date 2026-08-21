@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { blankEducation, yearRange, type EducationRecord } from "@/lib/careerRecords";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
 import { EditorShell } from "./EditorShell";
@@ -72,7 +72,7 @@ export function EducationEditor({ editor }: { editor: ProfileEditorState }) {
   return (
     <EditorShell loading={loading} loadError={loadError} onRetry={reload}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--text-muted)]">
+        <p className="text-sm text-foreground-muted">
           {records.length === 0
             ? "No schools yet."
             : `${records.length} school${records.length === 1 ? "" : "s"}.`}{" "}
@@ -137,16 +137,16 @@ function EducationSummary({ record }: { record: EducationRecord }) {
         {record.school || "Untitled school"}
       </span>
       {degreeLine && (
-        <span className="mt-0.5 block truncate text-sm text-[var(--text-secondary)]">
+        <span className="mt-0.5 block truncate text-sm text-foreground-secondary">
           {degreeLine}
         </span>
       )}
       {record.minor && (
-        <span className="mt-0.5 block truncate text-xs text-[var(--text-muted)]">
+        <span className="mt-0.5 block truncate text-xs text-foreground-muted">
           Minor: {record.minor}
         </span>
       )}
-      <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">
+      <span className="mt-1 block truncate text-xs text-foreground-muted">
         {[
           dates,
           // Only shown when the user chose to record one.

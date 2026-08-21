@@ -48,11 +48,15 @@ export const metadata: Metadata = {
  * with `color-scheme: light dark` in globals.css this is what prevents a white
  * flash before the stylesheet applies for a user in dark mode — and it needs no
  * JavaScript, so it cannot cause a hydration mismatch.
+ *
+ * The two colours are the canonical page surface in each scheme, so the mobile
+ * browser's own chrome matches the sheet the page paints. Light was still the
+ * pre-migration warm neutral until the canvas moved.
  */
 export const viewport: Viewport = {
   colorScheme: "light dark",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fbfbf8" },
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
     { media: "(prefers-color-scheme: dark)", color: "#14171a" }
   ]
 };

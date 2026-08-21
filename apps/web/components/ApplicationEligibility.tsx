@@ -79,14 +79,14 @@ export function ApplicationEligibility() {
   }, []);
 
   return (
-    <section aria-labelledby="eligibility-heading" className="rounded-2xl border border-line bg-white p-6">
+    <section aria-labelledby="eligibility-heading" className="rounded-card border border-line-default bg-surface-card p-6">
       <div className="flex items-start gap-3">
-        <ShieldQuestion className="mt-0.5 h-5 w-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+        <ShieldQuestion className="mt-0.5 h-5 w-5 shrink-0 text-foreground-muted" aria-hidden />
         <div>
           <h2 id="eligibility-heading" className="text-base font-semibold">
             Application eligibility answers
           </h2>
-          <p className="mt-1 max-w-prose text-sm leading-6 text-[var(--text-muted)]">
+          <p className="mt-1 max-w-prose text-sm leading-6 text-foreground-muted">
             XpertApply can reuse these answers for equivalent application questions. You can review or
             change them before submitting.
           </p>
@@ -94,13 +94,13 @@ export function ApplicationEligibility() {
       </div>
 
       {error && (
-        <p role="alert" className="mt-4 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-4 text-sm text-status-danger">
           {error}
         </p>
       )}
 
       {loading ? (
-        <p className="mt-6 flex items-center gap-2 text-sm text-[var(--text-muted)]">
+        <p className="mt-6 flex items-center gap-2 text-sm text-foreground-muted">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading your answers…
         </p>
       ) : (
@@ -112,7 +112,7 @@ export function ApplicationEligibility() {
             const busy = saving === entry.field;
             return (
               <fieldset key={entry.field} disabled={busy} className="border-0 p-0">
-                <legend className="text-sm font-medium text-[var(--text-secondary)]">
+                <legend className="text-sm font-medium text-foreground-secondary">
                   {entry.prompt}
                 </legend>
                 <div role="radiogroup" aria-label={entry.prompt} className="mt-3 flex flex-wrap gap-2">
@@ -125,10 +125,14 @@ export function ApplicationEligibility() {
                         role="radio"
                         aria-checked={active}
                         onClick={() => void choose(entry.field, choice.value)}
-                        className={`focus-ring inline-flex h-10 items-center rounded-lg border px-4 text-sm font-medium transition-colors ${
+                        /* Selected is a BRAND state, not a success state: the
+                           old green tint said "this answer is good" about a
+                           plain Yes/No choice. Success stays reserved for the
+                           "Saved" confirmation below. */
+                        className={`ds-focus-ring ds-touch-target inline-flex h-10 items-center rounded-control border px-4 text-sm font-medium transition-colors duration-fast ${
                           active
-                            ? "border-[var(--accent)] bg-[var(--success-surface)] text-[var(--accent)]"
-                            : "border-line bg-white text-[var(--text-secondary)] hover:bg-panel"
+                            ? "border-line-selected bg-surface-selected text-brand-primary"
+                            : "border-line-strong bg-surface-card text-foreground-secondary hover:bg-surface-subtle"
                         }`}
                       >
                         {choice.label}
@@ -136,13 +140,13 @@ export function ApplicationEligibility() {
                     );
                   })}
                 </div>
-                <p className="mt-2 text-xs text-[var(--text-muted)]">
+                <p className="mt-2 text-xs text-foreground-muted">
                   {busy ? (
                     <span className="inline-flex items-center gap-1.5">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Saving…
                     </span>
                   ) : savedField === entry.field ? (
-                    <span className="inline-flex items-center gap-1.5 text-[var(--accent)]">
+                    <span className="inline-flex items-center gap-1.5 text-status-success">
                       <Check className="h-3 w-3" aria-hidden /> Saved
                     </span>
                   ) : entry.needs_confirmation ? (

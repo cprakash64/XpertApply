@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import type { UnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 
 /**
@@ -64,7 +64,7 @@ export function UnsavedChangesDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-[var(--overlay)] p-4"
+      className="fixed inset-0 z-50 grid place-items-center bg-surface-overlay p-4"
       // The backdrop is not a dismiss target: clicking away from a
       // "you have unsaved work" prompt should not resolve it either way.
       role="presentation"
@@ -75,25 +75,25 @@ export function UnsavedChangesDialog({
         aria-modal="true"
         aria-labelledby="unsaved-title"
         aria-describedby="unsaved-body"
-        className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-[var(--shadow)]"
+        className="w-full max-w-md rounded-card border border-line-default bg-surface-card p-6 shadow-[var(--shadow)]"
       >
         <span
           aria-hidden
-          className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--warning-surface)] text-[var(--warning)]"
+          className="grid h-10 w-10 place-items-center rounded-card bg-status-warning-surface text-status-warning"
         >
           <AlertTriangle className="h-5 w-5" />
         </span>
         <h2 id="unsaved-title" className="mt-4 text-lg font-semibold tracking-[-0.02em]">
           Unsaved changes
         </h2>
-        <p id="unsaved-body" className="mt-1.5 text-sm text-[var(--text-muted)]">
+        <p id="unsaved-body" className="mt-1.5 text-sm text-foreground-muted">
           You have changes that haven’t been saved yet.
         </p>
 
         {guard.saveError && (
           <p
             role="alert"
-            className="mt-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2 text-sm text-[var(--danger)]"
+            className="mt-4 rounded-card border border-status-danger-border bg-status-danger-surface px-3 py-2 text-sm text-status-danger"
           >
             {guard.saveError}
           </p>
@@ -114,7 +114,7 @@ export function UnsavedChangesDialog({
             variant="secondary"
             onClick={guard.discard}
             disabled={guard.saving}
-            className="text-[var(--danger)]"
+            className="text-status-danger"
           >
             Discard changes
           </Button>

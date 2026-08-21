@@ -72,13 +72,13 @@ export function ProfileOverview() {
            dark-mode contrast e2e check targets it. The overview replaced the
            wizard at /profile, so it inherits the identifier too. */
         data-testid="section-error"
-        className="rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-5 py-4 text-sm text-[var(--danger)]"
+        className="rounded-card border border-status-danger-border bg-status-danger-surface px-5 py-4 text-sm text-status-danger"
       >
         <p>We couldn’t load your profile.</p>
         <button
           type="button"
           onClick={reload}
-          className="focus-ring mt-3 rounded-lg border border-[var(--danger-border)] px-3 py-1.5 font-semibold"
+          className="ds-focus-ring mt-3 rounded-control border border-status-danger-border px-3 py-1.5 font-semibold"
         >
           Try again
         </button>
@@ -102,7 +102,7 @@ function OnboardingHandoff() {
     <div>
       <header className="mb-6">
         <h1 className="text-3xl font-semibold tracking-[-0.03em]">Set up your profile</h1>
-        <p className="mt-2 max-w-2xl text-[var(--text-muted)]">
+        <p className="mt-2 max-w-2xl text-foreground-muted">
           Import a resume or fill in the sections below. Once you have the basics saved, this
           page becomes your profile overview.
         </p>
@@ -120,10 +120,10 @@ function Overview({ data }: { data: ProfileOverviewData }) {
 
   return (
     <div className="pb-10">
-      <header className="flex flex-col gap-4 border-b border-line pb-6 sm:flex-row sm:items-start sm:justify-between">
+      <header className="flex flex-col gap-4 border-b border-line-default pb-6 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-3xl font-semibold tracking-[-0.03em]">Profile</h1>
-          <p className="mt-2 max-w-xl text-sm text-[var(--text-muted)]">
+          <p className="mt-2 max-w-xl text-sm text-foreground-muted">
             Keep your career information accurate for better matches and applications.
           </p>
         </div>
@@ -132,13 +132,13 @@ function Overview({ data }: { data: ProfileOverviewData }) {
         <div className="flex shrink-0 flex-wrap gap-2">
           <Link
             href="/profile/import"
-            className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 text-sm font-medium text-ink transition hover:border-[var(--border-strong)] hover:bg-panel"
+            className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-card border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground transition hover:border-line-interactive hover:bg-surface-subtle"
           >
             <Upload className="h-4 w-4" aria-hidden /> Import / Update resume
           </Link>
           <Link
             href="/profile/edit"
-            className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-pine px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
+            className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
           >
             Edit profile
           </Link>
@@ -199,7 +199,7 @@ function IdentityCard({
       <div className="flex min-w-0 items-center gap-4">
         <span
           aria-hidden
-          className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-[var(--success-surface)] text-lg font-semibold text-pine"
+          className="grid h-14 w-14 shrink-0 place-items-center rounded-card border border-line-default bg-surface-subtle text-lg font-semibold text-foreground-secondary"
         >
           {initials}
         </span>
@@ -208,10 +208,10 @@ function IdentityCard({
             {name || "Add your name"}
           </h2>
           {headline && (
-            <p className="mt-0.5 truncate text-sm text-[var(--text-secondary)]">{headline}</p>
+            <p className="mt-0.5 truncate text-sm text-foreground-secondary">{headline}</p>
           )}
           {location && (
-            <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-[var(--text-muted)]">
+            <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-foreground-muted">
               <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
               {location}
             </p>
@@ -378,15 +378,15 @@ function ApplicationPreferencesCard({ data }: { data: ProfileOverviewData }) {
       <dl className="mt-4 grid gap-3">
         {rows.map((row) => (
           <div key={row.label} className="min-w-0">
-            <dt className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            <dt className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
               {row.label}
             </dt>
-            <dd className="mt-0.5 truncate text-sm text-[var(--text-secondary)]">{row.value}</dd>
+            <dd className="mt-0.5 truncate text-sm text-foreground-secondary">{row.value}</dd>
           </div>
         ))}
       </dl>
       {reusable > 0 && (
-        <p className="mt-3 border-t border-line pt-3 text-xs text-[var(--text-muted)]">
+        <p className="mt-3 border-t border-line-default pt-3 text-xs text-foreground-muted">
           +{reusable} reusable answer{reusable === 1 ? "" : "s"} configured
         </p>
       )}
@@ -421,10 +421,10 @@ function PreferencesCard({ data }: { data: ProfileOverviewData }) {
           <TagRow label="Level" values={profile.target_levels} />
           <TagRow label="Locations" values={profile.preferred_locations} />
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            <p className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
               Workplace
             </p>
-            <p className="mt-1.5 text-sm text-[var(--text-secondary)]">
+            <p className="mt-1.5 text-sm text-foreground-secondary">
               {WORKPLACE_LABEL[profile.remote_preference] ?? WORKPLACE_LABEL.everything}
             </p>
           </div>
@@ -443,14 +443,14 @@ function TagRow({ label, values, max = 3 }: { label: string; values: string[]; m
   const remaining = values.length - shown.length;
   return (
     <div>
-      <p className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+      <p className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
         {label}
       </p>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {shown.map((value) => (
           <span
             key={value}
-            className="rounded-lg border border-line bg-panel px-2 py-1 text-xs text-[var(--text-secondary)]"
+            className="rounded-control border border-line-default bg-surface-subtle px-2 py-1 text-xs text-foreground-secondary"
           >
             {value}
           </span>
@@ -474,21 +474,21 @@ function ExperienceCard({ data }: { data: ProfileOverviewData }) {
   return (
     <ClickableCard href="/profile/experience" title="Experience" icon={Briefcase}>
       {shown.length > 0 ? (
-        <ul className="mt-4 min-w-0 divide-y divide-line">
+        <ul className="mt-4 min-w-0 divide-y divide-line-subtle">
           {shown.map((entry, index) => (
             <li key={`${entry.company}-${index}`} className="flex min-w-0 gap-3 py-3 first:pt-0 last:pb-0">
               <span
                 aria-hidden
-                className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-panel text-[var(--text-muted)]"
+                className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-card bg-surface-subtle text-foreground-muted"
               >
                 <Building2 className="h-4 w-4" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">{entry.title || entry.company}</p>
-                <p className="mt-0.5 truncate text-sm text-[var(--text-secondary)]">
+                <p className="mt-0.5 truncate text-sm text-foreground-secondary">
                   {entry.title ? entry.company : ""}
                 </p>
-                <p className="mt-1 truncate text-xs text-[var(--text-muted)]">
+                <p className="mt-1 truncate text-xs text-foreground-muted">
                   {[
                     formatDateRange(entry.start_date, entry.end_date, entry.currently_working),
                     entry.location
@@ -515,15 +515,15 @@ function EducationCard({ data }: { data: ProfileOverviewData }) {
   return (
     <ClickableCard href="/profile/education" title="Education" icon={GraduationCap}>
       {shown.length > 0 ? (
-        <ul className="mt-4 min-w-0 divide-y divide-line">
+        <ul className="mt-4 min-w-0 divide-y divide-line-subtle">
           {shown.map((entry, index) => (
             <li key={`${entry.school}-${index}`} className="py-3 first:pt-0 last:pb-0">
               <p className="truncate text-sm font-semibold">{entry.school}</p>
-              <p className="mt-0.5 truncate text-sm text-[var(--text-secondary)]">
+              <p className="mt-0.5 truncate text-sm text-foreground-secondary">
                 {[entry.degree, entry.major].filter(Boolean).join(", ")}
                 {entry.minor ? ` · Minor in ${entry.minor}` : ""}
               </p>
-              <p className="mt-1 truncate text-xs text-[var(--text-muted)]">
+              <p className="mt-1 truncate text-xs text-foreground-muted">
                 {[
                   formatDateRange(entry.start_date, entry.end_date),
                   // GPA is shown only when the user chose to record one.
@@ -552,17 +552,17 @@ function ProjectsCard({ data }: { data: ProfileOverviewData }) {
   return (
     <ClickableCard href="/profile/projects" title="Projects" icon={FolderGit2}>
       {shown.length > 0 ? (
-        <ul className="mt-4 min-w-0 divide-y divide-line">
+        <ul className="mt-4 min-w-0 divide-y divide-line-subtle">
           {shown.map((entry, index) => (
             <li key={`${entry.name}-${index}`} className="py-3 first:pt-0 last:pb-0">
               <p className="truncate text-sm font-semibold">{entry.name}</p>
               {(entry.description || entry.bullets[0]) && (
-                <p className="mt-0.5 line-clamp-1 text-sm text-[var(--text-secondary)]">
+                <p className="mt-0.5 line-clamp-1 text-sm text-foreground-secondary">
                   {entry.description || entry.bullets[0]}
                 </p>
               )}
               {entry.technologies.length > 0 && (
-                <p className="mt-1 truncate text-xs text-[var(--text-muted)]">
+                <p className="mt-1 truncate text-xs text-foreground-muted">
                   {entry.technologies.slice(0, 4).join(" · ")}
                   {entry.technologies.length > 4 ? ` +${entry.technologies.length - 4}` : ""}
                 </p>
@@ -599,7 +599,7 @@ function SkillsCard({ data }: { data: ProfileOverviewData }) {
             const remaining = group.skills.length - visible.length;
             return (
               <div key={group.name}>
-                <p className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <p className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
                   {group.name}
                   <span className="ml-1.5 font-normal normal-case tracking-normal">
                     ({group.skills.length})
@@ -609,7 +609,7 @@ function SkillsCard({ data }: { data: ProfileOverviewData }) {
                   {visible.map((skill) => (
                     <span
                       key={skill}
-                      className="rounded-lg border border-line bg-panel px-2 py-1 text-xs text-[var(--text-secondary)]"
+                      className="rounded-control border border-line-default bg-surface-subtle px-2 py-1 text-xs text-foreground-secondary"
                     >
                       {skill}
                     </span>
@@ -649,15 +649,15 @@ function PublicationsCard({ data }: { data: ProfileOverviewData }) {
   return (
     <ClickableCard href="/profile/publications" title="Publications" icon={BookText}>
       {shown.length > 0 ? (
-        <ul className="mt-4 divide-y divide-line">
+        <ul className="mt-4 divide-y divide-line-subtle">
           {shown.map((entry, index) => (
             <li key={`${entry.title}-${index}`} className="py-3 first:pt-0 last:pb-0">
               <p className="truncate text-sm font-semibold">{entry.title}</p>
-              <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+              <p className="mt-0.5 truncate text-xs text-foreground-muted">
                 {[entry.venue, yearOf(entry.publication_date)].filter(Boolean).join(" · ")}
               </p>
               {entry.authors.length > 0 && (
-                <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+                <p className="mt-0.5 truncate text-xs text-foreground-muted">
                   {entry.authors.slice(0, 3).join(", ")}
                   {entry.authors.length > 3 ? ` +${entry.authors.length - 3}` : ""}
                 </p>
@@ -703,12 +703,12 @@ function CredentialsCard({ data }: { data: ProfileOverviewData }) {
   return (
     <ClickableCard href="/profile/credentials" title="Certifications & Awards" icon={Medal}>
       {shown.length > 0 ? (
-        <ul className="mt-4 divide-y divide-line">
+        <ul className="mt-4 divide-y divide-line-subtle">
           {shown.map((entry) => (
             <li key={entry.key} className="py-3 first:pt-0 last:pb-0">
               <p className="truncate text-sm font-semibold">{entry.name}</p>
               {entry.detail && (
-                <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{entry.detail}</p>
+                <p className="mt-0.5 truncate text-xs text-foreground-muted">{entry.detail}</p>
               )}
               {entry.href && (
                 <a
@@ -716,7 +716,7 @@ function CredentialsCard({ data }: { data: ProfileOverviewData }) {
                   target="_blank"
                   rel="noopener noreferrer"
                   /* Above the card overlay: opens the credential, not the editor. */
-                  className="focus-ring relative z-10 mt-1 inline-flex items-center gap-1 text-xs font-medium text-pine hover:underline"
+                  className="ds-focus-ring relative z-10 mt-1 inline-flex items-center gap-1 text-xs font-medium text-foreground-link hover:underline"
                 >
                   View credential <ArrowRight className="h-3 w-3" aria-hidden />
                 </a>
@@ -746,10 +746,10 @@ function yearOf(value: string): string {
 
 function FooterMore({ count, noun, href }: { count: number; noun: string; href: string }) {
   return (
-    <div className="mt-3 border-t border-line pt-3">
+    <div className="mt-3 border-t border-line-default pt-3">
       <Link
         href={href}
-        className="focus-ring relative z-10 text-sm font-medium text-[var(--text-muted)] transition hover:text-pine"
+        className="ds-focus-ring ds-touch-target relative z-10 inline-flex items-center text-sm font-medium text-foreground-muted transition hover:text-foreground-link"
       >
         +{count} more {noun}
         {count === 1 ? "" : "s"}
@@ -760,11 +760,11 @@ function FooterMore({ count, noun, href }: { count: number; noun: string; href: 
 
 function EmptyHint({ text, href, label }: { text: string; href: string; label: string }) {
   return (
-    <div className="mt-4 rounded-xl border border-dashed border-line bg-panel px-4 py-4">
-      <p className="text-sm text-[var(--text-muted)]">{text}</p>
+    <div className="mt-4 rounded-card border border-dashed border-line-default bg-surface-subtle px-4 py-4">
+      <p className="text-sm text-foreground-muted">{text}</p>
       <Link
         href={href}
-        className="focus-ring relative z-10 mt-2 inline-flex items-center gap-1 text-sm font-semibold text-pine"
+        className="ds-focus-ring relative z-10 mt-2 inline-flex items-center gap-1 text-sm font-semibold text-foreground-link"
       >
         {label} <ArrowRight className="h-3.5 w-3.5" aria-hidden />
       </Link>
@@ -775,14 +775,14 @@ function EmptyHint({ text, href, label }: { text: string; href: string; label: s
 function OverviewSkeleton() {
   return (
     <div className="pb-10" data-testid="profile-overview-skeleton">
-      <div className="flex flex-col gap-4 border-b border-line pb-6 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-line-default pb-6 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <Block className="h-9 w-40" />
           <Block className="mt-3 h-4 w-80 max-w-full" />
         </div>
         <div className="flex gap-2">
-          <Block className="h-10 w-48 rounded-xl" />
-          <Block className="h-10 w-28 rounded-xl" />
+          <Block className="h-10 w-48 rounded-card" />
+          <Block className="h-10 w-28 rounded-card" />
         </div>
       </div>
       <div className="mt-6 grid items-start gap-5 xl:grid-cols-[minmax(0,32fr)_minmax(0,68fr)]">
@@ -803,7 +803,7 @@ function OverviewSkeleton() {
 
 function CardSkeleton({ lines }: { lines: number }) {
   return (
-    <div className="rounded-2xl border border-line bg-white p-5">
+    <div className="rounded-card border border-line-default bg-surface-card p-5">
       <Block className="h-5 w-32" />
       <div className="mt-4 grid gap-3">
         {Array.from({ length: lines }).map((_, index) => (
@@ -818,7 +818,7 @@ function Block({ className = "" }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`block animate-pulse rounded bg-[var(--skeleton)] ${className}`}
+      className={`block animate-pulse rounded bg-skeleton ${className}`}
     />
   );
 }

@@ -20,14 +20,14 @@ export default function ProfileEeoPage() {
       <header className="mb-6">
         <Link
           href="/profile/application-preferences"
-          className="focus-ring inline-flex items-center gap-1.5 text-sm font-medium text-[var(--text-muted)] transition hover:text-pine"
+          className="ds-focus-ring ds-touch-target inline-flex items-center gap-1.5 rounded-control text-sm font-medium text-foreground-muted transition hover:text-foreground-link"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden /> Back to application preferences
         </Link>
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">
           Optional demographic information
         </h1>
-        <p className="mt-2 max-w-2xl text-[var(--text-muted)]">
+        <p className="mt-2 max-w-2xl text-foreground-muted">
           This information is optional and entirely up to you. It is used only to help complete
           voluntary demographic questions on applications, and never for job matching, fit
           scoring, ranking, resume generation, or cover-letter generation.

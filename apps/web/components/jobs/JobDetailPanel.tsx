@@ -29,6 +29,8 @@ import type { GeneratedDocument, Job } from "@/lib/api";
 import { getScoreDisplay } from "@/lib/fitScore";
 import { buildFitInsights } from "@/lib/fitInsights";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { StatusBadge } from "@/components/ui";
+import { getApplicationStatusTone } from "@/lib/applicationStatus";
 import { PeopleWhoCanHelp } from "@/components/PeopleWhoCanHelp";
 import { FitBadge, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
 import { AssistedApplyButton } from "@/components/jobs/ApplyButton";
@@ -115,16 +117,16 @@ export function JobDetailPanel({
       <DetailShell onClose={onClose}>
         <div data-testid="job-detail-skeleton" aria-busy="true" className="animate-pulse">
           <p className="sr-only">Loading this job…</p>
-          <div className="h-4 w-32 rounded bg-line" />
-          <div className="mt-4 h-8 w-3/4 rounded bg-line" />
-          <div className="mt-3 h-4 w-1/2 rounded bg-line" />
+          <div className="h-4 w-32 rounded bg-skeleton" />
+          <div className="mt-4 h-8 w-3/4 rounded bg-skeleton" />
+          <div className="mt-3 h-4 w-1/2 rounded bg-skeleton" />
           <div className="mt-6 flex gap-2.5">
-            <div className="h-11 w-44 rounded-lg bg-line" />
-            <div className="h-11 w-36 rounded-lg bg-line" />
+            <div className="h-11 w-44 rounded-control bg-skeleton" />
+            <div className="h-11 w-36 rounded-control bg-skeleton" />
           </div>
           <div className="mt-8 space-y-2.5">
             {[0, 1, 2, 3, 4, 5].map((row) => (
-              <div key={row} className={`h-3.5 rounded bg-line ${row % 3 === 2 ? "w-2/3" : "w-full"}`} />
+              <div key={row} className={`h-3.5 rounded bg-skeleton ${row % 3 === 2 ? "w-2/3" : "w-full"}`} />
             ))}
           </div>
         </div>
@@ -135,15 +137,15 @@ export function JobDetailPanel({
   if (!job) {
     return (
       <DetailShell onClose={onClose}>
-        <div className="rounded-2xl border border-line bg-white p-8">
+        <div className="rounded-card border border-line-default bg-surface-card p-8">
           <h2 className="text-lg font-semibold">This job is not available</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+          <p className="mt-2 text-sm leading-6 text-foreground-muted">
             {error || "It may have been withdrawn by the employer, or it is outside your current filters."}
           </p>
           <button
             type="button"
             onClick={onClose}
-            className="focus-ring mt-5 inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium"
+            className="ds-focus-ring mt-5 inline-flex h-10 items-center gap-2 rounded-control border border-line-default bg-surface-card px-4 text-sm font-medium"
           >
             <ArrowLeft className="h-4 w-4" /> Back to jobs
           </button>
@@ -181,7 +183,7 @@ export function JobDetailPanel({
           {error && (
             <p
               role="alert"
-              className="mb-7 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3.5 py-2.5 text-sm text-[var(--danger)]"
+              className="mb-7 rounded-control border border-status-danger-border bg-status-danger-surface px-3.5 py-2.5 text-sm text-status-danger"
             >
               {error}
             </p>
@@ -210,12 +212,12 @@ export function JobDetailPanel({
       </div>
 
       {/* Mobile keeps the primary action reachable without scrolling back up. */}
-      <div className="flex shrink-0 items-center gap-2 border-t border-line bg-[var(--background)] px-4 py-3 lg:hidden">
+      <div className="flex shrink-0 items-center gap-2 border-t border-line-default bg-surface-page px-4 py-3 lg:hidden">
         <AssistedApplyButton url={job.application_url} onApply={onApply} />
         <button
           type="button"
           onClick={onSave}
-          className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-medium"
+          className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-line-default bg-surface-card px-3 text-sm font-medium"
         >
           {trackerStatus ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
           {trackerStatus ? "Saved" : "Save"}
@@ -228,12 +230,12 @@ export function JobDetailPanel({
 function DetailShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line px-5 py-3">
+      <div className="flex shrink-0 items-center gap-2 border-b border-line-default px-5 py-3">
         <button
           type="button"
           onClick={onClose}
           aria-label="Close job details"
-          className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-[var(--text-muted)] hover:bg-panel"
+          className="ds-focus-ring inline-flex h-9 items-center gap-2 rounded-control px-2 text-sm text-foreground-muted hover:bg-surface-subtle"
         >
           <ArrowLeft className="h-4 w-4" /> Back to jobs
         </button>
@@ -278,19 +280,19 @@ function DetailHeader({
     ["applied", "interview", "offer", "rejected"].includes(trackerStatus);
 
   return (
-    <header className="shrink-0 border-b border-line bg-[var(--background)]">
+    <header className="shrink-0 border-b border-line-default bg-surface-page">
       <div className="mx-auto w-full max-w-[820px] px-6 pt-3 sm:px-9">
         <div className="flex h-9 items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="focus-ring -ml-2 inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm text-[var(--text-muted)] hover:bg-panel lg:hidden"
+            className="ds-focus-ring -ml-2 inline-flex h-9 items-center gap-1.5 rounded-control px-2 text-sm text-foreground-muted hover:bg-surface-subtle lg:hidden"
           >
             <ArrowLeft className="h-4 w-4" /> Back to jobs
           </button>
           <div className="hidden items-center gap-1 lg:flex">
             {position && (
-              <span className="mr-1.5 text-xs tabular-nums text-[var(--text-muted)]">{position}</span>
+              <span className="mr-1.5 text-xs tabular-nums text-foreground-muted">{position}</span>
             )}
             <IconButton label="Previous job" onClick={onPrevious}>
               <ChevronLeft className="h-4 w-4" />
@@ -313,20 +315,23 @@ function DetailHeader({
             size={48}
           />
           <div className="min-w-0 flex-1">
-            <h1 className="text-[1.6rem] font-semibold leading-tight tracking-[-0.02em] text-ink sm:text-[1.75rem]">
+            <h1 className="text-[1.6rem] font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
               {job.title}
             </h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm">
-              <span className="font-medium text-[var(--text-secondary)]">{job.company}</span>
+              <span className="font-medium text-foreground-secondary">{job.company}</span>
               <SourceBadge source={job.source} />
               {trackerStatus && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--success-surface)] px-2 py-0.5 text-xs font-medium text-[var(--success)]">
-                  <Check className="h-3 w-3" aria-hidden />
+                /* Tone from the shared application-status module; the wording
+                 * stays this screen's own ("Closed" rather than "Rejected").
+                 * It was hard-coded green, so a closed application was
+                 * announced in the success colour. */
+                <StatusBadge tone={getApplicationStatusTone(trackerStatus)}>
                   {TRACKER_LABELS[trackerStatus]}
-                </span>
+                </StatusBadge>
               )}
             </div>
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-[var(--text-muted)]">
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-foreground-muted">
               {job.location && <Meta icon={<MapPin className="h-3.5 w-3.5" />}>{job.location}</Meta>}
               {showsWorkplaceType(job.workplace_type, job.location) && (
                 <Meta icon={<Building2 className="h-3.5 w-3.5" />}>{capitalize(job.workplace_type!)}</Meta>
@@ -361,7 +366,7 @@ function DetailHeader({
                  * by what the user can see (WCAG 2.5.3), then disambiguates
                  * which job for screen-reader users. */
                 aria-label={`Mark as applied: ${job.title} at ${job.company}`}
-                className="mark-applied-action inline-flex h-11 items-center gap-2 rounded-lg px-4 text-sm font-medium"
+                className="mark-applied-action inline-flex h-11 items-center gap-2 rounded-control px-4 text-sm font-medium"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden /> Mark as applied
               </button>
@@ -369,7 +374,7 @@ function DetailHeader({
             <button
               type="button"
               onClick={onSave}
-              className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel"
+              className="ds-focus-ring inline-flex h-11 items-center gap-2 rounded-control border border-line-default bg-surface-card px-4 text-sm font-medium text-foreground-secondary transition-colors hover:bg-surface-subtle"
             >
               {trackerStatus ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
               {trackerStatus ? "Saved" : "Save"}
@@ -402,7 +407,7 @@ function IconButton({
       title={label}
       disabled={!onClick}
       onClick={() => onClick?.()}
-      className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-panel hover:text-[var(--text-secondary)] disabled:pointer-events-none disabled:opacity-35"
+      className="ds-focus-ring inline-flex h-9 w-9 items-center justify-center rounded-control text-foreground-muted transition-colors hover:bg-surface-subtle hover:text-foreground-secondary disabled:pointer-events-none disabled:opacity-35"
     >
       {children}
     </button>
@@ -448,10 +453,10 @@ function DetailTabs({ tab, onTabChange }: { tab: DetailTab; onTabChange: (tab: D
             aria-controls={`job-panel-${item.id}`}
             tabIndex={active ? 0 : -1}
             onClick={() => onTabChange(item.id)}
-            className={`focus-ring -mb-px whitespace-nowrap border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors ${
+            className={`ds-focus-ring -mb-px whitespace-nowrap border-b-2 pb-2.5 pt-1 text-sm font-medium transition-colors ${
               active
-                ? "border-pine text-pine"
-                : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                ? "border-brand-accent text-brand-primary"
+                : "border-transparent text-foreground-muted hover:text-foreground-secondary"
             }`}
           >
             {item.label}
@@ -484,8 +489,8 @@ function Section({
 }) {
   return (
     <section className="mt-10 first:mt-0">
-      <h2 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">{title}</h2>
-      {description && <p className="mt-1.5 text-sm leading-6 text-[var(--text-muted)]">{description}</p>}
+      <h2 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-foreground-muted">{title}</h2>
+      {description && <p className="mt-1.5 text-sm leading-6 text-foreground-muted">{description}</p>}
       <div className="mt-3.5">{children}</div>
     </section>
   );
@@ -508,22 +513,24 @@ function OverviewTab({
   return (
     <>
       {match?.fit_summary && (
-        <p className="text-[15px] leading-7 text-[var(--text-secondary)]">{match.fit_summary}</p>
+        <p className="text-[15px] leading-7 text-foreground-secondary">{match.fit_summary}</p>
       )}
 
       <Section title="Your fit">
         {!scored ? (
-          <p className="text-sm leading-6 text-[var(--text-muted)]">{display.helper}</p>
+          <p className="text-sm leading-6 text-foreground-muted">{display.helper}</p>
         ) : (
-          <div className="rounded-2xl border border-line bg-white p-5">
+          <div className="rounded-card border border-line-default bg-surface-card p-5">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div className="flex items-baseline gap-2.5">
-                <span className="text-4xl font-semibold leading-none tracking-[-0.03em] text-ink">
+                <span className="text-4xl font-semibold leading-none tracking-[-0.03em] text-foreground">
                   {Math.round(match!.fit_score!)}
                 </span>
-                <span className="text-sm text-[var(--text-muted)]">/ 100</span>
+                <span className="text-sm text-foreground-muted">/ 100</span>
                 {match?.fit_label && (
-                  <span className="ml-1 text-sm font-medium text-pine">{match.fit_label}</span>
+                  // Neutral on purpose: the band's colour is carried by the
+                  // score block, and painting "Low fit" green would lie.
+                  <span className="ml-1 text-sm font-medium text-foreground-secondary">{match.fit_label}</span>
                 )}
               </div>
               <dl className="flex flex-wrap gap-x-7 gap-y-2">
@@ -542,7 +549,7 @@ function OverviewTab({
             </div>
             {/* One overall number is what the backend produces. Presenting
               * invented per-category scores would misdescribe the assessment. */}
-            <p className="mt-4 border-t border-line/70 pt-3.5 text-xs leading-5 text-[var(--text-muted)]">
+            <p className="mt-4 border-t border-line-subtle pt-3.5 text-xs leading-5 text-foreground-muted">
               This is a single overall score from your profile and this posting
               {match?.explanation_source ? ` (${match.explanation_source} explanation)` : ""}. XpertApply does not
               break it into per-category sub-scores, so the signals below are the whole picture.
@@ -556,8 +563,8 @@ function OverviewTab({
           {insights.strengths.length > 0 && (
             <ul className="grid gap-2.5">
               {insights.strengths.map((reason) => (
-                <li key={reason} className="flex gap-2.5 text-sm leading-6 text-[var(--text-secondary)]">
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-pine" aria-hidden />
+                <li key={reason} className="flex gap-2.5 text-sm leading-6 text-foreground-secondary">
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-status-success" aria-hidden />
                   <span>{reason}</span>
                 </li>
               ))}
@@ -565,12 +572,12 @@ function OverviewTab({
           )}
           {insights.matchedSkills.length > 0 && (
             <div className={insights.strengths.length > 0 ? "mt-4" : ""}>
-              <p className="text-xs text-[var(--text-muted)]">Required skills you already match</p>
+              <p className="text-xs text-foreground-muted">Required skills you already match</p>
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {insights.matchedSkills.map((skill) => (
                   <li
                     key={skill}
-                    className="rounded-md border border-[var(--success-border)] bg-[var(--success-surface)] px-2.5 py-1 text-xs font-medium text-[var(--success)]"
+                    className="rounded-control border border-status-success-border bg-status-success-surface px-2.5 py-1 text-xs font-medium text-status-success"
                   >
                     {skill}
                   </li>
@@ -588,12 +595,12 @@ function OverviewTab({
         >
           {insights.missingSkills.length > 0 && (
             <div>
-              <p className="text-xs text-[var(--text-muted)]">Required skills not evidenced yet</p>
+              <p className="text-xs text-foreground-muted">Required skills not evidenced yet</p>
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {insights.missingSkills.map((skill) => (
                   <li
                     key={skill}
-                    className="rounded-md border border-line bg-panel/60 px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)]"
+                    className="rounded-control border border-line-default bg-surface-subtle px-2.5 py-1 text-xs font-medium text-foreground-secondary"
                   >
                     {skill}
                   </li>
@@ -604,8 +611,8 @@ function OverviewTab({
           {insights.risks.length > 0 && (
             <ul className={`grid gap-2.5 ${insights.missingSkills.length > 0 ? "mt-4" : ""}`}>
               {insights.risks.map((risk) => (
-                <li key={risk} className="flex gap-2.5 text-sm leading-6 text-[var(--text-secondary)]">
-                  <CircleAlert className="mt-1 h-4 w-4 shrink-0 text-[var(--text-muted)]" aria-hidden />
+                <li key={risk} className="flex gap-2.5 text-sm leading-6 text-foreground-secondary">
+                  <CircleAlert className="mt-1 h-4 w-4 shrink-0 text-foreground-muted" aria-hidden />
                   <span>{risk}</span>
                 </li>
               ))}
@@ -623,15 +630,15 @@ function OverviewTab({
             {insights.suggestions.map((suggestion) => (
               <li
                 key={suggestion.id}
-                className="rounded-xl border border-line bg-white p-4"
+                className="rounded-card border border-line-default bg-surface-card p-4"
               >
-                <p className="text-sm font-medium text-[var(--text-primary)]">{suggestion.title}</p>
-                <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">{suggestion.body}</p>
+                <p className="text-sm font-medium text-foreground">{suggestion.title}</p>
+                <p className="mt-1 text-sm leading-6 text-foreground-muted">{suggestion.body}</p>
                 {suggestion.action === "materials" && (
                   <button
                     type="button"
                     onClick={() => onTabChange("materials")}
-                    className="focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-pine hover:underline"
+                    className="ds-focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-foreground-link hover:underline"
                   >
                     Open application materials <ArrowRight className="h-3.5 w-3.5" aria-hidden />
                   </button>
@@ -640,7 +647,7 @@ function OverviewTab({
                   <button
                     type="button"
                     onClick={() => onTabChange("description")}
-                    className="focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-pine hover:underline"
+                    className="ds-focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-foreground-link hover:underline"
                   >
                     Read the full description <ArrowRight className="h-3.5 w-3.5" aria-hidden />
                   </button>
@@ -648,7 +655,7 @@ function OverviewTab({
                 {suggestion.action === "profile" && (
                   <Link
                     href="/profile"
-                    className="focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-pine hover:underline"
+                    className="ds-focus-ring mt-2.5 inline-flex items-center gap-1.5 rounded text-sm font-medium text-foreground-link hover:underline"
                   >
                     Update your profile <ArrowRight className="h-3.5 w-3.5" aria-hidden />
                   </Link>
@@ -661,9 +668,9 @@ function OverviewTab({
 
       {!insights.hasSignals && !match?.fit_summary && (
         <Section title="What is working for you">
-          <p className="text-sm leading-6 text-[var(--text-muted)]">
+          <p className="text-sm leading-6 text-foreground-muted">
             No match detail was produced for this role yet. Refresh your matches, or add target roles and skills
-            to your <Link className="font-medium text-pine underline" href="/profile">profile</Link> for a fuller
+            to your <Link className="ds-focus-ring rounded-control font-medium text-foreground-link underline" href="/profile">profile</Link> for a fuller
             explanation.
           </p>
         </Section>
@@ -690,8 +697,8 @@ function OverviewTab({
 function ScoreFact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-      <dd className="mt-0.5 text-sm font-medium tabular-nums text-[var(--text-secondary)]">{value}</dd>
+      <dt className="text-xs text-foreground-muted">{label}</dt>
+      <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground-secondary">{value}</dd>
     </div>
   );
 }
@@ -702,8 +709,8 @@ function Fact({ label, value }: { label: string; value: string | null | undefine
   }
   return (
     <div>
-      <dt className="text-xs text-[var(--text-muted)]">{label}</dt>
-      <dd className="mt-0.5 text-sm text-[var(--text-secondary)]">{value}</dd>
+      <dt className="text-xs text-foreground-muted">{label}</dt>
+      <dd className="mt-0.5 text-sm text-foreground-secondary">{value}</dd>
     </div>
   );
 }
@@ -726,7 +733,7 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
             {job.required_skills.map((skill) => (
               <li
                 key={skill}
-                className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-medium text-[var(--text-secondary)]"
+                className="rounded-control border border-line-default bg-surface-card px-2.5 py-1 text-xs font-medium text-foreground-secondary"
               >
                 {skill}
               </li>
@@ -739,7 +746,7 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
         <Section title="Nice to have">
           <ul className="flex flex-wrap gap-1.5">
             {job.preferred_skills.map((skill) => (
-              <li key={skill} className="rounded-md border border-line px-2.5 py-1 text-xs text-[var(--text-muted)]">
+              <li key={skill} className="rounded-control border border-line-default px-2.5 py-1 text-xs text-foreground-muted">
                 {skill}
               </li>
             ))}
@@ -751,7 +758,7 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
         <Section title="Responsibilities">
           <ul className="grid gap-2.5">
             {job.responsibilities.map((item) => (
-              <li key={item} className="flex gap-2.5 text-[15px] leading-[1.65] text-[var(--text-secondary)]">
+              <li key={item} className="flex gap-2.5 text-[15px] leading-[1.65] text-foreground-secondary">
                 <span aria-hidden className="mt-2.5 h-1 w-1 shrink-0 rounded-full bg-border-strong" />
                 <span>{item}</span>
               </li>
@@ -762,12 +769,12 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
 
       <Section title="Full description">
         {blocks.length === 0 ? (
-          <p className="text-sm leading-6 text-[var(--text-muted)]">
+          <p className="text-sm leading-6 text-foreground-muted">
             The employer did not publish a description through this source. Open the official posting for the full
             text.
           </p>
         ) : (
-          <div className="grid gap-4 text-[15px] leading-[1.7] text-[var(--text-secondary)]">
+          <div className="grid gap-4 text-[15px] leading-[1.7] text-foreground-secondary">
             {visible.map((block, index) =>
               block.kind === "paragraph" ? (
                 <p key={index}>{block.text}</p>
@@ -789,7 +796,7 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
             type="button"
             onClick={() => setExpanded((current) => !current)}
             aria-expanded={expanded}
-            className="focus-ring mt-5 inline-flex h-10 items-center rounded-lg border border-line bg-white px-3.5 text-sm font-medium"
+            className="ds-focus-ring mt-5 inline-flex h-10 items-center rounded-control border border-line-default bg-surface-card px-3.5 text-sm font-medium"
           >
             {expanded ? "Show less" : "Show full description"}
           </button>
@@ -797,12 +804,12 @@ function DescriptionTab({ job, posted }: { job: Job; posted: string | null }) {
       </Section>
 
       <Section title="Source">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--text-muted)]">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-foreground-muted">
           {sourceLabel(job.source) && <span>Listed via {sourceLabel(job.source)}</span>}
           {posted && <span>{posted}</span>}
           {job.source_url && (
             <a
-              className="focus-ring inline-flex items-center gap-1.5 rounded font-medium text-pine hover:underline"
+              className="ds-focus-ring inline-flex items-center gap-1.5 rounded font-medium text-foreground-link hover:underline"
               href={job.source_url}
               target="_blank"
               rel="noopener noreferrer"
@@ -869,9 +876,10 @@ function MaterialsTab({
 
       {job.match?.recommended_resume_angle && (
         <Section title="Tailoring angle">
-          <div className="flex gap-3 rounded-xl border border-[var(--success-border)] bg-[var(--success-surface)] p-4">
-            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden />
-            <p className="text-sm leading-6 text-[var(--text-secondary)]">
+          {/* Advice, not an achievement: informational rather than success. */}
+          <div className="flex gap-3 rounded-card border border-status-info-border bg-status-info-surface p-4">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-status-info" aria-hidden />
+            <p className="text-sm leading-6 text-foreground-secondary">
               {job.match.recommended_resume_angle}
             </p>
           </div>
@@ -880,7 +888,7 @@ function MaterialsTab({
 
       {(job.match?.missing_skills.length ?? 0) > 0 && (
         <Section title="Kept out of your resume">
-          <p className="text-sm leading-6 text-[var(--text-muted)]">
+          <p className="text-sm leading-6 text-foreground-muted">
             {job.match!.missing_skills.join(", ")} — required by this job but not evidenced in your profile, so
             they are never claimed on your behalf.
           </p>
@@ -908,35 +916,35 @@ function MaterialCard({
   const Icon = material.icon;
   const ready = Boolean(document) && !busy;
   return (
-    <article className="flex flex-col rounded-2xl border border-line bg-white p-5">
+    <article className="flex flex-col rounded-card border border-line-default bg-surface-card p-5">
       <div className="flex items-start gap-3">
         <span
           aria-hidden
-          className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
-            ready ? "bg-[var(--success-surface)] text-[var(--success)]" : "bg-panel text-[var(--text-muted)]"
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-control ${
+            ready ? "bg-status-success-surface text-status-success" : "bg-surface-subtle text-foreground-muted"
           }`}
         >
           <Icon className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-semibold text-[var(--text-primary)]">{material.title}</h3>
-          <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">{material.blurb}</p>
+          <h3 className="text-[15px] font-semibold text-foreground">{material.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-foreground-muted">{material.blurb}</p>
         </div>
       </div>
 
       <p aria-live="polite" className="mt-4 flex items-center gap-2 text-sm">
         {busy ? (
           <>
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-pine" aria-hidden />
-            <span className="text-[var(--text-secondary)]">Generating…</span>
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-status-info" aria-hidden />
+            <span className="text-foreground-secondary">Generating…</span>
           </>
         ) : ready ? (
           <>
-            <Check className="h-3.5 w-3.5 text-[var(--success)]" aria-hidden />
-            <span className="truncate text-[var(--text-secondary)]">Ready · {document!.title}</span>
+            <Check className="h-3.5 w-3.5 text-status-success" aria-hidden />
+            <span className="truncate text-foreground-secondary">Ready · {document!.title}</span>
           </>
         ) : (
-          <span className="text-[var(--text-muted)]">Not generated yet</span>
+          <span className="text-foreground-muted">Not generated yet</span>
         )}
       </p>
 
@@ -946,7 +954,7 @@ function MaterialCard({
             <button
               type="button"
               onClick={() => onPreview(document!)}
-              className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-pine px-3.5 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)]"
+              className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control bg-action-primary px-3.5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
             >
               <Download className="h-4 w-4" aria-hidden /> Preview and download
             </button>
@@ -954,7 +962,7 @@ function MaterialCard({
               type="button"
               disabled={disabled}
               onClick={onGenerate}
-              className="focus-ring inline-flex h-10 items-center rounded-lg border border-line bg-white px-3.5 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50"
+              className="ds-focus-ring inline-flex h-10 items-center rounded-control border border-action-secondary-border bg-action-secondary px-3.5 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               Regenerate
             </button>
@@ -964,7 +972,7 @@ function MaterialCard({
             type="button"
             disabled={disabled}
             onClick={onGenerate}
-            className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg bg-pine px-3.5 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control bg-action-primary px-3.5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
             {material.type === "resume" ? "Generate tailored resume" : "Generate cover letter"}

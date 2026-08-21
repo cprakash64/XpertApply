@@ -2,6 +2,8 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { JobDiscovery } from "../components/JobDiscovery";
 import { clearPeopleCache } from "../lib/peopleClient";
 
@@ -60,6 +62,7 @@ function mockJobsFetch(
     discovered?: unknown[];
     resumeWarnings?: string[];
     peopleResponse?: unknown;
+    trackerApplications?: unknown[];
   } = {}
 ) {
   const profileComplete = options.profileComplete ?? true;
@@ -70,7 +73,7 @@ function mockJobsFetch(
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/jobs/tracker/")) {
-      return Promise.resolve(jsonResponse({ applications: [] }));
+      return Promise.resolve(jsonResponse({ applications: options.trackerApplications ?? [] }));
     }
     if (url.match(/\/jobs\/\d+\/people$/) && method === "GET") {
       return Promise.resolve(
@@ -691,5 +694,70 @@ describe("JobDiscovery", () => {
     expect(await within(card).findByRole("button", { name: "Saved" })).toBeInTheDocument();
     // Saving from the card does not open the job.
     expect(window.location.search).not.toContain("job=");
+  });
+
+  describe("XpertApply design system", () => {
+    /**
+     * The card used to collapse every post-save state into a green "In
+     * tracker". Tone and wording now come from the shared module, so the card,
+     * the Tracker and the Dashboard cannot describe the same application
+     * differently.
+     */
+    it.each([
+      ["saved", "Saved", "status-neutral"],
+      ["applied", "Applied", "status-warning"],
+      ["interview", "Interview", "status-info"],
+      ["offer", "Offer", "status-success"],
+      ["rejected", "Rejected", "status-danger"]
+    ])("shows a %s job with its canonical status tone", async (status, label, tone) => {
+      mockJobsFetch({ trackerApplications: [{ id: 5, job_id: 1, status }] });
+      render(React.createElement(JobDiscovery));
+      await userEvent.click(await screen.findByRole("button", { name: /Find fresh jobs/ }));
+
+      const card = cardOf("Machine Learning Engineer");
+      const pill = await within(card).findByText(label, { selector: "span" });
+      expect(pill.className).toMatch(new RegExp(tone));
+      // Only an offer is allowed to be green here.
+      if (tone !== "status-success") {
+        expect(pill.className).not.toMatch(/status-success/);
+      }
+    });
+
+    it("separates a filter-emptied list from an empty workspace", async () => {
+      mockJobsFetch();
+      render(React.createElement(JobDiscovery));
+      await userEvent.click(await screen.findByRole("button", { name: /Find fresh jobs/ }));
+      await screen.findByText("Machine Learning Engineer");
+
+      // Jobs are loaded; the filters are what emptied the list, so the way out
+      // is one click rather than another discovery run.
+      await userEvent.type(screen.getByLabelText("Role or skill"), "zzzzzz");
+      expect(await screen.findByText("No jobs match these filters")).toBeInTheDocument();
+      const clear = screen.getAllByRole("button", { name: "Clear filters" })[0];
+      await userEvent.click(clear);
+      expect(await screen.findByText("Machine Learning Engineer")).toBeInTheDocument();
+      expect(screen.queryByText("No jobs match these filters")).not.toBeInTheDocument();
+    });
+
+    it("keeps discovery styling on canonical tokens", () => {
+      const root = join(__dirname, "..");
+      for (const file of [
+        "components/jobs/JobCard.tsx",
+        "components/jobs/JobsFilterBar.tsx",
+        "components/jobs/badges.tsx"
+      ]) {
+        const source = readFileSync(join(root, file), "utf8");
+        expect(source).not.toMatch(/text-pine|bg-pine|border-pine/);
+        expect(source).not.toMatch(/--success-surface|--text-muted|--text-secondary/);
+        expect(source).not.toMatch(/\bfocus-ring\b(?<!ds-focus-ring)/);
+      }
+      // Fit bands stay a shared domain semantic, never re-derived locally.
+      const badges = readFileSync(join(root, "components/jobs/badges.tsx"), "utf8");
+      expect(badges).toContain("getFitScoreTone");
+      const card = readFileSync(join(root, "components/jobs/JobCard.tsx"), "utf8");
+      expect(card).toContain('from "@/lib/applicationStatus"');
+      // No local status map may survive alongside the shared one.
+      expect(card).not.toMatch(/function\s+trackerTone|status === "offer"/);
+    });
   });
 });

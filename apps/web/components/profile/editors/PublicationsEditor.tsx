@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { blankPublication, yearRange, type PublicationRecord } from "@/lib/careerRecords";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
 import { isValidOptionalUrl } from "@/lib/profileUrls";
@@ -71,7 +71,7 @@ export function PublicationsEditor({ editor }: { editor: ProfileEditorState }) {
       {data && (
         <div>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-[var(--text-muted)]">
+            <p className="text-sm text-foreground-muted">
               Papers, articles, and other published work.
             </p>
             <Button type="button" variant="secondary" onClick={add}>
@@ -102,7 +102,7 @@ export function PublicationsEditor({ editor }: { editor: ProfileEditorState }) {
                           <p className="truncate text-sm font-semibold">
                             {record.title || "Untitled publication"}
                           </p>
-                          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+                          <p className="mt-0.5 truncate text-xs text-foreground-muted">
                             {[record.venue, yearRange(record.publication_date, "")]
                               .filter(Boolean)
                               .join(" · ")}
@@ -185,7 +185,7 @@ export function PublicationsEditor({ editor }: { editor: ProfileEditorState }) {
       />
 
       {invalidUrls > 0 && (
-        <p role="alert" className="mt-4 text-sm text-[var(--danger)]">
+        <p role="alert" className="mt-4 text-sm text-status-danger">
           Fix the highlighted link{invalidUrls === 1 ? "" : "s"} before saving.
         </p>
       )}

@@ -16,7 +16,11 @@ import {
   Trophy
 } from "lucide-react";
 import { CompanyLogo } from "@/components/CompanyLogo";
-import { Alert, Button, StatusBadge, type StatusTone } from "@/components/ui";
+import { Alert, Button, StatusBadge } from "@/components/ui";
+import {
+  formatApplicationStatus,
+  getApplicationStatusTone
+} from "@/lib/applicationStatus";
 import { getFitScoreTone } from "@/lib/fitScore";
 import {
   useDashboardSummary,
@@ -50,8 +54,10 @@ import {
 const CARD = "rounded-card border border-line-default bg-surface-card";
 
 /** Section title + description + trailing link, repeated by the two big panels. */
+/* `ds-touch-target` only bites under `pointer: coarse`, where these
+ * section links were a 20px-tall tap target beside a full-width card. */
 const SECTION_LINK =
-  "ds-focus-ring inline-flex shrink-0 items-center gap-1 rounded-control text-sm font-semibold text-foreground-link";
+  "ds-focus-ring ds-touch-target inline-flex shrink-0 items-center gap-1 rounded-control text-sm font-semibold text-foreground-link";
 
 export function DashboardClient() {
   const { data, loading, error, reload } = useDashboardSummary();
@@ -111,8 +117,13 @@ export function DashboardClient() {
         </div>
       </section>
 
+      {/* `min-w-0` on the grid children is load-bearing, not tidiness. A grid
+        * item's automatic minimum is its min-content width, and the truncating
+        * job titles below report a min-content the width of the untruncated
+        * string — so on a narrow screen the track was sized to the longest job
+        * title and pushed the whole document sideways. */}
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_.75fr]">
-        <section className={`${CARD} p-5 sm:p-6`}>
+        <section className={`min-w-0 ${CARD} p-5 sm:p-6`}>
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
               <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
@@ -359,35 +370,18 @@ function RecentApplications({
                 {application.updatedAt ? ` · ${relativeDate(application.updatedAt)}` : ""}
               </span>
             </span>
-            <StatusBadge tone={statusTone(application.status)} className="shrink-0">
-              {statusLabel(application.status)}
+            {/* Meaning comes from the shared domain module; the compact wording
+                is this screen's own — the Tracker names the same stage
+                "Offer / selected" because that is what you move an application
+                into, while a dense row just says "Offer". */}
+            <StatusBadge tone={getApplicationStatusTone(application.status)} className="shrink-0">
+              {formatApplicationStatus(application.status)}
             </StatusBadge>
           </Link>
         </li>
       ))}
     </ul>
   );
-}
-
-/**
- * Domain status tone, matching the Tracker's existing mapping so the same
- * application reads the same way on both screens. These are outcomes, not
- * brand: an offer is success, a rejection is danger, and everything still in
- * flight stays informational rather than being recoloured navy.
- */
-function statusTone(status: string): StatusTone {
-  if (status === "offer") return "success";
-  if (status === "interview") return "info";
-  if (status === "rejected") return "danger";
-  if (status === "applied" || status === "applying") return "warning";
-  return "neutral";
-}
-
-/** Unchanged from the pre-migration Dashboard — the wording is a data contract. */
-function statusLabel(status: string): string {
-  return status === "ready_to_apply"
-    ? "Saved"
-    : status.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 /** "Today" / "3d ago" / a date — short enough for a dense row. */
@@ -418,7 +412,7 @@ const NEXT_ACTION_ICONS: Record<DashboardNextActionKind, typeof Target> = {
  * success surface it used to borrow: being told what to do next is not an
  * achievement, and green here made every visit look like a win. */
 const NEXT_ACTION_SURFACE =
-  "self-start rounded-card border border-line-selected bg-surface-selected";
+  "min-w-0 self-start rounded-card border border-line-selected bg-surface-selected";
 
 /**
  * The next best action.
@@ -441,7 +435,7 @@ function NextActionCard({
     // empty panel rather than as content arriving. The tint appears with the
     // action it is promoting.
     return (
-      <aside className={`self-start ${CARD} p-6`} data-testid="next-action-skeleton">
+      <aside className={`min-w-0 self-start ${CARD} p-6`} data-testid="next-action-skeleton">
         <Skeleton className="h-11 w-11 rounded-control" />
         <Skeleton className="mt-8 h-3 w-32" />
         <Skeleton className="mt-3 h-7 w-52 max-w-full" />
@@ -585,17 +579,15 @@ function EmptyLine({ text, href, label }: { text: string; href: string; label: s
 /**
  * A neutral placeholder block. Inline-block so it occupies a text line's box.
  *
- * Filled with the subtle border role rather than the legacy `--skeleton`
- * token: that value is a warm neutral from the pre-migration palette and reads
- * yellow against these cool card surfaces. Migrating the token itself would
- * change every unmigrated page's skeletons, so this page uses the cool role and
- * the token is retired with the rest of the canvas later.
+ * Uses the canonical `--color-skeleton` role: a dedicated loading value that
+ * stays perceptible on the page, on a card, and on a tinted selected row in
+ * both themes, so a loading state never depends on the pulse animation alone.
  */
 function Skeleton({ className = "" }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className={`inline-block animate-pulse rounded bg-line-subtle align-middle ${className}`}
+      className={`inline-block animate-pulse rounded bg-skeleton align-middle ${className}`}
     />
   );
 }

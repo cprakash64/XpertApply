@@ -442,7 +442,9 @@ describe("PeopleWhoCanHelp", () => {
       expect(profileLink.className).toContain(`${state}[var(--linkedin)]`);
     }
     // Neutral until interacted with — the default state stays dark-theme.
-    expect(profileLink.className).toContain("text-[var(--text-secondary)]");
+    // Same claim as before the design-system migration; the neutral is now
+    // named by its semantic token rather than the raw legacy variable.
+    expect(profileLink.className).toContain("text-foreground-secondary");
     // The accessible name identifies the person, not just the network.
     expect(profileLink).toHaveAttribute("aria-label", expect.stringContaining("Rita Recruiter"));
     expect(screen.getByRole("button", { name: /Find work email/ })).toBeInTheDocument();
@@ -456,7 +458,7 @@ describe("PeopleWhoCanHelp", () => {
     ]) {
       expect(emailButton.className).toContain(`${state}[var(--email-action)]`);
     }
-    expect(emailButton.className).toContain("text-[var(--text-secondary)]");
+    expect(emailButton.className).toContain("text-foreground-secondary");
     // The two brand treatments must stay distinct.
     expect(emailButton.className).not.toContain("var(--linkedin)");
     expect(screen.getByRole("button", { name: "Draft message" })).toBeInTheDocument();

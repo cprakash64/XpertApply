@@ -6,8 +6,8 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <header className="mb-6">
-        <h1 className="text-3xl font-semibold">Settings and data controls</h1>
-        <p className="mt-2 text-[var(--text-muted)]">
+        <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">Settings and data controls</h1>
+        <p className="mt-2 text-foreground-muted">
           Employer account credentials, data export, and account deletion.
         </p>
       </header>

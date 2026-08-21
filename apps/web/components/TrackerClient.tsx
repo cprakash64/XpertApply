@@ -15,6 +15,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { Alert, Chip, StatusBadge } from "@/components/ui";
+import {
+  formatApplicationStatus,
+  getApplicationStatusTone
+} from "@/lib/applicationStatus";
 import { api, type Job } from "@/lib/api";
 import { invalidateDashboardSummary } from "@/lib/dashboardSummary";
 
@@ -86,6 +91,26 @@ const FILTERS: { value: TrackerFilter; label: string }[] = [
   { value: "rejected", label: "Rejected" }
 ];
 
+/**
+ * The shared card contract for this screen — border-first, no shadow. The
+ * Tracker is a list you scan, and a page of shadowed panels reads as noise
+ * long before it reads as depth.
+ */
+const CARD = "rounded-card border border-line-default bg-surface-card";
+
+/**
+ * The Tracker owns its failure copy rather than echoing the transport's
+ * normalized message, matching the Dashboard and the Jobs workspace.
+ *
+ * `/jobs/tracker/*` defines no user-facing failure wording of its own: what
+ * reaches the client is either the API's safe catch-all or an infrastructure
+ * `detail` written for an operator — the shared auth dependency answers a
+ * database outage by naming the migration command to run. Neither belongs in a
+ * red banner at the top of someone's application list.
+ */
+const LOAD_ERROR = "We couldn’t load your applications.";
+const UPDATE_ERROR = "We couldn’t update that application. Please try again.";
+
 export function TrackerClient() {
   const [applications, setApplications] = useState<TrackerApplication[]>([]);
   const [filter, setFilter] = useState<TrackerFilter>("all");
@@ -103,9 +128,9 @@ export function TrackerClient() {
         setError("");
         setApplications(result.applications);
       })
-      .catch((loadError: unknown) => {
+      .catch(() => {
         if (!active) return;
-        setError(loadError instanceof Error ? loadError.message : "Could not load applications.");
+        setError(LOAD_ERROR);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -143,8 +168,8 @@ export function TrackerClient() {
       );
       setMessage(`Moved to ${statusLabel(status)}.`);
       window.setTimeout(() => setMessage(""), 2500);
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "Could not update status.");
+    } catch {
+      setError(UPDATE_ERROR);
     } finally {
       setUpdatingId(null);
     }
@@ -176,12 +201,41 @@ export function TrackerClient() {
     });
   }, [applications, filter, query]);
 
+  // Skeletons in the shape of the real thing, rather than a spinner that
+  // occupies none of the eventual space: the summary row, the toolbar and the
+  // first cards all land where their placeholder sat, so nothing jumps. The
+  // request itself is untouched.
   if (loading) {
     return (
-      <div className="flex min-h-56 items-center justify-center rounded-2xl border border-line bg-white">
-        <Loader2 className="h-6 w-6 animate-spin text-pine" />
-        <span className="ml-2 text-sm text-[var(--text-muted)]">Loading your applications…</span>
-      </div>
+      <section aria-busy="true">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((card) => (
+            <div key={card} className={`${CARD} p-4`}>
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-9 w-9 rounded-control" />
+                <Skeleton className="h-7 w-10" />
+              </div>
+              <Skeleton className="mt-3 h-4 w-24" />
+            </div>
+          ))}
+        </div>
+        <Skeleton className="mt-5 h-16 w-full rounded-card" />
+        <div className="mt-4 grid gap-3">
+          {[0, 1, 2].map((row) => (
+            <div key={row} className={`${CARD} p-4 sm:p-5`}>
+              <div className="flex items-start gap-3">
+                <Skeleton className="h-10 w-10 shrink-0 rounded-control" />
+                <div className="min-w-0 flex-1">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="mt-2 h-5 w-64 max-w-full" />
+                  <Skeleton className="mt-2 h-3.5 w-48 max-w-full" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <span className="sr-only" role="status">Loading your applications…</span>
+      </section>
     );
   }
 
@@ -206,44 +260,56 @@ export function TrackerClient() {
         <SummaryCard icon={<Trophy className="h-5 w-5" />} label="Offers" value={counts.offer} />
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-line bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex gap-1 overflow-x-auto" aria-label="Application status filters">
+      <div className={`mt-5 flex flex-col gap-3 ${CARD} p-3 lg:flex-row lg:items-center lg:justify-between`}>
+        {/* Chips, not custom buttons: a filter is a toggle, and the primitive
+            carries `aria-pressed` plus the canonical selected treatment, so the
+            active stage is announced rather than only coloured. */}
+        <div
+          role="group"
+          aria-label="Application status filters"
+          className="scroll-strip flex gap-1 overflow-x-auto"
+        >
           {FILTERS.map((item) => (
-            <button
+            <Chip
               key={item.value}
-              type="button"
+              selected={filter === item.value}
               onClick={() => setFilter(item.value)}
-              className={`focus-ring whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${
-                filter === item.value
-                  ? "bg-pine text-white"
-                  : "text-[var(--text-secondary)] hover:bg-panel"
-              }`}
+              className="whitespace-nowrap"
             >
               {item.label}
-            </button>
+            </Chip>
           ))}
         </div>
+        {/* The icon sits inside the control, which the Input primitive's chrome
+            does not express — so this keeps its own markup and borrows the
+            field's visual contract instead. */}
         <label className="relative block w-full lg:max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
+          />
           <span className="sr-only">Search applications</span>
           <input
             aria-label="Search applications"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search company or role"
-            className="h-10 w-full rounded-lg border border-line bg-panel/30 pl-9 pr-3 text-sm"
+            className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
           />
         </label>
       </div>
 
-      {(message || error) && (
-        <p
-          role="status"
-          className={`mt-3 text-sm ${error ? "text-[var(--danger)]" : "text-pine"}`}
-        >
-          {error || message}
+      {error ? (
+        <Alert tone="danger" className="mt-4">
+          {error}
+        </Alert>
+      ) : message ? (
+        // A stage move is a genuine positive outcome, so the confirmation is
+        // allowed the success tone the badges use.
+        <p role="status" className="mt-3 text-sm font-medium text-status-success">
+          {message}
         </p>
-      )}
+      ) : null}
 
       <div className="mt-4 grid gap-3">
         {visible.map((application) => (
@@ -257,18 +323,23 @@ export function TrackerClient() {
       </div>
 
       {visible.length === 0 && (
-        <div className="mt-4 rounded-2xl border border-dashed border-line bg-white px-6 py-14 text-center">
-          <BriefcaseBusiness className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <h2 className="mt-3 font-semibold text-ink">
+        <div className="mt-4 rounded-card border border-dashed border-line-default bg-surface-card px-6 py-14 text-center">
+          <BriefcaseBusiness aria-hidden className="mx-auto h-9 w-9 text-foreground-muted" />
+          <h2 className="mt-3 font-semibold text-foreground">
             {applications.length === 0 ? "No applications yet" : "No applications found"}
           </h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-[var(--text-muted)]">
+          <p className="mx-auto mt-1 max-w-md text-sm text-foreground-muted">
             {applications.length === 0
               ? "Applications appear here after you confirm that you submitted them."
               : "Try another status or search term."}
           </p>
+          {/* Only the genuinely empty tracker gets a call to action — a search
+              that matched nothing needs a different query, not a new job. */}
           {applications.length === 0 && (
-            <Link className="mt-4 inline-flex rounded-lg bg-pine px-4 py-2 text-sm font-medium text-white" href="/jobs">
+            <Link
+              className="ds-focus-ring mt-4 inline-flex h-10 items-center rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
+              href="/jobs"
+            >
               Find jobs
             </Link>
           )}
@@ -278,6 +349,12 @@ export function TrackerClient() {
   );
 }
 
+/**
+ * A count, not a colour. These four are the same kind of object as the
+ * Dashboard's metric row and get the same restraint: the number carries the
+ * hierarchy and the icon stays muted. The old green tile spent the success
+ * palette on "Total tracked", which is not an achievement.
+ */
 function SummaryCard({
   icon,
   label,
@@ -288,12 +365,14 @@ function SummaryCard({
   value: number;
 }) {
   return (
-    <div className="rounded-2xl border border-line bg-white p-4 shadow-sm">
+    <div className={`${CARD} p-4`}>
       <div className="flex items-center justify-between">
-        <span className="rounded-xl bg-[var(--success-surface)] p-2 text-pine">{icon}</span>
-        <span className="text-2xl font-semibold text-ink">{value}</span>
+        <span className="rounded-control border border-line-default bg-surface-subtle p-2 text-foreground-muted">
+          {icon}
+        </span>
+        <span className="text-2xl font-semibold tabular-nums text-foreground">{value}</span>
       </div>
-      <p className="mt-3 text-sm font-medium text-[var(--text-secondary)]">{label}</p>
+      <p className="mt-3 text-sm font-medium text-foreground-secondary">{label}</p>
     </div>
   );
 }
@@ -310,7 +389,9 @@ function ApplicationCard({
   const { job } = application;
   const fitScore = job.match?.fit_score;
   return (
-    <article className="rounded-2xl border border-line bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:p-5">
+    <article
+      className={`${CARD} p-4 transition-colors duration-fast ease-standard hover:border-line-interactive sm:p-5`}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <CompanyLogo
@@ -321,50 +402,56 @@ function ApplicationCard({
           />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold text-[var(--text-secondary)]">{job.company}</p>
-              <StatusBadge status={application.status} />
+              <p className="font-semibold text-foreground-secondary">{job.company}</p>
+              {/* Tone from the shared domain module, wording from this screen. */}
+              <StatusBadge tone={getApplicationStatusTone(application.status)}>
+                {statusLabel(application.status)}
+              </StatusBadge>
             </div>
-            <h2 className="mt-1 text-lg font-semibold leading-snug text-ink">{job.title}</h2>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--text-muted)]">
+            <h2 className="mt-1 text-lg font-semibold leading-snug text-foreground">{job.title}</h2>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-foreground-muted">
               {job.location && (
                 <span className="inline-flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" />
+                  <MapPin aria-hidden className="h-3.5 w-3.5" />
                   {job.location}
                 </span>
               )}
               {application.applied_at && (
                 <span className="inline-flex items-center gap-1">
-                  <CalendarDays className="h-3.5 w-3.5" />
+                  <CalendarDays aria-hidden className="h-3.5 w-3.5" />
                   Applied {formatDate(application.applied_at)}
                 </span>
               )}
+              {/* Fit stays plain metadata here. The score's colour bands are a
+                  Jobs/Dashboard signal; in a dense tracker row the stage is the
+                  thing being scanned, and a second coloured chip competes. */}
               {fitScore != null && <span>{Math.round(fitScore)}% fit</span>}
             </div>
             {/* What was actually prepared and how the submission was confirmed.
               * These come from the one application record, so the Tracker never
               * needs a second copy of the job. */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-muted">
               {application.applied_source && (
                 <span>{APPLIED_SOURCE_LABEL[application.applied_source]}</span>
               )}
               {application.documents?.resume && (
                 <span className="inline-flex items-center gap-1">
-                  <FileText className="h-3 w-3" /> Tailored resume
+                  <FileText aria-hidden className="h-3 w-3" /> Tailored resume
                 </span>
               )}
               {application.documents?.cover_letter && (
                 <span className="inline-flex items-center gap-1">
-                  <Mail className="h-3 w-3" /> Cover letter
+                  <Mail aria-hidden className="h-3 w-3" /> Cover letter
                 </span>
               )}
               {application.application_url && (
                 <a
-                  className="inline-flex items-center gap-1 font-medium text-pine underline"
+                  className="ds-focus-ring inline-flex items-center gap-1 rounded-control font-medium text-foreground-link underline"
                   href={application.application_url}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  <ExternalLink className="h-3 w-3" /> Application
+                  <ExternalLink aria-hidden className="h-3 w-3" /> Application
                 </a>
               )}
             </div>
@@ -376,11 +463,26 @@ function ApplicationCard({
             <span className="sr-only">Update status for {job.title}</span>
             <select
               aria-label={`Update status for ${job.title}`}
-              value={application.status === "ready_to_apply" ? "saved" : application.status}
+              value={application.status}
               disabled={updating}
               onChange={(event) => onUpdate(event.target.value as TrackerStatus)}
-              className="h-10 rounded-lg border border-line bg-white px-3 pr-8 text-sm font-medium text-[var(--text-secondary)]"
+              className="ds-field ds-focus-ring h-10 rounded-field border border-line-interactive bg-surface-card px-3 pr-8 text-sm font-medium text-foreground transition duration-fast ease-standard hover:border-line-strong"
             >
+              {/* A tracked application can sit in a state this control cannot
+                * move it *to* — saved, applying, withdrawn, or something a
+                * later backend adds. Without an option carrying that value the
+                * native select falls back to rendering its first option, so a
+                * withdrawn application silently read as "Applied".
+                *
+                * The real state is added as its own option so the control tells
+                * the truth, and disabled so it stays a description of where the
+                * application is rather than an offer to move it there. The set
+                * of permitted destinations below is unchanged. */}
+              {!isTransitionTarget(application.status) && (
+                <option value={application.status} disabled>
+                  {statusLabel(application.status)}
+                </option>
+              )}
               {STATUS_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -388,43 +490,59 @@ function ApplicationCard({
               ))}
             </select>
           </label>
+          {/* Secondary, not primary: leaving for the posting is a normal step,
+              and a card full of filled buttons has no hierarchy left. */}
           <a
             href={job.application_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="focus-ring inline-flex h-10 items-center gap-1.5 rounded-lg border border-line px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-panel"
+            className="ds-focus-ring inline-flex h-10 items-center gap-1.5 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
           >
-            View job <ExternalLink className="h-3.5 w-3.5" />
+            View job <ExternalLink aria-hidden className="h-3.5 w-3.5" />
           </a>
-          {updating && <Loader2 className="h-4 w-4 animate-spin text-pine" />}
+          {updating && (
+            <Loader2 aria-hidden className="h-4 w-4 animate-spin text-foreground-muted" />
+          )}
         </div>
       </div>
     </article>
   );
 }
 
-function StatusBadge({ status }: { status: TrackerStatus }) {
-  const tone =
-    status === "offer"
-      ? "border-[var(--success-border)] bg-[var(--success-surface)] text-[var(--success)]"
-      : status === "interview"
-        ? "border-sky-300/40 bg-sky-500/10 text-sky-500"
-        : status === "rejected"
-          ? "border-[var(--danger-border)] bg-[var(--danger-surface)] text-[var(--danger)]"
-          : status === "applied" || status === "applying"
-            ? "border-[var(--warning-border)] bg-[var(--warning-surface)] text-[var(--warning)]"
-            : "border-line bg-panel text-[var(--text-muted)]";
-  return (
-    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${tone}`}>
-      {statusLabel(status)}
-    </span>
-  );
+/**
+ * The Tracker's name for a stage.
+ *
+ * Only `offer` differs from the shared compact label: on this screen the value
+ * is the name of the stage you *move an application into*, and "Offer /
+ * selected" says that some employers call it an offer and some call it being
+ * selected. The Dashboard's dense badge has no room for that nuance and says
+ * "Offer". Same domain state, different context — so the wording is local and
+ * only the meaning is shared.
+ */
+function statusLabel(status: string): string {
+  if (status === "offer") return "Offer / selected";
+  return formatApplicationStatus(status);
 }
 
-function statusLabel(status: TrackerStatus): string {
-  if (status === "offer") return "Offer / selected";
-  if (status === "ready_to_apply") return "Saved";
-  return status[0].toUpperCase() + status.slice(1).replaceAll("_", " ");
+/** Whether this status is one the control is allowed to move an application to. */
+function isTransitionTarget(status: string): boolean {
+  return STATUS_OPTIONS.some((option) => option.value === status);
+}
+
+/**
+ * A neutral placeholder block. Inline-block so it occupies a text line's box.
+ *
+ * Uses the canonical `--color-skeleton` role: a dedicated loading value that
+ * stays perceptible on the page, on a card, and on a tinted selected row in
+ * both themes, so a loading state never depends on the pulse animation alone.
+ */
+function Skeleton({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block animate-pulse rounded bg-skeleton align-middle ${className}`}
+    />
+  );
 }
 
 function formatDate(value: string): string {

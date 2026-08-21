@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import {
   blankExperience,
   yearRange,
@@ -79,7 +79,7 @@ export function ExperienceEditor({ editor }: { editor: ProfileEditorState }) {
   return (
     <EditorShell loading={loading} loadError={loadError} onRetry={reload}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--text-muted)]">
+        <p className="text-sm text-foreground-muted">
           {records.length === 0
             ? "No roles yet."
             : `${records.length} role${records.length === 1 ? "" : "s"}.`}{" "}
@@ -153,13 +153,13 @@ function ExperienceSummary({ record }: { record: ExperienceRecord }) {
         {record.company || "Untitled company"}
       </span>
       {record.title && (
-        <span className="mt-0.5 block truncate text-sm text-[var(--text-secondary)]">
+        <span className="mt-0.5 block truncate text-sm text-foreground-secondary">
           {record.title}
         </span>
       )}
-      {meta && <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">{meta}</span>}
+      {meta && <span className="mt-1 block truncate text-xs text-foreground-muted">{meta}</span>}
       {shown.length > 0 && (
-        <span className="mt-1.5 block truncate text-xs text-[var(--text-muted)]">
+        <span className="mt-1.5 block truncate text-xs text-foreground-muted">
           {shown.join(" · ")}
           {remaining > 0 && <span className="ml-1.5 font-medium">+{remaining}</span>}
         </span>

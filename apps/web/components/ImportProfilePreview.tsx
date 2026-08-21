@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { composeFullName, suggestNameParts } from "@/lib/names";
 
 export type ImportSection =
@@ -204,17 +204,17 @@ export function ImportProfilePreview({
 
   return (
     <div className="flex max-h-[80vh] flex-col">
-      <div className="sticky top-0 z-10 border-b border-line bg-white/95 px-1 py-4 backdrop-blur">
+      <div className="sticky top-0 z-10 border-b border-line-default bg-surface-card/95 px-1 py-4 backdrop-blur">
         <div className="mx-auto max-w-[880px]">
           <h3 className="text-xl font-semibold">Review imported profile</h3>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">
+          <p className="mt-1 text-sm text-foreground-muted">
             Review and edit the imported resume before saving it to your profile.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {sectionLabels.map((section) => (
               <label
                 key={section.key}
-                className="inline-flex h-8 items-center gap-2 rounded-full border border-line px-3 text-xs font-medium"
+                className="inline-flex h-8 items-center gap-2 rounded-full border border-line-default px-3 text-xs font-medium"
               >
                 <input
                   type="checkbox"
@@ -229,15 +229,15 @@ export function ImportProfilePreview({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto bg-panel/60 px-1 py-5">
+      <div className="flex-1 overflow-y-auto bg-surface-subtle px-1 py-5">
         <div className="mx-auto grid w-full max-w-[880px] gap-4">
           {warnings.length > 0 && (
-            <section className="rounded-lg border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4">
+            <section className="rounded-control border border-status-warning-border bg-status-warning-surface p-4">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--warning)]" />
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-status-warning" />
                 <div>
                   <h4 className="font-semibold">Warnings</h4>
-                  <ul className="mt-2 list-disc pl-5 text-sm leading-6 text-[var(--warning)]">
+                  <ul className="mt-2 list-disc pl-5 text-sm leading-6 text-status-warning">
                     {warnings.map((warning) => (
                       <li key={warning}>{warning}</li>
                     ))}
@@ -248,7 +248,7 @@ export function ImportProfilePreview({
           )}
 
           {conflicts.length > 0 && (
-            <section className="rounded-lg border border-line bg-white p-4">
+            <section className="rounded-control border border-line-default bg-surface-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h4 className="font-semibold">Existing data conflicts</h4>
                 <label className="inline-flex items-center gap-2 text-sm">
@@ -262,10 +262,10 @@ export function ImportProfilePreview({
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 {conflicts.map((conflict) => (
-                  <div key={conflict.field} className="rounded-md border border-line bg-panel p-3 text-sm">
+                  <div key={conflict.field} className="rounded-control border border-line-default bg-surface-subtle p-3 text-sm">
                     <p className="font-medium">{conflict.field}</p>
-                    <p className="mt-1 text-[var(--text-muted)]">Existing: {conflict.existing}</p>
-                    <p className="text-[var(--text-muted)]">Imported: {conflict.imported}</p>
+                    <p className="mt-1 text-foreground-muted">Existing: {conflict.existing}</p>
+                    <p className="text-foreground-muted">Imported: {conflict.imported}</p>
                   </div>
                 ))}
               </div>
@@ -273,7 +273,7 @@ export function ImportProfilePreview({
           )}
 
           {/* The resume "page" — a centered white document. */}
-          <article className="rounded-xl border border-line bg-white p-6 shadow-sm md:p-10">
+          <article className="rounded-card border border-line-default bg-surface-card p-6 shadow-sm md:p-10">
             <HeaderSection {...shared} />
             <SummarySection {...shared} />
             <SkillsSection {...shared} />
@@ -286,12 +286,12 @@ export function ImportProfilePreview({
             <LinksSection {...shared} />
           </article>
 
-          <section className="rounded-lg border border-line bg-white p-4">
-            <button className="text-sm font-medium text-pine" type="button" onClick={() => setShowRawText((value) => !value)}>
+          <section className="rounded-control border border-line-default bg-surface-card p-4">
+            <button className="ds-focus-ring rounded-control text-sm font-medium text-foreground-link" type="button" onClick={() => setShowRawText((value) => !value)}>
               {showRawText ? "Hide raw extracted text" : "Show raw extracted text"}
             </button>
             {showRawText && (
-              <p className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-panel p-3 text-sm text-[var(--text-muted)]">
+              <p className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-control bg-surface-subtle p-3 text-sm text-foreground-muted">
                 {editableDraft.raw_text_preview || "No raw text preview available."}
               </p>
             )}
@@ -299,7 +299,7 @@ export function ImportProfilePreview({
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-10 border-t border-line bg-white/95 px-1 py-4 backdrop-blur">
+      <div className="sticky bottom-0 z-10 border-t border-line-default bg-surface-card/95 px-1 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-[880px] flex-wrap items-center gap-3">
           <Button type="button" disabled={saving} onClick={() => apply(allSections, "all")}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Accept all
@@ -310,7 +310,7 @@ export function ImportProfilePreview({
           <Button variant="secondary" type="button" disabled={saving} onClick={onCancel}>
             <X className="h-4 w-4" /> Cancel
           </Button>
-          <span className="text-xs text-[var(--text-muted)]">{selected.length} of {allSections.length} sections selected</span>
+          <span className="text-xs text-foreground-muted">{selected.length} of {allSections.length} sections selected</span>
         </div>
       </div>
     </div>
@@ -357,15 +357,15 @@ function ResumeSection({
     return null;
   }
   return (
-    <section className={`border-t border-line/70 py-5 first:border-t-0 first:pt-0 ${included ? "" : "opacity-45"}`}>
+    <section className={`border-t border-line-subtle py-5 first:border-t-0 first:pt-0 ${included ? "" : "opacity-45"}`}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold uppercase tracking-wide text-[var(--text-secondary)]">{title}</h4>
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-foreground-secondary">{title}</h4>
         <div className="flex items-center gap-2">
           {onAdd && isEditing && (
             <button
               type="button"
               onClick={onAdd}
-              className="focus-ring inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-medium"
+              className="ds-focus-ring inline-flex items-center gap-1 rounded-control border border-line-default px-2 py-1 text-xs font-medium"
             >
               <Plus className="h-3.5 w-3.5" /> Add
             </button>
@@ -374,7 +374,7 @@ function ResumeSection({
             type="button"
             onClick={() => toggleEdit(section)}
             aria-label={`${isEditing ? "Done editing" : "Edit"} ${title}`}
-            className="focus-ring inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs font-medium"
+            className="ds-focus-ring inline-flex items-center gap-1 rounded-control border border-line-default px-2 py-1 text-xs font-medium"
           >
             {isEditing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
             {isEditing ? "Done" : "Edit"}
@@ -406,10 +406,10 @@ function HeaderSection({ draft, setDraft, selected, editing, toggle, toggleEdit 
 
   const view = (
     <div className="text-center">
-      <h2 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">{basic.full_name || "Your name"}</h2>
-      {basic.headline && <p className="mt-1 text-sm font-medium text-pine">{basic.headline}</p>}
+      <h2 className="text-2xl font-bold tracking-tight text-foreground">{basic.full_name || "Your name"}</h2>
+      {basic.headline && <p className="mt-1 text-sm font-medium text-foreground-secondary">{basic.headline}</p>}
       {contactBits.length > 0 && (
-        <p className="mt-2 flex flex-wrap justify-center gap-x-2 gap-y-1 text-xs text-[var(--text-muted)]">
+        <p className="mt-2 flex flex-wrap justify-center gap-x-2 gap-y-1 text-xs text-foreground-muted">
           {contactBits.map((bit, index) => (
             <span key={`${bit}-${index}`} className="break-all">
               {index > 0 && <span className="mr-2 text-line">·</span>}
@@ -459,7 +459,7 @@ function HeaderSection({ draft, setDraft, selected, editing, toggle, toggleEdit 
 }
 
 function SummarySection({ draft, setDraft, selected, editing, toggle, toggleEdit }: SharedProps) {
-  const view = <p className="text-sm leading-6 text-[var(--text-secondary)]">{draft.summary}</p>;
+  const view = <p className="text-sm leading-6 text-foreground-secondary">{draft.summary}</p>;
   const edit = <TextArea label="Professional summary" value={draft.summary} onChange={(value) => setDraft((current) => ({ ...current, summary: value }))} />;
   return (
     <ResumeSection
@@ -480,7 +480,7 @@ function SkillsSection({ draft, setDraft, selected, editing, toggle, toggleEdit 
   const groups = draft.skill_groups.filter((group) => group.items.length > 0);
   const view =
     groups.length > 0 ? (
-      <div className="grid gap-1.5 text-sm text-[var(--text-secondary)]">
+      <div className="grid gap-1.5 text-sm text-foreground-secondary">
         {groups.map((group, index) => (
           <p key={`${group.category}-${index}`}>
             {group.category && <span className="font-semibold">{group.category}: </span>}
@@ -491,7 +491,7 @@ function SkillsSection({ draft, setDraft, selected, editing, toggle, toggleEdit 
     ) : (
       <div className="flex flex-wrap gap-2">
         {draft.skills.map((skill) => (
-          <span key={skill} className="rounded-full border border-line bg-panel px-3 py-1 text-xs">
+          <span key={skill} className="rounded-full border border-line-default bg-surface-subtle px-3 py-1 text-xs">
             {skill}
           </span>
         ))}
@@ -526,10 +526,10 @@ function ExperienceSection({ draft, setDraft, selected, editing, toggle, toggleE
       {draft.experience.map((item, index) => (
         <div key={index}>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-            <p className="font-semibold text-[var(--text-primary)]">{[item.title, item.company].filter(Boolean).join(" — ")}</p>
-            <p className="text-xs text-[var(--text-muted)]">{formatDateRange(item.start_date, item.end_date, item.currently_working)}</p>
+            <p className="font-semibold text-foreground">{[item.title, item.company].filter(Boolean).join(" — ")}</p>
+            <p className="text-xs text-foreground-muted">{formatDateRange(item.start_date, item.end_date, item.currently_working)}</p>
           </div>
-          {item.location && <p className="text-xs text-[var(--text-muted)]">{item.location}</p>}
+          {item.location && <p className="text-xs text-foreground-muted">{item.location}</p>}
           <BulletList items={item.bullets} />
         </div>
       ))}
@@ -577,9 +577,9 @@ function ProjectsSection({ draft, setDraft, selected, editing, toggle, toggleEdi
     <div className="grid gap-4">
       {draft.projects.map((item, index) => (
         <div key={index}>
-          <p className="font-semibold text-[var(--text-primary)]">{item.name}</p>
-          {item.subtitle && <p className="text-xs italic text-[var(--text-muted)]">{item.subtitle}</p>}
-          {item.description && <p className="mt-1 text-sm text-[var(--text-secondary)]">{item.description}</p>}
+          <p className="font-semibold text-foreground">{item.name}</p>
+          {item.subtitle && <p className="text-xs italic text-foreground-muted">{item.subtitle}</p>}
+          {item.description && <p className="mt-1 text-sm text-foreground-secondary">{item.description}</p>}
           <BulletList items={item.bullets} />
         </div>
       ))}
@@ -625,12 +625,12 @@ function EducationSection({ draft, setDraft, selected, editing, toggle, toggleEd
       {draft.education.map((item, index) => (
         <div key={index}>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-            <p className="font-semibold text-[var(--text-primary)]">{item.school}</p>
-            <p className="text-xs text-[var(--text-muted)]">{formatDateRange(item.start_date, item.end_date, false)}</p>
+            <p className="font-semibold text-foreground">{item.school}</p>
+            <p className="text-xs text-foreground-muted">{formatDateRange(item.start_date, item.end_date, false)}</p>
           </div>
-          <p className="text-sm text-[var(--text-secondary)]">{[item.degree, item.minor && `Minor in ${item.minor}`].filter(Boolean).join(", ")}</p>
-          {item.gpa && <p className="text-xs text-[var(--text-muted)]">GPA: {item.gpa}</p>}
-          {item.honors.length > 0 && <p className="text-xs text-[var(--text-muted)]">Honors: {item.honors.join(", ")}</p>}
+          <p className="text-sm text-foreground-secondary">{[item.degree, item.minor && `Minor in ${item.minor}`].filter(Boolean).join(", ")}</p>
+          {item.gpa && <p className="text-xs text-foreground-muted">GPA: {item.gpa}</p>}
+          {item.honors.length > 0 && <p className="text-xs text-foreground-muted">Honors: {item.honors.join(", ")}</p>}
         </div>
       ))}
     </div>
@@ -672,11 +672,11 @@ function EducationSection({ draft, setDraft, selected, editing, toggle, toggleEd
 function AwardsSection({ draft, setDraft, selected, editing, toggle, toggleEdit }: SharedProps) {
   const empty: AwardDraft = { name: "", issuer: "", date: "", description: "" };
   const view = (
-    <ul className="grid list-disc gap-1 pl-5 text-sm text-[var(--text-secondary)]">
+    <ul className="grid list-disc gap-1 pl-5 text-sm text-foreground-secondary">
       {draft.awards.map((item, index) => (
         <li key={index}>
           {item.name}
-          {item.date && <span className="text-[var(--text-muted)]"> ({item.date})</span>}
+          {item.date && <span className="text-foreground-muted"> ({item.date})</span>}
         </li>
       ))}
     </ul>
@@ -716,7 +716,7 @@ function AwardsSection({ draft, setDraft, selected, editing, toggle, toggleEdit 
 function CertificationsSection({ draft, setDraft, selected, editing, toggle, toggleEdit }: SharedProps) {
   const empty: CertificationDraft = { name: "", issuer: "", issue_date: "", expiration_date: "", credential_url: "" };
   const view = (
-    <ul className="grid list-disc gap-1 pl-5 text-sm text-[var(--text-secondary)]">
+    <ul className="grid list-disc gap-1 pl-5 text-sm text-foreground-secondary">
       {draft.certifications.map((item, index) => (
         <li key={index}>{[item.name, item.issuer].filter(Boolean).join(" — ")}</li>
       ))}
@@ -754,7 +754,7 @@ function CertificationsSection({ draft, setDraft, selected, editing, toggle, tog
 function TargetsSection({ draft, setDraft, selected, editing, toggle, toggleEdit }: SharedProps) {
   const targets = draft.job_targets;
   const view = (
-    <div className="grid gap-1 text-sm text-[var(--text-secondary)]">
+    <div className="grid gap-1 text-sm text-foreground-secondary">
       {targets.target_roles.length > 0 && <p><span className="font-semibold">Roles: </span>{targets.target_roles.join(", ")}</p>}
       {targets.target_levels.length > 0 && <p><span className="font-semibold">Levels: </span>{targets.target_levels.join(", ")}</p>}
       {targets.preferred_locations.length > 0 && <p><span className="font-semibold">Locations: </span>{targets.preferred_locations.join(", ")}</p>}
@@ -769,7 +769,7 @@ function TargetsSection({ draft, setDraft, selected, editing, toggle, toggleEdit
       <label>
         <span className="text-sm font-medium">Preference</span>
         <select
-          className="mt-2 h-10 w-full rounded-md border border-line bg-white px-3"
+          className="mt-2 h-10 w-full rounded-control border border-line-default bg-surface-card px-3"
           value={targets.work_preference || "everything"}
           onChange={(event) => updateTargets(setDraft, "work_preference", event.target.value)}
         >
@@ -805,7 +805,7 @@ function LinksSection({ draft, setDraft, selected, editing, toggle, toggleEdit }
   const links = draft.links;
   const all = [links.linkedin_url, links.github_url, links.portfolio_url, ...links.other_links].filter(Boolean);
   const view = (
-    <ul className="grid list-disc gap-1 pl-5 text-sm text-pine">
+    <ul className="grid list-disc gap-1 pl-5 text-sm text-foreground-secondary">
       {all.map((link) => (
         <li key={link} className="break-all">{link}</li>
       ))}
@@ -846,15 +846,15 @@ function RecordEditor<T>({
   render: (record: T, index: number, setRecord: (record: T) => void) => ReactNode;
 }) {
   if (records.length === 0) {
-    return <p className="rounded-md border border-dashed border-line bg-panel p-4 text-center text-sm text-[var(--text-muted)]">No records. Use “Add” to create one.</p>;
+    return <p className="rounded-control border border-dashed border-line-default bg-surface-subtle p-4 text-center text-sm text-foreground-muted">No records. Use “Add” to create one.</p>;
   }
   return (
     <div className="grid gap-4">
       {records.map((record, index) => (
-        <div key={index} className="rounded-md border border-line bg-panel/50 p-4">
+        <div key={index} className="rounded-control border border-line-default bg-surface-subtle p-4">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-sm font-semibold">{label} {index + 1}</span>
-            <Button variant="danger" type="button" onClick={() => onChange(records.filter((_, itemIndex) => itemIndex !== index))}>
+            <Button variant="destructive" type="button" onClick={() => onChange(records.filter((_, itemIndex) => itemIndex !== index))}>
               <Trash2 className="h-4 w-4" /> Remove
             </Button>
           </div>
@@ -870,7 +870,7 @@ function BulletList({ items }: { items: string[] }) {
     return null;
   }
   return (
-    <ul className="mt-1 grid list-disc gap-1 pl-5 text-sm leading-6 text-[var(--text-secondary)]">
+    <ul className="mt-1 grid list-disc gap-1 pl-5 text-sm leading-6 text-foreground-secondary">
       {items.map((item, index) => (
         <li key={index}>{item}</li>
       ))}
@@ -887,7 +887,7 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   return (
     <label>
       <span className="text-sm font-medium">{label}</span>
-      <input className="mt-2 h-10 w-full rounded-md border border-line px-3" type="text" value={value} onChange={(event) => onChange(event.target.value)} />
+      <input className="mt-2 h-10 w-full rounded-control border border-line-default px-3" type="text" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -896,14 +896,14 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
   return (
     <label>
       <span className="text-sm font-medium">{label}</span>
-      <textarea className="mt-2 min-h-24 w-full rounded-md border border-line p-3" value={value} onChange={(event) => onChange(event.target.value)} />
+      <textarea className="mt-2 min-h-24 w-full rounded-control border border-line-default p-3" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
-    <label className="flex min-h-10 items-center gap-3 rounded-md border border-line p-3">
+    <label className="flex min-h-10 items-center gap-3 rounded-control border border-line-default p-3">
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <span className="text-sm font-medium">{label}</span>
     </label>
@@ -925,7 +925,7 @@ function ChipEditor({ label, values, onChange }: { label: string; values: string
         <span className="text-sm font-medium">{label}</span>
         <div className="mt-2 flex gap-2">
           <input
-            className="h-10 min-w-0 flex-1 rounded-md border border-line px-3"
+            className="h-10 min-w-0 flex-1 rounded-control border border-line-default px-3"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -943,7 +943,7 @@ function ChipEditor({ label, values, onChange }: { label: string; values: string
       {values.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {values.map((value) => (
-            <span key={value} className="inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-sm">
+            <span key={value} className="inline-flex max-w-full items-center gap-2 rounded-full border border-line-default bg-surface-subtle px-3 py-1 text-sm">
               <span className="break-all">{value}</span>
               <button type="button" onClick={() => onChange(values.filter((item) => item !== value))} aria-label={`Remove ${value}`}>
                 <X className="h-3.5 w-3.5" />

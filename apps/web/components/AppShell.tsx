@@ -16,7 +16,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   BriefcaseBusiness,
   ClipboardList,
-  FileText,
   Gauge,
   LogOut,
   Menu,
@@ -36,23 +35,26 @@ import {
 
 /**
  * Primary navigation, ordered by how a job search actually flows: see where you
- * stand, find roles, prepare materials, track what you sent, then maintain the
- * profile behind all of it.
+ * stand, find roles, track what you sent, then maintain the profile behind all
+ * of it.
  *
- * Every entry points at a route that exists. "Networking" is deliberately
- * absent: the people/referral features are a tab inside the Jobs workspace, not
- * a standalone page, and adding a sidebar entry for it would be a link to a
- * 404. It belongs here once it has its own route.
+ * Every entry points at a route that exists AND at a product that exists. Two
+ * deliberate absences:
+ *
+ * - "Networking". The people/referral features are a tab inside the Jobs
+ *   workspace, not a standalone page. A sidebar entry would be a link to a 404.
+ *
+ * - "My Resumes". `/resume`, `/cover-letter` and `/application-answers` are
+ *   headings that explain where document generation actually happens — inside
+ *   the Jobs workspace, against a specific job. There is no standalone
+ *   document-management product behind them, so a top-level entry sent users
+ *   into a dead end. The routes stay reachable by direct URL for existing links
+ *   and bookmarks; only the misleading navigation promise is gone. This entry
+ *   returns when a real Resumes library ships.
  */
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge, activeRoots: ["/dashboard"] },
   { href: "/jobs", label: "Find Jobs", icon: BriefcaseBusiness, activeRoots: ["/jobs", "/matches"] },
-  {
-    href: "/resume",
-    label: "My Resumes",
-    icon: FileText,
-    activeRoots: ["/resume", "/cover-letter", "/application-answers"]
-  },
   { href: "/tracker", label: "Applications", icon: ClipboardList, activeRoots: ["/tracker"] },
   { href: "/profile", label: "My Profile", icon: UserRound, activeRoots: ["/profile"] }
 ] as const;
@@ -283,7 +285,7 @@ export function AppShell({
         * the layout owns — the job list and the detail panel.
         */}
       <div
-        className={`app-shell bg-[var(--background)] ${
+        className={`app-shell bg-surface-page ${
           workspace ? "min-h-[100dvh]" : "min-h-screen"
         } ${immersive ? "h-[100dvh] overflow-hidden" : ""}`}
         data-desktop-collapsed={desktopCollapsed ? "true" : "false"}

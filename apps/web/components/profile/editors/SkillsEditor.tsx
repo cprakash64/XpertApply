@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Plus, Search, X } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { skillSuggestions } from "@/lib/profileCatalog";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
 import { groupSkills } from "@/lib/skillGroups";
@@ -91,7 +91,7 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
     <EditorShell loading={loading} loadError={loadError} onRetry={reload}>
       {/* Search doubles as the add box: type to filter suggestions, press Enter
           to add exactly what you typed, or paste a comma-separated list. */}
-      <div className="rounded-2xl border border-line bg-white p-4">
+      <div className="rounded-card border border-line-default bg-surface-card p-4">
         <label htmlFor="skill-search" className="block text-sm font-medium">
           Add a skill
         </label>
@@ -99,7 +99,7 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
           <div className="relative min-w-0 flex-1">
             <Search
               aria-hidden
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
             />
             <input
               id="skill-search"
@@ -120,26 +120,26 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
                   addSkills(pasted);
                 }
               }}
-              className="h-10 w-full rounded-xl border border-line bg-[var(--input-background)] pl-9 pr-3 text-sm"
+              className="h-10 w-full rounded-card border border-line-default bg-surface-raised pl-9 pr-3 text-sm"
             />
           </div>
           <Button type="button" variant="secondary" onClick={() => addSkills(query)}>
             <Plus className="h-4 w-4" aria-hidden /> Add
           </Button>
         </div>
-        <p id="skill-search-hint" className="mt-1 text-xs text-[var(--text-muted)]">
+        <p id="skill-search-hint" className="mt-1 text-xs text-foreground-muted">
           {skills.length} skill{skills.length === 1 ? "" : "s"} on your profile.
         </p>
 
         {query.trim() && alreadyPresent && (
-          <p role="status" className="mt-2 text-xs text-[var(--text-muted)]">
+          <p role="status" className="mt-2 text-xs text-foreground-muted">
             “{query.trim()}” is already on your profile.
           </p>
         )}
 
         {suggestions.length > 0 && (
           <div className="mt-3">
-            <p className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            <p className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
               Suggestions
             </p>
             <ul className="mt-1.5 flex flex-wrap gap-1.5">
@@ -148,7 +148,7 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
                   <button
                     type="button"
                     onClick={() => addSkills(skill)}
-                    className="focus-ring inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2 py-1 text-xs text-[var(--text-secondary)] transition hover:border-pine hover:text-pine"
+                    className="ds-focus-ring inline-flex items-center gap-1 rounded-control border border-dashed border-line-default px-2 py-1 text-xs text-foreground-secondary transition hover:border-line-interactive hover:text-foreground-link"
                   >
                     <Plus className="h-3 w-3" aria-hidden /> {skill}
                   </button>
@@ -160,7 +160,7 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
       </div>
 
       {groups.length === 0 ? (
-        <p className="mt-4 rounded-2xl border border-dashed border-line bg-panel px-5 py-8 text-center text-sm text-[var(--text-muted)]">
+        <p className="mt-4 rounded-card border border-dashed border-line-default bg-surface-subtle px-5 py-8 text-center text-sm text-foreground-muted">
           No skills yet. Skills drive job matching and resume tailoring.
         </p>
       ) : (
@@ -170,8 +170,8 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
             const visible = expanded ? group.skills : group.skills.slice(0, PREVIEW_PER_GROUP);
             const hidden = group.skills.length - visible.length;
             return (
-              <section key={group.name} className="rounded-2xl border border-line bg-white p-4">
-                <h2 className="text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              <section key={group.name} className="rounded-card border border-line-default bg-surface-card p-4">
+                <h2 className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
                   {group.name}
                   <span className="ml-1.5 font-normal normal-case tracking-normal">
                     ({group.skills.length})
@@ -181,14 +181,14 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
                   {visible.map((skill) => (
                     <li
                       key={skill}
-                      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-xs text-[var(--text-secondary)]"
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-control border border-line-default bg-surface-subtle px-2 py-1 text-xs text-foreground-secondary"
                     >
                       <span className="truncate">{skill}</span>
                       <button
                         type="button"
                         aria-label={`Remove ${skill}`}
                         onClick={() => removeSkill(skill)}
-                        className="focus-ring shrink-0 rounded text-[var(--text-muted)] transition hover:text-[var(--danger)]"
+                        className="ds-focus-ring shrink-0 rounded text-foreground-muted transition hover:text-status-danger"
                       >
                         <X className="h-3 w-3" aria-hidden />
                       </button>
@@ -202,7 +202,7 @@ export function SkillsEditor({ editor }: { editor: ProfileEditorState }) {
                     onClick={() =>
                       setExpandedGroups((current) => ({ ...current, [group.name]: !expanded }))
                     }
-                    className="focus-ring mt-2 text-xs font-medium text-[var(--text-muted)] transition hover:text-pine"
+                    className="ds-focus-ring mt-2 text-xs font-medium text-foreground-muted transition hover:text-foreground-link"
                   >
                     {expanded ? "Show fewer" : `+${hidden} more`}
                   </button>

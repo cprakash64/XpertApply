@@ -80,11 +80,37 @@ describe("sidebar", () => {
     expect(labels).toEqual([
       "Dashboard",
       "Find Jobs",
-      "My Resumes",
       "Applications",
       "My Profile",
       "Settings"
     ]);
+  });
+
+  /**
+   * `/resume`, `/cover-letter` and `/application-answers` are explanatory
+   * placeholders, not a document-management product: document generation runs
+   * inside the Jobs workspace against a specific job. A primary entry pointing
+   * at them advertised a product that does not exist, so it was removed. The
+   * routes stay reachable by direct URL.
+   */
+  it("offers no primary navigation into the document placeholder routes", () => {
+    renderShell();
+    const hrefs = within(sidebar())
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href"));
+    expect(hrefs).not.toContain("/resume");
+    expect(hrefs).not.toContain("/cover-letter");
+    expect(hrefs).not.toContain("/application-answers");
+    expect(within(sidebar()).queryByRole("link", { name: "My Resumes" })).toBeNull();
+  });
+
+  it("leaves a directly opened placeholder route with no active primary item", () => {
+    navigation.pathname = "/resume";
+    renderShell();
+    const current = within(sidebar())
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current).toEqual([]);
   });
 
   it("marks the current section", () => {

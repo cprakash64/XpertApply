@@ -27,6 +27,37 @@ const REQUIRED_TOKENS = [
   "--input-background", "--disabled-background"
 ];
 
+/**
+ * Legacy token names that are now ALIASES onto a canonical `--color-*` role.
+ *
+ * An alias must NOT be restated in the dark block: `var()` resolves against the
+ * element's own computed value, so the single declaration already follows the
+ * active scheme. Restating one is how light and dark drift apart again, which
+ * is why the dark-mode test below asserts their absence rather than their
+ * presence. Each entry is `[legacy, canonical]`.
+ */
+const ALIASED_TOKENS: [string, string][] = [
+  ["--background", "--color-surface-page"],
+  ["--surface", "--color-surface-card"],
+  ["--surface-raised", "--color-surface-raised"],
+  ["--surface-muted", "--color-surface-subtle"],
+  ["--text-primary", "--color-text-primary"],
+  ["--text-secondary", "--color-text-secondary"],
+  ["--text-muted", "--color-text-muted"],
+  ["--border", "--color-border-default"],
+  ["--border-strong", "--color-border-interactive"],
+  ["--focus-ring", "--color-focus-ring"],
+  ["--success", "--color-status-success"],
+  ["--warning", "--color-status-warning"],
+  ["--danger", "--color-status-danger"],
+  ["--danger-hover", "--color-status-danger-strong"],
+  ["--overlay", "--color-surface-overlay"],
+  ["--input-background", "--color-surface-raised"],
+  ["--disabled-background", "--color-surface-disabled"]
+];
+
+const ALIASED_NAMES = new Set(ALIASED_TOKENS.map(([legacy]) => legacy));
+
 function walk(dir: string, out: string[] = []): string[] {
   // Dirent avoids a separate stat call for every file. That distinction is
   // material on macOS workspaces backed by File Provider/iCloud, where statSync
@@ -48,11 +79,28 @@ describe("theme tokens", () => {
     }
   });
 
-  it("overrides every token for dark mode", () => {
+  it("resolves every legacy token name through a canonical design-system role", () => {
+    for (const [legacy, canonical] of ALIASED_TOKENS) {
+      expect(globalsCss, `${legacy} must alias ${canonical}`).toContain(
+        `${legacy}: var(${canonical});`
+      );
+    }
+  });
+
+  it("overrides every non-aliased token for dark mode", () => {
     const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
     for (const token of REQUIRED_TOKENS) {
-      // --shadow and --overlay are redefined too; all of them must be.
+      if (ALIASED_NAMES.has(token)) continue;
       expect(darkBlock, `${token} needs a dark value`).toContain(`${token}:`);
+    }
+  });
+
+  it("never restates an alias in the dark block, where it could drift", () => {
+    const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    for (const [legacy] of ALIASED_TOKENS) {
+      expect(darkBlock, `${legacy} is an alias and must not be redeclared`).not.toMatch(
+        new RegExp(`^\\s*${legacy}:`, "m")
+      );
     }
   });
 
@@ -66,8 +114,9 @@ describe("theme tokens", () => {
   });
 
   it("does not use pure black as the dark background", () => {
+    // Read the canonical page role the `--background` alias resolves to.
     const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
-    const background = /--background:\s*(#[0-9a-fA-F]{6})/.exec(darkBlock)?.[1]?.toLowerCase();
+    const background = /--color-surface-page:\s*(#[0-9a-fA-F]{6})/.exec(darkBlock)?.[1]?.toLowerCase();
     expect(background).toBeDefined();
     expect(background).not.toBe("#000000");
   });
@@ -77,8 +126,20 @@ describe("theme tokens", () => {
   });
 
   it("keeps placeholders and focus rings themed", () => {
-    expect(globalsCss).toMatch(/::placeholder\s*\{[^}]*var\(--text-muted\)/);
+    expect(globalsCss).toMatch(/::placeholder[^{]*\{[^}]*var\(--color-text-muted\)/);
     expect(globalsCss).toMatch(/focus-visible[^{]*\{[^}]*var\(--focus-ring\)/);
+  });
+
+  /**
+   * Tailwind's preflight ships `input::placeholder, textarea::placeholder`
+   * with gray-400. A bare `::placeholder` rule loses to it on specificity, so
+   * the themed colour silently did nothing and placeholders sat at 2.6:1 on a
+   * white field. The element-qualified selectors are what make the rule apply.
+   */
+  it("outranks Tailwind preflight on placeholder colour", () => {
+    const block = /(^|\n)([^{]*::placeholder[^{]*)\{/.exec(globalsCss)?.[2] ?? "";
+    expect(block).toContain("input::placeholder");
+    expect(block).toContain("textarea::placeholder");
   });
 
   it("themes scrollbars", () => {

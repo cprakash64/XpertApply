@@ -20,14 +20,19 @@ export function JobsFilterBar({
 }) {
   const hasFilters = Boolean(query.q || query.workplace || query.minFit > 0);
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white p-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-card border border-line-default bg-surface-card p-2">
+      {/* Search stays first and widest: it is the control people reach for
+        * before any of the dropdowns. */}
       <label className="min-w-[220px] flex-1">
         <span className="sr-only">Role or skill</span>
         <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
+          />
           <input
             aria-label="Role or skill"
-            className="h-10 w-full rounded-lg border border-transparent bg-panel/50 pl-9 pr-3 text-sm transition-colors focus:border-line"
+            className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
             placeholder="Search role or skill"
             value={query.q}
             onChange={(event) => onChange({ q: event.target.value })}
@@ -73,7 +78,7 @@ export function JobsFilterBar({
         {dateRefreshing && (
           <Loader2
             aria-label="Refreshing date range"
-            className="pointer-events-none absolute right-7 top-3 h-4 w-4 animate-spin text-pine"
+            className="pointer-events-none absolute right-7 top-3 h-4 w-4 animate-spin text-brand-accent"
           />
         )}
       </div>
@@ -92,7 +97,7 @@ export function JobsFilterBar({
         <button
           type="button"
           onClick={() => onChange({ q: "", workplace: "", minFit: 0 })}
-          className="focus-ring h-10 rounded-lg px-3 text-[13px] font-medium text-[var(--text-muted)] transition-colors hover:bg-panel hover:text-[var(--text-secondary)]"
+          className="ds-focus-ring h-10 rounded-control px-3 text-[13px] font-medium text-foreground-muted transition-colors duration-fast ease-standard hover:bg-surface-subtle hover:text-foreground"
         >
           Clear filters
         </button>
@@ -117,7 +122,7 @@ function FilterSelect({
       <span className="sr-only">{ariaLabel}</span>
       <select
         aria-label={ariaLabel}
-        className="h-10 rounded-lg border border-line bg-white px-2.5 text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:border-border-strong"
+        className="ds-field ds-focus-ring h-10 rounded-field border border-line-interactive bg-surface-card px-2.5 text-[13px] font-medium text-foreground transition duration-fast ease-standard hover:border-line-strong"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >

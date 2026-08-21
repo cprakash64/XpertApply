@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ExternalLink, Plus } from "lucide-react";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui";
 import { blankProject, yearRange, type ProjectRecord } from "@/lib/careerRecords";
 import type { ProfileEditorState } from "@/lib/profileEditorData";
 import { isValidOptionalUrl } from "@/lib/profileUrls";
@@ -65,7 +65,7 @@ export function ProjectsEditor({ editor }: { editor: ProfileEditorState }) {
   return (
     <EditorShell loading={loading} loadError={loadError} onRetry={reload}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--text-muted)]">
+        <p className="text-sm text-foreground-muted">
           {records.length === 0
             ? "No projects yet."
             : `${records.length} project${records.length === 1 ? "" : "s"}.`}{" "}
@@ -131,21 +131,21 @@ function ProjectSummary({ record }: { record: ProjectRecord }) {
     <span className="block min-w-0">
       <span className="block truncate text-sm font-semibold">{record.name || "Untitled project"}</span>
       {shown.length > 0 && (
-        <span className="mt-0.5 block truncate text-xs text-[var(--text-muted)]">
+        <span className="mt-0.5 block truncate text-xs text-foreground-muted">
           {shown.join(" · ")}
           {remaining > 0 && <span className="ml-1.5 font-medium">+{remaining}</span>}
         </span>
       )}
       {blurb && (
-        <span className="mt-1 block truncate text-sm text-[var(--text-secondary)]">{blurb}</span>
+        <span className="mt-1 block truncate text-sm text-foreground-secondary">{blurb}</span>
       )}
-      {dates && <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">{dates}</span>}
+      {dates && <span className="mt-1 block truncate text-xs text-foreground-muted">{dates}</span>}
       {record.links.length > 0 && (
         <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
           {record.links.slice(0, 3).map((link) => (
             <span
               key={link}
-              className="inline-flex max-w-full items-center gap-1 truncate text-xs text-[var(--text-muted)]"
+              className="inline-flex max-w-full items-center gap-1 truncate text-xs text-foreground-muted"
             >
               <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
               <span className="truncate">{linkLabel(link)}</span>
@@ -227,7 +227,7 @@ function ProjectFields({
           onChange={(values) => onChange({ ...record, links: values })}
         />
         {invalidLinks.length > 0 && (
-          <p role="alert" className="mt-1 text-xs text-[var(--danger)]">
+          <p role="alert" className="mt-1 text-xs text-status-danger">
             {invalidLinks.length === 1 ? "This link does not" : "These links do not"} start with
             http:// or https://: {invalidLinks.join(", ")}
           </p>

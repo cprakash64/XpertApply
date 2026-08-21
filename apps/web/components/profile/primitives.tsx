@@ -27,7 +27,7 @@ export function Card({ children, className = "" }: { children: React.ReactNode; 
     // column instead of truncating. The same reasoning applies to the inner
     // wrappers below.
     <section
-      className={`group/card min-w-0 rounded-2xl border border-line bg-white p-5 transition duration-150 hover:border-[var(--border-strong)] motion-safe:hover:-translate-y-px ${className}`}
+      className={`group/card min-w-0 rounded-card border border-line-default bg-surface-card p-5 transition duration-150 hover:border-line-interactive motion-safe:hover:-translate-y-px ${className}`}
     >
       {children}
     </section>
@@ -89,7 +89,7 @@ export function SectionHeading({
   return (
     <div className="flex min-w-0 items-center justify-between gap-3">
       <h2 className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-[-0.01em]">
-        {Icon && <Icon className="h-4 w-4 shrink-0 text-[var(--text-muted)]" aria-hidden />}
+        {Icon && <Icon className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden />}
         <span className="truncate">{title}</span>
       </h2>
       <EditLink href={href} label={`Edit ${title.toLowerCase()}`} stretched={stretched} />
@@ -117,7 +117,7 @@ export function EditLink({
     <Link
       href={href}
       aria-label={label}
-      className={`focus-ring group/edit inline-flex shrink-0 items-center gap-1 rounded-lg px-1.5 py-1 text-sm font-medium text-[var(--text-muted)] transition hover:text-pine ${
+      className={`ds-focus-ring group/edit inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-1 text-sm font-medium text-foreground-muted transition hover:text-foreground-link ${
         stretched ? "stretched-link" : ""
       }`}
     >
@@ -144,7 +144,7 @@ export function ProgressMeter({
   return (
     <div className="min-w-0">
       <div className="flex min-w-0 items-baseline justify-between gap-2">
-        <p className="truncate text-xs font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+        <p className="truncate text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
           {label}
         </p>
         <p className="shrink-0 text-sm font-semibold tabular-nums">{value}%</p>
@@ -155,14 +155,14 @@ export function ProgressMeter({
         aria-valuenow={value}
         aria-valuemin={0}
         aria-valuemax={100}
-        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-panel"
+        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-subtle"
       >
         <span
-          className="block h-full rounded-full bg-pine transition-[width] duration-300"
+          className="block h-full rounded-full bg-brand-accent transition-[width] duration-300"
           style={{ width: `${value}%` }}
         />
       </div>
-      {hint && <p className="mt-1.5 truncate text-xs text-[var(--text-muted)]">{hint}</p>}
+      {hint && <p className="mt-1.5 truncate text-xs text-foreground-muted">{hint}</p>}
     </div>
   );
 }
@@ -219,14 +219,14 @@ export type MetaRowTone =
  */
 const TONE_CLASSES: Record<MetaRowTone, string> = {
   email: "bg-[var(--email-action-surface)] text-[var(--email-action)]",
-  phone: "bg-[var(--success-surface)] text-pine",
-  location: "bg-[var(--warning-surface)] text-[var(--warning)]",
+  phone: "bg-surface-selected text-brand-primary",
+  location: "bg-status-warning-surface text-status-warning",
   linkedin: "bg-[var(--linkedin-surface)] text-[var(--linkedin)]",
   // X and GitHub are monochrome brands; a neutral chip is the honest rendering
   // and keeps contrast in both themes.
-  github: "bg-panel text-[var(--text-primary)]",
-  x: "bg-panel text-[var(--text-primary)]",
-  website: "bg-panel text-[var(--text-muted)]"
+  github: "bg-surface-subtle text-foreground",
+  x: "bg-surface-subtle text-foreground",
+  website: "bg-surface-subtle text-foreground-muted"
 };
 
 export function MetaRow({
@@ -246,14 +246,14 @@ export function MetaRow({
     <li className="flex min-w-0 items-center gap-3">
       <span
         aria-hidden
-        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
-          tone ? TONE_CLASSES[tone] : "bg-panel text-[var(--text-muted)]"
+        className={`grid h-8 w-8 shrink-0 place-items-center rounded-control ${
+          tone ? TONE_CLASSES[tone] : "bg-surface-subtle text-foreground-muted"
         }`}
       >
         <Icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-xs text-[var(--text-muted)]">{label}</span>
+        <span className="block text-xs text-foreground-muted">{label}</span>
         {isSafeExternalUrl(href) ? (
           <a
             href={href}
@@ -261,12 +261,12 @@ export function MetaRow({
             rel="noopener noreferrer"
             /* Above the card's stretched overlay, so clicking this opens the
                link itself rather than the section editor. */
-            className="focus-ring relative z-10 block truncate text-sm text-[var(--text-secondary)] transition hover:text-pine"
+            className="ds-focus-ring relative z-10 block truncate text-sm text-foreground-secondary transition hover:text-foreground-link"
           >
             {value}
           </a>
         ) : (
-          <span className="block truncate text-sm text-[var(--text-secondary)]">{value}</span>
+          <span className="block truncate text-sm text-foreground-secondary">{value}</span>
         )}
       </span>
     </li>
@@ -276,7 +276,7 @@ export function MetaRow({
 /** The "+N more" pill used wherever a list is truncated. */
 export function MoreCount({ count }: { count: number }) {
   return (
-    <span className="rounded-lg border border-dashed border-line px-2 py-1 text-xs text-[var(--text-muted)]">
+    <span className="rounded-control border border-dashed border-line-default px-2 py-1 text-xs text-foreground-muted">
       +{count} more
     </span>
   );

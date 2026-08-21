@@ -34,8 +34,10 @@ const sizeClasses: Record<ButtonSize, string> = {
 };
 
 /**
- * Canonical product action. Existing pages continue to use the legacy
- * `components/Button` adapter until their staged migration.
+ * The product's only button. The pre-migration `components/Button` adapter —
+ * a green-fill primary with no destructive/ghost roles — was retired once its
+ * last call site moved here; `__tests__/design-system-contracts.test.ts` keeps
+ * it from coming back.
  */
 export function Button({
   children,
