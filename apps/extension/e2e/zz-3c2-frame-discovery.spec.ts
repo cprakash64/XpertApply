@@ -282,6 +282,108 @@ test.describe("after the ATS origin is granted", () => {
     removeGrantedBuild("3c2granted");
   });
 
+  test("Stage 3C-3 activates the concrete ATS frame after a frame-scoped grant result", async () => {
+    test.setTimeout(180_000);
+    await grantedWorker.evaluate(async () => {
+      await chrome.storage.local.clear();
+      await chrome.storage.session?.clear();
+    });
+
+    const page = await grantedContext.newPage();
+    let submitted = false;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/submit")) submitted = true;
+    });
+    await page.goto(APPLICATION_URL);
+    await page.waitForSelector("#ats");
+
+    const prepared = await grantedWorker.evaluate(async ({ url, employer, ats, ads }) => {
+      const [tab] = await chrome.tabs.query({ url: `${employer}/*` });
+      if (!tab?.id) return { ok: false, error: "TAB_NOT_FOUND" };
+      const now = Date.now();
+      const pending = {
+        version: 1, applicationId: "3c3", jobId: "1", applicationUrl: url,
+        status: "prepared", handoffToken: "t", requestId: "r-3c3", sessionId: 55,
+        launchToken: "t", officialUrl: url, expectedOrigin: employer,
+        createdAt: now, expiresAt: now + 900_000, targetTabId: tab.id,
+        state: "waiting_for_content_script", protocolVersion: 3, atsType: null
+      };
+      const view = {
+        tabId: tab.id, requestId: "r-3c3", sessionId: 55,
+        state: "waiting_for_content_script", company: "Fixture Employer",
+        jobTitle: "Software Engineer", atsId: null, atsDisplayName: null,
+        limited: false, fieldsDiscovered: 0, filled: 0, skipped: 0,
+        reviewRequired: 0, resumeStatus: "pending", coverStatus: "pending",
+        reachedFinalStep: false, contentReady: true, packageLoaded: false,
+        running: false, failureCode: "APPLICATION_FRAME_PERMISSION_MISSING",
+        failureMessage: null, failureRecoverable: true,
+        siteAccess: "site_access_required", siteAccessPattern: `${ats}/*`,
+        siteAccessOrigin: new URL(ats).host, siteAccessScope: "frame",
+        siteAccessFramePathShape: "/embed/<id>", updatedAt: now
+      };
+      await chrome.storage.local.set({
+        activeAssistedApplyHandoffV1: pending,
+        pendingLaunches: { [String(tab.id)]: pending },
+        viewStates: { [String(tab.id)]: view }
+      });
+
+      // Mirror the native flow: the employer top frame is already alive and
+      // has registered its negative application probe before ATS permission is
+      // granted. The defect was precisely that this top-frame liveness caused
+      // the old worker to skip ATS activation.
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, frameIds: [0] }, files: ["content.js"]
+      });
+      const before = await new Promise<unknown>((resolve) => {
+        chrome.tabs.sendMessage(tab.id!, { type: "JOBPILOT_PING_CONTENT" }, { frameId: 0 }, resolve);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const all = await chrome.permissions.getAll();
+      return {
+        ok: true, tabId: tab.id, before,
+        atsGranted: await chrome.permissions.contains({ origins: [`${ats}/*`] }),
+        adsGranted: await chrome.permissions.contains({ origins: [`${ads}/*`] }),
+        wildcard: (all.origins ?? []).includes("https://*/*")
+      };
+    }, { url: APPLICATION_URL, employer: EMPLOYER_ORIGIN, ats: ATS_ORIGIN, ads: ADS_ORIGIN });
+
+    expect(prepared).toMatchObject({ ok: true, atsGranted: true, adsGranted: false, wildcard: false });
+    const extensionId = new URL(grantedWorker.url()).host;
+    const panel = await grantedContext.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+    const response = await panel.evaluate(async ({ tabId, pattern }) =>
+      new Promise<unknown>((resolve) => {
+        chrome.runtime.sendMessage({
+          type: "JOBPILOT_SITE_ACCESS_RESULT", tabId, pattern, granted: true
+        }, resolve);
+      }), { tabId: prepared.tabId, pattern: `${ATS_ORIGIN}/*` });
+    await panel.close();
+
+    const transition = { ...prepared, response };
+
+    console.log("=== Stage 3C-3 post-grant transition ===\n" + JSON.stringify(transition, null, 2));
+    expect(transition).toMatchObject({
+      ok: true,
+      response: { ok: true, state: "site_access_granted" },
+      atsGranted: true,
+      adsGranted: false,
+      wildcard: false
+    });
+
+    // The exact ATS frame bootstraps and fills. The unrelated frame remains
+    // ungranted, uninjected and empty, and neither form submits.
+    await expect(page.frameLocator("#ats").locator("#email"))
+      .toHaveValue(/fixture\.candidate@example\.test/i, { timeout: 90_000 });
+    const atsTraces = await page.frameLocator("#ats")
+      .locator("[data-jobpilot-filled],[data-jobpilot-status]").count();
+    expect(atsTraces).toBeGreaterThan(0);
+    const adValues = await page.frameLocator("#ads").locator("input")
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
+    expect(adValues.every((value) => value === "")).toBe(true);
+    expect(submitted).toBe(false);
+    await page.close();
+  });
+
   test("the ATS frame fills, the ad frame receives nothing, and nothing submits", async () => {
     test.setTimeout(180_000);
     const page = await grantedContext.newPage();

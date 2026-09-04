@@ -92,6 +92,7 @@ import {
   type FrameDiscoveryRecord,
   type FrameEvidenceSource
 } from "./frames/frameDiscovery";
+import { activateGrantedApplicationFrame } from "./frames/postGrantActivation";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -1013,12 +1014,17 @@ export async function siteAccessFor(
 /** Record on the tab's view what the side panel must ask for (or that nothing
  * is outstanding), so the panel renders from durable state rather than from a
  * message that may arrive while it is closed. */
-async function recordSiteAccess(tabId: number, need: SiteAccessNeed): Promise<void> {
+async function recordSiteAccess(
+  tabId: number,
+  need: SiteAccessNeed,
+  framePathShape: string | null = null
+): Promise<void> {
   await patchView(tabId, {
     siteAccess: need.state,
     siteAccessPattern: need.pattern,
     siteAccessOrigin: need.origin,
-    siteAccessScope: need.scope
+    siteAccessScope: need.scope,
+    siteAccessFramePathShape: need.scope === "frame" ? framePathShape : null
   });
 }
 
@@ -1442,7 +1448,11 @@ async function inspectApplicationFrames(
   // grant directly, and the user is not left looking at an in-page prompt while
   // the panel says nothing. Only ever the ONE trusted origin, at frame scope.
   if (outcome === "APPLICATION_FRAME_PERMISSION_MISSING" && candidate?.origin) {
-    await recordSiteAccess(tabId, siteAccessNeedFor(candidate.origin, false, "frame"));
+    await recordSiteAccess(
+      tabId,
+      siteAccessNeedFor(candidate.origin, false, "frame"),
+      candidate.pathShape
+    );
   }
 
   log.info("application frame inspection", {
@@ -1519,12 +1529,15 @@ async function requestFramePermission(
 
   const need = await siteAccessFor(candidate.href, "frame");
   if (need.state === "site_access_granted") {
-    // Already allowed — a newly permitted origin has no content script yet, so
-    // inject into that exact frame rather than waiting for a navigation.
-    await chrome.scripting
-      .executeScript({ target: { tabId, allFrames: true }, files: ["content.js"] })
-      .catch(() => undefined);
-    return { ok: true, reason: "ALREADY_GRANTED", granted: true };
+    // The panel may have completed the Chrome prompt while the top-frame
+    // widget was waiting. Resume through the same concrete-frame
+    // reconciliation path; never fall back to allFrames here.
+    const resumed = await applySiteAccessResult(tabId, need.pattern ?? "", true);
+    return {
+      ok: resumed.ok,
+      reason: resumed.ok ? "ALREADY_GRANTED" : "FRAME_CONFIRMATION_PENDING",
+      granted: true
+    };
   }
   await recordSiteAccess(tabId, need);
   log.info("frame site access required", { tabId, origin: candidate.origin });
@@ -2264,6 +2277,8 @@ async function applySiteAccessResult(
   const id = await resolveViewTab(tabId);
   if (id == null) return { ok: false, state: "no_workflow" };
 
+  const priorView = await getView(id);
+
   const reallyGranted = await chrome.permissions
     .contains({ origins: [pattern] })
     .catch(() => false);
@@ -2286,8 +2301,74 @@ async function applySiteAccessResult(
     failureMessage: null
   });
   log.info("site access granted", { tabId: id });
-  // Now that Chrome allows it, put the content script on the page.
-  await ensureContentReady(id).catch(() => false);
+
+  // Page grants use the existing top-frame readiness path. A frame grant is a
+  // different state transition: the top frame is normally already alive, so
+  // its untargeted ping cannot prove that the newly granted embedded frame was
+  // rediscovered or injected.
+  const frameScoped = priorView?.siteAccessScope === "frame"
+    && priorView.siteAccessPattern === pattern;
+  if (!frameScoped) {
+    await ensureContentReady(id).catch(() => false);
+    return { ok: true, state: "site_access_granted" };
+  }
+
+  const targetOrigin = canonicalFrameOrigin(pattern);
+  const launch = (await getPending(id)) ?? (await getActive());
+  const targetPathShape = priorView?.siteAccessFramePathShape ?? null;
+  if (!targetOrigin || !targetPathShape || !launch) {
+    await patchView(id, {
+      failureCode: "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION",
+      failureRecoverable: true
+    });
+    return { ok: false, state: "frame_confirmation_pending" };
+  }
+
+  const activation = await activateGrantedApplicationFrame(targetOrigin, {
+    permissionGranted: () => chrome.permissions
+      .contains({ origins: [pattern] })
+      .catch(() => false),
+    enumerate: async () => (await enumerateFrames(id)).frames,
+    workflowTrusted: (origin) => {
+      let candidate: URL;
+      try { candidate = new URL(origin); } catch { return false; }
+      return originJoinsWorkflow(launch.officialUrl ?? launch.applicationUrl, candidate)
+        || candidate.origin.toLowerCase() === safeOrigin(launch.applicationUrl);
+    },
+    frameMatches: (frame) => redactedFramePath(frame.url) === targetPathShape,
+    ping: (frameId) => pingFrame(id, frameId),
+    inject: async (frameIds) => {
+      await chrome.scripting.executeScript({
+        target: { tabId: id, frameIds },
+        files: ["content.js"]
+      });
+    },
+    wait: delay
+  });
+
+  log.info("post-grant frame activation", {
+    tabId: id,
+    origin: targetOrigin,
+    state: activation.state,
+    count: activation.frameIds.length,
+    reason: activation.state === "pending" ? activation.reason : activation.state
+  });
+
+  if (activation.state !== "active") {
+    await patchView(id, {
+      // Permission exists, but Chrome has not yet confirmed a live bootstrap.
+      // Keep this recoverable and distinct from ADAPTER_NOT_DETECTED: no ATS
+      // support decision has been made yet.
+      siteAccess: activation.state === "permission_revoked"
+        ? "site_access_required"
+        : "site_access_granted",
+      failureCode: "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION",
+      failureRecoverable: true
+    });
+    return { ok: false, state: activation.state === "permission_revoked"
+      ? "site_access_required"
+      : "frame_confirmation_pending" };
+  }
   return { ok: true, state: "site_access_granted" };
 }
 

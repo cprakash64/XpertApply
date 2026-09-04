@@ -44,6 +44,7 @@ const STAGE_LABEL: Record<string, string> = {
 
 const FAILURE_LABEL: Record<string, string> = {
   CONTENT_SCRIPT_NOT_INJECTED: "Couldn’t reach the application page. Reload it and click “Fill application”.",
+  FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION: "Site access is granted, but Chrome hasn’t confirmed the embedded application yet. Click “Fill application” to retry.",
   SESSION_PACKAGE_FAILED: "Your prepared application couldn’t be loaded. Reopen from XpertApply.",
   SESSION_UNAUTHORIZED: "Your session is no longer valid. Reopen the application from XpertApply.",
   SESSION_NOT_FOUND: "This application session no longer exists. Reopen from XpertApply.",

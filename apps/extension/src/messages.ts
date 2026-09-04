@@ -69,6 +69,7 @@ export type ReasonCode =
   // PII — these are structural/permission states only.
   | "HOST_PERMISSION_MISSING"
   | "CONTENT_SCRIPT_NOT_INJECTED"
+  | "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION"
   | "HANDOFF_URL_MISMATCH"
   | "NO_MATCHING_FRAME"
   | "FORM_NOT_RENDERED"
@@ -203,6 +204,9 @@ export interface LaunchViewState {
   siteAccessOrigin: string | null;
   /** Whether the page itself or one embedded frame needs the grant. */
   siteAccessScope: "page" | "frame";
+  /** Redacted path shape observed for a frame-scoped request. It is only a
+   * reconciliation hint; Chrome still supplies the authoritative frame id. */
+  siteAccessFramePathShape?: string | null;
   updatedAt: number;
 }
 

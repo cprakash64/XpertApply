@@ -216,6 +216,7 @@ export function initialView(tabId: number, launch: PendingLaunch, company: strin
     siteAccessPattern: null,
     siteAccessOrigin: null,
     siteAccessScope: "page",
+    siteAccessFramePathShape: null,
     updatedAt: Date.now()
   };
 }
