@@ -22,7 +22,17 @@ import { WidgetDriver } from "./widget-driver";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIST = path.resolve(here, "..", "dist");
+/**
+ * The extension build these specs load.
+ *
+ * Stage 3C removed install-time authority over employer/application sites, so a
+ * loopback fixture origin is no longer granted at install. These specs exercise
+ * what the extension does ONCE a user has granted the origin, so they run
+ * against a build with the fixture origins pre-granted — the same state Chrome
+ * is in after the grant. `npm run test:e2e` builds it; the shipped `dist/` is
+ * what the Stage 3C site-access spec asserts against.
+ */
+const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 const FIXTURE = fs.readFileSync(path.join(here, "fixtures", "legal-questions.html"), "utf8");
 
 const WORK_AUTH_Q = "Are you legally authorized to work in the US without restriction?";
@@ -111,7 +121,7 @@ const test = base.extend<Fixtures>({
     const applicationUrl = `${origin}/apply`;
     const sessionBody = {
       session_id: 55, ats_type: null, official_application_url: applicationUrl,
-      job: { title: "Engineer", company: "Acme" },
+      job: { title: "Engineer", company: "Acme", location: "San Francisco, CA" },
       resume: { status: "ready", document_id: 1, download_url: null },
       cover_letter: { status: "ready", document_id: 2, download_url: null },
       profile: {}

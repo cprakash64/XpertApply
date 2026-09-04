@@ -4,16 +4,38 @@
   "short_name": "XpertApply",
   "version": "0.2.0",
   "description": "AI-powered job application autofill and career copilot by XpertApply. You always review and submit every application yourself.",
-  "permissions": ["sidePanel", "storage", "scripting", "tabs"],
-  "optional_permissions": ["webNavigation"],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "optional_permissions": [
+    "webNavigation"
+  ],
   "host_permissions": [
+    "https://api.xpertapply.com/*",
+    "https://xpertapply.com/*",
+    "https://www.xpertapply.com/*",
+    "https://app.jobpilot.ai/*",
+    "https://ezjobfind.com/*",
+    "https://www.ezjobfind.com/*"
+  ],
+  "optional_host_permissions": [
     "https://*/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open XpertApply Assisted Apply" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open XpertApply Assisted Apply"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -25,25 +47,11 @@
         "https://ezjobfind.com/*",
         "https://www.ezjobfind.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
-    },
-    {
-      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-      "exclude_matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
-        "https://xpertapply.com/*",
-        "https://www.xpertapply.com/*",
-        "https://app.jobpilot.ai/*",
-        "https://ezjobfind.com/*",
-        "https://www.ezjobfind.com/*"
-      ],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true,
-      "match_origin_as_fallback": true
     }
   ]
 }

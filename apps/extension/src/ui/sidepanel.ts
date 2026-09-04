@@ -98,6 +98,7 @@ function render(): void {
   const terminal = v.failureCode != null && v.failureRecoverable === false;
   (el("fill") as HTMLButtonElement).disabled = v.running || terminal;
   setText("fill", v.running ? "Filling…" : terminal ? "Reopen from XpertApply" : "Fill application");
+  renderSiteAccess(v);
 
   renderDiagnostics(v);
 }
@@ -110,6 +111,32 @@ function docLabel(status: string): string {
     case "unavailable": return "Unavailable";
     default: return "—";
   }
+}
+
+/**
+ * Chrome host access, asked for here and nowhere else.
+ *
+ * `chrome.permissions.request()` requires a user gesture and cannot run in a
+ * service worker, so the worker decides WHICH origin a workflow needs and the
+ * panel — an extension page with real clicks — is the only place that can ask
+ * for it. The button below is that gesture.
+ */
+function renderSiteAccess(v: LaunchViewState): void {
+  const block = el("siteAccess");
+  const needed = v.siteAccess === "site_access_required" || v.siteAccess === "site_access_denied";
+  block.hidden = !needed;
+  if (!needed) return;
+  const site = v.siteAccessOrigin ?? "this site";
+  const where = v.siteAccessScope === "frame"
+    ? `The application is embedded from ${site}.`
+    : `The application is on ${site}.`;
+  setText(
+    "siteAccessText",
+    v.siteAccess === "site_access_denied"
+      ? `${where} XpertApply has no access to it, so it can't fill this application. You can allow it below.`
+      : `${where} XpertApply needs access to ${site} to fill it — and to nothing else.`
+  );
+  setText("grantSiteAccess", `Allow XpertApply on ${site}`);
 }
 
 function renderDiagnostics(v: LaunchViewState): void {
@@ -193,6 +220,24 @@ el("rescan").addEventListener("click", async () => {
   const resp = await sendBackground({ type: MSG.START_AUTOFILL, tabId, reason: "continue_after_navigation" });
   if (resp && resp.ok === false) showButtonError(`Couldn’t continue: ${resp.error ?? "unknown error"}`);
 });
+el("grantSiteAccess").addEventListener("click", async () => {
+  // Inside the click handler, which is what makes this a user gesture Chrome
+  // will accept. Only ever the one pattern the worker asked for.
+  const pattern = view?.siteAccessPattern;
+  if (!pattern) return;
+  let granted = false;
+  try {
+    granted = await chrome.permissions.request({ origins: [pattern] });
+  } catch (err) {
+    showButtonError(`Couldn't ask for site access: ${String(err).slice(0, 80)}`);
+    return;
+  }
+  const resp = await sendBackground({ type: MSG.SITE_ACCESS_RESULT, tabId, pattern, granted });
+  if (!granted) showButtonError("XpertApply can't fill this application without access to the site.");
+  else if (resp && resp.ok === false) showButtonError("Site access granted, but the application couldn't be reached.");
+  await refresh();
+});
+
 el("next").addEventListener("click", () => void refresh());
 el("clear").addEventListener("click", () => void sendBackground({ type: MSG.CLEAR_SESSION, tabId }));
 el("complete").addEventListener("click", async () => {

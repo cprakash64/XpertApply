@@ -67,33 +67,41 @@ describe("XpertApply origin self-exclusion", () => {
     }
   });
 
-  it("excludes XpertApply origins from the employer content script in the manifest", () => {
+  it("registers no employer content script statically at all (XA-06)", () => {
+    // These assertions used to require an employer entry matching every https
+    // page, with XpertApply's own origins carved out of it. There is no
+    // employer entry any more: the role is injected programmatically once an
+    // origin has been granted, so a site the user has not authorised has no
+    // XpertApply code in it to carve anything out of.
     const manifest = JSON.parse(readSource("manifest.json"));
-    const employerScript = manifest.content_scripts.find((entry: { matches: string[] }) =>
-      entry.matches.includes("https://*/*")
-    );
-    expect(employerScript).toBeTruthy();
-    for (const origin of ["http://localhost:3000/*", "http://127.0.0.1:3000/*", "https://app.jobpilot.ai/*"]) {
-      expect(employerScript.exclude_matches, origin).toContain(origin);
-    }
+    const entries: { matches: string[] }[] = manifest.content_scripts;
+    expect(entries.some((entry) => entry.matches.includes("https://*/*"))).toBe(false);
+    expect(entries).toHaveLength(1);
   });
 
   it("keeps the manifest and the runtime allow-list in agreement", () => {
+    // The same drift protection, against the entry that still exists: every
+    // origin the code trusts as a XpertApply origin must be one the bridge is
+    // actually registered on, or the two silently diverge.
     const manifest = JSON.parse(readSource("manifest.json"));
-    const employerScript = manifest.content_scripts.find((entry: { matches: string[] }) =>
-      entry.matches.includes("https://*/*")
-    );
-    // Every origin the code trusts is also excluded from employer injection —
-    // otherwise one of the two would silently drift.
-    const excluded: string[] = employerScript.exclude_matches;
+    const bridge = manifest.content_scripts[0];
+    const matches: string[] = bridge.matches;
     for (const origin of JOBPILOT_WEB_ORIGINS) {
-      expect(excluded.some((pattern) => pattern.startsWith(origin)), origin).toBe(true);
+      expect(matches.some((pattern) => pattern.startsWith(origin)), origin).toBe(true);
+    }
+    // And the bridge role is first-party only — never a wildcard.
+    for (const pattern of matches) {
+      expect(JOBPILOT_WEB_ORIGINS.some((origin) => pattern.startsWith(origin)), pattern).toBe(true);
     }
   });
 
-  it("keeps ATS host permissions intact", () => {
+  it("can still reach an arbitrary employer-hosted ATS, but only by asking", () => {
+    // The capability the wildcard existed for is retained; the authority is
+    // not. An employer domain nobody can enumerate up front is reachable
+    // through optional_host_permissions, one granted origin at a time.
     const manifest = JSON.parse(readSource("manifest.json"));
-    expect(manifest.host_permissions).toContain("https://*/*");
+    expect(manifest.optional_host_permissions).toContain("https://*/*");
+    expect(manifest.host_permissions).not.toContain("https://*/*");
   });
 });
 

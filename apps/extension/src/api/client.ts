@@ -48,7 +48,7 @@ type RawSession = {
   authenticated_user_id?: number;
   ats_type: string | null;
   official_application_url: string;
-  job?: { title: string | null; company: string | null };
+  job?: { title: string | null; company: string | null; location?: string | null };
   resume?: { status: string; document_id: number | null; download_url: string | null };
   cover_letter?: { status: string; document_id: number | null; download_url: string | null };
   profile?: Record<string, unknown>;
@@ -69,6 +69,7 @@ export async function fetchSessionData(token: string, sessionId: number): Promis
     officialUrl: session.official_application_url,
     jobTitle: session.job?.title ?? null,
     company: session.job?.company ?? null,
+    jobLocation: session.job?.location ?? null,
     profileData: session.profile ?? {},
     profileRevision: answers.profile_revision ?? null,
     answers: answers.answers,

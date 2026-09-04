@@ -214,16 +214,3 @@ export function singletonPrivacyAcknowledgementMatches(
   const option = normalizeForMatch(optionLabel);
   return /^(?:i\s+)?(?:agree|acknowledge|consent)\b/.test(option) || /^yes\b/.test(option);
 }
-
-/** User-approved rule for mandatory choice controls: select an affirmative
- * option only when it is the employer's ONE substantive choice. A Yes/No or
- * agree/decline question therefore never passes this matcher. */
-export function singletonRequiredAffirmationMatches(
-  optionLabel: string,
-  answer: string,
-  substantiveOptionLabels: string[]
-): boolean {
-  if (answer !== "__jobpilot_required_singleton_affirmation__" || substantiveOptionLabels.length !== 1) return false;
-  const option = normalizeForMatch(optionLabel);
-  return /^(?:i\s+)?(?:agree|acknowledge|consent|accept)\b/.test(option) || /^yes\b/.test(option);
-}

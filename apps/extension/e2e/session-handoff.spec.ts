@@ -1,6 +1,7 @@
 import { expect, test as base, chromium, type BrowserContext, type Route, type Worker } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { buildWithGrantedOrigins } from "./granted-build";
 import fs from "node:fs";
 
 /**
@@ -17,7 +18,28 @@ import fs from "node:fs";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIST = path.resolve(here, "..", "dist");
+/**
+ * The extension build these specs load.
+ *
+ * Stage 3C removed install-time authority over employer/application sites, so a
+ * loopback fixture origin is no longer granted at install. These specs exercise
+ * what the extension does ONCE a user has granted the origin, so they run
+ * against a build with the fixture origins pre-granted — the same state Chrome
+ * is in after the grant. `npm run test:e2e` builds it; the shipped `dist/` is
+ * what the Stage 3C site-access spec asserts against.
+ */
+const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
+
+/**
+ * Stage 3C: the listing origin and the login origin are different registrable
+ * domains. A workflow that crosses between them needs a grant for EACH — no
+ * automatic escalation — so this spec runs against a build where the user has
+ * granted both, which is the state it is actually describing.
+ */
+const GRANTED_DIST = buildWithGrantedOrigins(
+  ["https://careers.example.test/*", "https://login.example.test/*"],
+  "handoff"
+);
 const LISTING = fs.readFileSync(path.join(here, "fixtures", "listing-untrusted.html"), "utf8");
 const LOGIN = fs.readFileSync(path.join(here, "fixtures", "careers-login.html"), "utf8");
 
@@ -35,7 +57,7 @@ const test = base.extend<Fixtures>({
   context: async ({ stub }, use) => {
     const context = await chromium.launchPersistentContext("", {
       channel: "chromium",
-      args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
+      args: [`--disable-extensions-except=${GRANTED_DIST}`, `--load-extension=${GRANTED_DIST}`],
       serviceWorkers: "allow"
     });
 

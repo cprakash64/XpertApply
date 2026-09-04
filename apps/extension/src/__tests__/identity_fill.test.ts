@@ -16,8 +16,7 @@ import {
   dialCodeMatches,
   locationOptionMatches,
   phoneCountryOptionMatches,
-  singletonPrivacyAcknowledgementMatches,
-  singletonRequiredAffirmationMatches
+  singletonPrivacyAcknowledgementMatches
 } from "../fields/aliases";
 import { attachDropdownComponent } from "./dropdownComponents";
 import { discoverFields } from "../fields/discovery";
@@ -46,6 +45,7 @@ function session(extra: ReturnType<typeof answer>[] = []): ApplicationSessionDat
     atsType: "greenhouse",
     officialUrl: "https://job-boards.greenhouse.io/samsara/jobs/1",
     jobTitle: "Software Engineer",
+    jobLocation: "San Francisco, CA",
     company: "Samsara",
     unresolvedQuestions: [],
     answers: [
@@ -296,12 +296,11 @@ describe("structured phone autofill", () => {
     expect(singletonPrivacyAcknowledgementMatches(acknowledgement, sentinel, [acknowledgement, "I decline"])).toBe(false);
   });
 
-  it("matches a mandatory affirmative only when it is the single substantive choice", () => {
-    const sentinel = "__jobpilot_required_singleton_affirmation__";
-    expect(singletonRequiredAffirmationMatches("I agree", sentinel, ["I agree"])).toBe(true);
-    expect(singletonRequiredAffirmationMatches("Yes", sentinel, ["Yes"])).toBe(true);
-    expect(singletonRequiredAffirmationMatches("Yes", sentinel, ["Yes", "No"])).toBe(false);
-  });
+  // The mandatory-affirmation matcher was removed in Stage 3B (XA-02): it
+  // existed only to answer a question the user had not answered, and a single
+  // substantive "I agree" option is an attestation, not a formality. The
+  // behaviour it drove is now asserted in the negative by
+  // answer_integrity.test.ts.
 
   it("matches a city autocomplete result only with profile disambiguators", () => {
     expect(locationOptionMatches("Phoenix, Arizona, United States", "Phoenix, AZ, United States")).toBe(true);
@@ -382,8 +381,13 @@ describe("structured phone autofill", () => {
     expect(selected("location")).toBe("Tempe, AZ");
     expect(selected("authorization")).toMatch(/^Yes/);
     expect(selected("sponsorship")).toMatch(/^No/);
-    expect(selected("ai")).toBe("I agree");
-    expect(result.filled).toBe(6);
+    // XA-02 (Stage 3B): "Candidate AI Usage Attestation" is a legal
+    // attestation and the session carries no answer for it. Agreeing on the
+    // user's behalf — which is what this assertion used to require — is the
+    // defect, not the feature. It is now left blank and raised for review.
+    expect(selected("ai")).toBeFalsy();
+    expect(result.filled).toBe(5);
+    expect(result.reviewRequired).toBeGreaterThan(0);
   });
 
   it("fills the explicit Lyft defaults, work authorization, and full-name signature", async () => {

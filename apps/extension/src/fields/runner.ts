@@ -236,13 +236,11 @@ function resolveApplicationAnswer(
     // the user ticks it themselves.
     return undefined;
   }
-  if (
-    !answer &&
-    field.required &&
-    ["select", "combobox", "listbox", "radio"].includes(field.control)
-  ) {
-    return syntheticAnswer(key, "__jobpilot_required_singleton_affirmation__");
-  }
+  // A required choice control with no verified answer used to be given a
+  // synthesised affirmation here, on the reasoning that a single substantive
+  // "I agree" option could not mean anything else. It can: it means the user
+  // agreed, and they had not. Nothing is invented for an unanswered question
+  // any more — the field is left blank and surfaced for review.
   if (
     key === "city" &&
     answer &&

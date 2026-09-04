@@ -45,6 +45,7 @@ import {
   type AutofillResult,
   type LaunchPayload,
   type PendingLaunch,
+  type ObservedFramePayload,
   type ProgressPayload,
   type RuntimeMessage
 } from "./messages";
@@ -68,6 +69,29 @@ import {
   type SessionPackage
 } from "./state";
 import { urlsMatchForHandoff } from "./url";
+import {
+  authorizeFrameForLaunch,
+  describeSender,
+  originJoinsLaunchWorkflow,
+  originJoinsWorkflow,
+  senderCanBindTab,
+  type SenderContext
+} from "./security/senderTrust";
+import {
+  NO_ACCESS_NEEDED,
+  originPatternFor,
+  siteAccessNeedFor,
+  type SiteAccessNeed
+} from "./security/siteAccess";
+import {
+  canonicalFrameOrigin,
+  frameDiscoveryOutcome,
+  mergeFrameInventories,
+  patternForOrigin,
+  selectTrustedApplicationCandidate,
+  type FrameDiscoveryRecord,
+  type FrameEvidenceSource
+} from "./frames/frameDiscovery";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -319,6 +343,30 @@ async function navigateToApplicationDestination(
     return { ok: false, error: "SESSION_MISMATCH" };
   }
 
+  // And the destination must belong to the workflow the user actually started.
+  //
+  // The finding this closes (XA-06, Stage 3C-2): every URL reaching here is
+  // PAGE-DERIVED — an anchor href read off the listing, or the `src` of an
+  // embedded frame. Session and scheme were checked; origin was not. That made
+  // this a SECOND, weaker trust system beside the one the permission path uses,
+  // and an application-shaped ad or widget frame could therefore be reopened as
+  // "the application" and then named to the user as the site needing access.
+  //
+  // The same predicate as Stage 3A's frame gate and the host-permission gate —
+  // one policy, not a private allow-list here. Dot-anchored, so a suffix
+  // lookalike (`greenhouse.io.evil.test`, `notgreenhouse.io`) fails. The tab
+  // gate already refuses to serve a session to an origin outside the workflow;
+  // refusing to NAVIGATE there too simply stops the extension steering the user
+  // somewhere it would then do nothing.
+  const workflowUrl = launch.officialUrl ?? launch.applicationUrl;
+  const joinsWorkflow = urlsMatchForHandoff(launch.applicationUrl, target.toString())
+    || originJoinsWorkflow(workflowUrl, target)
+    || target.origin.toLowerCase() === safeOrigin(launch.applicationUrl);
+  if (!joinsWorkflow) {
+    log.warn("apply destination refused", { reason: "origin_not_in_workflow", origin: target.origin });
+    return { ok: false, error: "ORIGIN_NOT_IN_WORKFLOW" };
+  }
+
   // Persist BEFORE navigating: the worker can be suspended the moment the
   // navigation starts, and the destination may load after it restarts.
   const existingActivation = await readPendingActivation();
@@ -416,39 +464,6 @@ async function reconnectWorkflow(
     log.info("workflow reconnect failed", { stage: "rebind_request", reason: code.toLowerCase() });
     return { ok: false, reason: code === "SESSION_UNAUTHORIZED" ? "session_unauthorized" : code.toLowerCase() };
   }
-}
-
-/**
- * May a page on `candidate` join the workflow that started at `workflowUrl`?
- *
- * Deliberately narrow: the same registrable domain (careers -> login on the
- * same employer) or an allow-listed ATS host. Suffix-confusion hosts such as
- * `tiktok.com.evil.test` fail because matching is on registrable domain and
- * dot-anchored suffixes, never substrings.
- */
-function originJoinsWorkflow(workflowUrl: string, candidate: URL): boolean {
-  let origin: URL;
-  try {
-    origin = new URL(workflowUrl);
-  } catch {
-    return false;
-  }
-  const registrable = (host: string): string => {
-    const parts = host.toLowerCase().split(".").filter(Boolean);
-    if (parts.length <= 2) return parts.join(".");
-    const twoPart = new Set(["co", "com", "net", "org", "gov", "edu", "ac"]);
-    const last = parts[parts.length - 1];
-    if (last.length === 2 && twoPart.has(parts[parts.length - 2])) return parts.slice(-3).join(".");
-    return parts.slice(-2).join(".");
-  };
-  if (registrable(origin.hostname) === registrable(candidate.hostname)) return true;
-  const ATS = [
-    "greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "workday.com",
-    "smartrecruiters.com", "icims.com", "jobvite.com", "taleo.net", "successfactors.com",
-    "avature.net", "eightfold.ai", "phenompeople.com", "oraclecloud.com", "workable.com"
-  ];
-  const host = candidate.hostname.toLowerCase();
-  return ATS.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
 /**
@@ -553,8 +568,56 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       });
     }
     if (changeInfo.status !== "complete") return;
-    const pending = await getPending(tabId);
-    if (!pending) return;
+    let pending = await getPending(tabId);
+    if (!pending) {
+      // Nothing is bound to this tab yet. With the employer content script no
+      // longer declarative, there is no script here to announce itself and ask
+      // — so the WORKER has to recognise the application tab and bind it.
+      //
+      // This is what used to happen inside handleContentReady's self-bind path,
+      // which could only run because a script was already present on every
+      // page. It is the same rule (an unexpired active handoff whose URL
+      // matches this tab), moved to the only party that can still apply it.
+      const active = await getActive();
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!active || Date.now() > active.expiresAt) return;
+      if (!tab?.url) return;
+      // Either this IS the application URL, or it is a page the workflow
+      // legitimately moved to — the employer's own login host, an allow-listed
+      // ATS. Same predicate `reconnectWorkflow` has always used; it is an
+      // APPLICATION-level rule and grants no Chrome authority of its own, so
+      // injection below still depends on the user having granted this origin.
+      const exactMatch = urlsMatchForHandoff(active.applicationUrl, tab.url);
+      let joinsWorkflow = exactMatch;
+      if (!joinsWorkflow) {
+        try {
+          joinsWorkflow = originJoinsWorkflow(active.officialUrl ?? active.applicationUrl, new URL(tab.url));
+        } catch {
+          joinsWorkflow = false;
+        }
+      }
+      if (!joinsWorkflow) return;
+
+      if (exactMatch) {
+        pending = { ...active, targetTabId: tabId, status: "detecting", state: "detecting_ats" };
+        await putPending(tabId, pending);
+        if (!(await getView(tabId))) await putView(tabId, initialView(tabId, pending, null, null));
+        log.info("bound application tab", { tabId });
+      } else {
+        // A page the workflow moved to — the employer's own login host, an
+        // allow-listed ATS. Deliberately NOT bound here: binding it to a
+        // handoff whose URL it does not match makes the content script's own
+        // check fail terminally, instead of taking the reconnect path that
+        // exists for exactly this hop. Inject and let it reconnect.
+        log.info("workflow origin reached; injecting for reconnect", { tabId });
+      }
+    }
+    // An application workflow crosses origins by design — employer, ATS,
+    // identity provider, form. Navigation is NOT authorization: landing on a
+    // new origin re-opens the question rather than inheriting the grant the
+    // previous origin had. `ensureContentReady` re-checks and records the need,
+    // so an unauthorized destination simply gets no content script and the side
+    // panel asks about that origin by name.
     await ensureContentReady(tabId).catch(() => undefined);
   })();
 });
@@ -602,7 +665,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       if (sender.tab?.id != null && sender.frameId != null && message.probe) {
         registerFrameProbe(sender.tab.id, sender.frameId, message.probe);
       }
-      void handleContentReady(sender, message.url, message.isTopFrame, message.probe?.rootConfident === true, sendResponse);
+      void handleContentReady(sender, message.probe?.rootConfident === true, sendResponse);
       return true;
 
     case MSG.GET_PENDING_LAUNCH:
@@ -801,6 +864,38 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         .catch(() => sendResponse({ ok: true }));
       return true;
 
+    case MSG.GET_SITE_ACCESS:
+      void resolveViewTab(message.tabId)
+        .then(async (id) => {
+          if (id == null) return { ok: true, need: NO_ACCESS_NEEDED };
+          const tab = await chrome.tabs.get(id).catch(() => null);
+          const view = await getView(id);
+          // A frame-scoped need outranks the page: the page is already granted
+          // in that case, and the frame is what the workflow is stuck on.
+          if (view?.siteAccess === "site_access_required" && view.siteAccessScope === "frame") {
+            return { ok: true, tabId: id, need: {
+              state: view.siteAccess, pattern: view.siteAccessPattern,
+              origin: view.siteAccessOrigin, scope: "frame" as const
+            } };
+          }
+          return { ok: true, tabId: id, need: await siteAccessFor(tab?.url ?? null) };
+        })
+        .then((result) => sendResponse(result))
+        .catch(() => sendResponse({ ok: false, need: NO_ACCESS_NEEDED }));
+      return true;
+
+    case MSG.SITE_ACCESS_RESULT:
+      void applySiteAccessResult(message.tabId, message.pattern, message.granted)
+        .then((result) => sendResponse(result))
+        .catch(() => sendResponse({ ok: false }));
+      return true;
+
+    case MSG.REQUEST_FILL_LEASE:
+      void grantFillLease(sender, message.rootConfident === true)
+        .then((result) => sendResponse(result))
+        .catch(() => sendResponse({ granted: false, reason: "LEASE_ERROR" }));
+      return true;
+
     default:
       sendResponse({ ok: false, error: "UNKNOWN_MESSAGE" });
       return false;
@@ -819,7 +914,6 @@ function handleLaunchRequest(
   void (async () => {
     try {
       validatePayload(payload);
-      await ensureTargetAccess(payload.officialUrl);
       const applicationId = String(payload.sessionId);
       const existing = await findPendingByApplication(applicationId);
       if (existing) {
@@ -830,6 +924,7 @@ function handleLaunchRequest(
           await updatePending(existing.tabId, {
             ...handoffFields(payload), targetTabId: existing.tabId, status: "opening", state: "waiting_for_tab"
           });
+          await recordSiteAccess(existing.tabId, await siteAccessFor(payload.officialUrl));
           void ensureContentReady(existing.tabId);
           sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId: existing.tabId });
           return;
@@ -848,22 +943,15 @@ function handleLaunchRequest(
       const bound = { ...pending, targetTabId: tabId, status: "opening" as const, state: "waiting_for_tab" as const };
       await putPending(tabId, bound);
       await putView(tabId, initialView(tabId, bound, null, null));
+      // The employer origin is only knowable now, and a service worker cannot
+      // ask Chrome for it. Record what the workflow needs; the side panel —
+      // opened by this same user gesture — presents the request.
+      await recordSiteAccess(tabId, await siteAccessFor(payload.officialUrl));
       log.info("launch accepted", { requestId: payload.requestId, tabId, origin: pending.expectedOrigin });
       sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId });
     } catch (err) {
-      const missingAccess = err instanceof Error && err.message === "HOST_PERMISSION_MISSING";
-      log.error("launch failed", {
-        requestId: payload.requestId,
-        reason: missingAccess ? "host_permission_missing" : "open_or_create"
-      });
-      sendResponse(missingAccess
-        ? {
-            ok: false,
-            type: MSG.LAUNCH_FAILED,
-            code: "HOST_PERMISSION_MISSING",
-            message: "XpertApply does not have access to the employer's site. Open chrome://extensions, choose XpertApply, and set Site access to \"On all sites\"."
-          }
-        : { ok: false, type: MSG.LAUNCH_FAILED, code: "TAB_OPEN_FAILED", message: safeMessage(err) });
+      log.error("launch failed", { requestId: payload.requestId, reason: "open_or_create" });
+      sendResponse({ ok: false, type: MSG.LAUNCH_FAILED, code: "TAB_OPEN_FAILED", message: safeMessage(err) });
     }
   })();
 }
@@ -903,25 +991,35 @@ function validatePayload(payload: LaunchPayload): void {
 }
 
 /**
- * With host_permissions statically covering https://*, http://localhost/* and
- * http://127.0.0.1/*, this should always pass — chrome.permissions.request()
- * requires an active user gesture and is fragile when called from deep inside
- * an async message chain (the original cause of "Chrome blocked the tab"
- * failures on employer-hosted domains). Kept only as a defensive fallback for
- * a user who has manually revoked broad site access via chrome://extensions.
+ * What Chrome host access does this workflow still need?
+ *
+ * A CHECK, never a request. `chrome.permissions.request()` requires a user
+ * gesture and cannot run in a service worker, so the worker's job is to work
+ * out which origin is needed and record it; the side panel — an extension page
+ * with real clicks — is the only surface that can ask Chrome for it.
  */
-async function ensureTargetAccess(url: string): Promise<void> {
-  const origin = `${new URL(url).origin}/*`;
-  if (await chrome.permissions.contains({ origins: [origin] })) return;
-  // Deliberately NOT `chrome.permissions.request` here.
-  //
-  // A service worker has no user gesture, so the request either rejects or —
-  // worse — raises a prompt nothing is waiting on. The launch handler then never
-  // reaches `sendResponse`, and the web app's 15-second wait expires as
-  // EXTENSION_NO_ACK: a silent timeout that names nothing the user can act on.
-  // Failing immediately with a specific code turns it into a message that does.
-  log.warn("destination origin not permitted", { origin });
-  throw new Error("HOST_PERMISSION_MISSING");
+export async function siteAccessFor(
+  url: string | null | undefined,
+  scope: "page" | "frame" = "page"
+): Promise<SiteAccessNeed> {
+  const pattern = originPatternFor(url);
+  if (!pattern) return siteAccessNeedFor(url, false, scope);
+  const granted = await chrome.permissions
+    .contains({ origins: [pattern] })
+    .catch(() => false);
+  return siteAccessNeedFor(url, granted, scope);
+}
+
+/** Record on the tab's view what the side panel must ask for (or that nothing
+ * is outstanding), so the panel renders from durable state rather than from a
+ * message that may arrive while it is closed. */
+async function recordSiteAccess(tabId: number, need: SiteAccessNeed): Promise<void> {
+  await patchView(tabId, {
+    siteAccess: need.state,
+    siteAccessPattern: need.pattern,
+    siteAccessOrigin: need.origin,
+    siteAccessScope: need.scope
+  });
 }
 
 // --------------------------------------------------------------------------- //
@@ -929,31 +1027,36 @@ async function ensureTargetAccess(url: string): Promise<void> {
 // --------------------------------------------------------------------------- //
 /**
  * The single gate every ATS-page content script frame must pass before it is
- * allowed to touch the DOM. Because host_permissions now cover every https(s)
- * origin (employer/ATS forms live on arbitrary domains we cannot enumerate in
- * advance), the content script is declaratively injected into every page —
- * this is what keeps it dormant everywhere except a user-initiated handoff.
+ * allowed to touch the DOM. Employer and ATS origins carry no install-time
+ * authority (Stage 3C): there is no declarative content script for them, and a
+ * frame only runs XpertApply code after the user has granted its exact origin
+ * and the worker has injected there. This gate is what the frame must pass once
+ * it is running — Chrome's grant decides whether it runs at all.
  *
  * A tab is "matched" once ANY frame in it (top frame, almost always) reports a
- * URL that matches the active handoff via urlsMatchForHandoff. After that, the
- * whole TAB is trusted (targetTabId binding) so nested ATS iframes — whose own
- * URL rarely resembles the employer page URL — are also allowed to scan/fill.
- * The top frame alone is re-validated against the handoff URL on every call so
- * a tab that has since navigated away never keeps auto-filling.
+ * URL that matches the active handoff via urlsMatchForHandoff. Binding the tab
+ * is NOT the same as trusting what is inside it: a bound tab used to vouch for
+ * every frame in itself, which handed the user's profile and résumé to any
+ * third-party iframe on the employer's page that happened to look like an
+ * application. Each frame is now authorized on its own browser-supplied origin
+ * (security/senderTrust) — the top frame against the handoff URL, a nested
+ * frame against the workflow's origin graph — so an embedded ATS widget still
+ * fills and an unrelated ad, analytics or chat frame gets nothing.
  */
 async function handleContentReady(
   sender: chrome.runtime.MessageSender,
-  url: string,
-  isTopFrame: boolean,
   applicationRootDetected: boolean,
   sendResponse: (r: unknown) => void
 ): Promise<void> {
-  const tabId = sender.tab?.id;
-  if (tabId == null) {
+  // Identity comes from Chrome, never from the message. The frame's URL and
+  // whether it is the top frame used to be read out of the payload, which meant
+  // the gate below was deciding on the sender's own description of itself.
+  const context = describeSender(sender);
+  if (!context) {
     sendResponse({ ok: false, matched: false, error: "NO_TAB", launch: null });
     return;
   }
-  const frameId = sender.frameId;
+  const { tabId, frameId, isTopFrame } = context;
   let pending = await getPending(tabId);
   let boundVia: "tab_binding" | "active_self_bind" = "tab_binding";
   if (!pending) {
@@ -969,12 +1072,11 @@ async function handleContentReady(
       sendResponse({ ok: true, matched: false, error: "HANDOFF_EXPIRED", launch: null });
       return;
     }
-    // A frame binds the tab either by its own URL or (for cases where the
-    // handoff URL is the top page but this is the first frame to report in)
-    // the tab's own top-level URL.
-    const candidateUrls = [url, sender.tab?.url].filter((u): u is string => Boolean(u));
-    const matches = candidateUrls.some((u) => urlsMatchForHandoff(active.applicationUrl, u));
-    if (!matches) {
+    // Binding the TAB and authorizing this FRAME are different questions. A
+    // nested frame that reports in first may bind the tab it lives in — the
+    // tab's own top-level URL is honest evidence about the tab — but binding
+    // buys it nothing on its own: it still has to pass the frame gate below.
+    if (!senderCanBindTab(context, active)) {
       log.info("destination session resolution", { stage: "origin_validation", reason: "handoff_url_mismatch" });
       sendResponse({ ok: true, matched: false, error: "HANDOFF_URL_MISMATCH", launch: null });
       return;
@@ -983,16 +1085,28 @@ async function handleContentReady(
     await putPending(tabId, pending);
     await putView(tabId, initialView(tabId, pending, null, null));
   }
-  const reject = validateLaunch(pending, url, tabId, isTopFrame);
+  const reject = validateLaunch(pending, context);
   if (reject) {
-    // The tab WAS bound to a handoff, so surface the sanitized launch + a
-    // specific error rather than pretending nothing matched — the widget can
-    // then show a meaningful failure instead of staying silently blank.
+    // A REFUSED NESTED FRAME IS NOT A TAB FAILURE. Third-party frames — ad
+    // slots, analytics, chat widgets — are a normal part of employer pages, and
+    // one of them being told "no" says nothing about the application. Reply
+    // dormant so that frame goes inert, and leave the tab's state alone:
+    // raising a failure here would let any embedded frame paint an error over a
+    // perfectly healthy run.
+    if (!isTopFrame) {
+      log.info("frame refused", { tabId, frameId, reason: reject });
+      sendResponse({ ok: true, matched: false, error: reject, launch: null });
+      return;
+    }
+    // The TOP frame is the tab, so its rejection is the tab's rejection.
+    // Surface the sanitized launch + a specific error rather than pretending
+    // nothing matched — the widget can then show a meaningful failure instead
+    // of staying silently blank.
     await applyFailure(tabId, reject);
     sendResponse({ ok: false, matched: true, error: reject, launch: sanitize(pending) });
     return;
   }
-  log.info("content script ready", { tabId, frameId: frameId ?? -1, isTopFrame });
+  log.info("content script ready", { tabId, frameId, isTopFrame });
   const activation = await readPendingActivation();
   if (activation && (tabId === activation.sourceTabId || tabId === activation.destinationTabId)) {
     await writePendingActivation({
@@ -1058,29 +1172,18 @@ async function handleContentReady(
 //   • sandboxed to an opaque origin            -> reopen the frame as a tab
 //   • the frame has no real URL at all         -> nothing to open; say so
 //
-// This resolves which one it is, using real frame ids rather than the parent's
-// guesswork. Origins and redacted path shapes only: no query strings, no
-// tokens, no entered values.
+// This resolves which one it is. Origins and redacted path shapes only: no
+// query strings, no tokens, no entered values.
+//
+// Stage 3C-2: it resolves it from BOTH frame inventories. Chrome's enumeration
+// reports only frames the extension may inject into, so the ungranted frame —
+// the one whose whole problem is the missing grant — was absent from it, and
+// the "no host permission" verdict above was unreachable in the shipped build.
+// The top document's own `iframe[src]` markup can see it without any grant, so
+// `frames/frameDiscovery` merges the two and marks which is which. Observation
+// never becomes identity: those records carry no frame id and are only ever
+// candidates after `originJoinsWorkflow` accepts their origin.
 // --------------------------------------------------------------------------- //
-
-/** One frame, as the privileged side sees it. */
-interface InspectedFrame {
-  frameId: number;
-  parentFrameId: number;
-  origin: string | null;
-  pathShape: string | null;
-  urlKind: string;
-  /** Did a content script in THIS frame answer a ping? */
-  contentScriptResponds: boolean;
-  /** Does the extension hold a host permission covering this origin? */
-  hostPermissionGranted: boolean;
-  /** What the frame reported about its own application, when it answered. */
-  applicationEvidence: boolean;
-  fieldCount: number;
-  /** Parent-observable sandbox tokens, paired in by frameIndex when available. */
-  sandboxTokens: string[];
-  opaqueOrigin: boolean;
-}
 
 function frameUrlKind(raw: string | null | undefined): string {
   if (!raw || raw.trim() === "") return "empty";
@@ -1201,94 +1304,156 @@ function probeFrameApplication(
 
 async function inspectApplicationFrames(
   sender: chrome.runtime.MessageSender,
-  observed: { frameIndex: number; origin: string | null; sandboxTokens: string[]; opaqueOrigin: boolean }[]
+  observed: ObservedFramePayload[]
 ): Promise<{
   tabId: number | null;
   topOrigin: string | null;
   topPathShape: string | null;
-  frames: InspectedFrame[];
+  frames: FrameDiscoveryRecord[];
   enumerationSource: string;
   enumerationComplete: boolean;
   outcome: string;
-  reopenOrigin: string | null;
+  /** The ONE trusted origin a remedy may target, or null. Exact and portless. */
+  candidateOrigin: string | null;
+  /** The Chrome match pattern for that origin — never anything broader. */
+  candidatePattern: string | null;
+  candidateSource: FrameEvidenceSource | null;
 }> {
   const tabId = sender.tab?.id ?? null;
-  if (tabId == null) {
-    return {
-      tabId: null, topOrigin: null, topPathShape: null, frames: [],
-      enumerationSource: "none", enumerationComplete: false,
-      outcome: "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE", reopenOrigin: null
-    };
-  }
+  const empty = {
+    tabId: null, topOrigin: null, topPathShape: null, frames: [] as FrameDiscoveryRecord[],
+    enumerationSource: "none", enumerationComplete: false,
+    outcome: "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE",
+    candidateOrigin: null, candidatePattern: null, candidateSource: null
+  };
+  if (tabId == null) return empty;
 
+  // No workflow, no candidates. Discovery exists to serve an application the
+  // user started; without one there is nothing an origin could belong to, and
+  // "trusted" would have no meaning to test against.
+  const launch = (await getPending(tabId)) ?? (await getActive());
+  const workflowUrl = launch?.officialUrl ?? launch?.applicationUrl ?? null;
+
+  // One permission check per DISTINCT origin, not per frame.
+  const permissionCache = new Map<string, boolean>();
+  const isGranted = async (origin: string): Promise<boolean> => {
+    const cached = permissionCache.get(origin);
+    if (cached !== undefined) return cached;
+    const pattern = patternForOrigin(origin)!;
+    const granted = await chrome.permissions.contains({ origins: [pattern] }).catch(() => false);
+    permissionCache.set(origin, granted);
+    return granted;
+  };
+
+  /**
+   * Does this origin belong to the workflow the user actually started?
+   *
+   * The SAME predicate the frame gate (Stage 3A) and the host-permission gate
+   * use. Deliberately not a second allow-list: one policy, one place to audit,
+   * one place a suffix-confusion bug could be fixed.
+   */
+  const trusted = (origin: string | null): boolean => {
+    if (!origin || !workflowUrl) return false;
+    let candidate: URL;
+    try {
+      candidate = new URL(origin);
+    } catch {
+      return false;
+    }
+    return originJoinsWorkflow(workflowUrl, candidate)
+      || candidate.origin.toLowerCase() === safeOrigin(launch?.applicationUrl ?? "");
+  };
+
+  // ---- Source 1: Chrome's own enumeration ------------------------------- //
+  // Real frame ids, real ping results, real probes — for every frame Chrome is
+  // willing to report. Silently omits frames we hold no permission for, which
+  // is exactly why it cannot be the only source.
   const enumerated = await enumerateFrames(tabId);
-  // Sandbox tokens are a property of the PARENT's markup, so only the parent
-  // can see them. Pair them in by origin where we can.
   const sandboxByOrigin = new Map(
-    observed.filter((frame) => frame.origin).map((frame) => [frame.origin!, frame])
+    observed
+      .filter((frame) => canonicalFrameOrigin(frame.origin))
+      .map((frame) => [canonicalFrameOrigin(frame.origin)!, frame])
   );
 
-  const frames: InspectedFrame[] = [];
+  const confirmed: FrameDiscoveryRecord[] = [];
   for (const frame of enumerated.frames) {
-    const urlKind = frameUrlKind(frame.url);
-    let origin: string | null = null;
-    try {
-      origin = frame.url ? new URL(frame.url).origin : null;
-    } catch {
-      origin = null;
-    }
-    const hostPermissionGranted = origin && /^https?:/.test(origin)
-      ? await chrome.permissions.contains({ origins: [`${origin}/*`] }).catch(() => false)
-      : false;
+    const origin = canonicalFrameOrigin(frame.url);
+    const hostPermissionGranted = origin ? await isGranted(origin) : false;
     const contentScriptResponds = await pingFrame(tabId, frame.frameId);
     const probe = contentScriptResponds ? await probeFrameApplication(tabId, frame.frameId) : null;
     const parentObserved = origin ? sandboxByOrigin.get(origin) : undefined;
-
-    frames.push({
+    confirmed.push({
+      source: "chrome_confirmed",
       frameId: frame.frameId,
       parentFrameId: frame.parentFrameId,
       origin,
       pathShape: redactedFramePath(frame.url),
-      urlKind,
+      urlKind: frameUrlKind(frame.url),
       contentScriptResponds,
       hostPermissionGranted,
       applicationEvidence: Boolean(probe?.evidence),
       fieldCount: probe?.fieldCount ?? 0,
-      sandboxTokens: parentObserved?.sandboxTokens ?? [],
-      opaqueOrigin: Boolean(parentObserved?.opaqueOrigin)
+      sandboxTokens: Array.isArray(parentObserved?.sandboxTokens) ? parentObserved!.sandboxTokens : [],
+      opaqueOrigin: Boolean(parentObserved?.opaqueOrigin),
+      workflowTrusted: trusted(origin)
     });
   }
 
-  // The frame most worth acting on: real application evidence beats a bare
-  // control count, which beats a merely reachable frame.
-  const candidate = [...frames]
-    .filter((frame) => frame.frameId !== 0)
-    .sort((a, b) => {
-      const score = (frame: InspectedFrame) =>
-        (frame.applicationEvidence ? 100 : 0) + frame.fieldCount + (frame.urlKind === "https" ? 10 : 0);
-      return score(b) - score(a);
-    })[0] ?? null;
+  // ---- Source 2: the top document's own markup -------------------------- //
+  // `iframe[src]` is the PARENT's property and stays readable across origins,
+  // so the employer frame — which we do hold a grant for — can name an ATS
+  // origin Chrome refuses to report. Page-controlled data: re-canonicalized
+  // here rather than trusted as parsed, and worth nothing until it passes the
+  // workflow check above.
+  const observedRecords: FrameDiscoveryRecord[] = [];
+  for (const frame of observed) {
+    const origin = canonicalFrameOrigin(frame.origin);
+    if (!origin) continue;
+    observedRecords.push({
+      source: "observed_ungranted",
+      // NEVER fabricated. A made-up id would be accepted by sendMessage
+      // targeting and would let a hint impersonate a real frame.
+      frameId: null,
+      parentFrameId: null,
+      origin,
+      pathShape: typeof frame.pathShape === "string" ? frame.pathShape : null,
+      urlKind: typeof frame.urlKind === "string" ? frame.urlKind : "other",
+      // Observation proves nothing about what is running inside.
+      contentScriptResponds: false,
+      hostPermissionGranted: await isGranted(origin),
+      applicationEvidence: false,
+      fieldCount: Number.isFinite(frame.readableFieldCount) ? Number(frame.readableFieldCount) : 0,
+      sandboxTokens: Array.isArray(frame.sandboxTokens) ? frame.sandboxTokens : [],
+      opaqueOrigin: Boolean(frame.opaqueOrigin),
+      workflowTrusted: trusted(origin)
+    });
+  }
 
-  const outcome = !candidate
-    ? "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE"
-    : candidate.opaqueOrigin
-      ? "APPLICATION_FRAME_SANDBOXED_OPAQUE"
-      : candidate.origin && !candidate.hostPermissionGranted
-        ? "APPLICATION_FRAME_PERMISSION_MISSING"
-        : !candidate.contentScriptResponds
-          ? "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE"
-          : candidate.fieldCount > 0
-            ? "APPLICATION_FRAME_DISCOVERY_COMPLETED"
-            : candidate.applicationEvidence
-              ? "APPLICATION_FRAME_FOUND"
-              : "APPLICATION_FRAME_DISCOVERY_ZERO_FIELDS";
+  const frames = mergeFrameInventories(confirmed, observedRecords);
+  const candidate = selectTrustedApplicationCandidate(frames);
+  const outcome = frameDiscoveryOutcome(candidate);
+
+  // Hand the finding to the side panel as soon as it is made.
+  //
+  // `chrome.permissions.request` cannot run in a content script or a worker, so
+  // the in-page widget can only ever ASK the worker to record a need — the
+  // panel is the one surface that can put the question to Chrome. Recording it
+  // here rather than waiting for the widget click means the panel can offer the
+  // grant directly, and the user is not left looking at an in-page prompt while
+  // the panel says nothing. Only ever the ONE trusted origin, at frame scope.
+  if (outcome === "APPLICATION_FRAME_PERMISSION_MISSING" && candidate?.origin) {
+    await recordSiteAccess(tabId, siteAccessNeedFor(candidate.origin, false, "frame"));
+  }
 
   log.info("application frame inspection", {
     frames: String(frames.length),
+    observedOnly: String(frames.filter((frame) => frame.source === "observed_ungranted").length),
+    untrusted: String(frames.filter((frame) => !frame.workflowTrusted).length),
     source: enumerated.source,
     complete: String(enumerated.complete),
     outcome,
-    candidateOrigin: candidate?.origin ?? "none"
+    candidateOrigin: candidate?.origin ?? "none",
+    candidateSource: candidate?.source ?? "none"
   });
 
   return {
@@ -1299,8 +1464,12 @@ async function inspectApplicationFrames(
     enumerationSource: enumerated.source,
     enumerationComplete: enumerated.complete,
     outcome,
-    // Only an https origin can be reopened or permission-requested.
-    reopenOrigin: candidate?.urlKind === "https" ? candidate.origin : null
+    // Only a trusted, canonical https origin may be named to the user, asked
+    // for, or reopened. Everything else yields null and the workflow fails
+    // closed rather than guessing.
+    candidateOrigin: candidate?.urlKind === "https" ? candidate.origin : null,
+    candidatePattern: candidate?.urlKind === "https" ? patternForOrigin(candidate.origin) : null,
+    candidateSource: candidate?.urlKind === "https" ? candidate.source : null
   };
 }
 
@@ -1312,6 +1481,15 @@ async function inspectApplicationFrames(
  * looking at, and the origin must belong to the active workflow — a page may
  * not talk the worker into granting access to somewhere unrelated.
  */
+/**
+ * A frame the workflow needs but Chrome does not grant.
+ *
+ * This used to call `chrome.permissions.request()` here. It cannot work: the
+ * API requires a user gesture and a service worker has none, so the promise
+ * either rejects or raises a prompt nothing is waiting on. The worker's job is
+ * to decide WHICH origin is legitimate — the same workflow origin graph Stage
+ * 3A uses — and record it. The side panel does the asking.
+ */
 async function requestFramePermission(
   sender: chrome.runtime.MessageSender,
   origin: string
@@ -1319,9 +1497,14 @@ async function requestFramePermission(
   const tabId = sender.tab?.id;
   if (tabId == null) return { ok: false, reason: "NO_TAB" };
 
+  // Canonicalized through the SAME function discovery used, so the origin a
+  // grant is requested for is byte-identical to the one that was trusted. A
+  // second parse here is a second chance to disagree.
+  const canonical = canonicalFrameOrigin(origin);
+  if (!canonical) return { ok: false, reason: "INVALID_ORIGIN" };
   let candidate: URL;
   try {
-    candidate = new URL(origin);
+    candidate = new URL(canonical);
   } catch {
     return { ok: false, reason: "INVALID_ORIGIN" };
   }
@@ -1330,24 +1513,22 @@ async function requestFramePermission(
   const launch = (await getPending(tabId)) ?? (await getActive());
   if (!launch) return { ok: false, reason: "NO_ACTIVE_WORKFLOW" };
   if (!originJoinsWorkflow(launch.officialUrl ?? launch.applicationUrl, candidate)
-    && candidate.origin !== safeOrigin(launch.applicationUrl)) {
+    && candidate.origin.toLowerCase() !== safeOrigin(launch.applicationUrl)) {
     return { ok: false, reason: "ORIGIN_NOT_IN_WORKFLOW" };
   }
 
-  const pattern = `${candidate.origin}/*`;
-  if (await chrome.permissions.contains({ origins: [pattern] }).catch(() => false)) {
-    return { ok: true, reason: "ALREADY_GRANTED", granted: true };
-  }
-  const granted = await chrome.permissions.request({ origins: [pattern] }).catch(() => false);
-  log.info("frame permission request", { origin: candidate.origin, granted: String(granted) });
-  if (granted) {
-    // A newly permitted origin has no content script yet: inject now rather
-    // than waiting for a navigation that may never come.
+  const need = await siteAccessFor(candidate.href, "frame");
+  if (need.state === "site_access_granted") {
+    // Already allowed — a newly permitted origin has no content script yet, so
+    // inject into that exact frame rather than waiting for a navigation.
     await chrome.scripting
       .executeScript({ target: { tabId, allFrames: true }, files: ["content.js"] })
       .catch(() => undefined);
+    return { ok: true, reason: "ALREADY_GRANTED", granted: true };
   }
-  return { ok: granted, reason: granted ? "GRANTED" : "DENIED", granted };
+  await recordSiteAccess(tabId, need);
+  log.info("frame site access required", { tabId, origin: candidate.origin });
+  return { ok: false, reason: "SITE_ACCESS_REQUIRED", granted: false };
 }
 
 /**
@@ -1371,23 +1552,38 @@ function classifyPackageError(err: unknown): string {
   return "SESSION_PACKAGE_FAILED";
 }
 
+/**
+ * The pull half of the readiness handshake. It hands out the same session
+ * package CONTENT_READY does, so it is gated by the same rule — previously a
+ * bound tab made this unconditional for every frame in it.
+ */
 async function handleGetPending(sender: chrome.runtime.MessageSender, sendResponse: (r: unknown) => void): Promise<void> {
-  const tabId = sender.tab?.id;
-  if (tabId == null) {
+  const context = describeSender(sender);
+  if (!context) {
     sendResponse({ ok: true, matched: false, launch: null });
     return;
   }
+  const tabId = context.tabId;
   let pending = await getPending(tabId);
   if (!pending) {
     const active = await getActive();
-    const candidateUrls = [sender.url, sender.tab?.url].filter((u): u is string => Boolean(u));
-    if (active && Date.now() <= active.expiresAt && candidateUrls.some((u) => urlsMatchForHandoff(active.applicationUrl, u))) {
+    if (active && Date.now() <= active.expiresAt && senderCanBindTab(context, active)) {
       pending = { ...active, targetTabId: tabId };
       await putPending(tabId, pending);
     }
   }
-  const pkg = pending ? await getPackage(tabId) : null;
-  sendResponse({ ok: true, matched: Boolean(pending), launch: pending ? sanitize(pending) : null, session: pkg?.session ?? null });
+  if (!pending) {
+    sendResponse({ ok: true, matched: false, launch: null, session: null });
+    return;
+  }
+  const authorized = authorizeFrameForLaunch(context, pending);
+  if (!authorized.ok) {
+    log.info("frame refused", { tabId, frameId: context.frameId, reason: authorized.reason });
+    sendResponse({ ok: true, matched: false, error: authorized.reason, launch: null, session: null });
+    return;
+  }
+  const pkg = await getPackage(tabId);
+  sendResponse({ ok: true, matched: true, launch: sanitize(pending), session: pkg?.session ?? null });
 }
 
 // --------------------------------------------------------------------------- //
@@ -1419,12 +1615,24 @@ async function startAutofillForTab(
 
 /** Ping the content script; if silent, inject it and ping again with backoff. */
 async function ensureContentReady(tabId: number): Promise<boolean> {
+  // Checked first and every time. Without a grant there is no XpertApply code
+  // on the page at all — a stronger position than a script that is present and
+  // declines to act, and one Chrome enforces rather than the extension.
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const access = await siteAccessFor(tab?.url ?? null);
+  if (access.state !== "site_access_granted") {
+    await recordSiteAccess(tabId, access);
+    log.info("content script not injected", { reason: access.state });
+    return false;
+  }
   for (let attempt = 0; attempt < READY_MAX_ATTEMPTS; attempt += 1) {
     if (await pingContent(tabId)) return true;
-    // Inject the compiled content script as a fallback (host permission
-    // required — now static, so this always has access). allFrames so an
-    // employer form embedded in an iframe (e.g. an ATS widget) is reachable
-    // even when the declarative content_scripts registration missed it.
+    // Inject the compiled content script. The host permission this needs is
+    // the OPTIONAL grant checked immediately above, not a static one — Stage 3C
+    // removed install-time authority over employer origins. allFrames so an
+    // application embedded in an iframe is reached too; Chrome injects only
+    // into the frames whose origin is actually granted, which is what leaves an
+    // ungranted ATS frame for discovery to find.
     try {
       await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["content.js"] });
     } catch (err) {
@@ -1894,7 +2102,202 @@ function credibleApplicationFrames(tabId: number, exceptFrameId?: number): numbe
 
 /** Drop registrations for a tab (navigation, close, or session change) so a
  * stale frame can never vouch for a page that no longer exists. */
+// --------------------------------------------------------------------------- //
+// Fill lease — which frame in this tab is THE application
+//
+// A tab legitimately contains more than one application-shaped form: the real
+// application, a same-origin vendor widget that happens to ask for a name and
+// an e-mail, a second embedded ATS. Every frame resolved its own root
+// independently and every frame that liked what it saw filled, so the user's
+// profile and résumé went into forms they never applied to. Stage 3A stopped
+// that at the ORIGIN boundary; this stops it inside the origins that remain.
+//
+// Only a frame that has already resolved a confident application root asks for
+// a lease, which is what makes the ranking simple: the top document is the page
+// the user was sent to, so if IT holds the application, no nested frame does.
+// --------------------------------------------------------------------------- //
+
+interface FillLease {
+  frameId: number;
+  at: number;
+}
+
+const fillLeases = new Map<number, FillLease>();
+
+/**
+ * How long to wait for the top frame's probe before ruling.
+ *
+ * The wait exists to avoid a spurious refusal while frame 0 is still reporting.
+ * It is NOT a fallback: if the probe never arrives the answer is "we could not
+ * establish which frame is the application", and that refuses. A timer expiring
+ * is not evidence about a frame.
+ */
+const TOP_FRAME_PROBE_WAIT_MS = 2_000;
+
+async function awaitTopFrameProbe(tabId: number): Promise<RegisteredFrame | null> {
+  const deadline = Date.now() + TOP_FRAME_PROBE_WAIT_MS;
+  for (;;) {
+    const frame = frameRegistry.get(frameKey(tabId, 0));
+    if (frame) return frame;
+    if (Date.now() >= deadline) return null;
+    await delay(100);
+  }
+}
+
+/**
+ * Nested frames in this tab that could legitimately BE the application.
+ *
+ * Mirrors selectApplicationFrame's rule — a resolved root outranks any amount
+ * of raw control count — and additionally drops frames Stage 3A has already
+ * excluded on origin. That filter is load-bearing in both directions: an
+ * unauthorized frame must not be able to win the lease, and it must not be able
+ * to create a tie that stops the real application from filling. Without it, any
+ * page could disable autofill just by embedding an application-shaped
+ * third-party iframe.
+ */
+function credibleNestedFrames(tabId: number, launch: PendingLaunch): RegisteredFrame[] {
+  return [...frameRegistry.values()]
+    .filter((frame) => frame.tabId === tabId && frame.frameId !== 0 && frame.rootConfident)
+    .filter((frame) => {
+      try {
+        return originJoinsLaunchWorkflow(launch, new URL(frame.sanitizedUrl));
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => b.bestScore - a.bestScore);
+}
+
+export async function grantFillLease(
+  sender: chrome.runtime.MessageSender,
+  rootConfident: boolean
+): Promise<{ granted: boolean; reason: string }> {
+  const context = describeSender(sender);
+  if (!context) return { granted: false, reason: "NO_SENDER_TAB" };
+
+  // Re-check the Stage 3A gate here too: a lease must never be a second way
+  // into a tab a frame is not authorized for.
+  const pending = await getPending(context.tabId);
+  if (!pending) return { granted: false, reason: "NO_ACTIVE_LAUNCH" };
+  const authorized = authorizeFrameForLaunch(context, pending);
+  if (!authorized.ok) return { granted: false, reason: authorized.reason };
+
+  const held = fillLeases.get(context.tabId);
+  if (held && held.frameId === context.frameId) {
+    return { granted: true, reason: "ALREADY_HELD" };
+  }
+
+  // The top document is the page the user was sent to, and it only asks once it
+  // has resolved an application root of its own. That is positive evidence, and
+  // it outranks every nested frame.
+  if (context.isTopFrame) {
+    fillLeases.set(context.tabId, { frameId: context.frameId, at: Date.now() });
+    log.info("fill lease granted", { tabId: context.tabId, frameId: context.frameId, reason: "top_frame" });
+    return { granted: true, reason: "TOP_FRAME" };
+  }
+
+  // A nested frame needs POSITIVE evidence that the top frame is not the
+  // application. Only frame 0's own probe can establish that.
+  const top = await awaitTopFrameProbe(context.tabId);
+  if (!top) {
+    // Never heard from frame 0. We do not know whether the top document holds
+    // the application, so we do not know that this frame is the one to fill.
+    // Deliberately NOT terminal: the content script may retry, and a probe
+    // arriving later can settle it.
+    log.info("fill lease refused", {
+      tabId: context.tabId, frameId: context.frameId, reason: "frame_selection_unresolved"
+    });
+    return { granted: false, reason: "FRAME_SELECTION_UNRESOLVED" };
+  }
+  if (top.rootConfident) {
+    log.info("fill lease refused", {
+      tabId: context.tabId, frameId: context.frameId, reason: "top_frame_owns_application"
+    });
+    return { granted: false, reason: "TOP_FRAME_OWNS_APPLICATION" };
+  }
+  if (held) {
+    log.info("fill lease refused", {
+      tabId: context.tabId, frameId: context.frameId, reason: "another_frame_holds_lease"
+    });
+    return { granted: false, reason: "ANOTHER_FRAME_HOLDS_APPLICATION" };
+  }
+
+  // Several nested frames can each hold something application-shaped — the real
+  // application and a vendor widget that asks for a name and an e-mail. Fill
+  // one only when the evidence names it: a single credible frame, or a strict
+  // best by score. A tie is not a decision, so nobody fills.
+  const credible = credibleNestedFrames(context.tabId, pending);
+  if (credible.length > 1) {
+    const [best, runnerUp] = credible;
+    if (best.bestScore === runnerUp.bestScore || best.frameId !== context.frameId) {
+      log.info("fill lease refused", {
+        tabId: context.tabId, frameId: context.frameId, reason: "multiple_candidate_frames"
+      });
+      return { granted: false, reason: "FRAME_SELECTION_AMBIGUOUS" };
+    }
+  }
+  if (credible.length === 0 && !rootConfident) {
+    // Nothing anywhere reported a resolved application root, including this
+    // frame. There is no positive selection to act on.
+    return { granted: false, reason: "FRAME_SELECTION_UNRESOLVED" };
+  }
+
+  fillLeases.set(context.tabId, { frameId: context.frameId, at: Date.now() });
+  log.info("fill lease granted", {
+    tabId: context.tabId, frameId: context.frameId, reason: "embedded_application"
+  });
+  return { granted: true, reason: "EMBEDDED_APPLICATION" };
+}
+
+/**
+ * The side panel asked Chrome and got an answer. Resume or stop.
+ *
+ * The worker re-CHECKS rather than trusting the panel's `granted` flag: the
+ * panel is extension code, but a permission is a fact about Chrome's state, and
+ * asking Chrome is both cheap and the only authority that matters.
+ */
+async function applySiteAccessResult(
+  tabId: number | undefined,
+  pattern: string,
+  granted: boolean
+): Promise<{ ok: boolean; state: string }> {
+  const id = await resolveViewTab(tabId);
+  if (id == null) return { ok: false, state: "no_workflow" };
+
+  const reallyGranted = await chrome.permissions
+    .contains({ origins: [pattern] })
+    .catch(() => false);
+
+  if (!reallyGranted) {
+    // Declined. The workflow stops here rather than re-asking: a permission
+    // prompt loop is its own kind of harm, and the user said no.
+    await patchView(id, {
+      siteAccess: granted ? "site_access_required" : "site_access_denied",
+      failureCode: "SITE_ACCESS_DENIED",
+      failureRecoverable: true
+    });
+    log.info("site access declined", { tabId: id });
+    return { ok: false, state: "site_access_denied" };
+  }
+
+  await patchView(id, {
+    siteAccess: "site_access_granted",
+    failureCode: null,
+    failureMessage: null
+  });
+  log.info("site access granted", { tabId: id });
+  // Now that Chrome allows it, put the content script on the page.
+  await ensureContentReady(id).catch(() => false);
+  return { ok: true, state: "site_access_granted" };
+}
+
+/** Drop the lease when the tab navigates or closes, so the next page starts clean. */
+export function clearFillLease(tabId: number): void {
+  fillLeases.delete(tabId);
+}
+
 export function clearFrameRegistry(tabId: number, frameId?: number): void {
+  if (frameId == null) clearFillLease(tabId);
   for (const [key, frame] of frameRegistry) {
     if (frame.tabId !== tabId) continue;
     if (frameId != null && frame.frameId !== frameId) continue;
@@ -1969,12 +2372,19 @@ async function applyFailure(
  * against the handoff URL on every call, so a tab that has since navigated
  * away from the employer page stops auto-filling.
  */
-function validateLaunch(pending: PendingLaunch, url: string, tabId: number, isTopFrame: boolean): string | null {
+/**
+ * The single gate a frame must pass before it may hold the user's data.
+ *
+ * Returns null to allow, or a named refusal code. The frame rule itself lives
+ * in security/senderTrust so the top-frame and nested-frame cases cannot drift
+ * apart, and so it can be tested without a service worker.
+ */
+function validateLaunch(pending: PendingLaunch, sender: SenderContext): string | null {
   if (pending.protocolVersion !== PROTOCOL_VERSION) return "PROTOCOL_MISMATCH";
-  if (pending.targetTabId != null && pending.targetTabId !== tabId) return "WRONG_TAB";
+  if (pending.targetTabId != null && pending.targetTabId !== sender.tabId) return "WRONG_TAB";
   if (Date.now() > pending.expiresAt) return "HANDOFF_EXPIRED";
-  if (isTopFrame && !urlsMatchForHandoff(pending.applicationUrl, url)) return "HANDOFF_URL_MISMATCH";
-  return null;
+  const authorized = authorizeFrameForLaunch(sender, pending);
+  return authorized.ok ? null : authorized.reason;
 }
 
 /** Never expose the launch token beyond the background. */

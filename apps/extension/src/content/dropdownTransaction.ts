@@ -28,6 +28,10 @@ export type TransactionFailure =
   | "backing_value_mismatch"
   | "validation_failed"
   | "stale_resolution"
+  // The client answer-integrity gate refused the resolver's answer for this
+  // control: the question's jurisdiction or polarity could not be positively
+  // established against the key the answer belongs to.
+  | "semantics_incompatible"
   | "timeout";
 
 export interface TransactionResult {

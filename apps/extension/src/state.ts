@@ -212,6 +212,10 @@ export function initialView(tabId: number, launch: PendingLaunch, company: strin
     failureCode: null,
     failureMessage: null,
     failureRecoverable: null,
+    siteAccess: "no_workflow",
+    siteAccessPattern: null,
+    siteAccessOrigin: null,
+    siteAccessScope: "page",
     updatedAt: Date.now()
   };
 }
