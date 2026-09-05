@@ -149,7 +149,7 @@ test.setTimeout(60_000);
 async function seed(worker: Worker, url: string) {
   await worker.evaluate(async (u) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "m1", jobId: "1", applicationUrl: u, status: "prepared",
         handoffToken: "h", requestId: "m1", sessionId: 55, launchToken: "l", officialUrl: u,

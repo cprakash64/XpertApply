@@ -149,7 +149,7 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
       protocolVersion: 3,
       atsType: null
     };
-    await chrome.storage.local.set({ activeAssistedApplyHandoffV1: launch });
+    await (chrome.storage.session ?? chrome.storage.local).set({ activeAssistedApplyHandoffV1: launch });
   }, applicationUrl);
 
   const page = await context.newPage();
@@ -201,7 +201,7 @@ test("the shipped extension never activates the final Submit control", async ({
   const applicationUrl = `${origin}/job`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-app-2", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-request-2",
@@ -242,7 +242,7 @@ test("URL-first: the shipped extension navigates via the service worker, without
   const listingUrl = `${origin}/listing?cta=anchor`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-url-first", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-url-first",
@@ -283,7 +283,7 @@ test("URL-first: target=_blank opens a new tab that is bound to the same session
   const listingUrl = `${origin}/listing?cta=anchor-blank`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-newtab", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-newtab",
@@ -308,7 +308,7 @@ test("URL-first: target=_blank opens a new tab that is bound to the same session
 
   // The service worker bound the NEW tab to the existing launch.
   const bound = await worker.evaluate(async () => {
-    const store = await chrome.storage.local.get("pendingLaunches");
+    const store = await (chrome.storage.session ?? chrome.storage.local).get("pendingLaunches");
     const map = (store.pendingLaunches ?? {}) as Record<string, { sessionId: number }>;
     return Object.values(map).map((launch) => launch.sessionId);
   });

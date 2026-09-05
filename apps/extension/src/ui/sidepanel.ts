@@ -173,14 +173,15 @@ async function publishRuntimeIdentity(): Promise<void> {
 async function refresh(): Promise<void> {
   tabId = await currentTabId();
   if (tabId == null) return;
-  const store = await chrome.storage.local.get(STORAGE_KEYS.VIEW_KEY);
+  const store = await (chrome.storage.session ?? chrome.storage.local).get(STORAGE_KEYS.VIEW_KEY);
   const map = (store[STORAGE_KEYS.VIEW_KEY] as Record<string, LaunchViewState>) || {};
   view = map[String(tabId)] ?? null;
   render();
 }
 
 // React live to any change in the stored view state for our tab.
-chrome.storage.local.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "session" && chrome.storage.session) return;
   const change = changes[STORAGE_KEYS.VIEW_KEY];
   if (!change || tabId == null) return;
   const map = (change.newValue as Record<string, LaunchViewState>) || {};

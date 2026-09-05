@@ -47,7 +47,7 @@ function installFakeChrome(existingStore?: Record<string, unknown>, queryTabs: c
         tabsCreated.push({ id, url: opts.url });
         return { id };
       }),
-      get: vi.fn(async () => { throw new Error("no such tab"); }),
+      get: vi.fn(async (): Promise<chrome.tabs.Tab> => { throw new Error("no such tab"); }),
       update: vi.fn(async () => ({})),
       query: vi.fn(async (queryInfo: { url?: string }) => {
         if (!queryInfo?.url) return [];
@@ -291,6 +291,80 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     // fake onInstalled listener), and nothing else in the handoff path calls
     // chrome.sidePanel — the side panel is a purely optional viewer.
     expect(fakeChrome.sidePanel.setPanelBehavior).not.toHaveBeenCalled();
+  });
+});
+
+describe("Stage 3C-4 workflow generation isolation", () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("3 · a new request for the same application gets a new tab and a fresh view", async () => {
+    installFakeFetch();
+    const runtime = installFakeChrome();
+    runtime.fakeChrome.tabs.get.mockResolvedValue({ id: 81, windowId: 1 } as chrome.tabs.Tab);
+    const state = await import("../state");
+    const old = seedHandoff({ requestId: "old-run", targetTabId: 81 });
+    await state.putPending(81, old);
+    await state.putView(81, {
+      ...state.initialView(81, old, "MongoDB", "Engineer"),
+      state: "completed", fieldsDiscovered: 9, filled: 6, resumeStatus: "uploaded"
+    });
+    await import("../background");
+
+    const response = await dispatch(runtime.messageListeners, {
+      type: "JOBPILOT_LAUNCH_REQUEST",
+      payload: {
+        requestId: "new-run", launchToken: "new-token", sessionId: 55, jobId: 1,
+        officialUrl: old.officialUrl, atsType: null
+      }
+    }, { tab: { id: 1, windowId: 1 }, origin: "http://localhost:3000" }) as { tabId: number };
+
+    expect(response.tabId).toBe(1000);
+    expect(runtime.tabsCreated).toHaveLength(1);
+    expect(await state.getView(1000)).toMatchObject({
+      requestId: "new-run", state: "waiting_for_tab", fieldsDiscovered: 0,
+      filled: 0, resumeStatus: "pending", failureCode: null
+    });
+  });
+
+  it("9 · an old tab update cannot replace the active new workflow generation", async () => {
+    installFakeChrome();
+    const state = await import("../state");
+    const old = seedHandoff({ requestId: "old-run", targetTabId: 81, createdAt: 1 });
+    const current = seedHandoff({ requestId: "new-run", targetTabId: 82, createdAt: 2 });
+    await state.putPending(81, old);
+    await state.putActive(current);
+    await state.updatePending(81, { state: "completed", status: "ready" });
+
+    expect(await state.getActive()).toMatchObject({ requestId: "new-run", targetTabId: 82 });
+    expect(await state.getPending(81)).toMatchObject({ requestId: "old-run", state: "completed" });
+  });
+
+  it("runtime view/tab state is absent after a browser-session storage reset", async () => {
+    const localStore: Record<string, unknown> = {
+      pendingLaunches: { "81": seedHandoff({ requestId: "old-run", targetTabId: 81 }) },
+      viewStates: { "81": { state: "completed", fieldsDiscovered: 9, filled: 6 } },
+      activeAssistedApplyHandoffV1: seedHandoff({ requestId: "old-run", targetTabId: 81 })
+    };
+    const sessionStore: Record<string, unknown> = {};
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      storage: {
+        local: {
+          get: async (key: string) => ({ [key]: localStore[key] }),
+          set: async (value: Record<string, unknown>) => Object.assign(localStore, value),
+          remove: async (key: string) => { delete localStore[key]; }
+        },
+        session: {
+          get: async (key: string) => ({ [key]: sessionStore[key] }),
+          set: async (value: Record<string, unknown>) => Object.assign(sessionStore, value),
+          remove: async (key: string) => { delete sessionStore[key]; }
+        }
+      }
+    };
+    const state = await import("../state");
+    expect(await state.getPending(81)).toBeNull();
+    expect(await state.getView(81)).toBeNull();
+    expect(await state.getActive()).toBeNull();
   });
 });
 

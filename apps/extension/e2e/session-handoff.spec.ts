@@ -139,7 +139,7 @@ async function seedLaunch(worker: Worker, applicationId: string) {
   await worker.evaluate(
     async ([url, id]) => {
       const now = Date.now();
-      await chrome.storage.local.set({
+      await (chrome.storage.session ?? chrome.storage.local).set({
         activeAssistedApplyHandoffV1: {
           version: 1,
           applicationId: id,

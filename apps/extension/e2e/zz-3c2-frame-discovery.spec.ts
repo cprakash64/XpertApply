@@ -19,6 +19,9 @@
  * which is what the defect broke.
  */
 import { expect, test, chromium, type BrowserContext, type Worker } from "@playwright/test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { buildWithGrantedOrigins, removeGrantedBuild } from "./granted-build";
 import {
   startFixture, type Fixture,
@@ -175,7 +178,7 @@ test("discovery names the ATS origin as the one needing access, and never the ad
   // workflow. Throwaway test token; it never leaves this process.
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "3c2", jobId: "1", applicationUrl: url,
         status: "prepared", handoffToken: "t", requestId: "r-3c2", sessionId: 55,
@@ -195,13 +198,13 @@ test("discovery names the ATS origin as the one needing access, and never the ad
   const inspected = await worker.evaluate(async () => {
     const deadline = Date.now() + 150_000;
     while (Date.now() < deadline) {
-      const store = await chrome.storage.local.get("viewStates");
+      const store = await (chrome.storage.session ?? chrome.storage.local).get("viewStates");
       const map = (store.viewStates ?? {}) as Record<string, Record<string, unknown>>;
       const view = Object.values(map)[0];
       if (view && view.siteAccess && view.siteAccess !== "no_workflow") return view;
       await new Promise((r) => setTimeout(r, 500));
     }
-    const store = await chrome.storage.local.get("viewStates");
+    const store = await (chrome.storage.session ?? chrome.storage.local).get("viewStates");
     return { timedOut: true, views: store.viewStates ?? null };
   });
 
@@ -321,7 +324,7 @@ test.describe("after the ATS origin is granted", () => {
         siteAccessOrigin: new URL(ats).host, siteAccessScope: "frame",
         siteAccessFramePathShape: "/embed/<id>", updatedAt: now
       };
-      await chrome.storage.local.set({
+      await (chrome.storage.session ?? chrome.storage.local).set({
         activeAssistedApplyHandoffV1: pending,
         pendingLaunches: { [String(tab.id)]: pending },
         viewStates: { [String(tab.id)]: view }
@@ -390,7 +393,7 @@ test.describe("after the ATS origin is granted", () => {
 
     await grantedWorker.evaluate(async (url) => {
       const now = Date.now();
-      await chrome.storage.local.set({
+      await (chrome.storage.session ?? chrome.storage.local).set({
         activeAssistedApplyHandoffV1: {
           version: 1, applicationId: "3c2g", jobId: "1", applicationUrl: url,
           status: "prepared", handoffToken: "t", requestId: "r-3c2g", sessionId: 55,
@@ -442,5 +445,144 @@ test.describe("after the ATS origin is granted", () => {
     expect(submitted).toBe(false);
 
     await page.close();
+  });
+
+  test("Stage 3C-4 reactivates a newly confirmed ATS frame after a real browser restart", async () => {
+    test.setTimeout(300_000);
+    const profileDir = mkdtempSync(path.join(tmpdir(), "xa-3c4-restart-"));
+    const launchBrowser = () => chromium.launchPersistentContext(profileDir, {
+      channel: "chromium",
+      args: [
+        `--disable-extensions-except=${grantedDist}`,
+        `--load-extension=${grantedDist}`,
+        ...grantedFixture.chromeArgs
+      ],
+      ignoreHTTPSErrors: true,
+      serviceWorkers: "allow"
+    });
+    const seedFreshWorkflow = async (targetWorker: Worker, tabId: number, requestId: string) => {
+      await targetWorker.evaluate(async ({ url, tabId, requestId }) => {
+        const now = Date.now();
+        const pending = {
+          version: 1, applicationId: "3c4", jobId: "1", applicationUrl: url,
+          status: "prepared", handoffToken: `handoff-${requestId}`, requestId, sessionId: 55,
+          launchToken: `launch-${requestId}`, officialUrl: url, expectedOrigin: new URL(url).origin,
+          createdAt: now, expiresAt: now + 900_000, targetTabId: tabId,
+          state: "waiting_for_content_script", protocolVersion: 3, atsType: null
+        };
+        const view = {
+          tabId, requestId, sessionId: 55, state: "waiting_for_content_script",
+          company: "Fixture Employer", jobTitle: "Software Engineer",
+          atsId: null, atsDisplayName: null, limited: false,
+          fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0,
+          resumeStatus: "pending", coverStatus: "pending", reachedFinalStep: false,
+          contentReady: false, packageLoaded: false, running: false,
+          failureCode: null, failureMessage: null, failureRecoverable: null,
+          siteAccess: "site_access_granted", siteAccessPattern: null,
+          siteAccessOrigin: null, siteAccessScope: "page",
+          siteAccessFramePathShape: null, updatedAt: now
+        };
+        await (chrome.storage.session ?? chrome.storage.local).set({
+          activeAssistedApplyHandoffV1: pending,
+          pendingLaunches: { [String(tabId)]: pending },
+          viewStates: { [String(tabId)]: view }
+        });
+        // Intentionally activate only the employer top frame. The embedded ATS
+        // must be reached by the persisted-grant reconciliation under test.
+        await chrome.scripting.executeScript({
+          target: { tabId, frameIds: [0] }, files: ["content.js"]
+        });
+      }, { url: APPLICATION_URL, tabId, requestId });
+    };
+    const frameInventory = (targetWorker: Worker, tabId: number) => targetWorker.evaluate(async (tabId) => {
+      const rows = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => ({ origin: location.origin, path: location.pathname })
+      });
+      return rows.map((row) => ({ frameId: row.frameId ?? 0, ...row.result as { origin: string; path: string } }));
+    }, tabId);
+
+    let restartContext: BrowserContext | null = null;
+    try {
+      restartContext = await launchBrowser();
+      let restartWorker = restartContext.serviceWorkers()[0]
+        ?? (await restartContext.waitForEvent("serviceworker", { timeout: 20_000 }));
+      await restartWorker.evaluate(async () => {
+        await chrome.storage.local.clear();
+        await chrome.storage.session?.clear();
+      });
+
+      const run1 = await restartContext.newPage();
+      let submittedRun1 = false;
+      run1.on("request", (request) => {
+        if (request.method() === "POST" && request.url().includes("/submit")) submittedRun1 = true;
+      });
+      await run1.goto(APPLICATION_URL);
+      await run1.waitForSelector("#ats");
+      const run1Tab = await restartWorker.evaluate(async (origin) => {
+        const tabs = await chrome.tabs.query({ url: `${origin}/*` });
+        return tabs.at(-1)?.id ?? null;
+      }, EMPLOYER_ORIGIN);
+      expect(run1Tab).not.toBeNull();
+      await seedFreshWorkflow(restartWorker, run1Tab as number, "run-1");
+      await expect(run1.frameLocator("#ats").locator("#email"))
+        .toHaveValue("fixture.candidate@example.test", { timeout: 90_000 });
+      const run1Frames = await frameInventory(restartWorker, run1Tab as number);
+      expect(run1Frames.some((frame) => frame.origin === ATS_ORIGIN && frame.frameId > 0)).toBe(true);
+      expect(submittedRun1).toBe(false);
+
+      await restartContext.close();
+      restartContext = await launchBrowser();
+      restartWorker = restartContext.serviceWorkers()[0]
+        ?? (await restartContext.waitForEvent("serviceworker", { timeout: 20_000 }));
+      const afterRestart = await restartWorker.evaluate(async ({ employer, ats, ads }) => {
+        const runtime = await (chrome.storage.session ?? chrome.storage.local).get([
+          "activeAssistedApplyHandoffV1", "pendingLaunches", "viewStates", "sessionPackages"
+        ]);
+        const all = await chrome.permissions.getAll();
+        return {
+          runtime,
+          employer: await chrome.permissions.contains({ origins: [`${employer}/*`] }),
+          ats: await chrome.permissions.contains({ origins: [`${ats}/*`] }),
+          ads: await chrome.permissions.contains({ origins: [`${ads}/*`] }),
+          wildcard: (all.origins ?? []).includes("https://*/*")
+        };
+      }, { employer: EMPLOYER_ORIGIN, ats: ATS_ORIGIN, ads: ADS_ORIGIN });
+      expect(afterRestart).toMatchObject({ employer: true, ats: true, ads: false, wildcard: false });
+      expect(afterRestart.runtime).toEqual({});
+
+      const run2 = await restartContext.newPage();
+      let submittedRun2 = false;
+      run2.on("request", (request) => {
+        if (request.method() === "POST" && request.url().includes("/submit")) submittedRun2 = true;
+      });
+      await run2.goto(APPLICATION_URL);
+      await run2.waitForSelector("#ats");
+      const run2Tab = await restartWorker.evaluate(async (origin) => {
+        const tabs = await chrome.tabs.query({ url: `${origin}/*` });
+        return tabs.at(-1)?.id ?? null;
+      }, EMPLOYER_ORIGIN);
+      expect(run2Tab).not.toBeNull();
+      await seedFreshWorkflow(restartWorker, run2Tab as number, "run-2");
+      await expect(run2.frameLocator("#ats").locator("#email"))
+        .toHaveValue("fixture.candidate@example.test", { timeout: 90_000 });
+      expect(await run2.frameLocator("#ats").locator("#first_name").inputValue()).toBe("Fixture");
+      expect(await run2.frameLocator("#ats").locator("#last_name").inputValue()).toBe("Candidate");
+      const adValues = await run2.frameLocator("#ads").locator("input")
+        .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
+      expect(adValues.every((value) => value === "")).toBe(true);
+      const run2Frames = await frameInventory(restartWorker, run2Tab as number);
+      expect(run2Frames.some((frame) => frame.origin === ATS_ORIGIN && frame.frameId > 0)).toBe(true);
+      expect(submittedRun2).toBe(false);
+
+      console.log("=== Stage 3C-4 real restart ===\n" + JSON.stringify({
+        run1: { tabId: run1Tab, frames: run1Frames, submitted: submittedRun1 },
+        restart: afterRestart,
+        run2: { tabId: run2Tab, frames: run2Frames, submitted: submittedRun2, adValues }
+      }, null, 2));
+    } finally {
+      await restartContext?.close().catch(() => undefined);
+      rmSync(profileDir, { recursive: true, force: true });
+    }
   });
 });

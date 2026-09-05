@@ -90,6 +90,7 @@ function installProductionChrome(options: {
   const store: Record<string, unknown> = {};
   const messageListeners: Listener[] = [];
   const granted = new Set(options.granted.map((origin) => `${origin}/*`));
+  const injected = new Set<number>([0]);
   const isGranted = (url: string) => {
     try {
       return granted.has(`${new URL(url).origin}/*`);
@@ -111,6 +112,11 @@ function installProductionChrome(options: {
         get: async (key: string) => ({ [key]: store[key] }),
         set: async (o: Record<string, unknown>) => Object.assign(store, o),
         remove: async (key: string) => { delete store[key]; }
+      },
+      session: {
+        get: async (key: string) => ({ [key]: store[key] }),
+        set: async (o: Record<string, unknown>) => Object.assign(store, o),
+        remove: async (key: string) => { delete store[key]; }
       }
     },
     tabs: {
@@ -126,15 +132,25 @@ function installProductionChrome(options: {
       sendMessage: vi.fn((_tab: number, _msg: unknown, opts: unknown, cb?: (r: unknown) => void) => {
         const done = typeof opts === "function" ? (opts as (r: unknown) => void) : cb;
         const frameId = typeof opts === "object" && opts ? (opts as { frameId?: number }).frameId : undefined;
-        const frame = injectable().find((f) => f.frameId === frameId);
+        const frame = injectable().find((f) => f.frameId === frameId && injected.has(f.frameId));
         if (!frame) return done?.(undefined);
         return done?.({ ok: true, evidence: Boolean(frame.evidence), fieldCount: frame.fieldCount ?? 0 });
       })
     },
     windows: { update: vi.fn(async () => ({})) },
     scripting: {
-      executeScript: vi.fn(async () =>
-        injectable().map((frame) => ({ frameId: frame.frameId, result: frame.url })))
+      executeScript: vi.fn(async (request: {
+        target: { frameIds?: number[]; allFrames?: boolean };
+        func?: () => unknown;
+        files?: string[];
+      }) => {
+        const available = injectable();
+        if (request.func) return available.map((frame) => ({ frameId: frame.frameId, result: frame.url }));
+        const targetIds = request.target.frameIds
+          ?? (request.target.allFrames ? available.map((frame) => frame.frameId) : [0]);
+        for (const frameId of targetIds) injected.add(frameId);
+        return targetIds.map((frameId) => ({ frameId }));
+      })
     },
     permissions: {
       contains: vi.fn(async (q: { origins?: string[]; permissions?: string[] }) => {
@@ -150,7 +166,7 @@ function installProductionChrome(options: {
     sidePanel: { setPanelBehavior: vi.fn(async () => undefined) }
   };
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
-  return { messageListeners, store, fakeChrome };
+  return { messageListeners, store, fakeChrome, granted, injected };
 }
 
 function installFakeFetch() {
@@ -201,6 +217,29 @@ async function inspect(options: Parameters<typeof installProductionChrome>[0] & 
     { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: options.observed },
     { tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN }
   )) as Inspection;
+}
+
+async function inspectRuntime(options: Parameters<typeof installProductionChrome>[0] & {
+  observed: ReturnType<typeof observedFrame>[];
+  sender?: unknown;
+}) {
+  installFakeFetch();
+  const runtime = installProductionChrome(options);
+  runtime.store.jobpilotRuntimeRevivedV1 = Date.now();
+  const state = await import("../state");
+  const pending = launch() as never;
+  await state.putActive(pending);
+  await state.putPending(7, pending);
+  await state.putView(7, state.initialView(7, pending, "MongoDB", "Engineer"));
+  await import("../background");
+  const report = await dispatch(
+    runtime.messageListeners,
+    { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: options.observed },
+    options.sender ?? {
+      tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN
+    }
+  ) as Inspection;
+  return { ...runtime, report, state };
 }
 
 const TOP_ONLY = [{ frameId: 0, url: EMPLOYER }];
@@ -360,6 +399,227 @@ describe("embedded ATS discovery, employer granted and ATS not", () => {
       webNavigationGranted: false
     });
     expect(report.outcome).toBe("APPLICATION_FRAME_PERMISSION_MISSING");
+  });
+});
+
+describe("Stage 3C-4 persisted-grant restart activation", () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("1 · persisted exact ATS permission activates a fresh frame without requesting permission", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 9, url: ATS, fieldCount: 9, evidence: true }],
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+
+    expect(run.fakeChrome.permissions.request).not.toHaveBeenCalled();
+    expect(run.fakeChrome.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7, frameIds: [9] }, files: ["content.js"]
+    });
+    expect(run.report.outcome).toBe("APPLICATION_FRAME_DISCOVERY_COMPLETED");
+  });
+
+  it("2 · a prior frame id is never reused when Chrome confirms a new frame id", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 9, url: ATS, fieldCount: 9, evidence: true }],
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+    const injections = run.fakeChrome.scripting.executeScript.mock.calls
+      .map(([call]) => call)
+      .filter((call: { files?: string[] }) => call.files);
+    expect(injections).toEqual([{ target: { tabId: 7, frameIds: [9] }, files: ["content.js"] }]);
+    expect(JSON.stringify(injections)).not.toContain("3");
+  });
+
+  it("4 · persisted employer and ATS grants require no prompt but still bootstrap the ATS", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 12, url: ATS, fieldCount: 2, evidence: true }],
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+    expect(run.fakeChrome.permissions.contains).toHaveBeenCalledWith({ origins: [`${ATS_ORIGIN}/*`] });
+    expect(run.fakeChrome.permissions.request).not.toHaveBeenCalled();
+    expect(run.injected.has(12)).toBe(true);
+  });
+
+  it("5 · a persisted grant with no live ATS frame fabricates no id and injects no data", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN], liveFrames: TOP_ONLY,
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+    const targeted = run.fakeChrome.scripting.executeScript.mock.calls
+      .map(([call]) => call as { target?: { frameIds?: number[] } })
+      .filter((call) => call.target?.frameIds);
+    expect(targeted).toHaveLength(0);
+    expect(run.report.outcome).toBe("APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE");
+    expect(JSON.stringify(run.report)).not.toContain(PROFILE_MARKER);
+  });
+
+  it("6 · a grant revoked while closed returns to the exact permission-required state", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN], liveFrames: TOP_ONLY,
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+    const view = await run.state.getView(7);
+    expect(run.report.outcome).toBe("APPLICATION_FRAME_PERMISSION_MISSING");
+    expect(view).toMatchObject({
+      siteAccess: "site_access_required", siteAccessPattern: `${ATS_ORIGIN}/*`, siteAccessScope: "frame"
+    });
+    expect(run.fakeChrome.scripting.executeScript.mock.calls
+      .some(([call]) => Boolean((call as { target?: { frameIds?: number[] } }).target?.frameIds))).toBe(false);
+  });
+
+  it("revocation after a successful restart activation removes cached authority on the next workflow", async () => {
+    const liveFrames: { frameId: number; url: string; fieldCount?: number; evidence?: boolean }[] = [
+      ...TOP_ONLY,
+      { frameId: 9, url: ATS, fieldCount: 9, evidence: true },
+      { frameId: 4, url: `${ADS_ORIGIN}/widget`, fieldCount: 20, evidence: true }
+    ];
+    installFakeFetch();
+    const runtime = installProductionChrome({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN], liveFrames
+    });
+    runtime.store.jobpilotRuntimeRevivedV1 = Date.now();
+    const state = await import("../state");
+    const pending = launch() as never;
+    await state.putPending(7, pending);
+    await state.putView(7, state.initialView(7, pending, "MongoDB", "Engineer"));
+    await import("../background");
+    const sender = {
+      tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN
+    };
+    await dispatch(runtime.messageListeners,
+      { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
+      sender);
+    expect(runtime.injected.has(9)).toBe(true);
+
+    runtime.granted.delete(`${ATS_ORIGIN}/*`);
+    liveFrames.splice(1, 1, { frameId: 11, url: ATS, fieldCount: 9, evidence: true });
+    const before = runtime.fakeChrome.scripting.executeScript.mock.calls.length;
+    const revoked = await dispatch(runtime.messageListeners,
+      { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
+      sender) as Inspection;
+    const laterCalls = runtime.fakeChrome.scripting.executeScript.mock.calls.slice(before);
+    const view = await state.getView(7);
+
+    expect(revoked.outcome).toBe("APPLICATION_FRAME_PERMISSION_MISSING");
+    expect(view).toMatchObject({
+      siteAccess: "site_access_required", siteAccessPattern: `${ATS_ORIGIN}/*`, siteAccessScope: "frame"
+    });
+    expect(laterCalls.some(([call]) =>
+      (call as { target?: { frameIds?: number[] } }).target?.frameIds?.includes(11))).toBe(false);
+    expect(runtime.injected.has(11)).toBe(false);
+    expect(runtime.injected.has(4)).toBe(false);
+    expect(JSON.stringify(revoked)).not.toContain(PROFILE_MARKER);
+  });
+
+  it("7 · an ad present after restart is neither permission target nor injection target", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [
+        ...TOP_ONLY,
+        { frameId: 8, url: `${ADS_ORIGIN}/banner`, fieldCount: 40, evidence: true },
+        { frameId: 9, url: ATS, fieldCount: 9, evidence: true }
+      ],
+      observed: [observedFrame(0, ADS_ORIGIN, { readableFieldCount: 40 }), observedFrame(1, ATS_ORIGIN)]
+    });
+    expect(run.report.candidateOrigin).toBe(ATS_ORIGIN);
+    expect(run.injected.has(8)).toBe(false);
+    expect(run.fakeChrome.permissions.request).not.toHaveBeenCalled();
+  });
+
+  it("8 · duplicate same-origin ATS frames fail closed without targeted injection", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [
+        ...TOP_ONLY,
+        { frameId: 9, url: ATS },
+        { frameId: 10, url: ATS }
+      ],
+      observed: [observedFrame(0, ATS_ORIGIN)]
+    });
+    const targeted = run.fakeChrome.scripting.executeScript.mock.calls
+      .map(([call]) => call as { target?: { frameIds?: number[] } })
+      .filter((call) => call.target?.frameIds);
+    expect(targeted).toHaveLength(0);
+    expect(run.report.outcome).toBe("APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE");
+  });
+
+  it("10 · retry performs a fresh inventory and activates an ATS that appeared later", async () => {
+    const liveFrames: { frameId: number; url: string; fieldCount?: number; evidence?: boolean }[] = [...TOP_ONLY];
+    installFakeFetch();
+    const runtime = installProductionChrome({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN], liveFrames
+    });
+    runtime.store.jobpilotRuntimeRevivedV1 = Date.now();
+    const state = await import("../state");
+    const pending = launch() as never;
+    await state.putPending(7, pending);
+    await state.putView(7, state.initialView(7, pending, "MongoDB", "Engineer"));
+    await import("../background");
+    const sender = {
+      tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN
+    };
+
+    await dispatch(runtime.messageListeners,
+      { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
+      sender);
+    liveFrames.push({ frameId: 9, url: ATS, fieldCount: 9, evidence: true });
+    const retried = await dispatch(runtime.messageListeners,
+      { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
+      sender) as Inspection;
+
+    expect(runtime.fakeChrome.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7, frameIds: [9] }, files: ["content.js"]
+    });
+    expect(retried.outcome).toBe("APPLICATION_FRAME_DISCOVERY_COMPLETED");
+  });
+
+  it("11 · a bootstrap timeout delivers no profile or resume", async () => {
+    const run = installProductionChrome({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 9, url: ATS }]
+    });
+    run.store.jobpilotRuntimeRevivedV1 = Date.now();
+    run.fakeChrome.scripting.executeScript.mockImplementation(async (request: { func?: () => unknown }) => {
+      if (request.func) return [
+        { frameId: 0, result: EMPLOYER },
+        { frameId: 9, result: ATS }
+      ];
+      return [{ frameId: 9 }]; // execute returned, but bootstrap never answers
+    });
+    installFakeFetch();
+    const state = await import("../state");
+    const pending = launch() as never;
+    await state.putPending(7, pending);
+    await state.putView(7, state.initialView(7, pending, "MongoDB", "Engineer"));
+    await import("../background");
+    const report = await dispatch(run.messageListeners,
+      { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
+      { tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN }
+    );
+    expect(JSON.stringify(report)).not.toContain(PROFILE_MARKER);
+    expect(run.fakeChrome.tabs.sendMessage).not.toHaveBeenCalledWith(
+      7, expect.objectContaining({ type: "JOBPILOT_REQUEST_DOCUMENT" }), expect.anything(), expect.anything()
+    );
+  });
+
+  it("12 · forged payload claims cannot turn a nested ad sender into the trusted top frame", async () => {
+    const run = await inspectRuntime({
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 9, url: ATS }],
+      observed: [observedFrame(0, ATS_ORIGIN)],
+      sender: {
+        tab: { id: 7, url: EMPLOYER }, frameId: 4,
+        url: `${ADS_ORIGIN}/widget`, origin: ADS_ORIGIN,
+        isTopFrame: true, frameIdClaim: 0, originClaim: EMPLOYER_ORIGIN
+      }
+    });
+    expect(run.report.candidateOrigin).toBeNull();
+    expect(run.injected.has(9)).toBe(false);
+    expect(JSON.stringify(run.report)).not.toContain(PROFILE_MARKER);
   });
 });
 

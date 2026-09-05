@@ -92,7 +92,10 @@ import {
   type FrameDiscoveryRecord,
   type FrameEvidenceSource
 } from "./frames/frameDiscovery";
-import { activateGrantedApplicationFrame } from "./frames/postGrantActivation";
+import {
+  activateGrantedApplicationFrame,
+  type PostGrantActivationResult
+} from "./frames/postGrantActivation";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -155,9 +158,10 @@ async function reviveAfterRuntimeReset(): Promise<void> {
 
   await reviveOpenJobPilotTabs();
 
-  // If an employer tab was already open, its old content script and widget are
-  // just as stale as the XpertApply bridge. Durable local state contains the
-  // exact bound tab, so revive only that user-authorized application tab.
+  // If this was an ordinary worker wake, session state still contains the exact
+  // bound tab and it can be revived. A browser/extension runtime reset clears
+  // that ephemeral state, so no old tab/frame binding is resurrected merely
+  // because its host permission persisted.
   const active = await getActive().catch(() => null);
   if (
     active?.targetTabId != null &&
@@ -917,7 +921,10 @@ function handleLaunchRequest(
       validatePayload(payload);
       const applicationId = String(payload.sessionId);
       const existing = await findPendingByApplication(applicationId);
-      if (existing) {
+      // applicationId identifies the backend application, not one browser
+      // workflow generation. Only an idempotent replay of the SAME request may
+      // reuse its tab. A new request gets a new tab, view and frame inventory.
+      if (existing && existing.launch.requestId === payload.requestId) {
         const tab = await chrome.tabs.get(existing.tabId).catch(() => null);
         if (tab) {
           await chrome.tabs.update(existing.tabId, { active: true, url: payload.officialUrl });
@@ -960,10 +967,11 @@ function handleLaunchRequest(
 async function stageHandoff(payload: LaunchPayload, status: PendingLaunch["status"] = "prepared"): Promise<PendingLaunch> {
   validatePayload(payload);
   const previous = await getActive();
-  const createdAt = previous?.applicationId === String(payload.sessionId) ? previous.createdAt : Date.now();
+  const sameWorkflow = previous?.requestId === payload.requestId;
+  const createdAt = sameWorkflow ? previous.createdAt : Date.now();
   const launch: PendingLaunch = {
     ...handoffFields(payload), createdAt, expiresAt: Date.now() + LAUNCH_TTL_MS,
-    targetTabId: previous?.applicationId === String(payload.sessionId) ? previous.targetTabId : undefined,
+    targetTabId: sameWorkflow ? previous.targetTabId : undefined,
     status, state: status === "prepared" ? "package_ready" : "opening_tab"
   };
   await putActive(launch);
@@ -1325,19 +1333,21 @@ async function inspectApplicationFrames(
   candidatePattern: string | null;
   candidateSource: FrameEvidenceSource | null;
 }> {
-  const tabId = sender.tab?.id ?? null;
+  const context = describeSender(sender);
+  const tabId = context?.tabId ?? null;
   const empty = {
     tabId: null, topOrigin: null, topPathShape: null, frames: [] as FrameDiscoveryRecord[],
     enumerationSource: "none", enumerationComplete: false,
     outcome: "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE",
     candidateOrigin: null, candidatePattern: null, candidateSource: null
   };
-  if (tabId == null) return empty;
+  if (tabId == null || !context?.isTopFrame) return empty;
 
   // No workflow, no candidates. Discovery exists to serve an application the
   // user started; without one there is nothing an origin could belong to, and
   // "trusted" would have no meaning to test against.
-  const launch = (await getPending(tabId)) ?? (await getActive());
+  const launch = await getPending(tabId);
+  if (!launch || validateLaunch(launch, context)) return empty;
   const workflowUrl = launch?.officialUrl ?? launch?.applicationUrl ?? null;
 
   // One permission check per DISTINCT origin, not per frame.
@@ -1437,7 +1447,42 @@ async function inspectApplicationFrames(
 
   const frames = mergeFrameInventories(confirmed, observedRecords);
   const candidate = selectTrustedApplicationCandidate(frames);
-  const outcome = frameDiscoveryOutcome(candidate);
+  let outcome = frameDiscoveryOutcome(candidate);
+
+  // A persisted exact grant is authority to attempt activation, not evidence
+  // that this new document/frame is active. Re-enter the same bounded,
+  // Chrome-confirmed primitive used immediately after a new grant. This is the
+  // missing DISCOVERED+GRANTED -> CONFIRM/INJECT transition after restart.
+  if (
+    outcome === "APPLICATION_FRAME_CONTENT_SCRIPT_UNAVAILABLE"
+    && candidate?.source === "chrome_confirmed"
+    && candidate.frameId != null
+    && candidate.origin
+    && candidate.pathShape
+    && candidate.hostPermissionGranted
+  ) {
+    const pattern = patternForOrigin(candidate.origin)!;
+    const activation = await activateGrantedFrameForWorkflow(
+      tabId, candidate.origin, pattern, candidate.pathShape, launch
+    );
+    logGrantedFrameActivation("existing-grant frame activation", tabId, candidate.origin, activation);
+    if (activation.state === "permission_revoked") {
+      candidate.hostPermissionGranted = false;
+      outcome = frameDiscoveryOutcome(candidate);
+      await recordSiteAccess(
+        tabId,
+        siteAccessNeedFor(candidate.origin, false, "frame"),
+        candidate.pathShape
+      );
+    } else if (activation.state === "active") {
+      candidate.contentScriptResponds = true;
+      const probe = await probeFrameApplication(tabId, activation.frameIds[0]);
+      candidate.applicationEvidence = Boolean(probe?.evidence);
+      candidate.fieldCount = probe?.fieldCount ?? 0;
+      outcome = frameDiscoveryOutcome(candidate);
+      await patchView(tabId, { failureCode: null, failureMessage: null });
+    }
+  }
 
   // Hand the finding to the side panel as soon as it is made.
   //
@@ -2324,35 +2369,11 @@ async function applySiteAccessResult(
     return { ok: false, state: "frame_confirmation_pending" };
   }
 
-  const activation = await activateGrantedApplicationFrame(targetOrigin, {
-    permissionGranted: () => chrome.permissions
-      .contains({ origins: [pattern] })
-      .catch(() => false),
-    enumerate: async () => (await enumerateFrames(id)).frames,
-    workflowTrusted: (origin) => {
-      let candidate: URL;
-      try { candidate = new URL(origin); } catch { return false; }
-      return originJoinsWorkflow(launch.officialUrl ?? launch.applicationUrl, candidate)
-        || candidate.origin.toLowerCase() === safeOrigin(launch.applicationUrl);
-    },
-    frameMatches: (frame) => redactedFramePath(frame.url) === targetPathShape,
-    ping: (frameId) => pingFrame(id, frameId),
-    inject: async (frameIds) => {
-      await chrome.scripting.executeScript({
-        target: { tabId: id, frameIds },
-        files: ["content.js"]
-      });
-    },
-    wait: delay
-  });
+  const activation = await activateGrantedFrameForWorkflow(
+    id, targetOrigin, pattern, targetPathShape, launch
+  );
 
-  log.info("post-grant frame activation", {
-    tabId: id,
-    origin: targetOrigin,
-    state: activation.state,
-    count: activation.frameIds.length,
-    reason: activation.state === "pending" ? activation.reason : activation.state
-  });
+  logGrantedFrameActivation("post-grant frame activation", id, targetOrigin, activation);
 
   if (activation.state !== "active") {
     await patchView(id, {
@@ -2370,6 +2391,56 @@ async function applySiteAccessResult(
       : "frame_confirmation_pending" };
   }
   return { ok: true, state: "site_access_granted" };
+}
+
+/**
+ * Canonical exact-origin application-frame activation for both a newly issued
+ * grant and a persisted grant discovered in a fresh workflow. Every caller
+ * supplies fresh Chrome frame evidence; no stored frame id enters this gate.
+ */
+async function activateGrantedFrameForWorkflow(
+  tabId: number,
+  targetOrigin: string,
+  pattern: string,
+  targetPathShape: string,
+  launch: PendingLaunch
+): Promise<PostGrantActivationResult> {
+  return activateGrantedApplicationFrame(targetOrigin, {
+    permissionGranted: () => chrome.permissions
+      .contains({ origins: [pattern] })
+      .catch(() => false),
+    enumerate: async () => (await enumerateFrames(tabId)).frames,
+    workflowTrusted: (origin) => {
+      let candidate: URL;
+      try { candidate = new URL(origin); } catch { return false; }
+      return originJoinsWorkflow(launch.officialUrl ?? launch.applicationUrl, candidate)
+        || candidate.origin.toLowerCase() === safeOrigin(launch.applicationUrl);
+    },
+    frameMatches: (frame) => redactedFramePath(frame.url) === targetPathShape,
+    ping: (frameId) => pingFrame(tabId, frameId),
+    inject: async (frameIds) => {
+      await chrome.scripting.executeScript({
+        target: { tabId, frameIds },
+        files: ["content.js"]
+      });
+    },
+    wait: delay
+  });
+}
+
+function logGrantedFrameActivation(
+  event: string,
+  tabId: number,
+  origin: string,
+  activation: PostGrantActivationResult
+): void {
+  log.info(event, {
+    tabId,
+    origin,
+    state: activation.state,
+    count: activation.frameIds.length,
+    reason: activation.state === "pending" ? activation.reason : activation.state
+  });
 }
 
 /** Drop the lease when the tab navigates or closes, so the next page starts clean. */

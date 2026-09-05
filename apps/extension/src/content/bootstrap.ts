@@ -428,7 +428,12 @@ async function initAtsPage(): Promise<void> {
     }
     if (message.type === MSG.AUTOFILL_START) {
       if (message.reason === "manual_retry") { automaticRunSettled = false; rootRecoveryAttempted = false; }
-      void (matched ? fill(message.reason) : checkHandoffAndStart(message.reason)).then(() => sendResponse({ ok: true }));
+      // Retry is a new discovery attempt, not another adapter call against the
+      // frame that happened to answer first (normally the employer top frame).
+      // The top frame can therefore rediscover and activate a permitted ATS;
+      // an already-active ATS reaches fill immediately from the same function.
+      void (matched ? discoverAndFill(message.reason) : checkHandoffAndStart(message.reason))
+        .then(() => sendResponse({ ok: true }));
       return true;
     }
     if (message.type === MSG.AUTOFILL_PROGRESS) {
@@ -598,12 +603,12 @@ function ensureWidget(): ReturnType<typeof createWidget> {
           void requestReconnect();
           return;
         }
-        void (matched && session ? fill("manual_retry") : checkHandoffAndStart("manual_retry"));
+        void (matched && session ? discoverAndFill("manual_retry") : checkHandoffAndStart("manual_retry"));
       },
       rescan: () => {
         automaticRunSettled = false;
         rootRecoveryAttempted = false;
-        void (matched && session ? fill("manual_retry") : checkHandoffAndStart("manual_retry"));
+        void (matched && session ? discoverAndFill("manual_retry") : checkHandoffAndStart("manual_retry"));
       },
       clear: () => { if (matched) clearJobPilotFields(document); },
       openApplication: () => { void manuallyOpenApplication(); },
@@ -878,6 +883,24 @@ async function reportFrameRemedy(): Promise<void> {
     source: String(inspection?.enumerationSource ?? "unavailable"),
     reopenAvailable: String(Boolean(reopenUrl))
   });
+
+  // Inspection may itself have activated a fresh Chrome-confirmed frame from
+  // persisted exact authority. That child now owns discovery/fill; do not
+  // overwrite the healthy transition with the old unreachable fallback.
+  if ([
+    "APPLICATION_FRAME_FOUND",
+    "APPLICATION_FRAME_DISCOVERY_COMPLETED",
+    "APPLICATION_FRAME_DISCOVERY_ZERO_FIELDS"
+  ].includes(outcome)) {
+    pendingFrameRemedy = null;
+    widget = ensureWidget();
+    widget.update({
+      stage: "detecting",
+      stageLabel: "Application in embedded form",
+      message: "The application is inside an embedded form. XpertApply is filling it there…"
+    });
+    return;
+  }
 
   // Prefer asking for the exact origin: it keeps the user in one tab and one
   // session. Reopening is the fallback that works even when no grant can help.

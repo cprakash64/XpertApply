@@ -118,7 +118,9 @@ describe("tab-scoped launch state", () => {
     // Never associated by "active tab": tab 202 has its own, independent launch.
     expect((await state.getPending(202))?.sessionId).toBe(8);
     expect((await state.findPendingByRequest("r2"))?.tabId).toBe(202);
-    expect((await state.getActive())?.applicationId).toBe("8");
+    // Adding another tab-scoped record does not implicitly replace the active
+    // workflow generation. The launch path promotes it explicitly.
+    expect((await state.getActive())?.applicationId).toBe("7");
 
     await state.clearTab(101);
     expect(await state.getPending(101)).toBeNull();

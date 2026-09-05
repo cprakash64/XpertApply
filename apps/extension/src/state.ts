@@ -1,8 +1,8 @@
 /**
- * Durable launch metadata is persisted in chrome.storage.local. Session
- * packages (tokens and sensitive answers) use chrome.storage.session so they
- * survive MV3 worker suspension without being written to disk.
- * workers can stop/restart, so nothing important lives only in worker memory.
+ * Runtime launch metadata, view progress, and sensitive session packages use
+ * chrome.storage.session. They survive ordinary MV3 worker suspension without
+ * becoming durable browser-restart authority. Chrome host grants persist
+ * separately and are re-reconciled against a fresh workflow/frame inventory.
  *
  * Everything is keyed by the exact employer tab id, so a launch is never
  * associated by "active tab" and the user switching tabs cannot cross wires.
@@ -23,9 +23,18 @@ export interface SessionPackage {
 
 type Map<T> = Record<string, T>;
 
+function workflowStorage(): chrome.storage.StorageArea {
+  // Tab bindings, progress, frame-derived status and the active handoff are
+  // runtime authority, not user authority. storage.session survives ordinary
+  // MV3 worker suspension but Chrome clears it when the browser/extension
+  // runtime is restarted. The local fallback exists only for older test/dev
+  // environments that do not implement storage.session.
+  return chrome.storage.session ?? chrome.storage.local;
+}
+
 async function getMap<T>(key: string): Promise<Map<T>> {
   try {
-    const store = await chrome.storage.local.get(key);
+    const store = await workflowStorage().get(key);
     const value = store[key];
     return value && typeof value === "object" ? (value as Map<T>) : {};
   } catch {
@@ -34,7 +43,7 @@ async function getMap<T>(key: string): Promise<Map<T>> {
 }
 
 async function setMap<T>(key: string, map: Map<T>): Promise<void> {
-  await chrome.storage.local.set({ [key]: map });
+  await workflowStorage().set({ [key]: map });
 }
 
 function packageStorage(): chrome.storage.StorageArea {
@@ -80,11 +89,11 @@ export function isValidHandoffShape(value: unknown): value is PendingLaunch {
 }
 
 export async function putActive(launch: PendingLaunch): Promise<void> {
-  await chrome.storage.local.set({ [ACTIVE_KEY]: launch });
+  await workflowStorage().set({ [ACTIVE_KEY]: launch });
 }
 
 export async function getActive(): Promise<PendingLaunch | null> {
-  const store = await chrome.storage.local.get(ACTIVE_KEY);
+  const store = await workflowStorage().get(ACTIVE_KEY);
   const value = store[ACTIVE_KEY];
   return isValidHandoffShape(value) ? value : null;
 }
@@ -102,7 +111,8 @@ export async function putPending(tabId: number, launch: PendingLaunch): Promise<
   const map = await getMap<PendingLaunch>(PENDING_KEY);
   map[String(tabId)] = { ...launch, targetTabId: tabId };
   await setMap(PENDING_KEY, map);
-  await putActive(map[String(tabId)]);
+  const active = await getActive();
+  if (!active || active.requestId === launch.requestId) await putActive(map[String(tabId)]);
 }
 
 export async function getPending(tabId: number): Promise<PendingLaunch | null> {
@@ -126,7 +136,10 @@ export async function updatePending(tabId: number, patch: Partial<PendingLaunch>
   if (!existing) return;
   map[String(tabId)] = { ...existing, ...patch };
   await setMap(PENDING_KEY, map);
-  await putActive(map[String(tabId)]);
+  const active = await getActive();
+  if (!active || active.requestId === map[String(tabId)].requestId) {
+    await putActive(map[String(tabId)]);
+  }
 }
 
 // --- SessionPackage (cached to survive the single-use launch token) --------- //
@@ -251,7 +264,7 @@ export async function cleanupExpired(now = Date.now()): Promise<void> {
     await setPackageMap(packages);
   }
   const active = await getActive();
-  if (active && active.expiresAt <= now) await chrome.storage.local.remove(ACTIVE_KEY);
+  if (active && active.expiresAt <= now) await workflowStorage().remove(ACTIVE_KEY);
 }
 
 export const STORAGE_KEYS = { PENDING_KEY, PACKAGE_KEY, VIEW_KEY, ACTIVE_KEY };
