@@ -58,6 +58,7 @@ import {
 import { createApplicationAnswerHandlers } from "./applicationAnswer";
 import { startTeachMode, type LearnScope, type LearnedAnswer } from "./teach";
 import { resolveApplicationForm } from "../ats/base";
+import { evaluateSubmissionEvidence } from "../ats/submissionEvidence";
 import type { FormRootResult } from "../ats/formRoot";
 import { probeFrame } from "../frames/probe";
 import { deepQueryAll, scopedElementById } from "../dom/deepDom";
@@ -284,6 +285,10 @@ const HANDOFF_IMPL_VERSION = "session-scoped-package-v1";
  * rest, so a failing workflow can never become a request loop. */
 let reconnectAttempted = false;
 let reconnectInFlight = false;
+let submissionObservationStarted = false;
+let submitGestureObserved = false;
+let submissionOutcomeReported = false;
+let manualConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Ask the background to re-establish this tab's workflow binding.
@@ -317,6 +322,7 @@ async function requestReconnect(): Promise<boolean> {
       }
       outcome = detectAdapter({ url: location.href, document });
       started = true;
+      if (await startSubmissionObservation()) return true;
       void discoverAndFill("continue_after_navigation");
       observeMutations();
       return true;
@@ -586,8 +592,78 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
     widget.update({ stage: "detecting", message: "Waiting for the application form…" });
   }
   started = true;
+  if (await startSubmissionObservation()) return;
   void discoverAndFill(reason);
   observeMutations();
+}
+
+/**
+ * Observe only the result of the user's submission. This listener never calls
+ * click(), requestSubmit(), submit(), or dispatches an input/pointer event.
+ */
+async function startSubmissionObservation(): Promise<boolean> {
+  if (!session || submissionOutcomeReported) return submissionOutcomeReported;
+  if (!submissionObservationStarted) {
+    submissionObservationStarted = true;
+    document.addEventListener("submit", () => {
+      if (!session || submissionOutcomeReported) return;
+      submitGestureObserved = true;
+      if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
+      // Give the ATS time to render or navigate. Weak evidence only asks for
+      // manual confirmation; it can never mark the application applied.
+      manualConfirmationTimer = setTimeout(() => { void evaluateCurrentSubmission(true); }, 2_000);
+    }, true);
+  }
+  return evaluateCurrentSubmission(false);
+}
+
+async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<boolean> {
+  if (!session || submissionOutcomeReported || !isCurrentInstance()) return submissionOutcomeReported;
+  const resolved = resolveApplicationForm(document);
+  const adapterSubmit = outcome?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+  const evidence = evaluateSubmissionEvidence({
+    url: location.href,
+    visibleText: (document.body?.innerText || document.body?.textContent || "").slice(0, 20_000),
+    formStillPresent: Boolean(resolved.root || adapterSubmit),
+    submitClicked: submitGestureObserved,
+    submissionResponse: null
+  });
+
+  if (evidence.confirmed) {
+    submissionOutcomeReported = true;
+    if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
+    automaticRunSettled = true;
+    const response = await sendRuntime({
+      type: MSG.SUBMISSION_CONFIRMED,
+      sessionId: session.sessionId,
+      evidenceType: evidence.evidenceType,
+      submissionTimestamp: new Date().toISOString(),
+      submissionReference: evidence.reference,
+      ats: outcome?.result.atsId ?? session.atsType ?? null
+    }) as { ok?: boolean } | undefined;
+    if (!response?.ok) {
+      // The server is authoritative. A refused/failed request stays retryable
+      // through the user's explicit Mark as applied path and is never painted
+      // as a successful automatic confirmation.
+      widget?.update({
+        stage: "review",
+        message: "Submission detected, but XpertApply could not record it. Confirm it in XpertApply."
+      });
+      return true;
+    }
+    widget?.update({ stage: "ready", message: "Application submitted and recorded in your Tracker." });
+    return true;
+  }
+
+  if (reportWeakEvidence && submitGestureObserved) {
+    submissionOutcomeReported = true;
+    await sendRuntime({
+      type: MSG.MANUAL_CONFIRMATION_REQUIRED,
+      sessionId: session.sessionId,
+      reason: evidence.reason
+    });
+  }
+  return false;
 }
 
 function ensureWidget(): ReturnType<typeof createWidget> {
@@ -3718,12 +3794,15 @@ function observeMutations(): void {
     if (Date.now() > stopAt) { observer.disconnect(); return; }
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
-      // Continue filling any newly rendered fields. The fill engine skips fields
-      // already filled or edited by the user, so this never duplicates values.
-      if (session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
-        void discoverAndFill("continue_after_navigation");
-      }
-      else emitProgressOnly();
+      void evaluateCurrentSubmission(false).then((confirmed) => {
+        if (confirmed) return;
+        // Continue filling any newly rendered fields. The fill engine skips
+        // fields already filled or edited by the user.
+        if (session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
+          void discoverAndFill("continue_after_navigation");
+        }
+        else emitProgressOnly();
+      });
     }, 500);
   });
   observer.observe(document.body, { childList: true, subtree: true });

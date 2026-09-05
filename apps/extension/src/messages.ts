@@ -581,6 +581,13 @@ const AUTOFILL_REASONS = ["automatic_launch", "manual_retry", "continue_after_na
 const ANSWER_SCOPES = ["global", "company", "application", "sensitive"] as const;
 const DOCUMENT_KINDS = ["resume", "cover-letter"] as const;
 const EVIDENCE_TYPES = ["success_page", "success_response", "success_message"] as const;
+const WEAK_EVIDENCE_REASONS = [
+  "NO_SUCCESS_SIGNAL",
+  "SUBMIT_CLICK_ONLY",
+  "FORM_DISAPPEARED_ONLY",
+  "URL_CHANGED_ONLY",
+  "AMBIGUOUS_CONFIRMATION"
+] as const;
 
 const SESSION_ID: FieldSpec = { kind: "integer", required: true };
 
@@ -690,7 +697,7 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   },
   [MSG.MANUAL_CONFIRMATION_REQUIRED]: {
     sessionId: SESSION_ID,
-    reason: { kind: "string", max: LIMIT.key, required: true }
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: WEAK_EVIDENCE_REASONS }
   },
   [MSG.EMPLOYER_AUTH_REQUIRED]: {
     sessionId: SESSION_ID,

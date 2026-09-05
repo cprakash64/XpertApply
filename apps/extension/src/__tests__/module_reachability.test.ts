@@ -51,12 +51,10 @@ const KNOWN_ORPHANS: Record<string, string> = {
 //                               (checkDemographicOptions), on the live path and
 //                               against the real contract.
 //
-//   ats/submissionEvidence.ts   no producer existed anywhere in the content
-//                               script; nothing could reach it. XA-07 (the
-//                               missing submission-confirmation feature) stays
-//                               OPEN and will need this logic re-implemented
-//                               against the path that actually runs.
-const DECOMMISSIONED = ["fields/eeoMapping.ts", "ats/submissionEvidence.ts"];
+// `ats/submissionEvidence.ts` was formerly listed here because no producer
+// existed anywhere in the content script. XA-07 reintroduced it only after the
+// shipped bootstrap gained a real post-submit observer.
+const DECOMMISSIONED = ["fields/eeoMapping.ts"];
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -127,5 +125,6 @@ describe("XA-05 · every module is reachable from production code", () => {
     expect(imported.has("fields/answerSemantics.ts")).toBe(true);
     expect(imported.has("fields/answerAuthority.ts")).toBe(true);
     expect(imported.has("security/senderTrust.ts")).toBe(true);
+    expect(imported.has("ats/submissionEvidence.ts")).toBe(true);
   });
 });

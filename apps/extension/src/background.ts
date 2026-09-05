@@ -70,6 +70,7 @@ import {
 } from "./state";
 import { urlsMatchForHandoff } from "./url";
 import {
+  authorizeFrameForSubmission,
   authorizeFrameForLaunch,
   describeSender,
   originJoinsLaunchWorkflow,
@@ -854,7 +855,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.SUBMISSION_CONFIRMED:
-      void confirmSubmissionForSession(message)
+      void confirmSubmissionForSession(message, sender)
         .then((result) => sendResponse({ ok: true, ...result }))
         .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
       return true;
@@ -2020,13 +2021,29 @@ const CONFIRMED_SESSIONS = new Set<number>();
  * outright rather than guessed at.
  */
 async function confirmSubmissionForSession(
-  message: Extract<RuntimeMessage, { type: typeof MSG.SUBMISSION_CONFIRMED }>
+  message: Extract<RuntimeMessage, { type: typeof MSG.SUBMISSION_CONFIRMED }>,
+  sender: chrome.runtime.MessageSender
 ): Promise<{ alreadyConfirmed: boolean }> {
+  const context = describeSender(sender);
+  if (!context) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  const pending = await getPending(context.tabId);
+  const entry = await getPackage(context.tabId);
+  if (!pending || !entry) throw new Error("SESSION_NOT_FOUND");
+  if (pending.protocolVersion !== PROTOCOL_VERSION || Date.now() > pending.expiresAt) {
+    throw new Error("SESSION_NOT_FOUND");
+  }
+  if (pending.targetTabId != null && pending.targetTabId !== context.tabId) {
+    throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  }
+  if (pending.sessionId !== message.sessionId || entry.session.sessionId !== message.sessionId) {
+    throw new Error("SESSION_MISMATCH");
+  }
+  if (!authorizeFrameForSubmission(context, pending).ok) {
+    throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  }
   if (CONFIRMED_SESSIONS.has(message.sessionId)) {
     return { alreadyConfirmed: true };
   }
-  const entry = await findPackageBySession(message.sessionId);
-  if (!entry) throw new Error("SESSION_NOT_FOUND");
 
   const result = await confirmSubmission(entry.sessionToken, message.sessionId, {
     evidence_type: message.evidenceType,

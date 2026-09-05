@@ -18,6 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  authorizeFrameForSubmission,
   authorizeFrameForLaunch,
   describeSender,
   originJoinsWorkflow,
@@ -204,6 +205,38 @@ describe("tab binding is weaker than frame authorization", () => {
       ok: false,
       reason: "FRAME_ORIGIN_NOT_IN_WORKFLOW"
     });
+  });
+});
+
+describe("post-submit evidence authorization", () => {
+  it("accepts a success landing on the bound employer origin even though its path changed", () => {
+    const success = "https://careers.mongodb.com/application-submitted?submitted=true";
+    expect(authorizeFrameForSubmission(
+      context({ frameId: 0, url: success, tabUrl: success }),
+      launch()
+    )).toEqual({ ok: true, isTopFrame: true });
+  });
+
+  it("accepts an allow-listed ATS frame only while its tab remains in the workflow", () => {
+    expect(authorizeFrameForSubmission(
+      context({ frameId: 4, url: "https://boards.greenhouse.io/applications/1/confirmation" }),
+      launch()
+    )).toEqual({ ok: true, isTopFrame: false });
+  });
+
+  it("refuses unrelated frames and tabs", () => {
+    expect(authorizeFrameForSubmission(
+      context({ frameId: 4, url: "https://ads.doubleclick.net/application-submitted" }),
+      launch()
+    )).toEqual({ ok: false, reason: "FRAME_ORIGIN_NOT_IN_WORKFLOW" });
+    expect(authorizeFrameForSubmission(
+      context({
+        frameId: 4,
+        url: "https://boards.greenhouse.io/applications/1/confirmation",
+        tabUrl: "https://evil.example/"
+      }),
+      launch()
+    )).toEqual({ ok: false, reason: "TAB_LEFT_WORKFLOW" });
   });
 });
 
@@ -483,6 +516,58 @@ describe("the shipped message listener", () => {
     expect(view.view?.sessionId).toBe(55);
   });
 
+  it("binds a submission confirmation to the sender tab's cached session", async () => {
+    const { messageListeners } = await bindTab();
+    const successUrl = "https://careers.mongodb.com/application-submitted?submitted=true";
+    const response = await dispatch(
+      messageListeners,
+      {
+        type: "JOBPILOT_SUBMISSION_CONFIRMED",
+        sessionId: 55,
+        evidenceType: "success_page",
+        submissionTimestamp: "2026-09-05T19:00:00.000Z",
+        submissionReference: "XA-55",
+        ats: null
+      },
+      sender({ frameId: 0, url: successUrl, tabUrl: successUrl })
+    ) as { ok?: boolean };
+
+    expect(response.ok).toBe(true);
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).endsWith("/application-sessions/55/submission-confirmed")
+    )).toBe(true);
+  });
+
+  it("refuses a confirmation that names another session or comes from another origin", async () => {
+    const { messageListeners } = await bindTab();
+    const fetchMock = vi.mocked(fetch);
+    const before = fetchMock.mock.calls.length;
+    const message = {
+      type: "JOBPILOT_SUBMISSION_CONFIRMED",
+      sessionId: 999,
+      evidenceType: "success_page",
+      submissionTimestamp: "2026-09-05T19:00:00.000Z",
+      submissionReference: null,
+      ats: null
+    };
+
+    const mismatch = await dispatch(
+      messageListeners,
+      message,
+      sender({ frameId: 0, url: APPLICATION_URL })
+    ) as { ok?: boolean; error?: string };
+    expect(mismatch).toMatchObject({ ok: false, error: "SESSION_MISMATCH" });
+
+    const foreign = await dispatch(
+      messageListeners,
+      { ...message, sessionId: 55 },
+      sender({ frameId: 4, url: "https://ads.doubleclick.net/application-submitted" })
+    ) as { ok?: boolean; error?: string };
+    expect(foreign).toMatchObject({ ok: false, error: "UNTRUSTED_CONFIRMATION_SENDER" });
+    expect(fetchMock.mock.calls).toHaveLength(before);
+  });
+
   it("rejects an unknown message type", async () => {
     const { messageListeners } = await bindTab();
     const response = (await dispatch(
@@ -542,6 +627,9 @@ describe("runtime message payload validation", () => {
     expect(parseRuntimeMessage({
       type: "JOBPILOT_SUBMISSION_CONFIRMED", sessionId: 55, evidenceType: "vibes",
       submissionTimestamp: "2026-08-22T00:00:00Z", submissionReference: null, ats: null
+    })).toBeNull();
+    expect(parseRuntimeMessage({
+      type: "JOBPILOT_MANUAL_CONFIRMATION_REQUIRED", sessionId: 55, reason: "WHATEVER_THE_PAGE_SAID"
     })).toBeNull();
     expect(parseRuntimeMessage({
       type: "JOBPILOT_SAVE_ANSWER", sessionId: 55, canonicalKey: "k", value: "v", scope: "everything"

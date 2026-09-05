@@ -39,6 +39,18 @@ type Fixtures = { context: BrowserContext; worker: Worker; origin: string };
 const test = base.extend<Fixtures>({
   origin: async ({}, use) => {
     const server: Server = createServer((request, response) => {
+      if (request.method === "POST" && request.url?.startsWith("/careers/applications/submit")) {
+        response.writeHead(303, { Location: "/application-submitted?submitted=true" });
+        response.end();
+        return;
+      }
+      if (request.url?.startsWith("/application-submitted")) {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><title>Application received</title>
+          <main><h1>Your application has been submitted.</h1>
+          <p>Confirmation number: XA-E2E-55</p></main>`);
+        return;
+      }
       if (request.url?.startsWith("/job")) {
         response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         response.end(FIXTURE);
@@ -225,6 +237,76 @@ test("the shipped extension never activates the final Submit control", async ({
   expect(clicks.some((entry) => entry.toLowerCase().includes("submit"))).toBe(false);
   // The form is still there and unsubmitted.
   expect(await page.locator("#final-submit").count()).toBe(1);
+
+  await page.close();
+});
+
+test("a user-submitted application reaching strong confirmation evidence is reported once", async ({
+  context,
+  worker,
+  origin
+}) => {
+  const applicationUrl = `${origin}/job`;
+  await worker.evaluate(async (url) => {
+    const now = Date.now();
+    await (chrome.storage.session ?? chrome.storage.local).set({
+      activeAssistedApplyHandoffV1: {
+        version: 1, applicationId: "e2e-confirmation", jobId: "4242", applicationUrl: url,
+        status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-confirmation",
+        sessionId: 55, launchToken: "e2e-launch", officialUrl: url,
+        expectedOrigin: new URL(url).origin, createdAt: now, expiresAt: now + 900_000,
+        state: "waiting_for_content_script", protocolVersion: 3, atsType: null
+      }
+    });
+  }, applicationUrl);
+
+  const confirmations: { body: Record<string, unknown>; authorization: string | undefined }[] = [];
+  // Registered after the fixture's broad session route so Playwright gives
+  // this exact endpoint precedence and the service worker receives a real
+  // session-scoped token.
+  await context.route("**/application-sessions/token", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ session_token: "e2e-session-token" })
+  }));
+  await context.route("**/application-sessions/55/submission-confirmed", async (route) => {
+    confirmations.push({
+      body: route.request().postDataJSON() as Record<string, unknown>,
+      authorization: route.request().headers().authorization
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, application: {}, created: true, already_applied: false, job_id: 4242 })
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(applicationUrl);
+  await page.waitForSelector("#application-form", { timeout: 20_000 });
+  await page.locator("#first_name").fill("Test");
+  await page.locator("#last_name").fill("Candidate");
+  await page.locator("#email").fill("candidate@example.test");
+
+  // Playwright's pointer action is the user's final-submit gesture. The
+  // extension observes the result and must never activate this control itself.
+  await page.locator("#final-submit").click();
+  await page.waitForURL(/application-submitted/);
+  await expect.poll(() => confirmations.length, { timeout: 10_000 }).toBe(1);
+
+  expect(confirmations[0]).toEqual({
+    authorization: "Bearer e2e-session-token",
+    body: {
+      evidence_type: "success_page",
+      submission_timestamp: expect.any(String),
+      submission_reference: "XA-E2E-55",
+      ats: null,
+      confirmation_source: "extension_confirmed"
+    }
+  });
+  expect(Object.keys(confirmations[0].body)).not.toEqual(expect.arrayContaining(["job_id", "user_id", "status"]));
+  await page.waitForTimeout(750);
+  expect(confirmations).toHaveLength(1);
 
   await page.close();
 });

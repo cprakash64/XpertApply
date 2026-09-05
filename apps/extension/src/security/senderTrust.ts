@@ -229,6 +229,31 @@ export function authorizeFrameForLaunch(
 }
 
 /**
+ * Authorize evidence from a post-submit document.
+ *
+ * Unlike the fill gate, this deliberately permits the top frame's path to have
+ * changed: a success landing is expected not to match the job/application URL.
+ * It still requires both the sending frame and the current tab to remain inside
+ * the launch's employer/ATS origin graph. Session identity is checked against
+ * the tab-bound package by the caller.
+ */
+export function authorizeFrameForSubmission(
+  sender: SenderContext | null,
+  launch: PendingLaunch
+): FrameAuthorization {
+  if (!sender) return { ok: false, reason: "NO_SENDER_TAB" };
+  if (!sender.frameOrigin) return { ok: false, reason: "FRAME_ORIGIN_UNRESOLVABLE" };
+  if (!joinsWorkflow(launch, sender.frameOrigin)) {
+    return { ok: false, reason: "FRAME_ORIGIN_NOT_IN_WORKFLOW" };
+  }
+  const tabUrl = parseHttpUrl(sender.tabUrl);
+  if (!tabUrl || !joinsWorkflow(launch, tabUrl)) {
+    return { ok: false, reason: "TAB_LEFT_WORKFLOW" };
+  }
+  return { ok: true, isTopFrame: sender.isTopFrame };
+}
+
+/**
  * May this sender BIND the tab it is in to an active handoff?
  *
  * A weaker, separate question from `authorizeFrameForLaunch`: binding asks
