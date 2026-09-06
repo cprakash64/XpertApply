@@ -71,6 +71,11 @@ export class WidgetDriver {
     }`);
   }
 
+  /** User-visible status text from the production widget's closed shadow root. */
+  async message(): Promise<string> {
+    return this.call(`function(){ return (this.querySelector(".message") || {}).textContent || ""; }`);
+  }
+
   /** Every action-item card the authoritative review list is showing. */
   async actionItems(): Promise<
     { fieldKey: string; title: string; buttons: string[]; source: string | null; status: string | null }[]

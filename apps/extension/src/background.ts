@@ -2494,7 +2494,8 @@ export function frameRegistrySnapshot(tabId: number): RegisteredFrame[] {
 const PER_FRAME_FAILURE_CODES = new Set([
   "FORM_NOT_RENDERED",
   "NO_APPLICATION_FORM",
-  "APPLICATION_FORM_AMBIGUOUS"
+  "APPLICATION_FORM_AMBIGUOUS",
+  "APPLICATION_FORM_TOO_LARGE"
 ]);
 
 async function applyFailure(

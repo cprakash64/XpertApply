@@ -26,6 +26,7 @@ import {
   scopedElementById,
   scopedQuery
 } from "../dom/deepDom";
+import { inspectControlBudget } from "./controlBudget";
 
 const NATIVE_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])",
@@ -73,10 +74,24 @@ function currentFrameId(): string {
 export interface DiscoveryResult {
   fields: DiscoveredField[];
   excluded: ExcludedControl[];
+  /** True means discovery refused the whole root; fields were never truncated. */
+  tooLarge?: boolean;
+  controlCount?: number;
+  controlBudget?: number;
 }
 
 /** Full discovery with the exclusion ledger — the canonical entry point. */
 export function discoverAll(root: ParentNode = document, step = 0): DiscoveryResult {
+  const budget = inspectControlBudget(root);
+  if (budget.exceeded) {
+    return {
+      fields: [],
+      excluded: [],
+      tooLarge: true,
+      controlCount: budget.count,
+      controlBudget: budget.limit
+    };
+  }
   const fields: DiscoveredField[] = [];
   const excluded: ExcludedControl[] = [];
   const seenElements = new Set<HTMLElement>();

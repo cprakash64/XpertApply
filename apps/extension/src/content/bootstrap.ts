@@ -840,8 +840,10 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
 
   const message = obstructed
     ? "A cookie or consent banner is covering this page. Dismiss it, then choose Retry."
-    : code === "FIELD_DISCOVERY_RETURNED_ZERO"
-      ? "The application form loaded but XpertApply found no fields it can fill. Choose Rescan application."
+    : code === "APPLICATION_FORM_TOO_LARGE"
+      ? `This page has ${readiness.root?.controlCount ?? "too many"} controls, above XpertApply's safe limit of ${readiness.root?.controlBudget ?? 1_000}. XpertApply won't partially fill it; review the form manually.`
+      : code === "FIELD_DISCOVERY_RETURNED_ZERO"
+        ? "The application form loaded but XpertApply found no fields it can fill. Choose Rescan application."
       : canOpen
         ? "Click once to open the application form. XpertApply will continue automatically."
         : stillOnEntryUrl
@@ -1593,6 +1595,7 @@ async function fill(reason: AutofillReason): Promise<void> {
   if (!formRoot.confident) {
     running = false;
     const ambiguous = formRoot.reason === "APPLICATION_FORM_AMBIGUOUS";
+    const tooLarge = formRoot.reason === "APPLICATION_FORM_TOO_LARGE";
 
     // An unresolved root is EXPECTED state while the application has not been
     // revealed yet (the live Airbnb page ships "Role overview" selected and no
@@ -1602,13 +1605,15 @@ async function fill(reason: AutofillReason): Promise<void> {
     log.debug(`application root unresolved (${formRoot.reason ?? "unknown"}), ${formRoot.candidates.length} candidate(s)`);
 
     // Ambiguity is a real dead end — two different forms, nothing safe to pick.
-    if (ambiguous) {
+    if (ambiguous || tooLarge) {
       widget?.update({
         stage: "failed",
-        message:
-          "XpertApply found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it."
+        message: tooLarge
+          ? `This page has ${formRoot.controlCount ?? "too many"} controls, above XpertApply's safe limit of ${formRoot.controlBudget ?? 1_000}. XpertApply won't partially fill it; review the form manually.`
+          : "XpertApply found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it.",
+        recoverable: true
       });
-      void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: "APPLICATION_FORM_AMBIGUOUS" });
+      void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: formRoot.reason });
       return;
     }
 

@@ -23,12 +23,14 @@ import {
   deepQueryAll,
   scopedQuery
 } from "../dom/deepDom";
+import { inspectControlBudget } from "../fields/controlBudget";
 
 /** Bumped when the scoring rules change, so diagnostics are comparable.
  * 2.1.0: every count below pierces open shadow roots. Before it, an application
  * built from web components (SmartRecruiters "Easy Apply", the live ServiceNow
- * destination) scored `no_fields` on every candidate and resolved to nothing. */
-export const RESOLVER_VERSION = "2.1.0";
+ * destination) scored `no_fields` on every candidate and resolved to nothing.
+ * 2.2.0: root resolution refuses an over-budget control set before scoring. */
+export const RESOLVER_VERSION = "2.2.0";
 
 /** A candidate must beat this to be used at all. */
 const MIN_CONFIDENT_SCORE = 6;
@@ -47,7 +49,7 @@ export interface FormRootResult {
   root: ParentNode | null;
   element: Element | null;
   confident: boolean;
-  reason?: "APPLICATION_FORM_AMBIGUOUS" | "NO_APPLICATION_FORM";
+  reason?: "APPLICATION_FORM_AMBIGUOUS" | "APPLICATION_FORM_TOO_LARGE" | "NO_APPLICATION_FORM";
   candidates: FormCandidate[];
   resolverVersion: string;
   /** How the root was chosen — surfaced in diagnostics so "no root" is never
@@ -55,6 +57,8 @@ export interface FormRootResult {
   rootKind?: "form" | "container" | "document";
   /** Human-readable explanation of the verdict, for Copy diagnostics. */
   explanation?: string;
+  controlCount?: number;
+  controlBudget?: number;
 }
 
 const FIELD_SELECTOR = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),textarea,select,[role="combobox"],[role="listbox"]';
@@ -333,6 +337,22 @@ function documentFallback(doc: Document): { score: number; signals: string[]; fi
 const NESTED_MARGIN = 4;
 
 export function resolveApplicationRoot(doc: Document): FormRootResult {
+  const budget = inspectControlBudget(doc);
+  if (budget.exceeded) {
+    return {
+      root: null,
+      element: null,
+      confident: false,
+      reason: "APPLICATION_FORM_TOO_LARGE",
+      candidates: [],
+      resolverVersion: RESOLVER_VERSION,
+      controlCount: budget.count,
+      controlBudget: budget.limit,
+      explanation:
+        `Found ${budget.count} actionable controls, above the safe discovery budget of ${budget.limit}. ` +
+        "Refusing to scan or partially fill the page."
+    };
+  }
   const candidates: FormCandidate[] = [];
   const scored: { el: Element; score: number }[] = [];
 
