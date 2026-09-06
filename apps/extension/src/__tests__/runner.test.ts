@@ -43,8 +43,9 @@ describe("fill runner (end-to-end on a fixture)", () => {
   it("clears every XpertApply-filled value, leaving the form as it was", async () => {
     mountFixture(GREENHOUSE_FIXTURE);
     await runFill(document.querySelector("#application_form")!, session());
-    const cleared = clearJobPilotFields(document);
-    expect(cleared).toBeGreaterThanOrEqual(3);
+    const cleared = await clearJobPilotFields(document);
+    expect(cleared.cleared).toBeGreaterThanOrEqual(3);
+    expect(cleared.failed).toBe(0);
     expect((document.getElementById("first_name") as HTMLInputElement).value).toBe("");
     expect(document.querySelectorAll("[data-jobpilot-filled]").length).toBe(0);
   });

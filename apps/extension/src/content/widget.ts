@@ -177,7 +177,7 @@ const CATEGORY_LABEL: Record<ReviewCategory, string> = {
 export function createWidget(actions: {
   retry: () => void;
   rescan?: () => void;
-  clear: () => void;
+  clear: () => void | Promise<void>;
   complete: () => void;
   /** Manual fallback: activate the already-validated Apply control. Offered
    * only after automatic activation failed to produce any transition. */

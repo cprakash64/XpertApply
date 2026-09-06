@@ -8,12 +8,21 @@
 import type { DiscoveredField, FillOutcome } from "../types";
 import { fillDropdown, selectAdapter } from "./dropdown";
 import type { AnswerSource } from "./dropdown/types";
+import { deepQueryAll } from "../dom/deepDom";
 
 export type FillStatus = "verified" | "generated" | "review" | "invalid" | "neutral";
 
 const FILLED_ATTR = "data-jobpilot-filled";
 const ORIGINAL_ATTR = "data-jobpilot-original";
 const STATUS_ATTR = "data-jobpilot-status";
+
+interface DropdownOriginal {
+  field: DiscoveredField;
+  selected: string[];
+}
+
+/** Page-session only: answer labels never enter DOM attributes or storage. */
+const dropdownOriginals = new WeakMap<HTMLElement, DropdownOriginal>();
 
 const OUTLINE: Record<FillStatus, string> = {
   verified: "2px solid #2f8f5b", // green — verified user data
@@ -113,6 +122,12 @@ async function fillViaDropdown(field: DiscoveredField, values: string[], options
     return { uid: field.uid, status: "skipped", reason: "user value present" };
   }
 
+  // Capture before interaction. Keep the FIRST snapshot across forced/repeated
+  // fills so Clear always returns to the user's state, not an intermediate
+  // XpertApply selection.
+  const original = dropdownOriginals.get(el) ?? { field, selected: [...existing] };
+  if (!dropdownOriginals.has(el)) dropdownOriginals.set(el, original);
+  captureOriginalIfPossible(el);
   const result = await fillDropdown(field, {
     values,
     searchValue: options.dropdownSearchValue,
@@ -128,7 +143,6 @@ async function fillViaDropdown(field: DiscoveredField, values: string[], options
     selected: result.selected
   };
   if (result.ok) {
-    captureOriginalIfPossible(el);
     mark(el, options.status ?? "verified");
     return { uid: field.uid, status: "filled", dropdown: detail };
   }
@@ -195,13 +209,36 @@ function fillCheckbox(field: DiscoveredField, el: HTMLInputElement, value: strin
 // --------------------------------------------------------------------------- //
 // Clearing + highlighting (fully reversible; never permanently alters the page)
 // --------------------------------------------------------------------------- //
-export function clearJobPilotFields(root: ParentNode = document): number {
-  const filled = Array.from(root.querySelectorAll<HTMLElement>(`[${FILLED_ATTR}]`));
+export interface ClearResult {
+  cleared: number;
+  failed: number;
+}
+
+export async function clearJobPilotFields(root: ParentNode = document): Promise<ClearResult> {
+  const filled = deepQueryAll<HTMLElement>(root, `[${FILLED_ATTR}]`);
+  let cleared = 0;
+  let failed = 0;
   for (const el of filled) {
+    const dropdownOriginal = dropdownOriginals.get(el);
+    if (dropdownOriginal) {
+      const adapter = selectAdapter(dropdownOriginal.field);
+      const restored = Boolean(
+        adapter?.restoreSelection
+        && await adapter.restoreSelection(dropdownOriginal.field, dropdownOriginal.selected).catch(() => false)
+      );
+      if (!restored) {
+        failed += 1;
+        continue;
+      }
+      dropdownOriginals.delete(el);
+    }
     const original = el.getAttribute(ORIGINAL_ATTR) ?? "";
     const tag = el.tagName.toLowerCase();
     const input = el as HTMLInputElement;
-    if (input.type === "checkbox" || input.type === "radio") {
+    if (dropdownOriginal) {
+      // The adapter already restored and dispatched the framework-visible
+      // events. Never overwrite that verified state through a second path.
+    } else if (input.type === "checkbox" || input.type === "radio") {
       input.checked = original === "checked";
     } else if (el.getAttribute("contenteditable") === "true") {
       el.textContent = original;
@@ -210,13 +247,14 @@ export function clearJobPilotFields(root: ParentNode = document): number {
     } else {
       setNativeValue(el as HTMLInputElement | HTMLTextAreaElement, original);
     }
-    dispatch(el, ["input", "change"]);
+    if (!dropdownOriginal) dispatch(el, ["input", "change"]);
     el.removeAttribute(FILLED_ATTR);
     el.removeAttribute(ORIGINAL_ATTR);
     el.removeAttribute("data-jobpilot-repeater");
     removeHighlight(el);
+    cleared += 1;
   }
-  return filled.length;
+  return { cleared, failed };
 }
 
 export function highlight(el: HTMLElement, status: FillStatus): void {

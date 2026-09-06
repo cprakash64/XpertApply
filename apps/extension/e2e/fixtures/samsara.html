@@ -227,6 +227,14 @@ function makeSelect(opts) {
     control.setAttribute('aria-expanded', 'false');
   }
 
+  function clearSelection() {
+    selected.clear();
+    if (placeholder) placeholder.style.display = '';
+    value.textContent = '';
+    value.className = 'select__value';
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   function commit(label) {
     if (opts.inert) return;                 // renders options but never commits
     if (opts.multiple) {
@@ -256,6 +264,9 @@ function makeSelect(opts) {
   control.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') open();
     if (e.key === 'Escape') close();
+    // React Select's ordinary keyboard clear affordance. XA-10 exercises the
+    // production adapter through this real component state transition.
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selected.size > 0) clearSelection();
   });
   if (searchInput) searchInput.addEventListener('input', render);
   return { getSelected: () => Array.from(selected) };

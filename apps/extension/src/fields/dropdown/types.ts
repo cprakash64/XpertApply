@@ -88,6 +88,10 @@ export interface DropdownAdapter {
   /** Currently-selected labels read from real DOM state. Empty = blank, which
    * includes any placeholder ("Select...", "Choose...", …). Drives completeness. */
   readSelection(field: DiscoveredField): string[];
+  /** Restore the exact pre-XpertApply selection through the control's real
+   * state path. False means the caller must retain its marker and report that
+   * Clear was incomplete. */
+  restoreSelection?(field: DiscoveredField, selected: string[]): Promise<boolean>;
 }
 
 /** Where a chosen answer came from — ordered by trust (section E). */

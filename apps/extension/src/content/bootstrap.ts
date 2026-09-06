@@ -452,9 +452,12 @@ async function initAtsPage(): Promise<void> {
       return false;
     }
     if (message.type === MSG.CLEAR_SESSION) {
-      if (matched) clearJobPilotFields(document);
-      sendResponse({ ok: true });
-      return false;
+      if (!matched) {
+        sendResponse({ ok: true, cleared: 0, failed: 0 });
+        return false;
+      }
+      void clearJobPilotFields(document).then((result) => sendResponse({ ok: result.failed === 0, ...result }));
+      return true;
     }
     return false;
   });
@@ -686,7 +689,17 @@ function ensureWidget(): ReturnType<typeof createWidget> {
         rootRecoveryAttempted = false;
         void (matched && session ? discoverAndFill("manual_retry") : checkHandoffAndStart("manual_retry"));
       },
-      clear: () => { if (matched) clearJobPilotFields(document); },
+      clear: () => {
+        if (!matched) return;
+        void clearJobPilotFields(document).then(({ cleared, failed }) => {
+          widget?.update({
+            stage: "review",
+            message: failed > 0
+              ? `Cleared ${cleared} field${cleared === 1 ? "" : "s"}, but ${failed} choice control${failed === 1 ? "" : "s"} could not be safely restored. Review the marked field${failed === 1 ? "" : "s"} manually.`
+              : `Cleared ${cleared} XpertApply-filled field${cleared === 1 ? "" : "s"}.`
+          });
+        });
+      },
       openApplication: () => { void manuallyOpenApplication(); },
       reconnect: () => {
         widget?.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true, offerReconnect: true });

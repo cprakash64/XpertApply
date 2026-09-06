@@ -76,6 +76,11 @@ export class WidgetDriver {
     return this.call(`function(){ return (this.querySelector(".message") || {}).textContent || ""; }`);
   }
 
+  /** Activate the production Clear button inside the closed shadow root. */
+  async clearFilledFields(): Promise<void> {
+    await this.call(`function(){ this.querySelector('[data-a="clear"]').click(); return true; }`);
+  }
+
   /** Every action-item card the authoritative review list is showing. */
   async actionItems(): Promise<
     { fieldKey: string; title: string; buttons: string[]; source: string | null; status: string | null }[]

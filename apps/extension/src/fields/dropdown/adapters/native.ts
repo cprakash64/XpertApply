@@ -95,6 +95,30 @@ export const nativeSelectAdapter: DropdownAdapter = {
       .filter((o) => o.value.trim() !== "")
       .map((o) => clean(o.textContent) || o.value)
       .filter((label) => label && !isBlankValue(label));
+  },
+
+  async restoreSelection(field, selected): Promise<boolean> {
+    const el = field.element as HTMLSelectElement | undefined;
+    if (!el) return false;
+    const wanted = new Set(selected.map(normalizeForMatch));
+    if (el.multiple) {
+      for (const option of Array.from(el.options)) {
+        const label = clean(option.textContent) || option.value;
+        option.selected = wanted.has(normalizeForMatch(label));
+      }
+    } else if (selected.length === 0) {
+      el.value = "";
+    } else {
+      const option = Array.from(el.options).find((candidate) => {
+        const label = clean(candidate.textContent) || candidate.value;
+        return wanted.has(normalizeForMatch(label));
+      });
+      if (!option) return false;
+      el.value = option.value;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    return sameSelections(nativeSelectAdapter.readSelection(field), selected);
   }
 };
 
@@ -151,8 +175,26 @@ export const radioGroupAdapter: DropdownAdapter = {
       .filter((r) => r.checked)
       .map((r) => labelForRadio(r))
       .filter((label) => label && !isBlankValue(label));
+  },
+
+  async restoreSelection(field, selected): Promise<boolean> {
+    const wanted = new Set(selected.map(normalizeForMatch));
+    const members = radioMembers(field);
+    for (const radio of members) {
+      const checked = wanted.has(normalizeForMatch(labelForRadio(radio)));
+      if (radio.checked === checked) continue;
+      radio.checked = checked;
+      radio.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      radio.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    }
+    return sameSelections(radioGroupAdapter.readSelection(field), selected);
   }
 };
+
+function sameSelections(actual: string[], expected: string[]): boolean {
+  const normalized = (values: string[]) => values.map(normalizeForMatch).sort();
+  return JSON.stringify(normalized(actual)) === JSON.stringify(normalized(expected));
+}
 
 function radioMembers(field: DiscoveredField): HTMLInputElement[] {
   const el = field.element as HTMLInputElement | undefined;
