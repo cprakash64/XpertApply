@@ -202,6 +202,29 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
   expect(result.clicks).not.toContain("cookie-accept");
   expect(result.clicks.filter((entry) => entry === "primary-apply")).toHaveLength(1);
 
+  // XA-08 regression: runtime workflow state may survive MV3 worker
+  // suspension, but bearer credentials and job history must never be durable.
+  // Inspect the real storage areas used by the shipped service worker after a
+  // completed autofill run, not a state-module mock.
+  const storage = await worker.evaluate(async () => ({
+    local: await chrome.storage.local.get(null),
+    session: await chrome.storage.session.get(null)
+  }));
+  const durableText = JSON.stringify(storage.local);
+  expect(Object.keys(storage.local)).not.toEqual(expect.arrayContaining([
+    "activeAssistedApplyHandoffV1",
+    "pendingLaunches",
+    "viewStates",
+    "sessionPackages"
+  ]));
+  expect(durableText).not.toMatch(/launchToken|handoffToken|sessionToken/i);
+  expect(Object.keys(storage.session)).toEqual(expect.arrayContaining([
+    "activeAssistedApplyHandoffV1",
+    "pendingLaunches",
+    "viewStates",
+    "sessionPackages"
+  ]));
+
   await page.close();
 });
 
