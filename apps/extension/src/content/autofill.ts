@@ -12,6 +12,7 @@ import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
 import { deepClosest, deepTextContent } from "../dom/deepDom";
 import { applyFill, scan, type FillSummary } from "../fields/runner";
+import { highlight } from "../fields/fill";
 import { uploadFileToInput } from "../fields/upload";
 import { buildLedger, computeCounts, type LedgerCounts, type LedgerEntry } from "../fields/ledger";
 import { COMPANY_SCOPED_FIELDS, CUSTOM_RESPONSE_FIELDS, UPLOAD_FIELDS, type CanonicalField } from "../fields/taxonomy";
@@ -91,6 +92,7 @@ export async function runAutofill(
     fieldResults,
     uploadLedgerStates(uploaded, reviewDocs)
   );
+  applyLedgerHighlights(scanned.fields, ledger);
   const counts = computeCounts(ledger);
   const reviewItems = counts.pending;
   const filled = counts.filled;
@@ -307,7 +309,13 @@ function buildFieldResults(
       const withOptions = outcome.dropdown?.options?.length
         ? { ...base, options: outcome.dropdown.options }
         : base;
-      if (outcome.status === "filled") results.push({ ...withOptions, status: "filled" });
+      if (outcome.status === "filled") {
+        results.push({
+          ...withOptions,
+          status: "filled",
+          reasonCode: mapping.requiresReview ? "LOW_CONFIDENCE" : undefined
+        });
+      }
       else if (outcome.status === "skipped") results.push({ ...withOptions, status: "skipped", reasonCode: "USER_VALUE_PRESENT" });
       else if (outcome.status === "review_required") {
         // Carry the exact dropdown failure code (DROPDOWN_OPEN_FAILED,
@@ -323,7 +331,11 @@ function buildFieldResults(
     }
     const had = el ? valueStuck(el, answer.value) : false;
     if (had) {
-      results.push({ ...base, status: "filled" });
+      results.push({
+        ...base,
+        status: "filled",
+        reasonCode: mapping.requiresReview ? "LOW_CONFIDENCE" : undefined
+      });
     } else if (el && hadUserValue(field)) {
       results.push({ ...base, status: "skipped", reasonCode: "USER_VALUE_PRESENT" });
     } else {
@@ -331,6 +343,17 @@ function buildFieldResults(
     }
   }
   return results;
+}
+
+/** Paint successful controls from the ledger's single terminal status. */
+function applyLedgerHighlights(fields: DiscoveredField[], entries: LedgerEntry[]): void {
+  const byUid = new Map(entries.map((entry) => [entry.uid, entry]));
+  for (const field of fields) {
+    if (!field.element) continue;
+    const status = byUid.get(field.uid)?.status;
+    if (status === "filled_verified") highlight(field.element, "verified");
+    else if (status === "filled_needs_review") highlight(field.element, "review");
+  }
 }
 
 /** Dropdown failure codes are first-class reason codes; anything else falls back

@@ -100,6 +100,9 @@ export function statusFromResult(field: DiscoveredField, result: FieldFillResult
   switch (result.status) {
     case "filled":
     case "already_filled":
+      if (reason === "LOW_CONFIDENCE") {
+        return { status: "filled_needs_review", reasonCode: reason, verified: false };
+      }
       return { status: "filled_verified", reasonCode: "", verified: true };
     case "skipped":
       if (reason === "USER_VALUE_PRESENT") return { status: "user_entered", reasonCode: reason, verified: true };
@@ -246,15 +249,16 @@ export function computeCounts(entries: LedgerEntry[]): LedgerCounts {
 
   for (const e of entries) {
     if (FILLED_STATUSES.has(e.status)) filled += 1;
+    if (e.status === "filled_needs_review") needsConfirmation += 1;
     if (e.status === "missing_information") needsInformation += 1;
     if (e.status === "needs_confirmation") needsConfirmation += 1;
     if (e.status === "unsupported_control" || e.status === "technical_failure") technical += 1;
     if (e.status === "intentionally_skipped_optional" || e.status === "not_applicable") optionalSkipped += 1;
-    const unresolved = UNRESOLVED_STATUSES.has(e.status) && !e.verified;
+    const unresolved = (UNRESOLVED_STATUSES.has(e.status) || e.status === "filled_needs_review") && !e.verified;
     if (unresolved) {
       pending += 1;
       if (e.sensitive) sensitive += 1;
-      if (e.required) requiredBlank += 1;
+      if (e.required && e.status !== "filled_needs_review") requiredBlank += 1;
     }
   }
   return { discovered: entries.length, filled, needsInformation, needsConfirmation, sensitive, technical, optionalSkipped, requiredBlank, pending };

@@ -1953,6 +1953,8 @@ async function fill(reason: AutofillReason): Promise<void> {
             : atReview
               ? "Live verification passed. Review the application before submitting."
               : "All required live controls are verified. Review everything before submitting."
+          : ledgerCounts.needsConfirmation > 0
+            ? `${ledgerCounts.needsConfirmation} filled field${ledgerCounts.needsConfirmation === 1 ? "" : "s"} need${ledgerCounts.needsConfirmation === 1 ? "s" : ""} your confirmation before final review.`
           : tiktokActive
             ? `${lastFinalVerification.requiredRemaining} required eligibility field${lastFinalVerification.requiredRemaining === 1 ? "" : "s"} remain. ${lastFinalVerification.technicalIssues} technical issue${lastFinalVerification.technicalIssues === 1 ? "" : "s"}. ${consentMessage}`.trim()
             : `Autofill is incomplete. ${lastFinalVerification.requiredRemaining} required field${lastFinalVerification.requiredRemaining === 1 ? "" : "s"} remain; ${lastFinalVerification.technicalIssues} technical issue${lastFinalVerification.technicalIssues === 1 ? "" : "s"}. ${consentMessage}`.trim(),
@@ -2157,10 +2159,10 @@ function recordFinalControl(control: FinalControlVerification): void {
     && (prior?.state === "answer_missing" || prior?.state === "requires_confirmation");
   const state = control.consent
     ? "sensitive_manual"
+    : preserveMissingAnswer
+      ? null
     : control.verified
       ? "filled_verified"
-      : preserveMissingAnswer
-        ? null
       : control.required
         ? "interaction_failed"
         : null;

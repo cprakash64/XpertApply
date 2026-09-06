@@ -19,4 +19,57 @@ describe("required versus optional ledger classification", () => {
     const entry = { uid: "f", frameId: "top", label: "Referral", normalizedLabel: "referral", controlType: "text", canonicalKey: null, required: false, sensitive: false, options: [], multiple: false, currentValuePresent: false, status: "intentionally_skipped_optional", reasonCode: "NO_VERIFIED_ANSWER", fillSource: null, verified: false, question: "Referral", reusable: false } as LedgerEntry;
     expect(computeCounts([entry])).toMatchObject({ needsInformation: 0, pending: 0, optionalSkipped: 1 });
   });
+
+  it("counts a successful low-confidence fill as filled and needing confirmation", () => {
+    const source = field(true);
+    const terminal = statusFromResult(source, {
+      uid: source.uid,
+      fieldKey: "first_name",
+      question: "First name",
+      status: "filled",
+      confidence: 0.93,
+      reasonCode: "LOW_CONFIDENCE"
+    });
+    const entry = {
+      uid: source.uid, frameId: source.frameId, label: "First name", normalizedLabel: "first name",
+      controlType: source.control, canonicalKey: "first_name", required: true, sensitive: false,
+      options: [], multiple: false, currentValuePresent: true, status: terminal.status,
+      reasonCode: terminal.reasonCode, fillSource: "profile", verified: terminal.verified,
+      question: "First name", reusable: true
+    } as LedgerEntry;
+
+    expect(terminal).toEqual({ status: "filled_needs_review", reasonCode: "LOW_CONFIDENCE", verified: false });
+    expect(computeCounts([entry])).toMatchObject({
+      filled: 1,
+      needsConfirmation: 1,
+      pending: 1,
+      requiredBlank: 0
+    });
+  });
+
+  it("keeps a successful high-confidence fill verified without confirmation", () => {
+    const source = field(true);
+    const terminal = statusFromResult(source, {
+      uid: source.uid,
+      fieldKey: "email",
+      question: "Email",
+      status: "filled",
+      confidence: 0.99
+    });
+    const entry = {
+      uid: source.uid, frameId: source.frameId, label: "Email", normalizedLabel: "email",
+      controlType: source.control, canonicalKey: "email", required: true, sensitive: false,
+      options: [], multiple: false, currentValuePresent: true, status: terminal.status,
+      reasonCode: terminal.reasonCode, fillSource: "profile", verified: terminal.verified,
+      question: "Email", reusable: true
+    } as LedgerEntry;
+
+    expect(terminal).toEqual({ status: "filled_verified", reasonCode: "", verified: true });
+    expect(computeCounts([entry])).toMatchObject({
+      filled: 1,
+      needsConfirmation: 0,
+      pending: 0,
+      requiredBlank: 0
+    });
+  });
 });

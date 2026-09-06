@@ -161,7 +161,9 @@ describe("Samsara/Greenhouse field ledger (section M)", () => {
     expect((document.getElementById("city") as HTMLInputElement).value).toBe("San Francisco");
     expect((document.getElementById("zip") as HTMLInputElement).value).toBe("94105");
     expect((document.getElementById("linkedin") as HTMLInputElement).value).toBe("https://linkedin.com/in/x");
-    expect(byLabel(ledger, "Country")!.status).toBe("filled_verified");
+    // Country maps at 0.90 confidence, so the successful fill remains visible
+    // and counted as needing confirmation under the XA-11 status contract.
+    expect(byLabel(ledger, "Country")!.status).toBe("filled_needs_review");
   });
 
   it("M9: single-select options are captured and a select fills from an answer", async () => {

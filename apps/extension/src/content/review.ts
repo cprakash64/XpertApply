@@ -140,7 +140,8 @@ export function buildReviewModel(entries: LedgerEntry[], session: ApplicationSes
   );
 
   for (const e of entries) {
-    if (!UNRESOLVED_STATUSES.has(e.status) || e.verified) continue;
+    const needsReview = UNRESOLVED_STATUSES.has(e.status) || e.status === "filled_needs_review";
+    if (!needsReview || e.verified) continue;
     if (e.uid.startsWith("upload:")) continue; // documents resolve through the ATS "Attach" UI
     keyByUid.set(e.uid, e.canonicalKey ?? "unknown");
     if (e.defaultScope) scopeByUid.set(e.uid, e.defaultScope);

@@ -177,7 +177,10 @@ export async function applyFill(fields: DiscoveredField[], mappings: FieldMappin
     }
     const isPhoneNumber = mapping.canonicalKey === "phone" || mapping.canonicalKey === "phone_national";
     const outcome = await fillField(field, answer.value, {
-      status: mapping.requiresReview ? "review" : "verified",
+      // The final outline is derived from the ledger after the fill result has
+      // been classified. Keeping mapping confidence out of this presentation
+      // path prevents a second, contradictory status system (XA-11).
+      status: "verified",
       dropdownSearchValue: mapping.canonicalKey === "city"
         ? String(answer.value).split(",")[0]?.trim()
         : mapping.canonicalKey === "phone_country"
