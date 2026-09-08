@@ -94,9 +94,11 @@ describe("XA-06 · the built manifest takes no authority over employer sites", (
     expect(entries[0].all_frames).toBe(false);
   });
 
-  it("exposes nothing to the open web", () => {
+  it("exposes no resources and accepts external messages only from production XpertApply", () => {
     expect(manifest.web_accessible_resources).toBeUndefined();
-    expect(manifest.externally_connectable).toBeUndefined();
+    expect(manifest.externally_connectable).toEqual({
+      matches: ["https://xpertapply.com/*", "https://www.xpertapply.com/*"]
+    });
   });
 
   it("keeps API permissions minimal and unchanged by this stage", () => {

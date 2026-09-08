@@ -7,7 +7,7 @@
  * redirect anyone off-product.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BRAND, PRODUCT_NAME, chromeExtensionUrl, siteUrl } from "../lib/siteConfig";
+import { BRAND, PRODUCT_NAME, chromeExtensionId, chromeExtensionUrl, siteUrl } from "../lib/siteConfig";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -84,6 +84,27 @@ describe("chromeExtensionUrl", () => {
     ]) {
       vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", value);
       expect(chromeExtensionUrl(), value).toBeNull();
+    }
+  });
+});
+
+describe("chromeExtensionId", () => {
+  const id = "abcdefghijklmnopabcdefghijklmnop";
+
+  it("accepts an explicit stable public extension ID", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    expect(chromeExtensionId()).toBe(id);
+  });
+
+  it("does not infer runtime routing from the separate Web Store install URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", `https://chromewebstore.google.com/detail/xpertapply/${id}`);
+    expect(chromeExtensionId()).toBeNull();
+  });
+
+  it("rejects malformed or non-Chrome extension IDs", () => {
+    for (const value of ["", "too-short", "zbcdefghijklmnopabcdefghijklmnop", `${id}/extra`]) {
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", value);
+      expect(chromeExtensionId(), value).toBeNull();
     }
   });
 });

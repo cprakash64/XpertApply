@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
 import { api } from "@/lib/api";
@@ -35,6 +35,7 @@ export function AuthDialog({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (presentation !== "modal") return;
@@ -57,7 +58,8 @@ export function AuthDialog({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (submitting) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError("");
     setSubmitting(true);
     try {
@@ -65,7 +67,7 @@ export function AuthDialog({
         method: "POST",
         body: JSON.stringify({ email, password })
       });
-      storeAuthToken(result.access_token);
+      await storeAuthToken(result.access_token);
       const requestedDestination =
         typeof window === "undefined"
           ? null
@@ -73,6 +75,7 @@ export function AuthDialog({
       router.replace(requestedDestination ?? "/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : mode === "login" ? "Login failed." : "Signup failed.");
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

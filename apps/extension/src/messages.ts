@@ -4,9 +4,9 @@
  * background service worker, and the side panel.
  *
  * There are two transports:
- *   • window.postMessage — page ⇆ XpertApply-origin content script (detection +
- *     staging the launch payload; a token is staged into the isolated content
- *     world and never left in the DOM).
+ *   • window.postMessage — page ⇆ XpertApply-origin content script for launch
+ *     staging/results only; extension presence and auth teardown use Chrome's
+ *     externally-connectable runtime channel.
  *   • chrome.runtime messaging — content/side panel ⇆ background.
  *
  * No raw message-type strings are duplicated elsewhere: everything imports the
@@ -40,6 +40,33 @@ export type LaunchState =
 
 /** Why an autofill run was started — both paths call one canonical runner. */
 export type AutofillReason = "automatic_launch" | "manual_retry" | "continue_after_navigation";
+export type SessionEndReason = "logout" | "account_deleted" | "expired" | "account_changed";
+
+/** Browser-routed Web -> extension protocol. These messages never cross the
+ * page-visible postMessage bridge. */
+export const EXTERNAL_MSG = {
+  PING: "XPERTAPPLY_EXTERNAL_PING",
+  SESSION_END: "XPERTAPPLY_EXTERNAL_SESSION_END"
+} as const;
+
+export type ExternalRuntimeMessage =
+  | { type: typeof EXTERNAL_MSG.PING }
+  | { type: typeof EXTERNAL_MSG.SESSION_END; reason: SessionEndReason };
+
+export function parseExternalRuntimeMessage(raw: unknown): ExternalRuntimeMessage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as { type?: unknown; reason?: unknown };
+  if (data.type === EXTERNAL_MSG.PING && Object.keys(data).length === 1) {
+    return data as ExternalRuntimeMessage;
+  }
+  if (data.type === EXTERNAL_MSG.SESSION_END
+    && typeof data.reason === "string"
+    && SESSION_END_REASONS.includes(data.reason as SessionEndReason)
+    && Object.keys(data).length === 2) {
+    return data as ExternalRuntimeMessage;
+  }
+  return null;
+}
 
 // --------------------------------------------------------------------------- //
 // Field-level result model (Phase 12)
@@ -223,12 +250,9 @@ export interface LaunchViewState {
 // --------------------------------------------------------------------------- //
 export const MSG = {
   // page ⇆ XpertApply-origin content script (postMessage)
-  PING: "JOBPILOT_PING",
-  PONG: "JOBPILOT_PONG",
   STAGE_LAUNCH: "JOBPILOT_STAGE_LAUNCH",
   START_ASSISTED_APPLY: "JOBPILOT_START_ASSISTED_APPLY",
   START_ASSISTED_APPLY_RESULT: "JOBPILOT_START_ASSISTED_APPLY_RESULT",
-  HANDSHAKE: "JOBPILOT_HANDSHAKE",
   // XpertApply-origin content script → background (runtime)
   LAUNCH_REQUEST: "JOBPILOT_LAUNCH_REQUEST",
   LAUNCH_ACCEPTED: "JOBPILOT_LAUNCH_ACCEPTED",
@@ -332,7 +356,6 @@ export type ProgressPayload = {
 
 export type RuntimeMessage =
   | { type: typeof MSG.LAUNCH_REQUEST; payload: LaunchPayload }
-  | { type: typeof MSG.HANDSHAKE; origin: string; apiBase?: string; protocolVersion: number }
   | { type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | {
       type: typeof MSG.CONTENT_READY;
@@ -507,7 +530,7 @@ export type ObservedFramePayload = {
 };
 
 const RUNTIME_TYPES = new Set<string>([
-  MSG.LAUNCH_REQUEST, MSG.HANDSHAKE, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
+  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
@@ -578,6 +601,7 @@ type FieldSpec =
   | { kind: "array"; maxItems: number; required?: true };
 
 const AUTOFILL_REASONS = ["automatic_launch", "manual_retry", "continue_after_navigation"] as const;
+const SESSION_END_REASONS = ["logout", "account_deleted", "expired", "account_changed"] as const;
 const ANSWER_SCOPES = ["global", "company", "application", "sensitive"] as const;
 const DOCUMENT_KINDS = ["resume", "cover-letter"] as const;
 const EVIDENCE_TYPES = ["success_page", "success_response", "success_message"] as const;
@@ -592,11 +616,6 @@ const WEAK_EVIDENCE_REASONS = [
 const SESSION_ID: FieldSpec = { kind: "integer", required: true };
 
 const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
-  [MSG.HANDSHAKE]: {
-    origin: { kind: "string", max: LIMIT.url, required: true },
-    apiBase: { kind: "string", max: LIMIT.url },
-    protocolVersion: { kind: "integer" }
-  },
   [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
   [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
   [MSG.CONTENT_READY]: {
@@ -764,25 +783,16 @@ export const PAGE_SOURCE_EXT = "jobpilot-extension";
 
 export type Capability = "fill" | "upload" | "results" | "ashby" | "greenhouse" | "lever" | "workday" | "generic";
 
-export type ExtensionInfo = {
-  installed: true;
-  version: string;
-  protocolVersion: number;
-  capabilities: Capability[];
-};
-
 export type PageMessage =
-  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.PING; apiBase?: string }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.START_ASSISTED_APPLY; payload: LaunchPayload }
-  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } }
-  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.PONG; info: ExtensionInfo };
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } };
 
 export function parsePageMessage(raw: unknown): PageMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as { source?: unknown; type?: unknown };
   if (data.source !== PAGE_SOURCE_WEB && data.source !== PAGE_SOURCE_EXT) return null;
-  if (data.type !== MSG.PING && data.type !== MSG.STAGE_LAUNCH && data.type !== MSG.START_ASSISTED_APPLY && data.type !== MSG.START_ASSISTED_APPLY_RESULT && data.type !== MSG.PONG) return null;
+  if (data.type !== MSG.STAGE_LAUNCH && data.type !== MSG.START_ASSISTED_APPLY && data.type !== MSG.START_ASSISTED_APPLY_RESULT) return null;
   return raw as PageMessage;
 }
 

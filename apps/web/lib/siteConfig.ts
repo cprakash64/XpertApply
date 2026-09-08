@@ -50,6 +50,7 @@ const DEFAULT_SITE_URL = `https://${BRAND.domain}`;
  * as "not configured yet" and the CTA falls back to its unavailable state.
  */
 const CHROME_WEB_STORE_HOSTS = new Set(["chromewebstore.google.com", "chrome.google.com"]);
+const CHROME_EXTENSION_ID = /^[a-p]{32}$/;
 
 /** Strip a trailing slash so callers can concatenate paths safely. */
 function normalizeOrigin(value: string): string {
@@ -95,4 +96,13 @@ export function chromeExtensionUrl(): string | null {
   } catch {
     return null;
   }
+}
+
+/** The stable public ID used for browser-routed Web -> extension messaging.
+ * This explicit build-time value is the sole routing source; the install-link
+ * URL is deliberately not parsed as a second configuration channel. The ID is
+ * public routing metadata, never an authentication secret. */
+export function chromeExtensionId(): string | null {
+  const configured = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID?.trim().toLowerCase();
+  return configured && CHROME_EXTENSION_ID.test(configured) ? configured : null;
 }

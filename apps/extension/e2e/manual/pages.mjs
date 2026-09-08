@@ -121,7 +121,7 @@ function shell(title, heading, body) {
  * and records what host access the workflow needs. Nothing about the launch is
  * simulated and no extension storage is touched by hand.
  */
-export function launcherPage(applicationUrl) {
+export function launcherPage(applicationUrl, extensionId) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>XpertApply — fixture</title>
   <style>${PANEL_CSS}
     button { font-size: 18px; padding: 12px 20px; margin-top: 12px; cursor: pointer; }
@@ -142,36 +142,29 @@ export function launcherPage(applicationUrl) {
   <script>
     const WEB = "jobpilot-web";
     const EXT = "jobpilot-extension";
+    const EXTENSION_ID = ${JSON.stringify(extensionId)};
     const logEl = document.getElementById("log");
     function log(line) { logEl.textContent = line + "\\n" + logEl.textContent; }
 
     window.addEventListener("message", (e) => {
       const d = e.data;
       if (!d || d.source !== EXT) return;
-      if (d.type === "JOBPILOT_PONG") {
-        document.getElementById("ext").textContent =
-          "YES — v" + d.info.version + " (protocol " + d.info.protocolVersion + ")";
-      }
       if (d.type === "JOBPILOT_START_ASSISTED_APPLY_RESULT") {
         log("launch result: " + JSON.stringify(d.result));
       }
     });
-    // Retried, not fired once: on a cold start the tab can be painted before
-    // the content script is injected, and a single ping would report a healthy
-    // bridge as missing.
-    let attempts = 0;
-    const ping = setInterval(() => {
-      attempts += 1;
-      if (document.getElementById("ext").textContent.startsWith("YES") || attempts > 20) {
-        clearInterval(ping);
-        const el = document.getElementById("ext");
-        if (!el.textContent.startsWith("YES")) {
-          el.textContent = "NO — reload this page, or check the extension is loaded";
+    const extStatus = document.getElementById("ext");
+    if (!/^[a-p]{32}$/.test(EXTENSION_ID) || typeof chrome === "undefined" || typeof chrome.runtime?.sendMessage !== "function") {
+      extStatus.textContent = "NOT CONFIGURED — set XPERTAPPLY_EXTENSION_ID";
+    } else {
+      chrome.runtime.sendMessage(EXTENSION_ID, { type: "XPERTAPPLY_EXTERNAL_PING" }, (result) => {
+        if (chrome.runtime.lastError || result?.ok !== true) {
+          extStatus.textContent = "NO — browser runtime did not reach the extension";
+          return;
         }
-        return;
-      }
-      window.postMessage({ source: WEB, type: "JOBPILOT_PING" }, location.origin);
-    }, 500);
+        extStatus.textContent = "YES — v" + result.info.version + " (protocol " + result.info.protocolVersion + ")";
+      });
+    }
 
     document.getElementById("apply").addEventListener("click", () => {
       const requestId = "3cv2-" + Date.now();

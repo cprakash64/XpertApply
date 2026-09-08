@@ -1,4 +1,5 @@
 import { API_URL, api } from "@/lib/api";
+import { connectExternalExtension, type BrowserExtensionInfo } from "@/lib/extensionRuntime";
 
 /** A prepared assisted-apply session as returned by the backend. */
 export type ApplicationSessionView = {
@@ -33,11 +34,12 @@ export async function getApplicationSession(sessionId: number): Promise<Applicat
 }
 
 // --------------------------------------------------------------------------- //
-// Extension handoff (window.postMessage handshake — no real extension id needed,
-// no token ever placed in a URL or exposed to the employer page).
+// Extension handoff. Presence is browser-routed through the configured public
+// extension ID; launch staging remains on the first-party content-script bridge
+// and no token is ever placed in a URL or exposed to the employer page.
 //
 // These message-type strings and the payload shape MUST match the extension's
-// src/messages.ts (MSG.PING / MSG.PONG / MSG.STAGE_LAUNCH, PROTOCOL_VERSION 2).
+// src/messages.ts (MSG.STAGE_LAUNCH, PROTOCOL_VERSION 3).
 // The two builds are separate packages, so the contract is mirrored here.
 //
 // The `jobpilot`/`JOBPILOT_` spelling is the WIRE FORMAT and is frozen. An
@@ -48,8 +50,6 @@ export async function getApplicationSession(sessionId: number): Promise<Applicat
 // --------------------------------------------------------------------------- //
 const WEB_SOURCE = "jobpilot-web";
 const EXT_SOURCE = "jobpilot-extension";
-const MSG_PING = "JOBPILOT_PING";
-const MSG_PONG = "JOBPILOT_PONG";
 const MSG_STAGE_LAUNCH = "JOBPILOT_STAGE_LAUNCH";
 const MSG_START_ASSISTED_APPLY = "JOBPILOT_START_ASSISTED_APPLY";
 const MSG_START_ASSISTED_APPLY_RESULT = "JOBPILOT_START_ASSISTED_APPLY_RESULT";
@@ -61,12 +61,7 @@ export const MIN_EXTENSION_PROTOCOL = 3;
 type ExtMessage = { source: string; type: string; [key: string]: unknown };
 
 /** The handshake reply from the installed extension. */
-export type ExtensionInfo = {
-  installed: true;
-  version: string;
-  protocolVersion: number;
-  capabilities: string[];
-};
+export type ExtensionInfo = BrowserExtensionInfo;
 
 /** Resolved extension state for the UI. `null` = not detected. `outdated` is
  * true when the extension is present but speaks an older protocol. */
@@ -74,48 +69,11 @@ export type ExtensionState =
   | { present: false }
   | { present: true; outdated: boolean; info: ExtensionInfo };
 
-/** One PING attempt; resolves with the extension's info, or null if nothing
- * replies within `timeoutMs`. */
-function pingOnce(timeoutMs: number): Promise<ExtensionInfo | null> {
-  if (typeof window === "undefined") {
-    return Promise.resolve(null);
-  }
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: ExtensionInfo | null) => {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("message", onMessage);
-      resolve(value);
-    };
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as (ExtMessage & { info?: ExtensionInfo }) | undefined;
-      if (event.source === window && data?.source === EXT_SOURCE && data.type === MSG_PONG) {
-        // Tolerate an older extension that PONGs without an info payload.
-        finish(
-          data.info ?? { installed: true, version: "0.0.0", protocolVersion: 0, capabilities: [] }
-        );
-      }
-    };
-    window.addEventListener("message", onMessage);
-    window.postMessage(
-      { source: WEB_SOURCE, type: MSG_PING, apiBase: API_URL } satisfies ExtMessage,
-      window.location.origin
-    );
-    window.setTimeout(() => finish(null), timeoutMs);
-  });
-}
-
-/** Ping the extension and return its rich info, or null if none replies.
- * The content script may still be initializing (e.g. it runs at
- * document_idle and can race the page's own React hydration), so a single
- * missed PING is not conclusive — retry once, briefly, before concluding the
- * extension truly isn't there. The web app records real capabilities instead
- * of merely guessing presence. */
+/** Ask Chrome's externally-connectable runtime for extension metadata. A
+ * page-visible postMessage PONG is never accepted as presence evidence. */
 export async function detectExtensionInfo(timeoutMs = 800): Promise<ExtensionInfo | null> {
-  const first = await pingOnce(timeoutMs);
-  if (first) return first;
-  return pingOnce(timeoutMs);
+  const result = await connectExternalExtension(timeoutMs);
+  return result.kind === "present" ? result.info : null;
 }
 
 /** Resolve the extension state (present / outdated) for the modal. */

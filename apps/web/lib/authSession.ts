@@ -1,7 +1,9 @@
 import { AUTH_TOKEN_STORAGE_KEY, readAuthToken } from "@/lib/authToken";
+import { EXTERNAL_SESSION_END, connectExternalExtension } from "@/lib/extensionRuntime";
 
 export const AUTH_SESSION_INVALIDATED_EVENT = "xpertapply:auth-session-invalidated";
 const AUTH_SESSION_CHANGED_EVENT = "xpertapply:auth-session-changed";
+const SESSION_END_TIMEOUT_MS = 1_600;
 
 export type AuthSessionInvalidationReason = "expired" | "logout" | "account_deleted";
 
@@ -103,6 +105,36 @@ function notifySessionChanged(): void {
   window.dispatchEvent(new Event(AUTH_SESSION_CHANGED_EVENT));
 }
 
+function isTeardownSuccess(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  const value = response as { ok?: unknown };
+  return value.ok === true && Object.keys(value).length === 1;
+}
+
+/** Tell the installed extension to discard the prior account's workflow state
+ * through Chrome's externally-connectable runtime channel. No page-visible
+ * postMessage result participates in extension presence or authorization. */
+export async function requestExtensionSessionEnd(
+  reason: AuthSessionInvalidationReason | "account_changed",
+  timeoutMs = SESSION_END_TIMEOUT_MS
+): Promise<"acknowledged" | "extension_absent"> {
+  const presence = await connectExternalExtension(timeoutMs);
+  if (presence.kind === "absent") return "extension_absent";
+  if (presence.kind === "timeout") throw new Error("Extension presence check timed out.");
+  if (presence.kind !== "present") throw new Error("Extension presence check failed.");
+  const teardown = await presence.channel.request(
+    { type: EXTERNAL_SESSION_END, reason },
+    timeoutMs
+  );
+  if (teardown.kind === "timeout") {
+    throw new Error("Installed extension did not acknowledge session teardown.");
+  }
+  if (teardown.kind !== "response" || !isTeardownSuccess(teardown.response)) {
+    throw new Error("Extension session teardown failed.");
+  }
+  return "acknowledged";
+}
+
 /** React/external consumers can observe login, logout, expiry, and other tabs. */
 export function subscribeAuthSession(listener: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
@@ -120,20 +152,30 @@ export function registerAuthSessionCleanup(cleanup: Cleanup): () => void {
 }
 
 /** The only supported token write path. It also opens a fresh invalidation cycle. */
-export function storeAuthToken(token: string): void {
+export async function storeAuthToken(token: string): Promise<void> {
   if (typeof window === "undefined") return;
+  const previousToken = readAuthToken();
   runCleanups();
+  if (previousToken && previousToken !== token) {
+    // Fail closed between accounts: old web authority is removed immediately,
+    // and replacement authority is not activated until the extension confirms
+    // its security-critical purge (or bounded detection establishes absence).
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    notifySessionChanged();
+    await requestExtensionSessionEnd("account_changed");
+  }
   window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
   invalidationStarted = false;
   activeLoginHref = "/login";
   notifySessionChanged();
 }
 
-export function clearAuthSession(): void {
+export function clearAuthSession(reason: AuthSessionInvalidationReason = "logout"): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
   runCleanups();
   notifySessionChanged();
+  void requestExtensionSessionEnd(reason).catch(() => undefined);
 }
 
 /**
@@ -155,7 +197,7 @@ export function invalidateAuthSession({
   }
   invalidationStarted = true;
   activeLoginHref = loginHrefFor(returnTo);
-  clearAuthSession();
+  clearAuthSession(reason);
   window.dispatchEvent(
     new CustomEvent<AuthSessionInvalidationDetail>(AUTH_SESSION_INVALIDATED_EVENT, {
       detail: { loginHref: activeLoginHref, reason }

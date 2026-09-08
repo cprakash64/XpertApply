@@ -28,7 +28,7 @@ import {
   setApplicationOverride
 } from "./api/client";
 import { validateOverrideRequest } from "./content/reviewActions";
-import { getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS } from "./config";
+import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS } from "./config";
 import {
   classifyEnvironment,
   safeApiBase,
@@ -38,8 +38,10 @@ import {
 } from "./runtimeIdentity";
 import { lastError, log } from "./logger";
 import {
+  EXTERNAL_MSG,
   MSG,
   PROTOCOL_VERSION,
+  parseExternalRuntimeMessage,
   parseRuntimeMessage,
   type AutofillReason,
   type AutofillResult,
@@ -50,8 +52,13 @@ import {
   type RuntimeMessage
 } from "./messages";
 import {
+  advanceAuthorityGeneration,
+  captureAuthorityGeneration,
+  clearAllWorkflowState,
   clearTab,
+  clearWorkflowSession,
   cleanupExpired,
+  endSessionAuthority,
   findPackageBySession,
   findPendingByApplication,
   getActive,
@@ -60,12 +67,16 @@ import {
   getPending,
   getView,
   initialView,
+  isSessionAuthorityActive,
   patchView,
   putPackage,
   putActive,
   putPending,
   putView,
   updatePending,
+  workflowTabIds,
+  withAuthorityMutation,
+  type AuthorityGeneration,
   type SessionPackage
 } from "./state";
 import { urlsMatchForHandoff } from "./url";
@@ -78,6 +89,7 @@ import {
   senderCanBindTab,
   type SenderContext
 } from "./security/senderTrust";
+import { isApprovedExternalWebSender } from "./security/externalMessaging";
 import {
   NO_ACCESS_NEEDED,
   originPatternFor,
@@ -114,6 +126,10 @@ void reviveAfterRuntimeReset();
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined);
   void reviveOpenJobPilotTabs();
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  void purgeSessionState("startup");
 });
 
 /**
@@ -175,11 +191,12 @@ async function reviveAfterRuntimeReset(): Promise<void> {
 // Keep the durable handoff when a tab closes so "Open manually" and reopen can
 // bind a new ATS tab. Only discard tab-specific view/package records.
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const generation = captureAuthorityGeneration();
   clearFrameRegistry(tabId);
   void (async () => {
     const pending = await getPending(tabId);
-    if (pending) await putActive({ ...pending, targetTabId: undefined, status: "prepared", state: "package_ready" });
-    await clearTab(tabId);
+    if (pending) await putActive({ ...pending, targetTabId: undefined, status: "prepared", state: "package_ready" }, generation);
+    await clearTab(tabId, generation);
   })();
 });
 
@@ -271,7 +288,8 @@ async function prepareApplicationLaunch(
     sessionId: number; sourceUrl: string; normalizedCtaText: string; confidence: number;
     href: string | null; target: string | null; expectedDestinationOrigin: string | null;
     jobFingerprint: string;
-  }
+  },
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; launchId?: string; error?: string }> {
   const launch = (await getPending(sourceTabId)) ?? (await getActive());
   if (!launch || launch.sessionId !== message.sessionId) return { ok: false, error: "SESSION_MISMATCH" };
@@ -296,7 +314,7 @@ async function prepareApplicationLaunch(
     redirectSequence: [safeOriginPath(message.sourceUrl)],
     consumed: false
   };
-  await writePendingActivation(record);
+  await writePendingActivation(record, generation);
   log.info("application launch prepared", {
     launchId: record.launchId,
     state: record.state,
@@ -306,19 +324,19 @@ async function prepareApplicationLaunch(
   return { ok: true, launchId: record.launchId };
 }
 
-async function writePendingActivation(activation: PendingActivation): Promise<void> {
+async function writePendingActivation(activation: PendingActivation, generation: AuthorityGeneration): Promise<void> {
   try {
     const area = chrome.storage.session ?? chrome.storage.local;
-    await area.set({ [ACTIVATION_KEY]: activation });
+    await withAuthorityMutation(generation, () => area.set({ [ACTIVATION_KEY]: activation }));
   } catch {
     /* best-effort: a failed write only costs us popup adoption */
   }
 }
 
-async function clearPendingActivation(): Promise<void> {
+async function clearPendingActivation(generation = captureAuthorityGeneration()): Promise<void> {
   try {
     const area = chrome.storage.session ?? chrome.storage.local;
-    await area.remove(ACTIVATION_KEY);
+    await withAuthorityMutation(generation, () => area.remove(ACTIVATION_KEY));
   } catch {
     /* ignore */
   }
@@ -326,7 +344,8 @@ async function clearPendingActivation(): Promise<void> {
 
 async function navigateToApplicationDestination(
   sourceTabId: number,
-  message: { sessionId: number; url: string; newTab: boolean; source: string }
+  message: { sessionId: number; url: string; newTab: boolean; source: string },
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; tabId?: number; created?: boolean; error?: string }> {
   // Re-validate the scheme here even though the content script already did:
   // this is the privileged side, and it must not trust a page-adjacent world.
@@ -387,7 +406,7 @@ async function navigateToApplicationDestination(
     }),
     url: target.toString(), expectedOrigin: target.origin, newTab: message.newTab,
     expiresAt: now + PENDING_ACTIVATION_TTL_MS, state: "PENDING_NAVIGATION", consumed: false
-  });
+  }, generation);
   // Sanitized: origin only, never the full URL (it can carry query identifiers).
   log.info("apply destination navigation requested", {
     source: message.source,
@@ -400,12 +419,12 @@ async function navigateToApplicationDestination(
     if (typeof created.id === "number") {
       await bindTabToLaunch(created.id, {
         ...launch, applicationUrl: target.toString(), expectedOrigin: target.origin
-      }, sourceTabId);
+      }, sourceTabId, generation);
       const activation = await readPendingActivation();
       if (activation) await writePendingActivation({
         ...activation, destinationTabId: created.id, state: "DESTINATION_DETECTED",
         redirectSequence: [...activation.redirectSequence, safeOriginPath(target.toString())]
-      });
+      }, generation);
       return { ok: true, tabId: created.id, created: true };
     }
     return { ok: false, error: "TAB_CREATE_FAILED" };
@@ -414,7 +433,7 @@ async function navigateToApplicationDestination(
   // Same-tab: the tab id does not change, so the existing binding and cached
   // package still apply. The activation record stays until the destination
   // reports in, so a worker restart mid-navigation is still recoverable.
-  await putPending(sourceTabId, { ...launch, applicationUrl: target.toString(), expectedOrigin: target.origin });
+  await putPending(sourceTabId, { ...launch, applicationUrl: target.toString(), expectedOrigin: target.origin }, generation);
   await chrome.tabs.update(sourceTabId, { url: target.toString() });
   return { ok: true, tabId: sourceTabId, created: false };
 }
@@ -429,7 +448,8 @@ async function navigateToApplicationDestination(
  */
 async function reconnectWorkflow(
   tabId: number,
-  origin: string
+  origin: string,
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; reason: string; session?: unknown }> {
   const active = (await getPending(tabId)) ?? (await getActive());
   if (!active) return { ok: false, reason: "no_pending_activation" };
@@ -448,21 +468,21 @@ async function reconnectWorkflow(
     return { ok: false, reason: "origin_not_allowed" };
   }
 
-  await putPending(tabId, { ...active, targetTabId: tabId });
+  await putPending(tabId, { ...active, targetTabId: tabId }, generation);
 
   // Reuse the SESSION-scoped package. The launch token is single-use and is
   // already spent by the tab that started the workflow, so re-exchanging it
   // would 401 — the very failure this path exists to avoid.
   const inherited = await findPackageForSession(active.sessionId);
   if (inherited) {
-    await putPackage(tabId, inherited);
+    await putPackage(tabId, inherited, generation);
     log.info("workflow reconnected", { stage: "rebind_accepted", reason: "session_scoped_reuse" });
     return { ok: true, reason: "rebound", session: inherited.session };
   }
 
   // No package anywhere: the launch token may still be unspent. Try once.
   try {
-    const pkg = await ensurePackage(tabId, active);
+    const pkg = await ensurePackage(tabId, active, generation);
     log.info("workflow reconnected", { stage: "rebind_accepted", reason: "fresh_exchange" });
     return { ok: true, reason: "rebound", session: pkg.session };
   } catch (err) {
@@ -486,17 +506,18 @@ async function reconnectWorkflow(
 async function bindTabToLaunch(
   tabId: number,
   launch: PendingLaunch,
-  sourceTabId?: number
+  sourceTabId: number | undefined,
+  generation: AuthorityGeneration
 ): Promise<void> {
-  await putPending(tabId, launch);
+  await putPending(tabId, launch, generation);
   if (typeof sourceTabId === "number" && sourceTabId !== tabId) {
     const carried = await getPackage(sourceTabId);
     if (carried) {
-      await putPackage(tabId, carried);
+      await putPackage(tabId, carried, generation);
       log.info("carried session package to destination tab");
     }
   }
-  await ensureContentReady(tabId).catch(() => undefined);
+  await ensureContentReady(tabId, generation).catch(() => undefined);
 }
 
 // A popup or target="_blank" the PAGE opened (rather than one we created) still
@@ -505,6 +526,7 @@ async function bindTabToLaunch(
 log.info("service worker active", { build: BUILD_INFO.buildId, version: BUILD_INFO.version });
 
 chrome.tabs.onCreated.addListener((tab) => {
+  const generation = captureAuthorityGeneration();
   void (async () => {
     const activation = await readPendingActivation();
     if (!activation || typeof tab.id !== "number") return;
@@ -525,13 +547,13 @@ chrome.tabs.onCreated.addListener((tab) => {
       ...launch,
       applicationUrl: destinationUrl || launch.applicationUrl,
       expectedOrigin: destinationUrl ? safeOrigin(destinationUrl) : launch.expectedOrigin
-    }, activation.sourceTabId);
+    }, activation.sourceTabId, generation);
     await writePendingActivation({
       ...activation, destinationTabId: tab.id, state: "DESTINATION_DETECTED",
       redirectSequence: destinationUrl
         ? [...activation.redirectSequence, safeOriginPath(destinationUrl)]
         : activation.redirectSequence
-    });
+    }, generation);
     log.info("adopted application tab opened by the page", { origin: activation.expectedOrigin });
   })();
 });
@@ -539,6 +561,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 // When a tab with a pending launch finishes loading (initial load, refresh, or
 // SPA navigation reported as complete), make sure the content script is ready.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  const generation = captureAuthorityGeneration();
   // A top-frame navigation invalidates every frame in the tab.
   if (changeInfo.url) clearFrameRegistry(tabId);
   void (async () => {
@@ -559,7 +582,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
             applicationUrl: candidate.toString(),
             expectedOrigin: candidate.origin,
             targetTabId: tabId
-          });
+          }, generation);
         }
       } catch {
         destinationAllowed = false;
@@ -571,7 +594,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
         : [...activation.redirectSequence, nextPath].slice(-12);
       await writePendingActivation({
         ...activation, destinationTabId: tabId, state: "DESTINATION_DETECTED", redirectSequence: sequence
-      });
+      }, generation);
     }
     if (changeInfo.status !== "complete") return;
     let pending = await getPending(tabId);
@@ -606,8 +629,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
       if (exactMatch) {
         pending = { ...active, targetTabId: tabId, status: "detecting", state: "detecting_ats" };
-        await putPending(tabId, pending);
-        if (!(await getView(tabId))) await putView(tabId, initialView(tabId, pending, null, null));
+        await putPending(tabId, pending, generation);
+        if (!(await getView(tabId))) await putView(tabId, initialView(tabId, pending, null, null), generation);
         log.info("bound application tab", { tabId });
       } else {
         // A page the workflow moved to — the employer's own login host, an
@@ -624,14 +647,43 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     // previous origin had. `ensureContentReady` re-checks and records the need,
     // so an unauthorized destination simply gets no content script and the side
     // panel asks about that origin by name.
-    await ensureContentReady(tabId).catch(() => undefined);
+    await ensureContentReady(tabId, generation).catch(() => undefined);
   })();
 });
 
 // --------------------------------------------------------------------------- //
 // Message router (validates every message; unknown → structured error)
 // --------------------------------------------------------------------------- //
+chrome.runtime.onMessageExternal?.addListener((raw, sender, sendResponse) => {
+  const message = parseExternalRuntimeMessage(raw);
+  if (!message) {
+    sendResponse({ ok: false, error: "UNKNOWN_EXTERNAL_MESSAGE" });
+    return false;
+  }
+  if (!isApprovedExternalWebSender(sender, !chrome.runtime.getManifest().update_url)) {
+    sendResponse({ ok: false, error: "UNTRUSTED_EXTERNAL_SENDER" });
+    return false;
+  }
+  if (message.type === EXTERNAL_MSG.PING) {
+    sendResponse({
+      ok: true,
+      info: {
+        installed: true,
+        version: BUILD_INFO.version,
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: EXTENSION_CAPABILITIES
+      }
+    });
+    return false;
+  }
+  void purgeSessionState(message.reason)
+    .then(() => sendResponse({ ok: true }))
+    .catch(() => sendResponse({ ok: false, error: "SESSION_END_FAILED" }));
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
+  const generation = captureAuthorityGeneration();
   const message = parseRuntimeMessage(raw);
   if (!message) {
     sendResponse({ ok: false, error: "UNKNOWN_MESSAGE" });
@@ -639,21 +691,14 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   }
 
   switch (message.type) {
-    case MSG.HANDSHAKE:
-      // Remember which XpertApply deployment the user is actually using, so a
-      // later application can tell whether the extension is pointed somewhere
-      // else. Only the CATEGORY is kept, and only for an approved origin.
-      void rememberWebRuntime(message.origin, message.apiBase);
-      sendResponse({ ok: message.protocolVersion === PROTOCOL_VERSION, protocolVersion: PROTOCOL_VERSION });
-      return false;
-
     case MSG.STAGE_LAUNCH:
       void rememberWebRuntime(
         sender.origin ?? "",
         message.payload.webApiBase,
-        message.payload.webAuthenticatedUserId
+        message.payload.webAuthenticatedUserId,
+        generation
       );
-      void stageHandoff(message.payload)
+      void stageHandoff(message.payload, "prepared", generation)
         .then(() => sendResponse({ ok: true, applicationId: String(message.payload.sessionId) }))
         .catch((err) => sendResponse({ ok: false, code: "INVALID_HANDOFF", message: safeMessage(err) }));
       return true;
@@ -662,40 +707,38 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       void rememberWebRuntime(
         sender.origin ?? "",
         message.payload.webApiBase,
-        message.payload.webAuthenticatedUserId
+        message.payload.webAuthenticatedUserId,
+        generation
       );
-      handleLaunchRequest(message.payload, sender, sendResponse);
+      handleLaunchRequest(message.payload, sender, sendResponse, generation);
       return true;
 
     case MSG.CONTENT_READY:
-      if (sender.tab?.id != null && sender.frameId != null && message.probe) {
-        registerFrameProbe(sender.tab.id, sender.frameId, message.probe);
-      }
-      void handleContentReady(sender, message.probe?.rootConfident === true, sendResponse);
+      void handleContentReady(sender, message.probe, sendResponse, generation);
       return true;
 
     case MSG.GET_PENDING_LAUNCH:
-      void handleGetPending(sender, sendResponse);
+      void handleGetPending(sender, sendResponse, generation);
       return true;
 
     case MSG.INSPECT_APPLICATION_FRAMES:
-      void inspectApplicationFrames(sender, message.observed)
+      void inspectApplicationFrames(sender, message.observed, generation)
         .then((report) => sendResponse({ ok: true, ...report }))
         .catch((err) => sendResponse({ ok: false, error: String(err).slice(0, 60) }));
       return true;
 
     case MSG.REQUEST_FRAME_PERMISSION:
-      void requestFramePermission(sender, message.origin)
+      void requestFramePermission(sender, message.origin, generation)
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({ ok: false, reason: "PERMISSION_REQUEST_FAILED" }));
       return true;
 
     case MSG.AUTOFILL_PROGRESS:
-      void applyProgress(sender.tab?.id, message.payload).then(() => sendResponse({ ok: true }));
+      void applyProgress(sender.tab?.id, message.payload, generation).then(() => sendResponse({ ok: true }));
       return true;
 
     case MSG.AUTOFILL_RESULT:
-      void recordResult(sender.tab?.id, message.sessionId, message.result, message.progress)
+      void recordResult(sender.tab?.id, message.sessionId, message.result, message.progress, generation)
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
@@ -703,7 +746,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     case MSG.AUTOFILL_FAILED:
       // sender.frameId is Chrome-supplied and therefore trustworthy; a frameId
       // in the message body would be forgeable by a compromised page.
-      void applyFailure(sender.tab?.id, message.reasonCode, message.message, sender.frameId).then(() =>
+      void applyFailure(sender.tab?.id, message.reasonCode, message.message, sender.frameId, generation).then(() =>
         sendResponse({ ok: true })
       );
       return true;
@@ -721,17 +764,17 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.START_AUTOFILL:
-      void startAutofillForTab(message.tabId, message.reason)
+      void startAutofillForTab(message.tabId, message.reason, generation)
         .then((r) => sendResponse(r))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
 
     case MSG.CLEAR_SESSION:
-      void clearSession(message.tabId).then(() => sendResponse({ ok: true }));
+      void clearSession(message.tabId, generation).then(() => sendResponse({ ok: true }));
       return true;
 
     case MSG.COMPLETE_SESSION:
-      void completeActive(message.sessionId)
+      void completeActive(message.sessionId, generation)
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
@@ -742,7 +785,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         sendResponse({ ok: false, error: "NO_SOURCE_TAB" });
         return false;
       }
-      void navigateToApplicationDestination(sourceTabId, message)
+      void navigateToApplicationDestination(sourceTabId, message, generation)
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({ ok: false, error: String(err).slice(0, 80) }));
       return true;
@@ -754,7 +797,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         sendResponse({ ok: false, error: "NO_SOURCE_TAB" });
         return false;
       }
-      void prepareApplicationLaunch(sourceTabId, message)
+      void prepareApplicationLaunch(sourceTabId, message, generation)
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({ ok: false, error: "INTERNAL_HANDOFF_FAILURE" }));
       return true;
@@ -766,7 +809,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         sendResponse({ ok: false, reason: "source_tab_missing" });
         return false;
       }
-      void reconnectWorkflow(tabId, message.origin)
+      void reconnectWorkflow(tabId, message.origin, generation)
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({ ok: false, reason: "unknown" }));
       return true;
@@ -855,7 +898,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.SUBMISSION_CONFIRMED:
-      void confirmSubmissionForSession(message, sender)
+      void confirmSubmissionForSession(message, sender, generation)
         .then((result) => sendResponse({ ok: true, ...result }))
         .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
       return true;
@@ -866,7 +909,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       void patchView(sender.tab?.id ?? -1, {
         failureCode: message.reason,
         failureRecoverable: true
-      }).then(() => sendResponse({ ok: true }))
+      }, generation).then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: true }));
       return true;
 
@@ -891,13 +934,13 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.SITE_ACCESS_RESULT:
-      void applySiteAccessResult(message.tabId, message.pattern, message.granted)
+      void applySiteAccessResult(message.tabId, message.pattern, message.granted, generation)
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.REQUEST_FILL_LEASE:
-      void grantFillLease(sender, message.rootConfident === true)
+      void grantFillLease(sender, message.rootConfident === true, generation)
         .then((result) => sendResponse(result))
         .catch(() => sendResponse({ granted: false, reason: "LEASE_ERROR" }));
       return true;
@@ -914,7 +957,8 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 function handleLaunchRequest(
   payload: LaunchPayload,
   sender: chrome.runtime.MessageSender,
-  sendResponse: (r: unknown) => void
+  sendResponse: (r: unknown) => void,
+  generation: AuthorityGeneration
 ): void {
   const windowId = sender.tab?.windowId;
   void (async () => {
@@ -932,15 +976,15 @@ function handleLaunchRequest(
           if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
           await updatePending(existing.tabId, {
             ...handoffFields(payload), targetTabId: existing.tabId, status: "opening", state: "waiting_for_tab"
-          });
-          await recordSiteAccess(existing.tabId, await siteAccessFor(payload.officialUrl));
-          void ensureContentReady(existing.tabId);
+          }, generation);
+          await recordSiteAccess(existing.tabId, await siteAccessFor(payload.officialUrl), null, generation);
+          void ensureContentReady(existing.tabId, generation);
           sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId: existing.tabId });
           return;
         }
       }
       // Persist first: navigation must never be the only owner of the handoff.
-      const pending = await stageHandoff(payload, "opening");
+      const pending = await stageHandoff(payload, "opening", generation);
       const created = await chrome.tabs.create({
         url: payload.officialUrl,
         windowId: windowId ?? undefined,
@@ -950,12 +994,12 @@ function handleLaunchRequest(
       if (tabId == null) throw new Error("no tab id");
 
       const bound = { ...pending, targetTabId: tabId, status: "opening" as const, state: "waiting_for_tab" as const };
-      await putPending(tabId, bound);
-      await putView(tabId, initialView(tabId, bound, null, null));
+      await putPending(tabId, bound, generation);
+      await putView(tabId, initialView(tabId, bound, null, null), generation);
       // The employer origin is only knowable now, and a service worker cannot
       // ask Chrome for it. Record what the workflow needs; the side panel —
       // opened by this same user gesture — presents the request.
-      await recordSiteAccess(tabId, await siteAccessFor(payload.officialUrl));
+      await recordSiteAccess(tabId, await siteAccessFor(payload.officialUrl), null, generation);
       log.info("launch accepted", { requestId: payload.requestId, tabId, origin: pending.expectedOrigin });
       sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId });
     } catch (err) {
@@ -965,7 +1009,11 @@ function handleLaunchRequest(
   })();
 }
 
-async function stageHandoff(payload: LaunchPayload, status: PendingLaunch["status"] = "prepared"): Promise<PendingLaunch> {
+async function stageHandoff(
+  payload: LaunchPayload,
+  status: PendingLaunch["status"] = "prepared",
+  generation = captureAuthorityGeneration()
+): Promise<PendingLaunch> {
   validatePayload(payload);
   const previous = await getActive();
   const sameWorkflow = previous?.requestId === payload.requestId;
@@ -975,7 +1023,7 @@ async function stageHandoff(payload: LaunchPayload, status: PendingLaunch["statu
     targetTabId: sameWorkflow ? previous.targetTabId : undefined,
     status, state: status === "prepared" ? "package_ready" : "opening_tab"
   };
-  await putActive(launch);
+  await putActive(launch, generation);
   log.info("handoff saved", { requestId: payload.requestId, sessionId: payload.sessionId, state: status });
   return launch;
 }
@@ -1026,7 +1074,8 @@ export async function siteAccessFor(
 async function recordSiteAccess(
   tabId: number,
   need: SiteAccessNeed,
-  framePathShape: string | null = null
+  framePathShape: string | null = null,
+  generation = captureAuthorityGeneration()
 ): Promise<void> {
   await patchView(tabId, {
     siteAccess: need.state,
@@ -1034,7 +1083,7 @@ async function recordSiteAccess(
     siteAccessOrigin: need.origin,
     siteAccessScope: need.scope,
     siteAccessFramePathShape: need.scope === "frame" ? framePathShape : null
-  });
+  }, generation);
 }
 
 // --------------------------------------------------------------------------- //
@@ -1060,8 +1109,9 @@ async function recordSiteAccess(
  */
 async function handleContentReady(
   sender: chrome.runtime.MessageSender,
-  applicationRootDetected: boolean,
-  sendResponse: (r: unknown) => void
+  probe: Extract<RuntimeMessage, { type: typeof MSG.CONTENT_READY }>["probe"],
+  sendResponse: (r: unknown) => void,
+  generation: AuthorityGeneration
 ): Promise<void> {
   // Identity comes from Chrome, never from the message. The frame's URL and
   // whether it is the top frame used to be read out of the payload, which meant
@@ -1072,6 +1122,7 @@ async function handleContentReady(
     return;
   }
   const { tabId, frameId, isTopFrame } = context;
+  const applicationRootDetected = probe?.rootConfident === true;
   let pending = await getPending(tabId);
   let boundVia: "tab_binding" | "active_self_bind" = "tab_binding";
   if (!pending) {
@@ -1097,8 +1148,8 @@ async function handleContentReady(
       return;
     }
     pending = { ...active, targetTabId: tabId, status: "detecting", state: "detecting_ats" };
-    await putPending(tabId, pending);
-    await putView(tabId, initialView(tabId, pending, null, null));
+    await putPending(tabId, pending, generation);
+    await putView(tabId, initialView(tabId, pending, null, null), generation);
   }
   const reject = validateLaunch(pending, context);
   if (reject) {
@@ -1117,10 +1168,18 @@ async function handleContentReady(
     // Surface the sanitized launch + a specific error rather than pretending
     // nothing matched — the widget can then show a meaningful failure instead
     // of staying silently blank.
-    await applyFailure(tabId, reject);
+    await applyFailure(tabId, reject, undefined, undefined, generation);
     sendResponse({ ok: false, matched: true, error: reject, launch: sanitize(pending) });
     return;
   }
+  // A frame probe is workflow authority: register it only after the Chrome-
+  // supplied sender has matched a live launch, and immediately re-check both
+  // account and session invalidation after the async lookup/validation work.
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+    sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    return;
+  }
+  if (probe) registerFrameProbe(tabId, frameId, probe);
   log.info("content script ready", { tabId, frameId, isTopFrame });
   const activation = await readPendingActivation();
   if (activation && (tabId === activation.sourceTabId || tabId === activation.destinationTabId)) {
@@ -1128,9 +1187,9 @@ async function handleContentReady(
       ...activation,
       destinationTabId: tabId,
       state: applicationRootDetected ? "APPLICATION_DISCOVERED" : "CONTENT_SCRIPT_READY"
-    });
+    }, generation);
   }
-  await patchView(tabId, { contentReady: true, state: "fetching_package" });
+  await patchView(tabId, { contentReady: true, state: "fetching_package" }, generation);
   // Low-cardinality trace of HOW this tab resolved its binding. No identifiers,
   // no tokens, no URLs — just the shape of the path taken, so a live failure
   // names one specific cause instead of collapsing into "unauthorized".
@@ -1141,20 +1200,20 @@ async function handleContentReady(
     same_tab: String(pending.targetTabId === tabId)
   });
   try {
-    const pkg = await ensurePackage(tabId, pending);
+    const pkg = await ensurePackage(tabId, pending, generation);
     await patchView(tabId, {
       packageLoaded: true,
       company: pkg.session.company,
       jobTitle: pkg.session.jobTitle,
       sessionId: pkg.session.sessionId
-    });
+    }, generation);
     const rebound = await readPendingActivation();
     if (rebound && (tabId === rebound.sourceTabId || tabId === rebound.destinationTabId)) {
       await writePendingActivation({
         ...rebound,
         destinationTabId: tabId,
         state: applicationRootDetected ? "AUTOFILL_READY" : "SESSION_REBOUND"
-      });
+      }, generation);
     }
     // Hand the content script the meta + session so it can autofill immediately.
     sendResponse({ ok: true, matched: true, launch: sanitize(pending), session: pkg.session, reason: "automatic_launch" as AutofillReason });
@@ -1168,7 +1227,7 @@ async function handleContentReady(
       reason: code === "SESSION_UNAUTHORIZED" ? "session_unauthorized" : code.toLowerCase(),
       bound_via: boundVia
     });
-    await applyFailure(tabId, code);
+    await applyFailure(tabId, code, undefined, undefined, generation);
     sendResponse({ ok: false, matched: true, error: code, launch: sanitize(pending), recoverable: RECOVERABLE_PACKAGE_CODES.has(code) });
   }
 }
@@ -1319,7 +1378,8 @@ function probeFrameApplication(
 
 async function inspectApplicationFrames(
   sender: chrome.runtime.MessageSender,
-  observed: ObservedFramePayload[]
+  observed: ObservedFramePayload[],
+  generation: AuthorityGeneration
 ): Promise<{
   tabId: number | null;
   topOrigin: string | null;
@@ -1473,7 +1533,8 @@ async function inspectApplicationFrames(
       await recordSiteAccess(
         tabId,
         siteAccessNeedFor(candidate.origin, false, "frame"),
-        candidate.pathShape
+        candidate.pathShape,
+        generation
       );
     } else if (activation.state === "active") {
       candidate.contentScriptResponds = true;
@@ -1481,7 +1542,7 @@ async function inspectApplicationFrames(
       candidate.applicationEvidence = Boolean(probe?.evidence);
       candidate.fieldCount = probe?.fieldCount ?? 0;
       outcome = frameDiscoveryOutcome(candidate);
-      await patchView(tabId, { failureCode: null, failureMessage: null });
+      await patchView(tabId, { failureCode: null, failureMessage: null }, generation);
     }
   }
 
@@ -1497,7 +1558,8 @@ async function inspectApplicationFrames(
     await recordSiteAccess(
       tabId,
       siteAccessNeedFor(candidate.origin, false, "frame"),
-      candidate.pathShape
+      candidate.pathShape,
+      generation
     );
   }
 
@@ -1548,7 +1610,8 @@ async function inspectApplicationFrames(
  */
 async function requestFramePermission(
   sender: chrome.runtime.MessageSender,
-  origin: string
+  origin: string,
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; reason: string; granted?: boolean }> {
   const tabId = sender.tab?.id;
   if (tabId == null) return { ok: false, reason: "NO_TAB" };
@@ -1578,14 +1641,14 @@ async function requestFramePermission(
     // The panel may have completed the Chrome prompt while the top-frame
     // widget was waiting. Resume through the same concrete-frame
     // reconciliation path; never fall back to allFrames here.
-    const resumed = await applySiteAccessResult(tabId, need.pattern ?? "", true);
+    const resumed = await applySiteAccessResult(tabId, need.pattern ?? "", true, generation);
     return {
       ok: resumed.ok,
       reason: resumed.ok ? "ALREADY_GRANTED" : "FRAME_CONFIRMATION_PENDING",
       granted: true
     };
   }
-  await recordSiteAccess(tabId, need);
+  await recordSiteAccess(tabId, need, null, generation);
   log.info("frame site access required", { tabId, origin: candidate.origin });
   return { ok: false, reason: "SITE_ACCESS_REQUIRED", granted: false };
 }
@@ -1616,7 +1679,11 @@ function classifyPackageError(err: unknown): string {
  * package CONTENT_READY does, so it is gated by the same rule — previously a
  * bound tab made this unconditional for every frame in it.
  */
-async function handleGetPending(sender: chrome.runtime.MessageSender, sendResponse: (r: unknown) => void): Promise<void> {
+async function handleGetPending(
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (r: unknown) => void,
+  generation: AuthorityGeneration
+): Promise<void> {
   const context = describeSender(sender);
   if (!context) {
     sendResponse({ ok: true, matched: false, launch: null });
@@ -1628,7 +1695,7 @@ async function handleGetPending(sender: chrome.runtime.MessageSender, sendRespon
     const active = await getActive();
     if (active && Date.now() <= active.expiresAt && senderCanBindTab(context, active)) {
       pending = { ...active, targetTabId: tabId };
-      await putPending(tabId, pending);
+      await putPending(tabId, pending, generation);
     }
   }
   if (!pending) {
@@ -1650,37 +1717,41 @@ async function handleGetPending(sender: chrome.runtime.MessageSender, sendRespon
 // --------------------------------------------------------------------------- //
 async function startAutofillForTab(
   tabId: number | undefined,
-  reason: AutofillReason
+  reason: AutofillReason,
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; error?: string }> {
   const id = await resolveViewTab(tabId);
   if (id == null) return { ok: false, error: "NO_TAB" };
   const pending = await getPending(id);
   if (!pending) return { ok: false, error: "SESSION_PACKAGE_FAILED" };
-  const ready = await ensureContentReady(id);
+  const ready = await ensureContentReady(id, generation);
   if (!ready) {
-    await applyFailure(id, "CONTENT_SCRIPT_NOT_INJECTED");
+    await applyFailure(id, "CONTENT_SCRIPT_NOT_INJECTED", undefined, undefined, generation);
     return { ok: false, error: "CONTENT_SCRIPT_NOT_INJECTED" };
   }
   try {
-    await ensurePackage(id, pending);
+    await ensurePackage(id, pending, generation);
   } catch {
-    await applyFailure(id, "SESSION_PACKAGE_FAILED");
+    await applyFailure(id, "SESSION_PACKAGE_FAILED", undefined, undefined, generation);
     return { ok: false, error: "SESSION_PACKAGE_FAILED" };
   }
-  await patchView(id, { running: true, failureCode: null, failureMessage: null });
+  await patchView(id, { running: true, failureCode: null, failureMessage: null }, generation);
   await sendToTab(id, { type: MSG.AUTOFILL_START, reason });
   return { ok: true };
 }
 
 /** Ping the content script; if silent, inject it and ping again with backoff. */
-async function ensureContentReady(tabId: number): Promise<boolean> {
+async function ensureContentReady(
+  tabId: number,
+  generation = captureAuthorityGeneration()
+): Promise<boolean> {
   // Checked first and every time. Without a grant there is no XpertApply code
   // on the page at all — a stronger position than a script that is present and
   // declines to act, and one Chrome enforces rather than the extension.
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   const access = await siteAccessFor(tab?.url ?? null);
   if (access.state !== "site_access_granted") {
-    await recordSiteAccess(tabId, access);
+    await recordSiteAccess(tabId, access, null, generation);
     log.info("content script not injected", { reason: access.state });
     return false;
   }
@@ -1719,8 +1790,14 @@ function pingContent(tabId: number): Promise<boolean> {
 // --------------------------------------------------------------------------- //
 // Package: exchange the single-use token ONCE, then cache per tab
 // --------------------------------------------------------------------------- //
-async function ensurePackage(tabId: number, pending: PendingLaunch): Promise<SessionPackage> {
+async function ensurePackage(
+  tabId: number,
+  pending: PendingLaunch,
+  generation: AuthorityGeneration
+): Promise<SessionPackage> {
+  if (generation !== captureAuthorityGeneration()) throw new Error("SESSION_ENDED");
   const cached = await getPackage(tabId);
+  if (generation !== captureAuthorityGeneration()) throw new Error("SESSION_ENDED");
   if (cached) return cached;
   const inFlight = packageLoads.get(tabId);
   if (inFlight) return inFlight;
@@ -1735,19 +1812,26 @@ async function ensurePackage(tabId: number, pending: PendingLaunch): Promise<Ses
     // and the only thing that keeps a cross-tab handoff alive.
     const inherited = await findPackageForSession(pending.sessionId);
     if (inherited) {
-      await putPackage(tabId, inherited);
+      if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) throw new Error("SESSION_ENDED");
+      await putPackage(tabId, inherited, generation);
       log.info("inherited session package for destination tab", { reason: "session_scoped_reuse" });
       return inherited;
     }
     const { session_token } = await exchangeLaunchToken(pending.launchToken);
     const session = await fetchSessionData(session_token, pending.sessionId);
+    if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) throw new Error("SESSION_ENDED");
     const pkg: SessionPackage = { sessionToken: session_token, session, cachedAt: Date.now() };
-    await putPackage(tabId, pkg);
-    await updatePending(tabId, { status: "detecting", state: "detecting_ats" });
+    await putPackage(tabId, pkg, generation);
+    await updatePending(tabId, { status: "detecting", state: "detecting_ats" }, generation);
     return pkg;
   })();
+  if (generation !== captureAuthorityGeneration()) throw new Error("SESSION_ENDED");
   packageLoads.set(tabId, load);
-  try { return await load; } finally { packageLoads.delete(tabId); }
+  try {
+    return await load;
+  } finally {
+    if (packageLoads.get(tabId) === load) packageLoads.delete(tabId);
+  }
 }
 
 async function fetchDocument(
@@ -1879,12 +1963,13 @@ const WEB_RUNTIME_KEY = "jobpilotWebRuntimeV2";
 async function rememberWebRuntime(
   origin: string,
   apiBase?: string,
-  authenticatedUserId?: number | null
+  authenticatedUserId?: number | null,
+  generation = captureAuthorityGeneration()
 ): Promise<void> {
   if (!isApprovedJobPilotOrigin(origin)) return;
   const environment = classifyEnvironment(origin);
   try {
-    await chrome.storage.local.set({
+    await withAuthorityMutation(generation, () => chrome.storage.local.set({
       [WEB_RUNTIME_KEY]: {
         webEnvironment: environment,
         webApiBase: apiBase ? safeApiBase(apiBase) : null,
@@ -1892,7 +1977,7 @@ async function rememberWebRuntime(
           ? authenticatedUserId
           : null
       }
-    });
+    }));
   } catch {
     // Non-fatal: the check degrades to "unknown", which never blocks.
   }
@@ -1979,25 +2064,27 @@ async function recordResult(
   tabId: number | undefined,
   sessionId: number,
   result: AutofillResult,
-  progress: ProgressPayload
+  progress: ProgressPayload,
+  generation: AuthorityGeneration
 ): Promise<void> {
   const id = await resolveViewTab(tabId);
   if (id != null) {
-    await applyProgress(id, progress);
+    await applyProgress(id, progress, generation);
     await patchView(id, {
       running: false,
       state: result.status === "completed_with_review" ? "completed_with_review" : "completed"
-    });
+    }, generation);
   }
   const pkg = id != null ? await getPackage(id) : null;
   if (pkg) await reportAutofillResult(pkg.sessionToken, sessionId, result).catch(() => undefined);
 }
 
-async function completeActive(sessionId: number): Promise<void> {
+async function completeActive(sessionId: number, generation: AuthorityGeneration): Promise<void> {
   // Find the package holding this session across tabs.
   const entry = await findPackageBySession(sessionId);
   if (!entry) throw new Error("No active session token");
   await completeSession(entry.sessionToken, sessionId);
+  await purgeCompletedSession(sessionId, generation);
 }
 
 /**
@@ -2022,7 +2109,8 @@ const CONFIRMED_SESSIONS = new Set<number>();
  */
 async function confirmSubmissionForSession(
   message: Extract<RuntimeMessage, { type: typeof MSG.SUBMISSION_CONFIRMED }>,
-  sender: chrome.runtime.MessageSender
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
 ): Promise<{ alreadyConfirmed: boolean }> {
   const context = describeSender(sender);
   if (!context) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
@@ -2053,27 +2141,81 @@ async function confirmSubmissionForSession(
   });
   // Only remember it once the server has actually accepted it — a failed call
   // must stay retryable.
+  if (generation !== captureAuthorityGeneration()) throw new Error("STALE_AUTHORITY_GENERATION");
   CONFIRMED_SESSIONS.add(message.sessionId);
   return { alreadyConfirmed: result.already_applied };
 }
 
-async function clearSession(tabId: number | undefined): Promise<void> {
+async function clearSession(tabId: number | undefined, generation: AuthorityGeneration): Promise<void> {
   const id = await resolveViewTab(tabId);
   if (id == null) return;
   await sendToTab(id, { type: MSG.CLEAR_SESSION });
-  await patchView(id, { running: false, filled: 0, skipped: 0, reviewRequired: 0 });
+  await patchView(id, { running: false, filled: 0, skipped: 0, reviewRequired: 0 }, generation);
+}
+
+/** Account/session teardown is global to this extension profile, not one tab. */
+async function purgeSessionState(reason: string): Promise<void> {
+  // Invalidate first, synchronously. Any mutation already queued under the old
+  // epoch is now stale; any mutation already executing finishes ahead of the
+  // queued purge and is then removed by that purge.
+  const generation = advanceAuthorityGeneration();
+  packageLoads.clear();
+  CONFIRMED_SESSIONS.clear();
+  frameRegistry.clear();
+  fillLeases.clear();
+  const tabIds = await workflowTabIds();
+  // Security authority is removed before any slow or unreachable employer tab
+  // is contacted. The mutation queue makes this the last word after all writes
+  // that had already entered storage under the prior epoch.
+  await Promise.all([
+    clearAllWorkflowState(generation),
+    clearPendingActivation(generation),
+    withAuthorityMutation(generation, () => chrome.storage.local.remove(WEB_RUNTIME_KEY))
+  ]);
+  log.info("session state purged", { reason });
+  // XA-10 restoration is best-effort and deliberately outside the ACK's
+  // security-critical path. A closed or broken employer tab cannot retain
+  // extension authority or delay account replacement.
+  void Promise.all(tabIds.map((tabId) =>
+    sendToTab(tabId, { type: MSG.CLEAR_SESSION }).catch(() => undefined)
+  ));
+}
+
+async function purgeCompletedSession(
+  sessionId: number,
+  generation = captureAuthorityGeneration()
+): Promise<void> {
+  // Invalidate this session synchronously before entering the storage queue.
+  // Writers already executing finish before the queued purge; queued or later
+  // writers for this session fail, while unrelated sessions remain valid.
+  endSessionAuthority(sessionId);
+  const tabIds = await clearWorkflowSession(sessionId, generation);
+  const activation = await readPendingActivation();
+  if (activation?.sessionId === sessionId) await clearPendingActivation(generation);
+  await Promise.all(tabIds.map((tabId) =>
+    sendToTab(tabId, { type: MSG.CLEAR_SESSION }).catch(() => undefined)
+  ));
+  for (const tabId of tabIds) {
+    packageLoads.delete(tabId);
+    clearFrameRegistry(tabId);
+  }
+  CONFIRMED_SESSIONS.delete(sessionId);
 }
 
 // --------------------------------------------------------------------------- //
 // View-state updates
 // --------------------------------------------------------------------------- //
-async function applyProgress(tabId: number | undefined, p: ProgressPayload): Promise<void> {
+async function applyProgress(
+  tabId: number | undefined,
+  p: ProgressPayload,
+  generation: AuthorityGeneration
+): Promise<void> {
   if (tabId == null) return;
   const durableStatus: PendingLaunch["status"] = p.state === "failed" ? "failed"
     : p.state === "completed_with_review" ? "review_required"
     : p.state === "completed" ? "ready"
     : p.state === "filling" ? "filling" : "detecting";
-  await updatePending(tabId, { status: durableStatus, state: p.state });
+  await updatePending(tabId, { status: durableStatus, state: p.state }, generation);
   const resumeUploaded = p.documentsUploaded.includes("resume");
   const coverUploaded = p.documentsUploaded.includes("cover_letter");
   await patchView(tabId, {
@@ -2088,7 +2230,7 @@ async function applyProgress(tabId: number | undefined, p: ProgressPayload): Pro
     reachedFinalStep: p.reachedFinalStep,
     resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : "pending",
     coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : "pending"
-  });
+  }, generation);
   // Only the top frame owns the floating widget, but the authoritative fill may
   // run inside an embedded ATS iframe. Mirror the PII-free progress back to the
   // tab so the top-frame widget reflects the iframe's terminal state.
@@ -2245,7 +2387,8 @@ function credibleNestedFrames(tabId: number, launch: PendingLaunch): RegisteredF
 
 export async function grantFillLease(
   sender: chrome.runtime.MessageSender,
-  rootConfident: boolean
+  rootConfident: boolean,
+  generation = captureAuthorityGeneration()
 ): Promise<{ granted: boolean; reason: string }> {
   const context = describeSender(sender);
   if (!context) return { granted: false, reason: "NO_SENDER_TAB" };
@@ -2266,6 +2409,9 @@ export async function grantFillLease(
   // has resolved an application root of its own. That is positive evidence, and
   // it outranks every nested frame.
   if (context.isTopFrame) {
+    if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+      return { granted: false, reason: "STALE_AUTHORITY" };
+    }
     fillLeases.set(context.tabId, { frameId: context.frameId, at: Date.now() });
     log.info("fill lease granted", { tabId: context.tabId, frameId: context.frameId, reason: "top_frame" });
     return { granted: true, reason: "TOP_FRAME" };
@@ -2317,6 +2463,9 @@ export async function grantFillLease(
     return { granted: false, reason: "FRAME_SELECTION_UNRESOLVED" };
   }
 
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+    return { granted: false, reason: "STALE_AUTHORITY" };
+  }
   fillLeases.set(context.tabId, { frameId: context.frameId, at: Date.now() });
   log.info("fill lease granted", {
     tabId: context.tabId, frameId: context.frameId, reason: "embedded_application"
@@ -2334,7 +2483,8 @@ export async function grantFillLease(
 async function applySiteAccessResult(
   tabId: number | undefined,
   pattern: string,
-  granted: boolean
+  granted: boolean,
+  generation: AuthorityGeneration
 ): Promise<{ ok: boolean; state: string }> {
   const id = await resolveViewTab(tabId);
   if (id == null) return { ok: false, state: "no_workflow" };
@@ -2352,7 +2502,7 @@ async function applySiteAccessResult(
       siteAccess: granted ? "site_access_required" : "site_access_denied",
       failureCode: "SITE_ACCESS_DENIED",
       failureRecoverable: true
-    });
+    }, generation);
     log.info("site access declined", { tabId: id });
     return { ok: false, state: "site_access_denied" };
   }
@@ -2361,7 +2511,7 @@ async function applySiteAccessResult(
     siteAccess: "site_access_granted",
     failureCode: null,
     failureMessage: null
-  });
+  }, generation);
   log.info("site access granted", { tabId: id });
 
   // Page grants use the existing top-frame readiness path. A frame grant is a
@@ -2371,7 +2521,7 @@ async function applySiteAccessResult(
   const frameScoped = priorView?.siteAccessScope === "frame"
     && priorView.siteAccessPattern === pattern;
   if (!frameScoped) {
-    await ensureContentReady(id).catch(() => false);
+    await ensureContentReady(id, generation).catch(() => false);
     return { ok: true, state: "site_access_granted" };
   }
 
@@ -2382,7 +2532,7 @@ async function applySiteAccessResult(
     await patchView(id, {
       failureCode: "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION",
       failureRecoverable: true
-    });
+    }, generation);
     return { ok: false, state: "frame_confirmation_pending" };
   }
 
@@ -2402,7 +2552,7 @@ async function applySiteAccessResult(
         : "site_access_granted",
       failureCode: "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION",
       failureRecoverable: true
-    });
+    }, generation);
     return { ok: false, state: activation.state === "permission_revoked"
       ? "site_access_required"
       : "frame_confirmation_pending" };
@@ -2502,7 +2652,8 @@ async function applyFailure(
   tabId: number | undefined,
   code: string,
   message?: string,
-  frameId?: number
+  frameId?: number,
+  generation = captureAuthorityGeneration()
 ): Promise<void> {
   if (tabId == null) return;
   // A form-hosting page can have several frames; a frame with no fields of its
@@ -2526,10 +2677,10 @@ async function applyFailure(
   await updatePending(tabId, {
     status: "failed", state: "failed", failureCode: code,
     lastError: { code, message: message ?? code, recoverable }
-  });
+  }, generation);
   await patchView(tabId, {
     running: false, state: "failed", failureCode: code, failureMessage: message ?? null, failureRecoverable: recoverable
-  });
+  }, generation);
 }
 
 // --------------------------------------------------------------------------- //

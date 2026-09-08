@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -87,6 +87,22 @@ describe("auth pages", () => {
     );
   });
 
+  it("coalesces duplicate login submissions while replacement is pending", async () => {
+    let release!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>((resolve) => { release = resolve; })
+    );
+    render(React.createElement(LoginPage));
+    await fillCredentials();
+    const form = screen.getByRole("button", { name: "Log in" }).closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release(jsonResponse({ access_token: "login-token", token_type: "bearer" }));
+    await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"));
+  });
+
   it("login displays backend errors", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "Invalid credentials" }, 401)
@@ -130,7 +146,10 @@ describe("auth pages", () => {
     await fillCredentials();
     await userEvent.click(screen.getByRole("button", { name: "Log in" }));
 
-    await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"));
+    await waitFor(
+      () => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"),
+      { timeout: 2_500 }
+    );
     expect(localStorage.getItem("jobpilot_token")).toBe("fresh-token");
   });
 

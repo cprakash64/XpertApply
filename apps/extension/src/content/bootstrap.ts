@@ -25,7 +25,7 @@ import {
   type TikTokAdapterTrace
 } from "../ats/tiktokApplication";
 import { clearJobPilotFields, fillField } from "../fields/fill";
-import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin } from "../config";
+import { getApiBase, isApprovedJobPilotOrigin } from "../config";
 import { log } from "../logger";
 import {
   MSG,
@@ -34,7 +34,6 @@ import {
   parsePageMessage,
   parseRuntimeMessage,
   type AutofillReason,
-  type ExtensionInfo,
   type LaunchPayload,
   type PageMessage,
   type ProgressPayload
@@ -165,12 +164,6 @@ if (isApprovedJobPilotOrigin(location.origin)) {
 // 1. XpertApply web origin: validated, acknowledged bridge
 // --------------------------------------------------------------------------- //
 function initWebOrigin(): void {
-  const info: ExtensionInfo = {
-    installed: true,
-    version: chrome.runtime.getManifest?.().version ?? "0.0.0",
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: EXTENSION_CAPABILITIES
-  };
   // Register the listener FIRST, synchronously, before anything async — the
   // web page may send WEB_PING immediately after its own readiness listener
   // goes up, and there must be no window where a ping could arrive unheard.
@@ -180,37 +173,7 @@ function initWebOrigin(): void {
     if (!isApprovedJobPilotOrigin(event.origin)) return;
     const data = parsePageMessage(event.data);
     if (!data) return;
-    if (data.type === MSG.PING) {
-      log.debug("web ping received");
-      const ack = (await sendRuntime({
-        type: MSG.HANDSHAKE,
-        origin: event.origin,
-        apiBase: data.apiBase,
-        protocolVersion: PROTOCOL_VERSION
-      })) as
-        | { ok?: boolean; protocolVersion?: number }
-        | undefined;
-      // PONG whenever the background is actually reachable — regardless of
-      // whether ITS protocol version matches this (possibly stale, if the
-      // extension was reloaded while this tab stayed open) content script's
-      // compiled-in PROTOCOL_VERSION. The web app already compares
-      // info.protocolVersion itself to decide "outdated" vs. current; what
-      // must never happen is silently dropping the reply and collapsing
-      // "installed but outdated/stale" into "not installed at all".
-      // `ack === undefined` means chrome.runtime.sendMessage itself failed
-      // (extension context invalidated — content script truly orphaned by a
-      // reload) and there is genuinely no bridge to report; stay silent so
-      // the web app's timeout-driven "reload the page" messaging is accurate.
-      if (ack !== undefined) {
-        window.postMessage({ source: PAGE_SOURCE_EXT, type: MSG.PONG, info } satisfies PageMessage, location.origin);
-        log.debug("extension ready sent");
-      } else {
-        // Expected briefly during an unpacked-extension reload. The background
-        // now revives this page automatically; logging at warn made Chrome list
-        // a normal lifecycle transition as an extension error.
-        log.debug("background temporarily unavailable; waiting for bridge revival");
-      }
-    } else if (data.type === MSG.STAGE_LAUNCH) {
+    if (data.type === MSG.STAGE_LAUNCH) {
       if (validLaunch(data.payload)) void sendRuntime({ type: MSG.STAGE_LAUNCH, payload: data.payload });
     } else if (data.type === MSG.START_ASSISTED_APPLY) {
       log.debug("start assisted apply forwarded");

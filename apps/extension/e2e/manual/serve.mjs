@@ -40,6 +40,7 @@ const EMPLOYER_ORIGIN = `https://${EMPLOYER_HOST}`;
 const ATS_ORIGIN = `https://${ATS_HOST}`;
 const ADS_ORIGIN = `https://${ADS_HOST}`;
 const APPLICATION_URL = `${EMPLOYER_ORIGIN}/jobs/1/apply`;
+const EXTENSION_ID = process.env.XPERTAPPLY_EXTENSION_ID ?? "";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(here, "..", "..", "dist");
@@ -169,7 +170,7 @@ const server = createServer({ key, cert }, (request, response) => {
     return json({ ok: true });
   }
 
-  if (host === WEB_HOST) return html(launcherPage(APPLICATION_URL));
+  if (host === WEB_HOST) return html(launcherPage(APPLICATION_URL, EXTENSION_ID));
   if (host === ATS_HOST) return html(atsPage());
   if (host === ADS_HOST) return html(adsPage());
   // Anything the fixture does not model — including a form POST — is answered,

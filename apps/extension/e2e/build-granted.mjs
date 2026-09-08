@@ -9,5 +9,13 @@ cpSync("dist", out, { recursive: true });
 const file = path.join(out, "manifest.json");
 const manifest = JSON.parse(readFileSync(file, "utf8"));
 manifest.host_permissions = [...manifest.host_permissions, "http://localhost/*", "http://127.0.0.1/*"];
+manifest.externally_connectable = {
+  ...manifest.externally_connectable,
+  matches: [
+    ...(manifest.externally_connectable?.matches ?? []),
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
+};
 writeFileSync(file, JSON.stringify(manifest, null, 2));
 console.log("granted e2e build -> dist-e2e-granted");

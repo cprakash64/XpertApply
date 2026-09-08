@@ -24,8 +24,49 @@ function jwt(exp: number): string {
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: "1", exp })}.signature`;
 }
 
+const TEST_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+const PING_RESPONSE = {
+  ok: true,
+  info: { installed: true, version: "0.2.0", protocolVersion: 3, capabilities: ["fill"] }
+};
+
+function installExternalRuntime() {
+  type Call = {
+    extensionId: string;
+    message: { type: string; reason?: string };
+    callback: (response: unknown) => void;
+  };
+  const calls: Call[] = [];
+  const runtime: {
+    lastError?: { message: string };
+    sendMessage: (extensionId: string, message: Call["message"], callback: Call["callback"]) => void;
+  } = {
+    sendMessage(extensionId, message, callback) {
+      calls.push({ extensionId, message, callback });
+    }
+  };
+  vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", TEST_EXTENSION_ID);
+  vi.stubGlobal("chrome", { runtime });
+  return {
+    calls,
+    async respond(index: number, response: unknown) {
+      calls[index].callback(response);
+      await Promise.resolve();
+      await Promise.resolve();
+    },
+    fail(index: number, message: string) {
+      runtime.lastError = { message };
+      calls[index].callback(undefined);
+      delete runtime.lastError;
+    }
+  };
+}
+
 describe("central auth-session handling", () => {
   beforeEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     localStorage.clear();
     __resetAuthSessionForTests();
@@ -95,6 +136,7 @@ describe("central auth-session handling", () => {
   });
 
   it("does not let a late 401 from an old token clear a newer login", async () => {
+    const external = installExternalRuntime();
     storeAuthToken("old-token");
     let release!: (value: Response) => void;
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -102,7 +144,10 @@ describe("central auth-session handling", () => {
     );
 
     const oldRequest = api("/profile").catch((cause: unknown) => cause);
-    storeAuthToken("new-token");
+    const replacement = storeAuthToken("new-token");
+    await external.respond(0, PING_RESPONSE);
+    await external.respond(1, { ok: true });
+    await replacement;
     release(response(401, "Invalid token"));
     await oldRequest;
 
@@ -153,10 +198,136 @@ describe("central auth-session handling", () => {
     expect(headers.has("Authorization")).toBe(false);
   });
 
-  it("explicit logout clears the token without preserving a protected return", () => {
+  it("explicit logout clears the token and requests browser-routed teardown", async () => {
+    const external = installExternalRuntime();
     storeAuthToken("valid-token");
     const result = invalidateAuthSession({ reason: "logout", returnTo: null });
     expect(result).toEqual({ initiated: true, loginHref: "/login" });
     expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    expect(external.calls[0]).toMatchObject({
+      extensionId: TEST_EXTENSION_ID,
+      message: { type: "XPERTAPPLY_EXTERNAL_PING" }
+    });
+    await external.respond(0, PING_RESPONSE);
+    expect(external.calls[1].message).toEqual({
+      type: "XPERTAPPLY_EXTERNAL_SESSION_END", reason: "logout"
+    });
   });
+
+  it("does not activate a replacement token until the extension acknowledges teardown", async () => {
+    const external = installExternalRuntime();
+    const postMessage = vi.spyOn(window, "postMessage");
+    storeAuthToken("user-a-token");
+    expect(postMessage).not.toHaveBeenCalled();
+
+    storeAuthToken("user-a-token");
+    expect(postMessage).not.toHaveBeenCalled();
+
+    const replacement = storeAuthToken("user-b-token");
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(external.calls[0].message).toEqual({ type: "XPERTAPPLY_EXTERNAL_PING" });
+    await external.respond(0, PING_RESPONSE);
+    expect(external.calls[1].message).toEqual({
+      type: "XPERTAPPLY_EXTERNAL_SESSION_END", reason: "account_changed"
+    });
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    await external.respond(1, { ok: true });
+    await replacement;
+    expect(localStorage.getItem("jobpilot_token")).toBe("user-b-token");
+  });
+
+  it("same-page legacy PONG and exact forged ACK cannot authorize replacement", async () => {
+    const external = installExternalRuntime();
+    storeAuthToken("user-a-token");
+    const replacement = storeAuthToken("user-b-token");
+    for (const data of [
+      { source: "jobpilot-extension", type: "JOBPILOT_PONG" },
+      { source: "jobpilot-extension", type: "JOBPILOT_SESSION_END_RESULT", requestId: "known-old-request", ok: true }
+    ]) window.dispatchEvent(new MessageEvent("message", {
+      source: window, origin: window.location.origin, data
+    }));
+    await Promise.resolve();
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    expect(external.calls).toHaveLength(1);
+    await external.respond(0, PING_RESPONSE);
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    await external.respond(1, { ok: true });
+    await replacement;
+    expect(localStorage.getItem("jobpilot_token")).toBe("user-b-token");
+  });
+
+  it("negative control: the retired page-visible ACK design authorizes the same forgery", async () => {
+    localStorage.setItem("jobpilot_token", "user-a-token");
+    const legacyReplacement = new Promise<void>((resolve) => {
+      const requestId = "observable-request";
+      window.addEventListener("message", function legacyListener(event) {
+        const data = event.data as { source?: string; type?: string; requestId?: string; ok?: boolean };
+        if (event.source !== window || event.origin !== window.location.origin
+          || data.source !== "jobpilot-extension" || data.type !== "JOBPILOT_SESSION_END_RESULT"
+          || data.requestId !== requestId || data.ok !== true) return;
+        window.removeEventListener("message", legacyListener);
+        localStorage.setItem("jobpilot_token", "user-b-token");
+        resolve();
+      });
+      localStorage.removeItem("jobpilot_token");
+      window.postMessage({ source: "jobpilot-web", type: "JOBPILOT_SESSION_END", requestId }, window.location.origin);
+    });
+    window.dispatchEvent(new MessageEvent("message", {
+      source: window,
+      origin: window.location.origin,
+      data: {
+        source: "jobpilot-extension", type: "JOBPILOT_SESSION_END_RESULT",
+        requestId: "observable-request", ok: true
+      }
+    }));
+    await legacyReplacement;
+    expect(localStorage.getItem("jobpilot_token")).toBe("user-b-token");
+  });
+
+  it("fails closed on an explicit teardown failure", async () => {
+    const external = installExternalRuntime();
+    storeAuthToken("user-a-token");
+    const replacement = storeAuthToken("user-b-token");
+    await external.respond(0, PING_RESPONSE);
+    await external.respond(1, { ok: false, error: "SESSION_END_FAILED" });
+    await expect(replacement).rejects.toThrow("teardown failed");
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+  });
+
+  it("permits replacement when Chrome reports no receiving extension", async () => {
+    const external = installExternalRuntime();
+    storeAuthToken("user-a-token");
+    const replacement = storeAuthToken("user-b-token");
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    external.fail(0, "Could not establish connection. Receiving end does not exist.");
+    await replacement;
+    expect(localStorage.getItem("jobpilot_token")).toBe("user-b-token");
+  });
+
+  it("does not activate replacement authority when an installed extension times out", async () => {
+    vi.useFakeTimers();
+    const external = installExternalRuntime();
+    storeAuthToken("user-a-token");
+    const replacement = storeAuthToken("user-b-token");
+    await external.respond(0, PING_RESPONSE);
+    const rejected = expect(replacement).rejects.toThrow("did not acknowledge");
+    await vi.advanceTimersByTimeAsync(1_600);
+    await rejected;
+    expect(localStorage.getItem("jobpilot_token")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it.each(["expired", "account_deleted"] as const)(
+    "forwards the %s invalidation reason without account data",
+    async (reason) => {
+      const external = installExternalRuntime();
+      storeAuthToken("valid-token");
+      invalidateAuthSession({ reason, returnTo: null });
+      await external.respond(0, PING_RESPONSE);
+      expect(external.calls[1].message).toEqual({
+        type: "XPERTAPPLY_EXTERNAL_SESSION_END", reason
+      });
+    }
+  );
 });
