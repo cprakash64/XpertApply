@@ -61,6 +61,7 @@ function sender(opts: { tabId?: number; frameId: number; url?: string; tabUrl?: 
   return {
     tab: { id: opts.tabId ?? 7, url: opts.tabUrl ?? APPLICATION_URL },
     frameId: opts.frameId,
+    documentId: `document-${opts.tabId ?? 7}-${opts.frameId}`,
     url: opts.url,
     origin: opts.origin
   } as unknown as chrome.runtime.MessageSender;
@@ -288,7 +289,28 @@ function installFakeChrome() {
       get: vi.fn(async () => { throw new Error("no such tab"); }),
       update: vi.fn(async () => ({})),
       query: vi.fn(async () => []),
-      sendMessage: vi.fn((_tabId: number, _message: unknown, cb?: (r: unknown) => void) => cb?.(undefined))
+      sendMessage: vi.fn((
+        _tabId: number,
+        message: unknown,
+        optionsOrCallback?: { frameId?: number } | ((r: unknown) => void),
+        callback?: (r: unknown) => void
+      ) => {
+        const done = typeof optionsOrCallback === "function" ? optionsOrCallback : callback;
+        if ((message as { type?: string }).type !== "JOBPILOT_PROBE_FRAME_APPLICATION") return done?.(undefined);
+        const frameId = typeof optionsOrCallback === "object" ? optionsOrCallback.frameId ?? 0 : 0;
+        return done?.({
+          ok: true,
+          evidence: true,
+          fieldCount: 3,
+          probe: {
+            isTopFrame: frameId === 0,
+            sanitizedUrl: frameId === 0 ? APPLICATION_URL : "https://boards.greenhouse.io/embed/mongodb/1",
+            rootConfident: true,
+            applicationLabelsFound: ["first_name", "email"],
+            bestScore: 20
+          }
+        });
+      })
     },
     windows: { update: vi.fn(async () => ({})) },
     scripting: { executeScript: vi.fn(async () => undefined) },

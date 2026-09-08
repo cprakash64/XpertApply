@@ -11,7 +11,7 @@ describe("message validation", () => {
     expect(isApprovedJobPilotOrigin("https://jobpilot.ai.evil.example")).toBe(false);
   });
   it("accepts a known runtime message and rejects unknown ones", () => {
-    expect(parseRuntimeMessage({ type: MSG.CONTENT_READY, url: "x", title: "t", protocolVersion: 3, isTopFrame: true, detectedAts: null })).toBeTruthy();
+    expect(parseRuntimeMessage({ type: MSG.CONTENT_READY })).toEqual({ type: MSG.CONTENT_READY });
     expect(parseRuntimeMessage({ type: "SOMETHING_ELSE" })).toBeNull();
     expect(parseRuntimeMessage(null)).toBeNull();
     expect(parseRuntimeMessage("nope")).toBeNull();

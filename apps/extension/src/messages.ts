@@ -357,25 +357,7 @@ export type ProgressPayload = {
 export type RuntimeMessage =
   | { type: typeof MSG.LAUNCH_REQUEST; payload: LaunchPayload }
   | { type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
-  | {
-      type: typeof MSG.CONTENT_READY;
-      url: string;
-      title: string;
-      protocolVersion: number;
-      isTopFrame: boolean;
-      topUrl: string | null;
-      detectedAts: string | null;
-      /** Sanitized per-frame application evidence (counts/scores only — see
-       * frames/probe.ts). Lets the background rank frames against each other
-       * instead of letting the top frame speak for the whole tab. */
-      probe?: {
-        isTopFrame: boolean;
-        sanitizedUrl: string;
-        rootConfident: boolean;
-        applicationLabelsFound: string[];
-        bestScore: number;
-      };
-    }
+  | { type: typeof MSG.CONTENT_READY }
   | { type: typeof MSG.GET_PENDING_LAUNCH; url: string }
   | { type: typeof MSG.PING_CONTENT }
   | { type: typeof MSG.PONG_CONTENT; url: string }
@@ -618,15 +600,7 @@ const SESSION_ID: FieldSpec = { kind: "integer", required: true };
 const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
   [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
-  [MSG.CONTENT_READY]: {
-    url: { kind: "string", max: LIMIT.url },
-    title: { kind: "string", max: LIMIT.text },
-    protocolVersion: { kind: "integer" },
-    isTopFrame: { kind: "boolean" },
-    topUrl: { kind: "string", max: LIMIT.url, nullable: true },
-    detectedAts: { kind: "string", max: LIMIT.key, nullable: true },
-    probe: { kind: "object" }
-  },
+  [MSG.CONTENT_READY]: {},
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
   [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },

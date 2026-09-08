@@ -714,7 +714,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.CONTENT_READY:
-      void handleContentReady(sender, message.probe, sendResponse, generation);
+      void handleContentReady(sender, sendResponse, generation);
       return true;
 
     case MSG.GET_PENDING_LAUNCH:
@@ -1109,7 +1109,6 @@ async function recordSiteAccess(
  */
 async function handleContentReady(
   sender: chrome.runtime.MessageSender,
-  probe: Extract<RuntimeMessage, { type: typeof MSG.CONTENT_READY }>["probe"],
   sendResponse: (r: unknown) => void,
   generation: AuthorityGeneration
 ): Promise<void> {
@@ -1122,7 +1121,6 @@ async function handleContentReady(
     return;
   }
   const { tabId, frameId, isTopFrame } = context;
-  const applicationRootDetected = probe?.rootConfident === true;
   let pending = await getPending(tabId);
   let boundVia: "tab_binding" | "active_self_bind" = "tab_binding";
   if (!pending) {
@@ -1172,14 +1170,75 @@ async function handleContentReady(
     sendResponse({ ok: false, matched: true, error: reject, launch: sanitize(pending) });
     return;
   }
-  // A frame probe is workflow authority: register it only after the Chrome-
-  // supplied sender has matched a live launch, and immediately re-check both
-  // account and session invalidation after the async lookup/validation work.
+  // frameId is reused when a frame navigates. Chrome's documentId is the
+  // immutable identity of the document that sent this READY, and is therefore
+  // required before authority can cross an asynchronous probe request.
+  const documentId = typeof sender.documentId === "string" && sender.documentId.length > 0
+    ? sender.documentId
+    : null;
+  if (!documentId) {
+    sendResponse({ ok: false, matched: false, error: "DOCUMENT_ID_UNAVAILABLE", launch: null });
+    return;
+  }
+  // DOM evidence is requested only after the Chrome-supplied sender has
+  // matched a live launch. CONTENT_READY itself is deliberately inert.
   if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
     sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
     return;
   }
-  if (probe) registerFrameProbe(tabId, frameId, probe);
+  const senderPattern = patternForOrigin(context.frameOrigin?.origin ?? null);
+  const stillGranted = senderPattern
+    ? await chrome.permissions.contains({ origins: [senderPattern] }).catch(() => false)
+    : false;
+  if (!stillGranted) {
+    sendResponse({ ok: false, matched: false, error: "HOST_PERMISSION_MISSING", launch: null });
+    return;
+  }
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+    sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    return;
+  }
+  const requestedProbe = await probeFrameApplication(tabId, frameId, documentId);
+  // The probe request crossed an async boundary: logout, expiry, or account
+  // replacement during it invalidates the result before it can enter memory.
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+    sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    return;
+  }
+  const currentPending = await getPending(tabId);
+  if (!currentPending
+    || currentPending.sessionId !== pending.sessionId
+    || Date.now() > currentPending.expiresAt) {
+    sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    return;
+  }
+  const permissionStillGranted = senderPattern
+    ? await chrome.permissions.contains({ origins: [senderPattern] }).catch(() => false)
+    : false;
+  if (!permissionStillGranted) {
+    sendResponse({ ok: false, matched: false, error: "HOST_PERMISSION_MISSING", launch: null });
+    return;
+  }
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
+    sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    return;
+  }
+  const probe = requestedProbe?.probe && frameProbeMatchesSender(requestedProbe.probe, context)
+    ? requestedProbe.probe
+    : null;
+  if (!probe) {
+    await applyFailure(tabId, "NO_MATCHING_FRAME", undefined, frameId, generation);
+    sendResponse({
+      ok: false,
+      matched: true,
+      error: "NO_MATCHING_FRAME",
+      recoverable: true,
+      launch: sanitize(pending)
+    });
+    return;
+  }
+  const applicationRootDetected = probe?.rootConfident === true;
+  registerFrameProbe(tabId, frameId, probe, documentId);
   log.info("content script ready", { tabId, frameId, isTopFrame });
   const activation = await readPendingActivation();
   if (activation && (tabId === activation.sourceTabId || tabId === activation.destinationTabId)) {
@@ -1358,17 +1417,57 @@ function pingFrame(tabId: number, frameId: number): Promise<boolean> {
   });
 }
 
-/** Ask one frame what application it can see. */
+type FrameProbePayload = {
+  isTopFrame: boolean;
+  sanitizedUrl: string;
+  rootConfident: boolean;
+  applicationLabelsFound: string[];
+  bestScore: number;
+};
+
+function parseFrameProbePayload(value: unknown): FrameProbePayload | null {
+  if (!value || typeof value !== "object") return null;
+  const probe = value as Partial<FrameProbePayload>;
+  if (typeof probe.isTopFrame !== "boolean"
+    || typeof probe.sanitizedUrl !== "string"
+    || probe.sanitizedUrl.length > 2_048
+    || typeof probe.rootConfident !== "boolean"
+    || !Array.isArray(probe.applicationLabelsFound)
+    || probe.applicationLabelsFound.length > 20
+    || !probe.applicationLabelsFound.every((label) => typeof label === "string" && label.length <= 80)
+    || typeof probe.bestScore !== "number"
+    || !Number.isFinite(probe.bestScore)) return null;
+  return probe as FrameProbePayload;
+}
+
+function frameProbeMatchesSender(probe: FrameProbePayload, sender: SenderContext): boolean {
+  if (probe.isTopFrame !== sender.isTopFrame || !sender.frameOrigin) return false;
+  try {
+    return new URL(probe.sanitizedUrl).origin.toLowerCase() === sender.frameOrigin.origin.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+/** Ask one authorized frame what application it can see. */
 function probeFrameApplication(
   tabId: number,
-  frameId: number
-): Promise<{ evidence: boolean; fieldCount: number } | null> {
+  frameId: number,
+  documentId?: string
+): Promise<{ evidence: boolean; fieldCount: number; probe: FrameProbePayload | null } | null> {
   return new Promise((resolve) => {
     try {
-      chrome.tabs.sendMessage(tabId, { type: MSG.PROBE_FRAME_APPLICATION }, { frameId }, (resp) => {
+      const target: chrome.tabs.MessageSendOptions = documentId
+        ? { frameId, documentId }
+        : { frameId };
+      chrome.tabs.sendMessage(tabId, { type: MSG.PROBE_FRAME_APPLICATION }, target, (resp) => {
         if (lastError()) return resolve(null);
-        const value = resp as { evidence?: boolean; fieldCount?: number } | undefined;
-        resolve(value ? { evidence: Boolean(value.evidence), fieldCount: Number(value.fieldCount ?? 0) } : null);
+        const value = resp as { evidence?: boolean; fieldCount?: number; probe?: unknown } | undefined;
+        resolve(value ? {
+          evidence: Boolean(value.evidence),
+          fieldCount: Number(value.fieldCount ?? 0),
+          probe: parseFrameProbePayload(value.probe)
+        } : null);
       });
     } catch {
       resolve(null);
@@ -2261,6 +2360,7 @@ const TERMINAL_FAILURE_CODES = new Set([
 type RegisteredFrame = {
   tabId: number;
   frameId: number;
+  documentId: string | null;
   isTopFrame: boolean;
   sanitizedUrl: string;
   rootConfident: boolean;
@@ -2276,12 +2376,15 @@ const frameKey = (tabId: number, frameId: number): string => `${tabId}:${frameId
 export function registerFrameProbe(
   tabId: number,
   frameId: number,
-  probe: { isTopFrame: boolean; sanitizedUrl: string; rootConfident: boolean; applicationLabelsFound: string[]; bestScore: number }
+  probe: FrameProbePayload,
+  documentId: string | null = null
 ): void {
   frameRegistry.set(frameKey(tabId, frameId), {
     tabId,
     frameId,
-    isTopFrame: probe.isTopFrame,
+    documentId,
+    // Frame identity comes from Chrome, never from content-derived evidence.
+    isTopFrame: frameId === 0,
     sanitizedUrl: probe.sanitizedUrl,
     rootConfident: probe.rootConfident,
     applicationLabels: probe.applicationLabelsFound.length,

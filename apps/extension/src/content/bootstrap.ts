@@ -30,7 +30,6 @@ import { log } from "../logger";
 import {
   MSG,
   PAGE_SOURCE_EXT,
-  PROTOCOL_VERSION,
   parsePageMessage,
   parseRuntimeMessage,
   type AutofillReason,
@@ -195,19 +194,17 @@ function validLaunch(payload: LaunchPayload): boolean {
 // --------------------------------------------------------------------------- //
 // 2. Employer/ATS page: readiness pull + canonical autofill
 //
-// host_permissions now cover every https(s) origin (employer/ATS forms live on
-// domains we cannot enumerate up front), so this script is declaratively
-// injected into every page. What keeps it dormant everywhere except a
-// user-initiated XpertApply handoff is this gate: it NEVER scans the DOM,
-// inserts the widget, or observes mutations until the background confirms
-// this exact tab/frame matches an active, unexpired handoff. An unmatched
-// frame registers only the (inert) message listener and exits immediately.
+// Employer/ATS code is dynamically injected only after an exact-origin grant.
+// Injection is still not workflow authority: the readiness message below is
+// inert, and this frame does not scan the DOM until the worker has matched its
+// Chrome-supplied tab/frame identity to an active, unexpired handoff and sends
+// an explicit PROBE_FRAME_APPLICATION request.
 // --------------------------------------------------------------------------- //
 const isTopFrame = window.top === window;
 
-/** Sanitized evidence about THIS frame, sent with CONTENT_READY so the
- * background can rank frames. Best-effort: a probe failure must never block the
- * readiness handshake. */
+/** Sanitized evidence about THIS frame, returned only when the worker asks for
+ * it after authorizing the Chrome-supplied sender. A probe failure is
+ * recoverable, but deliberately blocks package access and autofill. */
 function buildFrameProbe() {
   try {
     const p = probeFrame(document);
@@ -384,12 +381,14 @@ async function initAtsPage(): Promise<void> {
       return false;
     }
     if (message.type === MSG.PROBE_FRAME_APPLICATION) {
-      // Answered by EVERY frame, matched or not: this is the diagnostic that
-      // tells the top frame whether a nested application frame is reachable at
-      // all. Counts and one boolean — never a label, never a value.
+      // Only the worker sends this frame-targeted request, after it has matched
+      // the browser-supplied sender to a live handoff. Counts, scores and one
+      // boolean only — never a field value or surrounding page text.
+      const probe = buildFrameProbe();
       const evidence = collectApplicationEvidence(document);
       sendResponse({
         ok: true,
+        probe,
         evidence: hasApplicationEvidence(evidence),
         fieldCount: evidence.applicantControlCount
       });
@@ -463,30 +462,9 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
   });
 }
 
-/** Best-effort top-level URL; throws for a cross-origin iframe (expected —
- * the background already knows the top URL via chrome.tabs, it doesn't need
- * this frame to report it). */
-function topFrameUrl(): string | null {
-  if (isTopFrame) return location.href;
-  try {
-    return window.top?.location.href ?? null;
-  } catch {
-    return null;
-  }
-}
-
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   if (!isCurrentInstance()) return;
-  const resp = (await sendRuntime({
-    type: MSG.CONTENT_READY,
-    probe: buildFrameProbe(),
-    url: location.href,
-    title: document.title,
-    protocolVersion: PROTOCOL_VERSION,
-    isTopFrame,
-    topUrl: topFrameUrl(),
-    detectedAts: null
-  })) as
+  const resp = (await sendRuntime({ type: MSG.CONTENT_READY })) as
     | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null }
     | undefined;
 

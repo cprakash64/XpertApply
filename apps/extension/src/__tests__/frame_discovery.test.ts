@@ -134,7 +134,18 @@ function installProductionChrome(options: {
         const frameId = typeof opts === "object" && opts ? (opts as { frameId?: number }).frameId : undefined;
         const frame = injectable().find((f) => f.frameId === frameId && injected.has(f.frameId));
         if (!frame) return done?.(undefined);
-        return done?.({ ok: true, evidence: Boolean(frame.evidence), fieldCount: frame.fieldCount ?? 0 });
+        return done?.({
+          ok: true,
+          evidence: Boolean(frame.evidence),
+          fieldCount: frame.fieldCount ?? 0,
+          probe: {
+            isTopFrame: frame.frameId === 0,
+            sanitizedUrl: frame.url,
+            rootConfident: Boolean(frame.evidence),
+            applicationLabelsFound: frame.evidence ? ["first_name", "email"] : [],
+            bestScore: frame.evidence ? 20 : 0
+          }
+        });
       })
     },
     windows: { update: vi.fn(async () => ({})) },
@@ -598,7 +609,8 @@ describe("Stage 3C-4 persisted-grant restart activation", () => {
     await import("../background");
     const report = await dispatch(run.messageListeners,
       { type: "JOBPILOT_INSPECT_APPLICATION_FRAMES", observed: [observedFrame(0, ATS_ORIGIN)] },
-      { tab: { id: 7, url: EMPLOYER }, frameId: 0, url: EMPLOYER, origin: EMPLOYER_ORIGIN }
+      { tab: { id: 7, url: EMPLOYER }, frameId: 0, documentId: "document-7-0",
+        url: EMPLOYER, origin: EMPLOYER_ORIGIN }
     );
     expect(JSON.stringify(report)).not.toContain(PROFILE_MARKER);
     expect(run.fakeChrome.tabs.sendMessage).not.toHaveBeenCalledWith(
@@ -823,7 +835,8 @@ describe("being observable to the top document buys a frame nothing", () => {
   async function bindAndReport(frameUrl: string) {
     installFakeFetch();
     const { messageListeners } = installProductionChrome({
-      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN], liveFrames: TOP_ONLY
+      granted: [EMPLOYER_ORIGIN, ATS_ORIGIN],
+      liveFrames: [...TOP_ONLY, { frameId: 21, url: frameUrl, fieldCount: 9, evidence: true }]
     });
     const state = await import("../state");
     await state.putActive(launch() as never);
@@ -850,7 +863,8 @@ describe("being observable to the top document buys a frame nothing", () => {
       messageListeners,
       { type: "JOBPILOT_CONTENT_READY", url: frameUrl, title: "x", protocolVersion: 3,
         isTopFrame: false, topUrl: null, detectedAts: null },
-      { tab: { id: 7, url: EMPLOYER }, frameId: 21, url: frameUrl, origin: new URL(frameUrl).origin }
+      { tab: { id: 7, url: EMPLOYER }, frameId: 21, documentId: "document-7-21",
+        url: frameUrl, origin: new URL(frameUrl).origin }
     )) as { matched?: boolean; error?: string; session?: unknown; launch?: unknown };
   }
 
