@@ -37,15 +37,44 @@ Nothing is ever submitted automatically. Sensitive/voluntary questions
 (demographics, veteran/disability status, legal attestations, salary, criminal
 history, etc.) are **never** guessed — they are left for you.
 
-## Security model (summary)
+## Security and privacy model
 
-- The employer tab never receives a token or your profile data.
-- Documents and answers are fetched with a **session-scoped** token held only in
-  `chrome.storage.session` (in-memory, cleared on browser close), not your login
-  token.
-- No candidate PII is written to `chrome.storage.local` or logged.
-- Allowed web origins and the API base are configurable in `src/config.ts`; the
-  manifest host permissions are restricted to the supported ATS hosts + local dev.
+- The production bridge is available only on `https://xpertapply.com` and
+  `https://www.xpertapply.com`. Those first-party origins and
+  `https://api.xpertapply.com` are the extension's only required host access.
+- Employer/ATS HTTPS access is **optional**, not install-time access to every
+  site. Chrome may persist an exact-origin grant after the user approves it, but
+  the extension treats that grant as capability, not current workflow authority.
+  It injects only into an origin tied to the active application, and every frame
+  must independently pass the browser-supplied origin and workflow checks before
+  it can receive application data or touch the DOM.
+- Launch metadata, tab-scoped progress, verified answers, document metadata, and
+  the session token live in `chrome.storage.session` (with service-worker memory
+  for transient coordination). Supported production Chrome does not persist that
+  workflow package across a browser or extension-runtime restart.
+- `chrome.storage.local` is limited to extension configuration and minimal runtime
+  coordination metadata; candidate profile fields, form answers, document
+  contents, and session tokens are not written there. Logs use low-cardinality
+  state and reason codes rather than candidate data.
+- The session token is scoped to one assisted-apply session and is not the user's
+  XpertApply login token. It and the full session package remain inside the
+  extension's isolated world. The employer page sees only the values and files
+  the extension intentionally places into its native form controls, just as it
+  can see values typed or selected by the user; it does not receive the token or
+  the package itself.
+- XpertApply never infers or automatically affirms consents, certifications, or
+  legal attestations. Work-authorization and sponsorship questions may be filled
+  only from an explicit saved answer when the question's jurisdiction and
+  yes/no polarity are proven; ambiguous cases remain for manual review.
+- XpertApply never clicks Submit. It may observe the user's submit gesture and
+  report a PII-free result summary, but the user reviews and submits the
+  application.
+- Extension bookkeeping stays in private JavaScript state. The employer page can
+  observe native form events and values written into its own controls, plus the
+  visible XpertApply widget host, but not the extension's internal field ledger.
+- Logout and account replacement invalidate in-flight authority, purge workflow
+  storage and in-memory caches, and clear extension-owned state in open employer
+  tabs on a best-effort basis.
 
 ## Supported ATS
 
@@ -84,18 +113,19 @@ Other scripts: `npm run typecheck`, `npm test`.
 > click the ↻ reload icon on the extension card in `chrome://extensions`. A rebuild
 > alone does not reload the running service worker.
 
-### Configuring for a non-local backend / production origin
+### Configuring a development build
 
 Edit `src/config.ts`:
 
 - `DEFAULT_API_BASE` — the XpertApply API base (or set `apiBase` in extension
   storage at runtime, no rebuild needed).
-- `JOBPILOT_WEB_ORIGINS` — origins allowed to hand a launch token to the
-  extension.
+- `JOBPILOT_WEB_ORIGINS` — the internal allowlist of first-party origins allowed
+  to hand a launch token to the extension.
 
-Then add the production web origin to `manifest.json` `content_scripts.matches`
-and `host_permissions`, and rebuild. Production should list only known origins —
-never `<all_urls>`.
+Keep `manifest.json` `content_scripts.matches`, required `host_permissions`, and
+`externally_connectable.matches` aligned with that first-party allowlist, then
+rebuild. Employer origins belong in `optional_host_permissions`; runtime code
+requests only the exact workflow origin from a user gesture.
 
 ## Notes / limitations
 

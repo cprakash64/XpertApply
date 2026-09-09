@@ -26,6 +26,7 @@
     "src/__tests__/generated_manifest.test.ts",
     "src/__tests__/self_exclusion_and_credentials.test.ts",
     "src/__tests__/branding.test.ts",
+    "src/__tests__/readme_security_model.test.ts",
     "src/__tests__/module_reachability.test.ts",
     "src/__tests__/site_access.test.ts"
   ]
