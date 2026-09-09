@@ -225,6 +225,26 @@ no-receiver absence behavior.
 
 ## Progress
 
+### XA-16/XA-19 checkpoint E2E reconciliation (2026-09-09)
+
+The account-replacement production-MV3 test assumed an independently started
+Next development server whose client bundle already contained the unpacked
+extension ID. A full-suite invocation without that build-time environment value
+therefore treated the extension as absent and never entered the purge barrier;
+`__xa12Entered` correctly remained false. Committed HEAD and the XA-16/XA-19
+worktree both passed with matched IDs, excluding a product or widget regression.
+
+The E2E test now derives the unpacked ID from the ready service worker, starts
+its own Next fixture on an XA-12-approved loopback port, waits for `/login` HTTP
+200, and proves an authenticated external PING succeeds before starting the
+account-replacement assertion. Test-only observation records the Web calls and
+Chrome-supplied sender metadata. The fixture is terminated in `finally`; the
+security timeout and production sender policy are unchanged. The final measured
+path entered the external PING at +50 ms, session-end request at +52 ms, and
+purge barrier at +54 ms. Token B remained absent through the forged-page-message
+negative control and activated only after the held browser response was
+released. The final one-shot extension E2E suite passed 151/151 in 8.8 minutes.
+
 - [x] Recovered authoritative finding.
 - [x] Reproduced and classified current behavior before production edits.
 - [x] Implement authenticated teardown path.
