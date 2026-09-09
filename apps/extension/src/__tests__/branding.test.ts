@@ -60,15 +60,14 @@ describe("extension branding", () => {
 });
 
 describe("production origins", () => {
-  it("trusts the new production domain without dropping the previous ones", () => {
+  it("trusts only the two current XpertApply Web origins", () => {
     expect(isApprovedJobPilotOrigin("https://xpertapply.com")).toBe(true);
     expect(isApprovedJobPilotOrigin("https://www.xpertapply.com")).toBe(true);
-    // Installed extensions must keep working against older deployments. An
-    // extension updates on Chrome's schedule, not on ours.
-    expect(isApprovedJobPilotOrigin("https://ezjobfind.com")).toBe(true);
-    expect(isApprovedJobPilotOrigin("https://www.ezjobfind.com")).toBe(true);
-    expect(isApprovedJobPilotOrigin("https://app.jobpilot.ai")).toBe(true);
-    expect(isApprovedJobPilotOrigin("http://localhost:3000")).toBe(true);
+    expect(isApprovedJobPilotOrigin("https://ezjobfind.com")).toBe(false);
+    expect(isApprovedJobPilotOrigin("https://www.ezjobfind.com")).toBe(false);
+    expect(isApprovedJobPilotOrigin("https://app.jobpilot.ai")).toBe(false);
+    expect(isApprovedJobPilotOrigin("http://localhost:3000")).toBe(false);
+    expect(isApprovedJobPilotOrigin("http://127.0.0.1:3000")).toBe(false);
   });
 
   it("still rejects look-alike origins", () => {
@@ -85,7 +84,7 @@ describe("production origins", () => {
     }
   });
 
-  it("classifies the new domain as production and keeps the old ones recognised", () => {
+  it("classifies known deployment environments independently of bridge trust", () => {
     expect(classifyEnvironment("https://xpertapply.com")).toBe("production");
     expect(classifyEnvironment("https://api.xpertapply.com")).toBe("production");
     expect(classifyEnvironment("https://staging.xpertapply.com")).toBe("staging");
@@ -95,9 +94,7 @@ describe("production origins", () => {
   });
 
   it("keeps the manifest content scripts aligned with the trusted origins", () => {
-    const bridgeScript = manifest.content_scripts.find((entry) =>
-      entry.matches.includes("http://localhost:3000/*")
-    );
+    const bridgeScript = manifest.content_scripts[0];
     expect(bridgeScript).toBeTruthy();
     for (const origin of JOBPILOT_WEB_ORIGINS) {
       expect(bridgeScript?.matches, origin).toContain(`${origin}/*`);

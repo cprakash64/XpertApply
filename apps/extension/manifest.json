@@ -16,15 +16,10 @@
   "host_permissions": [
     "https://api.xpertapply.com/*",
     "https://xpertapply.com/*",
-    "https://www.xpertapply.com/*",
-    "https://app.jobpilot.ai/*",
-    "https://ezjobfind.com/*",
-    "https://www.ezjobfind.com/*"
+    "https://www.xpertapply.com/*"
   ],
   "optional_host_permissions": [
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "https://*/*"
   ],
   "externally_connectable": {
     "matches": [
@@ -45,13 +40,8 @@
   "content_scripts": [
     {
       "matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
         "https://xpertapply.com/*",
-        "https://www.xpertapply.com/*",
-        "https://app.jobpilot.ai/*",
-        "https://ezjobfind.com/*",
-        "https://www.ezjobfind.com/*"
+        "https://www.xpertapply.com/*"
       ],
       "js": [
         "content.js"

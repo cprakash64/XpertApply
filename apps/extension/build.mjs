@@ -7,8 +7,18 @@ import { execSync } from "node:child_process";
 import { readFileSync as readSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import {
+  bridgeOriginsForProfile,
+  bridgeMatchPatternsForProfile
+} from "./src/bridge-origin-profiles.mjs";
+import { DEVELOPMENT_BRIDGE_ORIGINS } from "./src/development-bridge-origins.mjs";
+import { resolveExtensionBuild } from "./src/build-profile.mjs";
 
-const outdir = "dist";
+const { profile: BUILD_PROFILE, outdir } = resolveExtensionBuild({
+  argv: process.argv.slice(2),
+  env: process.env
+});
+const allowLoopbackBridge = BUILD_PROFILE !== "production";
 
 // --------------------------------------------------------------------------- //
 // Build identity
@@ -77,7 +87,8 @@ try {
 const buildDefine = {
   __JOBPILOT_BUILD_VERSION__: JSON.stringify(BUILD_VERSION),
   __JOBPILOT_BUILT_AT__: JSON.stringify(BUILT_AT),
-  __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID)
+  __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID),
+  __XPERTAPPLY_BRIDGE_ORIGINS__: JSON.stringify(bridgeOriginsForProfile(BUILD_PROFILE))
 };
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
@@ -104,7 +115,19 @@ await build({
 // Write the manifest with the same identity compiled into the bundle, so the
 // two can never disagree about which build is loaded.
 {
-  const generated = { ...sourceManifest, version_name: `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT})` };
+  const generated = {
+    ...sourceManifest,
+    version_name: `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT}; ${BUILD_PROFILE})`,
+    content_scripts: sourceManifest.content_scripts.map((entry, index) => index === 0
+      ? { ...entry, matches: bridgeMatchPatternsForProfile(BUILD_PROFILE) }
+      : { ...entry }),
+    optional_host_permissions: allowLoopbackBridge
+      ? [...new Set([
+          ...(sourceManifest.optional_host_permissions ?? []),
+          ...DEVELOPMENT_BRIDGE_ORIGINS.map((origin) => `${new URL(origin).protocol}//${new URL(origin).hostname}/*`)
+        ])]
+      : [...(sourceManifest.optional_host_permissions ?? [])]
+  };
   writeFileSync(`${outdir}/manifest.json`, JSON.stringify(generated, null, 2));
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
@@ -121,6 +144,6 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log(`Extension built to dist/ — v${BUILD_VERSION} build ${BUILD_ID} at ${BUILT_AT}`);
-console.log("Load unpacked from apps/extension/dist. After rebuilding: chrome://extensions -> Reload,");
+console.log(`Extension built to ${outdir}/ — profile ${BUILD_PROFILE}, v${BUILD_VERSION} build ${BUILD_ID} at ${BUILT_AT}`);
+console.log(`Load unpacked from apps/extension/${outdir}. After rebuilding: chrome://extensions -> Reload,`);
 console.log("then close and reopen the application tab so the new content script is injected.");

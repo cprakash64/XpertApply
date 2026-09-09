@@ -690,7 +690,7 @@ describe("handshake + stale-handoff regressions", () => {
   it("on install/update, re-injects the bridge into already-open XpertApply tabs but never an ATS/employer tab", async () => {
     installFakeFetch();
     const openTabs = [
-      { id: 501, url: "https://app.jobpilot.ai/jobs" } as chrome.tabs.Tab,
+      { id: 501, url: "https://www.xpertapply.com/jobs" } as chrome.tabs.Tab,
       { id: 502, url: "https://careers.mongodb.com/jobs/123/apply" } as chrome.tabs.Tab
     ];
     const { installedListeners, executedScripts } = installFakeChrome(undefined, openTabs);
@@ -709,7 +709,7 @@ describe("handshake + stale-handoff regressions", () => {
   it("revives an already-open XpertApply tab when the extension runtime resets even without onInstalled", async () => {
     installFakeFetch();
     const openTabs = [
-      { id: 601, url: "http://localhost:3000/jobs" } as chrome.tabs.Tab
+      { id: 601, url: "https://xpertapply.com/jobs" } as chrome.tabs.Tab
     ];
     const { executedScripts } = installFakeChrome(undefined, openTabs);
 

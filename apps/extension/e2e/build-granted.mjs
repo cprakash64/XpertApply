@@ -1,11 +1,17 @@
 /** Test-only: dist/ plus the loopback fixture origins pre-granted, i.e. the
  * state Chrome is in after a user grants them. Never shipped. */
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 const out = path.resolve("dist-e2e-granted");
-rmSync(out, { recursive: true, force: true });
-mkdirSync(out, { recursive: true });
-cpSync("dist", out, { recursive: true });
+execFileSync(process.execPath, ["build.mjs", "--profile", "e2e"], {
+  cwd: process.cwd(),
+  env: {
+    ...process.env,
+    XPERTAPPLY_EXTENSION_OUTDIR: "dist-e2e-granted"
+  },
+  stdio: "inherit"
+});
 const file = path.join(out, "manifest.json");
 const manifest = JSON.parse(readFileSync(file, "utf8"));
 manifest.host_permissions = [...manifest.host_permissions, "http://localhost/*", "http://127.0.0.1/*"];

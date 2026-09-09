@@ -10,4 +10,5 @@ test-results/
 playwright-report/
 e2e/smoke.png
 dist-e2e-granted/
+dist-development/
 dist-granted-*/

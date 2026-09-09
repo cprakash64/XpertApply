@@ -5,9 +5,12 @@ import manifest from "../../manifest.json";
 import { isApprovedJobPilotOrigin } from "../config";
 
 describe("message validation", () => {
-  it("accepts configured XpertApply origins and rejects an untrusted origin", () => {
-    expect(isApprovedJobPilotOrigin("http://localhost:3000")).toBe(true);
-    expect(isApprovedJobPilotOrigin("https://app.jobpilot.ai")).toBe(true);
+  it("accepts current XpertApply origins and rejects loopback and retired origins", () => {
+    expect(isApprovedJobPilotOrigin("http://localhost:3000")).toBe(false);
+    expect(isApprovedJobPilotOrigin("http://127.0.0.1:3000")).toBe(false);
+    expect(isApprovedJobPilotOrigin("https://app.jobpilot.ai")).toBe(false);
+    expect(isApprovedJobPilotOrigin("https://ezjobfind.com")).toBe(false);
+    expect(isApprovedJobPilotOrigin("https://www.ezjobfind.com")).toBe(false);
     expect(isApprovedJobPilotOrigin("https://jobpilot.ai.evil.example")).toBe(false);
   });
   it("accepts a known runtime message and rejects unknown ones", () => {

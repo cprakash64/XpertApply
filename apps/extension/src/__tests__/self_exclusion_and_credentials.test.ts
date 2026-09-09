@@ -21,7 +21,7 @@ function readSource(relative: string): string {
 
 describe("XpertApply origin self-exclusion", () => {
   it("recognises every XpertApply origin", () => {
-    for (const origin of ["http://localhost:3000", "http://127.0.0.1:3000", "https://app.jobpilot.ai"]) {
+    for (const origin of JOBPILOT_WEB_ORIGINS) {
       expect(isApprovedJobPilotOrigin(origin), origin).toBe(true);
     }
   });
@@ -32,6 +32,8 @@ describe("XpertApply origin self-exclusion", () => {
       "https://jobs.lever.co",
       "https://app.jobpilot.ai.evil.test",
       "https://notapp.jobpilot.ai",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
       "http://localhost:3001",
       "https://app.jobpilot.ai:8443"
     ]) {
