@@ -646,7 +646,18 @@ function ensureWidget(): ReturnType<typeof createWidget> {
         widget?.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true, offerReconnect: true });
         void requestReconnect();
       },
-      complete: () => { if (session) void sendRuntime({ type: MSG.COMPLETE_SESSION, sessionId: session.sessionId }); },
+      complete: () => {
+        const completingSession = session;
+        const completingWidget = widget;
+        if (!completingSession || !completingWidget) return;
+        void sendRuntime({ type: MSG.COMPLETE_SESSION, sessionId: completingSession.sessionId }).then((response) => {
+          // A late response must not update a replacement workflow/widget.
+          if (session !== completingSession || widget !== completingWidget) return;
+          if (!response || typeof response !== "object" || !("ok" in response) || response.ok !== true) {
+            completingWidget.update({ stage: "failed", message: "Application completion could not be saved. Please try again." });
+          }
+        });
+      },
       diagnostics: copyDiagnostics,
       captureControl: captureCurrentEligibilityControls,
       teach: (enabled) => { if (enabled) beginTeaching(); else { stopTeaching?.(); stopTeaching = null; } }

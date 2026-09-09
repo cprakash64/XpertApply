@@ -250,3 +250,74 @@ describe("Teach XpertApply — consent before anything is remembered", () => {
     widget.destroy();
   });
 });
+
+
+describe("XA-16 named widget and scoped announcements", () => {
+  it("has one visible heading, one named nonmodal panel, and only a message live region", () => {
+    const widget = mountWidget();
+    const root = shadowRoot();
+    const panel = root.querySelector("section")!;
+    expect(panel.getAttribute("aria-labelledby")).toBe("xpertapply-heading");
+    expect(root.getElementById("xpertapply-heading")?.textContent).toBe("XpertApply assisted application");
+    expect(root.querySelectorAll("h2")).toHaveLength(1);
+    expect(panel.hasAttribute("aria-live")).toBe(false);
+    expect(panel.hasAttribute("aria-label")).toBe(false);
+    expect(panel.hasAttribute("aria-modal")).toBe(false);
+    expect(root.querySelectorAll('[aria-live],[role="status"],[role="alert"]')).toHaveLength(1);
+    expect(root.querySelector('[role="status"]')).toBe(root.querySelector(".message"));
+    expect(root.querySelector(".message")?.getAttribute("aria-atomic")).toBe("true");
+    for (const selector of [".counts-row", ".review-panel", ".action-panel", ".actions", ".footer"]) {
+      expect(root.querySelector(selector)?.closest('[aria-live],[role="status"]')).toBeNull();
+    }
+    widget.destroy();
+  });
+
+  it.each([
+    ["preparing", "Preparing your application…"],
+    ["filling", "Starting autofill"],
+    ["ready", "3 fields filled"],
+    ["review", "2 fields need your confirmation"],
+    ["failed", "Unable to save completion. Try again."],
+    ["ready", "Ready for manual completion"]
+  ] as const)("announces only the intended message in %s", async (stage, message) => {
+    const widget = mountWidget();
+    const root = shadowRoot();
+    const status = root.querySelector(".message")!;
+    widget.update({stage, message, filled: 2, total: 3});
+    expect(status.textContent).toBe(message);
+    expect(root.querySelectorAll('[role="status"],[aria-live]')).toHaveLength(1);
+    expect(root.getElementById("xpertapply-heading")?.textContent).toBe("XpertApply assisted application");
+    const observer = new MutationObserver(() => {});
+    observer.observe(status, {childList:true,characterData:true,subtree:true});
+    widget.update({stage, message, filled: 3, total: 4});
+    expect(observer.takeRecords()).toHaveLength(0);
+    widget.update({stage, message: message + " Updated."});
+    expect(observer.takeRecords()).toHaveLength(1);
+    observer.disconnect();
+    widget.destroy();
+  });
+});
+
+describe("XA-19 action layout preserves workflow authority", () => {
+  it("keeps completion outside the scrolling body without changing its user-action gate", () => {
+    const complete = vi.fn();
+    const widget = createWidget({retry:vi.fn(),clear:vi.fn(),complete});
+    const root = shadowRoot();
+    const button = root.querySelector<HTMLButtonElement>('[data-a="complete"]')!;
+    expect(button.closest(".footer")).not.toBeNull();
+    expect(button.closest(".body")).toBeNull();
+    expect(button.type).toBe("button");
+    expect(button.disabled).toBe(true);
+    widget.showReview([], {onFill:vi.fn(),onSave:vi.fn(),onJumpToField:vi.fn()});
+    expect(button.disabled).toBe(false);
+    widget.update({stage:"ready",message:"Ready for manual completion"});
+    expect(complete).not.toHaveBeenCalled();
+    button.click();
+    expect(complete).toHaveBeenCalledTimes(1);
+    widget.update({stage:"failed",message:"Completion could not be saved"});
+    expect(root.querySelector('[role="status"]')?.textContent).toBe("Completion could not be saved");
+    expect(button.disabled).toBe(false);
+    expect(complete).toHaveBeenCalledTimes(1);
+    widget.destroy();
+  });
+});

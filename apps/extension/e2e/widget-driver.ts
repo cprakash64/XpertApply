@@ -62,6 +62,28 @@ export class WidgetDriver {
     return result.value as T;
   }
 
+  /** Test-only DevTools inspection/stress; never exposed to employer scripts. */
+  async probe<T>(fn: string, ...args: unknown[]): Promise<T> {
+    return this.call<T>(fn, ...args);
+  }
+
+  /** Browser geometry/semantics of the closed production shadow root. */
+  async inspectLayout(): Promise<any> {
+    return this.call(`function(){
+      const box = this.querySelector('.box'), body = this.querySelector('.body');
+      const action = this.querySelector('[data-a="complete"]');
+      const rect = el => { const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}; };
+      const a=rect(action), b=rect(box), sc=rect(body);
+      const heading=this.getElementById(box.getAttribute('aria-labelledby'));
+      return { viewport:{width:innerWidth,height:innerHeight}, box:b, body:{...sc,scrollHeight:body.scrollHeight,clientHeight:body.clientHeight,overflow:getComputedStyle(body).overflowY},action:a,
+        actionVisible:a.top>=Math.max(0,b.top)&&a.bottom<=Math.min(innerHeight,b.bottom,body.contains(action)?sc.bottom:innerHeight),
+        horizontalOverflow:box.scrollWidth>box.clientWidth||body.scrollWidth>body.clientWidth||b.left<0||b.right>innerWidth,
+        name:box.getAttribute('aria-label')||heading?.textContent||null,panelLive:box.getAttribute('aria-live'),
+        live:Array.from(this.querySelectorAll('[aria-live], [role="status"], [role="alert"]')).map(el=>({tag:el.tagName,role:el.getAttribute('role'),live:el.getAttribute('aria-live'),atomic:el.getAttribute('aria-atomic'),className:el.className}))
+      };
+    }`);
+  }
+
   /** Reveal the review panel, exactly as the user's click does. */
   async openReview(): Promise<void> {
     await this.call(`function(){

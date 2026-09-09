@@ -223,7 +223,7 @@ export function createWidget(actions: {
       .box{
         --ink:#17211c;--muted:#657069;--line:rgba(66,84,73,.16);--accent:#176b46;
         position:fixed;right:18px;bottom:18px;z-index:2147483647;
-        width:min(372px,calc(100vw - 24px));max-height:min(82vh,780px);
+        width:min(372px,calc(100vw - 24px));max-height:min(780px,calc(100vh - 36px));max-height:min(780px,calc(100dvh - 36px));
         display:flex;flex-direction:column;overflow:hidden;
         color:var(--ink);border:1px solid rgba(255,255,255,.72);border-radius:22px;
         background:linear-gradient(150deg,rgba(255,255,255,.92),rgba(245,249,246,.78));
@@ -232,10 +232,14 @@ export function createWidget(actions: {
         font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
         letter-spacing:-.006em
       }
-      header{display:flex;align-items:center;gap:10px;min-height:58px;padding:11px 14px 11px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.42);font-size:14px;font-weight:660;cursor:pointer}
+      header{flex-shrink:0;display:flex;align-items:center;gap:10px;min-height:58px;padding:11px 14px 11px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.42);font-size:14px;font-weight:660;cursor:pointer}
       .dot{width:9px;height:9px;border-radius:50%;background:#21a267;box-shadow:0 0 0 4px rgba(33,162,103,.11);flex-shrink:0}
-      .title{letter-spacing:-.01em}
-      .body{padding:14px 14px 12px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(79,96,86,.28) transparent}
+      .heading{min-width:0;flex:1}
+      h2{margin:0;font:inherit;font-size:13px;overflow-wrap:anywhere}
+      .title{letter-spacing:-.01em;font-size:12px;font-weight:500}
+      .body{flex:1 1 auto;min-height:0;padding:14px 14px 12px;overflow:auto;overflow-wrap:anywhere;scroll-padding:6px;scrollbar-width:thin;scrollbar-color:rgba(79,96,86,.28) transparent}
+      .footer{flex:0 0 auto;padding:10px 14px 12px;border-top:1px solid var(--line);background:rgba(245,249,246,.98)}
+      .footer button{width:100%;white-space:normal;overflow-wrap:anywhere}
       .message{font-size:13px;color:#354139}
       .count{color:var(--muted);margin-top:3px;font-size:12px}
       .counts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:11px;font-size:11px;color:var(--muted)}
@@ -248,7 +252,7 @@ export function createWidget(actions: {
       button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid rgba(30,116,76,.22);outline-offset:2px}
       button:disabled{opacity:.42;cursor:default;box-shadow:none;transform:none}
       .collapse{margin-left:auto;width:32px;min-height:32px;border:0;background:rgba(255,255,255,.48);padding:0;border-radius:50%;font-size:18px;font-weight:400;color:#53615a}
-      .collapsed .body{display:none}
+      .collapsed .body,.collapsed .footer{display:none}
       .failed .dot{background:#c85a3e}
       .review .dot{background:#d69416;box-shadow:0 0 0 4px rgba(214,148,22,.12)}
       .review-toggle{position:relative;width:100%;text-align:left;margin-top:12px;padding:10px 34px 10px 12px;border-color:rgba(35,105,69,.20);background:rgba(235,246,239,.72);font-weight:650}
@@ -308,14 +312,23 @@ export function createWidget(actions: {
       .transaction-panel summary{cursor:pointer;font-weight:650}
       .transaction-row{margin-top:6px;padding:7px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}
       .interacting{opacity:.25}
-      .interacting .body{display:none}
-      @media(max-width:520px){.box{right:12px;bottom:12px}.counts-row{grid-template-columns:1fr}}
+      .interacting .body,.interacting .footer{display:none}
+      @media(max-width:520px){.box{right:12px;bottom:12px;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px)}.counts-row{grid-template-columns:1fr}}
+      @media(forced-colors:active){
+        .box{border:1px solid CanvasText;background:Canvas;color:CanvasText;box-shadow:none}
+        header,.footer{background:Canvas;border-color:CanvasText}
+        button{border:1px solid ButtonText;background:ButtonFace;color:ButtonText}
+        [data-a="complete"]{background:ButtonFace;color:ButtonText;border-color:ButtonText}
+        button:disabled{color:GrayText;border-color:GrayText;opacity:1}
+        button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid Highlight}
+        .message,.title{color:CanvasText}
+      }
       @media(prefers-reduced-motion:reduce){button{transition:none}}
     </style>
-    <section class="box" aria-live="polite">
-      <header><span class="dot"></span><span class="title">Preparing</span><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
+    <section class="box" aria-labelledby="xpertapply-heading">
+      <header><span class="dot" aria-hidden="true"></span><div class="heading"><h2 id="xpertapply-heading">XpertApply assisted application</h2><span class="title">Preparing</span></div><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
       <div class="body">
-        <div class="message">Preparing your application…</div>
+        <div class="message" role="status" aria-atomic="true">Preparing your application…</div>
         <div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div>
         <div class="count"></div>
         <div class="counts-row"></div>
@@ -334,7 +347,6 @@ export function createWidget(actions: {
           <button type="button" data-a="retry">Retry autofill</button>
           <button type="button" data-a="continue">Continue filling</button>
           <button type="button" data-a="next">Jump to next issue</button>
-          <button type="button" data-a="complete">Mark application complete</button>
           <details class="more-actions">
             <summary>More options</summary>
             <div class="more-grid">
@@ -349,6 +361,9 @@ export function createWidget(actions: {
           <details class="transaction-panel consent-transactions" style="display:none"><summary>Consent trace</summary><div data-transaction-rows="consent"></div></details>
         </div>
       </div>
+      <footer class="footer">
+        <button type="button" data-a="complete">Mark application complete</button>
+      </footer>
     </section>`;
   document.documentElement.appendChild(host);
   const box = root.querySelector<HTMLElement>(".box")!;
@@ -445,7 +460,7 @@ export function createWidget(actions: {
     reviewPanel.classList.add("open");
     reviewToggle.setAttribute("aria-expanded", "true");
     handlers?.onJumpToField(next.id);
-    root.querySelector<HTMLElement>(`[data-item="${cssId(next.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    root.querySelector<HTMLElement>(`[data-item="${cssId(next.id)}"]`)?.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
   });
 
   function cssId(id: string): string {
@@ -946,7 +961,10 @@ export function createWidget(actions: {
       const labels: Record<WidgetStage, string> = { preparing:"Preparing", opening:"Opening application", detecting:"Detecting fields", filling:"Filling", uploading:"Uploading resume", review:"Needs review", ready:"Ready for review", failed:"Failed" };
       const title = value.stageLabel ?? labels[value.stage];
       root.querySelector<HTMLElement>(".title")!.textContent = title;
-      root.querySelector<HTMLElement>(".message")!.textContent = value.message ?? title;
+      // Keep repeated counter refreshes from re-inserting identical live text.
+      const message = root.querySelector<HTMLElement>(".message")!;
+      const nextMessage = value.message ?? title;
+      if (message.textContent !== nextMessage) message.textContent = nextMessage;
       if (value.requiredFieldsVerified != null) finalRequiredVerified = value.requiredFieldsVerified;
       if (value.requiredFieldsRemaining != null) finalRequiredRemaining = value.requiredFieldsRemaining;
       if (value.manualConsentActions != null) finalManualConsent = value.manualConsentActions;
