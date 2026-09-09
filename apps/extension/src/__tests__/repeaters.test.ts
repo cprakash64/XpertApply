@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { fillStructuredRepeaters } from "../fields/repeaters";
+import { isJobPilotRepeater } from "../fields/fill";
 import type { ApplicationSessionData } from "../types";
 
 function monthOptions(): string {
@@ -92,7 +93,8 @@ describe("structured profile repeaters", () => {
 
     for (const element of Array.from(document.querySelectorAll("[data-job] input, [data-job] select, [data-school] input, [data-school] select"))) {
       if ((element as HTMLInputElement).value && (element as HTMLInputElement).value !== "Select…") {
-        expect(element.getAttribute("data-jobpilot-repeater")).toBe("1");
+        expect(isJobPilotRepeater(element as HTMLElement)).toBe(true);
+        expect(Array.from(element.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
       }
     }
   });

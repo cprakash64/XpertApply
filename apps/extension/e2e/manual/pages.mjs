@@ -7,8 +7,7 @@
  *
  *   • the XpertApply widget host element (`#jobpilot-assisted-apply`), which the
  *     content script creates in the frame it runs in;
- *   • any `data-jobpilot-*` attribute, which the fill engine stamps on a field
- *     it has touched;
+ *   • whether any forbidden legacy `data-jobpilot-*` marker is visible;
  *   • the live value of every field, so a fill — or the absence of one — is
  *     visible;
  *   • whether the form was ever submitted.
@@ -57,7 +56,8 @@ const PANEL_JS = `
   }
   function scan() {
     const widget = !!document.getElementById("jobpilot-assisted-apply");
-    const traced = document.querySelectorAll("[data-jobpilot-filled],[data-jobpilot-status]").length;
+    const traced = Array.from(document.querySelectorAll("*")).reduce((count, element) =>
+      count + Array.from(element.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-")).length, 0);
     const fields = Array.from(document.querySelectorAll("input,select,textarea"));
     const filled = fields.filter((f) =>
       f.type === "checkbox" || f.type === "radio" ? f.checked

@@ -12,7 +12,7 @@ import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
 import { deepClosest, deepTextContent } from "../dom/deepDom";
 import { applyFill, scan, type FillSummary } from "../fields/runner";
-import { highlight } from "../fields/fill";
+import { highlight, isJobPilotFilled } from "../fields/fill";
 import { uploadFileToInput } from "../fields/upload";
 import { buildLedger, computeCounts, type LedgerCounts, type LedgerEntry } from "../fields/ledger";
 import { COMPANY_SCOPED_FIELDS, CUSTOM_RESPONSE_FIELDS, UPLOAD_FIELDS, type CanonicalField } from "../fields/taxonomy";
@@ -399,7 +399,7 @@ function valueStuck(el: HTMLInputElement | HTMLSelectElement, expected: string):
   const current = (el.value || "").trim().toLowerCase();
   const want = expected.trim().toLowerCase();
   if (!current) return false;
-  return current === want || current.includes(want) || want.includes(current) || el.hasAttribute("data-jobpilot-filled");
+  return current === want || current.includes(want) || want.includes(current) || isJobPilotFilled(el);
 }
 
 function hadUserValue(field: DiscoveredField): boolean {

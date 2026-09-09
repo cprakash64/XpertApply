@@ -24,6 +24,7 @@ describe("fill engine", () => {
     expect(el.value).toBe("cp@example.com");
     expect(onInput).toHaveBeenCalled();
     expect(isJobPilotFilled(el)).toBe(true);
+    expect(Array.from(el.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
   });
 
   it("does not overwrite a value the user already typed", async () => {
@@ -161,13 +162,14 @@ describe("custom dropdown / combobox filling", () => {
     return discoverFields(document.querySelector("form")!);
   }
 
-  it("keeps the marker when a custom control cannot be safely restored", async () => {
+  it("keeps private ownership when a custom control cannot be safely restored", async () => {
     const fields = mountCombobox(["Canada", "United States"]);
     const control = document.getElementById("country")!;
     expect((await fillField(field(fields, "country"), "United States")).status).toBe("filled");
 
     expect(await clearJobPilotFields(document)).toEqual({ cleared: 0, failed: 1 });
-    expect(control.getAttribute("data-jobpilot-filled")).toBe("1");
+    expect(isJobPilotFilled(control)).toBe(true);
+    expect(Array.from(control.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
     expect(document.querySelector("#country .select__value")!.textContent).toBe("United States");
   });
 

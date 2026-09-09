@@ -439,7 +439,6 @@ export function createWidget(actions: {
   root.querySelector('[data-a="next"]')?.addEventListener("click", () => {
     const next = items.find((i) => !i.resolved);
     if (!next) {
-      document.querySelector<HTMLElement>('[data-jobpilot-status="review"],[data-jobpilot-status="invalid"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     box.classList.remove("collapsed");

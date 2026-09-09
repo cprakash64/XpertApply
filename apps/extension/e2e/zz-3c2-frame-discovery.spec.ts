@@ -379,7 +379,7 @@ test.describe("after the ATS origin is granted", () => {
       .toHaveValue(/fixture\.candidate@example\.test/i, { timeout: 90_000 });
     const atsTraces = await page.frameLocator("#ats")
       .locator("[data-jobpilot-filled],[data-jobpilot-status]").count();
-    expect(atsTraces).toBeGreaterThan(0);
+    expect(atsTraces).toBe(0);
     const adValues = await page.frameLocator("#ads").locator("input")
       .evaluateAll((nodes) => nodes.map((node) => (node as HTMLInputElement).value));
     expect(adValues.every((value) => value === "")).toBe(true);

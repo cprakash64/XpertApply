@@ -2,35 +2,33 @@
  * Form-filling engine. Deterministic DOM interaction with native setters so
  * React/Vue-controlled inputs register the change. Never overwrites a non-empty
  * value the user typed (unless forced), records what XpertApply filled so it can
- * be cleared, and applies subtle, fully-removable status highlighting.
+ * be cleared in extension-private memory, and applies subtle, fully-removable
+ * status highlighting.
  */
 
 import type { DiscoveredField, FillOutcome } from "../types";
 import { fillDropdown, selectAdapter } from "./dropdown";
 import type { AnswerSource } from "./dropdown/types";
 import { deepQueryAll } from "../dom/deepDom";
+import { presentFieldStatus, removeFieldStatus } from "./statusPresentation";
 
 export type FillStatus = "verified" | "generated" | "review" | "invalid" | "neutral";
-
-const FILLED_ATTR = "data-jobpilot-filled";
-const ORIGINAL_ATTR = "data-jobpilot-original";
-const STATUS_ATTR = "data-jobpilot-status";
 
 interface DropdownOriginal {
   field: DiscoveredField;
   selected: string[];
 }
 
-/** Page-session only: answer labels never enter DOM attributes or storage. */
-const dropdownOriginals = new WeakMap<HTMLElement, DropdownOriginal>();
+interface PrivateFillState {
+  filled: boolean;
+  status: FillStatus;
+}
 
-const OUTLINE: Record<FillStatus, string> = {
-  verified: "2px solid #2f8f5b", // green — verified user data
-  generated: "2px solid #2f6f9f", // blue — generated/suggested
-  review: "2px solid #e0a72f", // yellow — review required
-  invalid: "2px solid #c85a3e", // red — missing/invalid
-  neutral: ""
-};
+/** Document-session only. Weak keys do not retain detached employer controls. */
+const dropdownOriginals = new WeakMap<HTMLElement, DropdownOriginal>();
+const originalValues = new WeakMap<HTMLElement, string>();
+const fillStates = new WeakMap<HTMLElement, PrivateFillState>();
+const repeaterElements = new WeakSet<HTMLElement>();
 
 export interface FillOptions {
   force?: boolean; // overwrite an existing non-empty user value
@@ -143,11 +141,11 @@ async function fillViaDropdown(field: DiscoveredField, values: string[], options
     selected: result.selected
   };
   if (result.ok) {
-    mark(el, options.status ?? "verified");
+    markFilled(el, options.status ?? "verified");
     return { uid: field.uid, status: "filled", dropdown: detail };
   }
   // A failed dropdown is ALWAYS surfaced — highlighted red when required.
-  mark(el, field.required ? "invalid" : "review");
+  markFilled(el, field.required ? "invalid" : "review");
   return { uid: field.uid, status: "review_required", reason: result.reason, dropdown: detail };
 }
 
@@ -158,10 +156,10 @@ function captureOriginalIfPossible(el: HTMLElement): void {
 
 function fillContentEditable(field: DiscoveredField, el: HTMLElement, value: string, options: FillOptions): FillOutcome {
   if ((el.textContent || "").trim() && !options.force && !isJobPilotFilled(el)) return { uid: field.uid, status: "skipped", reason: "user value present" };
-  el.setAttribute(ORIGINAL_ATTR, el.textContent || "");
+  captureOriginalValue(el, el.textContent || "");
   el.textContent = value;
   dispatch(el, ["input", "change", "blur"]);
-  mark(el, options.status ?? "verified");
+  markFilled(el, options.status ?? "verified");
   return (el.textContent || "").trim() === value.trim() ? { uid: field.uid, status: "filled" } : { uid: field.uid, status: "error", reason: "value did not stick" };
 }
 
@@ -178,18 +176,18 @@ async function fillTextLike(field: DiscoveredField, el: HTMLInputElement, value:
   captureOriginal(el);
   setNativeValue(el, value);
   dispatch(el, ["input", "change", "blur"]);
-  mark(el, options.status ?? "verified");
+  markFilled(el, options.status ?? "verified");
   if (el.validationMessage) {
-    mark(el, "invalid");
+    markFilled(el, "invalid");
     return { uid: field.uid, status: "review_required", reason: el.validationMessage };
   }
   // The site may have rewritten (or rejected) the value on blur.
   if (options.verify && !options.verify(el.value ?? "")) {
-    mark(el, field.required ? "invalid" : "review");
+    markFilled(el, field.required ? "invalid" : "review");
     return { uid: field.uid, status: "review_required", reason: "value did not survive site formatting" };
   }
   if (el.getAttribute("aria-invalid") === "true") {
-    mark(el, "invalid");
+    markFilled(el, "invalid");
     return { uid: field.uid, status: "review_required", reason: "site marked the field invalid" };
   }
   return { uid: field.uid, status: "filled" };
@@ -202,7 +200,7 @@ function fillCheckbox(field: DiscoveredField, el: HTMLInputElement, value: strin
     el.click(); // native toggle to the desired state (avoids double-toggling)
     dispatch(el, ["input", "change"]);
   }
-  mark(el, "verified");
+  markFilled(el, "verified");
   return { uid: field.uid, status: "filled" };
 }
 
@@ -215,7 +213,9 @@ export interface ClearResult {
 }
 
 export async function clearJobPilotFields(root: ParentNode = document): Promise<ClearResult> {
-  const filled = deepQueryAll<HTMLElement>(root, `[${FILLED_ATTR}]`);
+  const candidates = deepQueryAll<HTMLElement>(root, "*");
+  if (root instanceof HTMLElement) candidates.unshift(root);
+  const filled = candidates.filter((element) => isJobPilotFilled(element));
   let cleared = 0;
   let failed = 0;
   for (const el of filled) {
@@ -232,7 +232,7 @@ export async function clearJobPilotFields(root: ParentNode = document): Promise<
       }
       dropdownOriginals.delete(el);
     }
-    const original = el.getAttribute(ORIGINAL_ATTR) ?? "";
+    const original = originalValues.get(el) ?? "";
     const tag = el.tagName.toLowerCase();
     const input = el as HTMLInputElement;
     if (dropdownOriginal) {
@@ -248,50 +248,63 @@ export async function clearJobPilotFields(root: ParentNode = document): Promise<
       setNativeValue(el as HTMLInputElement | HTMLTextAreaElement, original);
     }
     if (!dropdownOriginal) dispatch(el, ["input", "change"]);
-    el.removeAttribute(FILLED_ATTR);
-    el.removeAttribute(ORIGINAL_ATTR);
-    el.removeAttribute("data-jobpilot-repeater");
     removeHighlight(el);
+    fillStates.delete(el);
+    originalValues.delete(el);
+    repeaterElements.delete(el);
     cleared += 1;
   }
   return { cleared, failed };
 }
 
 export function highlight(el: HTMLElement, status: FillStatus): void {
-  mark(el, status);
+  const current = fillStates.get(el);
+  fillStates.set(el, { filled: current?.filled ?? false, status });
+  paint(el, status);
 }
 
 export function removeHighlight(el: HTMLElement): void {
-  el.style.outline = "";
-  el.style.removeProperty("outline-offset");
-  el.removeAttribute(STATUS_ATTR);
+  removeFieldStatus(el);
+  const current = fillStates.get(el);
+  if (current) fillStates.set(el, { ...current, status: "neutral" });
 }
 
 export function isJobPilotFilled(el: HTMLElement): boolean {
-  return el.hasAttribute(FILLED_ATTR);
+  return fillStates.get(el)?.filled === true;
+}
+
+export function markJobPilotRepeater(el: HTMLElement): void {
+  repeaterElements.add(el);
+}
+
+export function isJobPilotRepeater(el: HTMLElement): boolean {
+  return repeaterElements.has(el);
 }
 
 // --------------------------------------------------------------------------- //
 // Low-level helpers
 // --------------------------------------------------------------------------- //
-function mark(el: HTMLElement, status: FillStatus): void {
-  el.setAttribute(FILLED_ATTR, "1");
-  el.setAttribute(STATUS_ATTR, status);
-  if (OUTLINE[status]) {
-    el.style.outline = OUTLINE[status];
-    el.style.outlineOffset = "1px";
-  }
+function markFilled(el: HTMLElement, status: FillStatus): void {
+  fillStates.set(el, { filled: true, status });
+  paint(el, status);
+}
+
+function paint(el: HTMLElement, status: FillStatus): void {
+  if (status === "neutral") removeFieldStatus(el);
+  else presentFieldStatus(el, status);
 }
 
 function captureOriginal(el: HTMLInputElement | HTMLSelectElement): void {
-  if (el.hasAttribute(ORIGINAL_ATTR)) {
-    return;
-  }
+  if (originalValues.has(el)) return;
   const input = el as HTMLInputElement;
   const original = input.type === "checkbox" || input.type === "radio"
     ? (input.checked ? "checked" : "")
     : el.value;
-  el.setAttribute(ORIGINAL_ATTR, original ?? "");
+  originalValues.set(el, original ?? "");
+}
+
+function captureOriginalValue(el: HTMLElement, value: string): void {
+  if (!originalValues.has(el)) originalValues.set(el, value);
 }
 
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {

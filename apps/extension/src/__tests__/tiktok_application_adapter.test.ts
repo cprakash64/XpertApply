@@ -10,6 +10,7 @@ import {
 } from "../ats/tiktokApplication";
 import { discoverFields } from "../fields/discovery";
 import { buildLedger } from "../fields/ledger";
+import { fieldStatusPresentationForTest } from "../fields/statusPresentation";
 import { verifyFinalLiveDom } from "../content/finalVerification";
 import { fieldRef } from "../content/questionBatch";
 import type { QuestionExecutionTrace } from "../content/diagnostics";
@@ -361,7 +362,9 @@ describe("TikTok legal interaction", () => {
       true
     );
     expect(result).toMatchObject({ ok: true, openStrategy: "already_open", displayed: "Yes" });
-    expect(document.getElementById("authorization")!.style.outline).toContain("3px");
+    const control = document.getElementById("authorization")!;
+    expect(control.style.outline).toBe("");
+    expect(fieldStatusPresentationForTest(control)?.text).toContain("Needs review");
   });
 
   it("returns LISTBOX_NOT_OPENED when the trigger never exposes a popup", async () => {

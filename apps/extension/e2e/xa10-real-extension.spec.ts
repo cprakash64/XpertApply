@@ -9,7 +9,8 @@ const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 
 const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job</h1>
   <form id="application">
-    <label for="first">First name</label><input id="first" name="first_name" autocomplete="given-name" required>
+    <label for="prior">Existing value</label><input id="prior" name="unmapped_existing" value="KEEP-ME">
+    <label for="first">First name</label><input id="first" name="first_name" autocomplete="given-name" required class="employer-control" style="outline:3px dotted rgb(12,34,56);border:4px solid purple;box-shadow:1px 2px 3px black;background:linen">
     <label for="last">Last name</label><input id="last" name="last_name" autocomplete="family-name" required>
     <label for="email">Email</label><input id="email" name="email" autocomplete="email" required>
     <label for="country-native">Country</label><select id="country-native" autocomplete="country-name">
@@ -28,6 +29,17 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
   </form></main>
   <script>
     window.__xa10Submit = 0;
+    window.__xa10EmployerStyle = document.querySelector('#first').getAttribute('style');
+    window.__xa14Mutations = [];
+    new MutationObserver(records => {
+      for (const record of records) {
+        if (record.type !== 'attributes') continue;
+        const name = record.attributeName || '';
+        if (name.startsWith('data-jobpilot-') || name.startsWith('data-xpertapply-')) {
+          window.__xa14Mutations.push(name);
+        }
+      }
+    }).observe(document.documentElement, { subtree: true, attributes: true });
     document.querySelector('#application').addEventListener('submit', event => { event.preventDefault(); window.__xa10Submit++; });
     const control = document.querySelector('#country-custom');
     const display = control.querySelector('.select__value');
@@ -92,6 +104,14 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
     await expect(page.locator("#source-board")).toBeChecked();
     await expect(page.locator("#country-custom .select__value")).toHaveText("United States");
     await page.waitForSelector("#jobpilot-assisted-apply", { state: "attached" });
+    expect(await page.evaluate(() => Array.from(document.querySelectorAll("*")).flatMap((element) =>
+      Array.from(element.attributes)
+        .filter((attribute) => attribute.name.startsWith("data-jobpilot-") || attribute.name.startsWith("data-xpertapply-"))
+        .map((attribute) => attribute.name)
+    ))).toEqual([]);
+    expect(await page.evaluate(() => (window as any).__xa14Mutations)).toEqual([]);
+    await expect(page.locator("#prior")).toHaveValue("KEEP-ME");
+    expect(await page.locator("#first").getAttribute("style")).toBe(await page.evaluate(() => (window as any).__xa10EmployerStyle));
     const widget = await WidgetDriver.attach(page);
     await widget.clearFilledFields();
     await expect.poll(() => widget.message()).toContain("Cleared");
@@ -100,11 +120,18 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
       native: (document.querySelector("#country-native") as HTMLSelectElement).value,
       radio: (document.querySelector("#source-board") as HTMLInputElement).checked,
       custom: document.querySelector("#country-custom .select__value")?.textContent ?? "",
+      prior: (document.querySelector("#prior") as HTMLInputElement).value,
+      employerStylePreserved: document.querySelector("#first")?.getAttribute("style") === (window as any).__xa10EmployerStyle,
       marked: document.querySelectorAll("[data-jobpilot-filled]").length,
+      privateMarkers: Array.from(document.querySelectorAll("*")).flatMap((element) =>
+        Array.from(element.attributes).filter((attribute) =>
+          attribute.name.startsWith("data-jobpilot-") || attribute.name.startsWith("data-xpertapply-")
+        )).length,
+      observedPrivateMarkers: (window as any).__xa14Mutations.length,
       submitted: (window as any).__xa10Submit
     }));
     console.log(`XA10_MV3 ${JSON.stringify(result)}`);
-    expect(result).toEqual({ native: "", radio: false, custom: "", marked: 0, submitted: 0 });
+    expect(result).toEqual({ native: "", radio: false, custom: "", prior: "KEEP-ME", employerStylePreserved: true, marked: 0, privateMarkers: 0, observedPrivateMarkers: 0, submitted: 0 });
     await page.close();
   } finally {
     await context.close();

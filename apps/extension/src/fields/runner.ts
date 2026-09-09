@@ -8,7 +8,7 @@
 
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FillOutcome } from "../types";
 import { discoverFields } from "./discovery";
-import { fillField, highlight } from "./fill";
+import { fillField, highlight, isJobPilotRepeater } from "./fill";
 import { buildMappings } from "./mapping";
 import { UPLOAD_FIELDS } from "./taxonomy";
 
@@ -136,7 +136,7 @@ export async function applyFill(fields: DiscoveredField[], mappings: FieldMappin
     if (!field?.element) {
       continue;
     }
-    if (field.element.hasAttribute("data-jobpilot-repeater")) {
+    if (isJobPilotRepeater(field.element)) {
       summary.skipped += 1;
       summary.outcomes.set(mapping.uid, {
         uid: mapping.uid,

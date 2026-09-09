@@ -8,6 +8,7 @@ import {
   type TransactionFailure,
   type TransactionResult
 } from "../content/dropdownTransaction";
+import { highlight } from "../fields/fill";
 
 export type TikTokLegalKind = "authorization" | "sponsorship_now_or_future";
 
@@ -719,8 +720,7 @@ export async function actuateTikTokLegalField(
   }
   if (assisted) {
     initial.trigger.scrollIntoView({ block: "center", behavior: "auto" });
-    initial.trigger.style.outline = "3px solid #5b5ce2";
-    initial.trigger.style.outlineOffset = "3px";
+    highlight(initial.trigger, "review");
     initial.trigger.focus();
     // Close anything the OTHER legal question left open first. The two TikTok
     // dropdowns portal into the same place, so a menu still mounted from the

@@ -16,6 +16,29 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
   </form></main>
   <script>
     window.__xa11Submit = 0;
+    window.__xa14ReviewMutations = { attributes: [], style: 0, widgetAdds: 0, nativeInput: 0, nativeChange: 0 };
+    document.addEventListener('input', () => window.__xa14ReviewMutations.nativeInput++, true);
+    document.addEventListener('change', () => window.__xa14ReviewMutations.nativeChange++, true);
+    new MutationObserver(records => {
+      for (const record of records) {
+        if (record.type === 'attributes') {
+          const name = record.attributeName || '';
+          window.__xa14ReviewMutations.attributes.push({
+            id: record.target.id || '',
+            name,
+            value: record.target.getAttribute(name)
+          });
+          if (name === 'style') window.__xa14ReviewMutations.style++;
+          continue;
+        }
+        for (const node of record.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if (node.id === 'jobpilot-assisted-apply' || node.querySelector?.('#jobpilot-assisted-apply')) {
+            window.__xa14ReviewMutations.widgetAdds++;
+          }
+        }
+      }
+    }).observe(document.documentElement, { subtree: true, attributes: true, childList: true });
     document.querySelector('#application').addEventListener('submit', event => {
       event.preventDefault();
       window.__xa11Submit++;
@@ -97,26 +120,67 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
     }, applicationUrl);
 
     const page = await context.newPage();
+    await page.emulateMedia({ forcedColors: "active" });
     await page.goto(applicationUrl);
     await expect(page.locator("#email")).toHaveValue("candidate@example.test", { timeout: 20_000 });
     await page.waitForSelector("#jobpilot-assisted-apply", { state: "attached" });
     const widget = await WidgetDriver.attach(page);
     await expect.poll(() => widget.summary()).toMatchObject({ title: "Autofill incomplete" });
 
-    const markers = await page.evaluate(() => ({
+    const pageState = await page.evaluate(() => ({
       review: document.querySelectorAll('[data-jobpilot-status="review"]').length,
       verified: document.querySelectorAll('[data-jobpilot-status="verified"]').length,
+      privateMarkers: Array.from(document.querySelectorAll("*")).flatMap((element) =>
+        Array.from(element.attributes)
+          .filter((attribute) => attribute.name.startsWith("data-jobpilot-"))
+          .map((attribute) => attribute.name)
+      ),
+      styles: ["first_name", "last_name", "email"].map((id) => {
+        const element = document.getElementById(id)!;
+        const computed = getComputedStyle(element);
+        return {
+          id,
+          inlineOutline: (element as HTMLElement).style.outline,
+          inlineOutlineOffset: (element as HTMLElement).style.outlineOffset,
+          computedOutline: computed.outline,
+          computedOutlineColor: computed.outlineColor,
+          computedOutlineStyle: computed.outlineStyle,
+          computedOutlineWidth: computed.outlineWidth
+        };
+      }),
+      observer: (window as any).__xa14ReviewMutations,
+      widgetHostReadable: document.getElementById("jobpilot-assisted-apply")?.id ?? null,
+      pageWindowInstanceVisible: Object.prototype.hasOwnProperty.call(window, "__jobpilotContentInstance"),
+      fieldExpandos: ["first_name", "last_name", "email"].flatMap((id) =>
+        Object.keys(document.getElementById(id)!).filter((key) => /jobpilot|xpertapply/i.test(key))
+      ),
       submitted: (window as any).__xa11Submit
     }));
     const summary = await widget.summary();
+    const cdp = await context.newCDPSession(page);
+    const accessibility = await cdp.send("Accessibility.getFullAXTree");
+    const accessibleNames = accessibility.nodes
+      .map((node) => node.name?.value)
+      .filter((value): value is string => typeof value === "string");
     const confirmation = Number(/Needs confirmation:\s*(\d+)/.exec(summary.counts)?.[1] ?? -1);
-    console.log(`XA11_MV3 ${JSON.stringify({ markers, summary, confirmation })}`);
+    console.log(`XA11_MV3 ${JSON.stringify({ pageState, summary, confirmation, accessibleNames })}`);
 
-    expect(markers.submitted).toBe(0);
-    expect(markers).toMatchObject({ review: 2, verified: 1 });
+    expect(pageState.submitted).toBe(0);
+    expect(pageState).toMatchObject({
+      review: 0,
+      verified: 0,
+      privateMarkers: [],
+      pageWindowInstanceVisible: false,
+      fieldExpandos: []
+    });
+    expect(pageState.styles.map((style) => style.inlineOutline)).toEqual(["", "", ""]);
+    expect(pageState.styles.map((style) => style.inlineOutlineOffset)).toEqual(["", "", ""]);
+    expect(pageState.observer.style).toBe(0);
+    expect(accessibleNames.filter((name) => name === "XpertApply field status: Needs review")).toHaveLength(2);
+    expect(accessibleNames.filter((name) => name === "XpertApply field status: Verified")).toHaveLength(1);
     expect(summary.count).toBe("Filled 1 of 3");
     expect(summary.message).toContain("2 filled fields need your confirmation");
-    expect(confirmation).toBe(markers.review);
+    expect(confirmation).toBe(2);
     await page.close();
   } finally {
     await context.close();
