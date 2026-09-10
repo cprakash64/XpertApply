@@ -105,4 +105,43 @@ class ApplicationTrackerOut(BaseModel):
     status: str
     notes: str | None = None
     applied_at: datetime | None = None
+    deletion_scheduled_at: datetime | None = None
+    confirmation_required_at: datetime | None = None
+    confirmation_prompt_dismissed_at: datetime | None = None
+    snapshot_available: bool = False
+    snapshot_count: int = 0
 
+
+class SnapshotArtifactResponse(BaseModel):
+    document_id: int | None = None
+    filename: str | None = None
+    content_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class SnapshotAnswerResponse(BaseModel):
+    canonical_key: str = Field(max_length=120)
+    display_value: str = Field(max_length=4000)
+    source: str | None = Field(default=None, max_length=60)
+    requires_review: bool = False
+
+
+class ApplicationSnapshotResponse(BaseModel):
+    id: int
+    application_tracker_id: int
+    attempt_number: int
+    confirmation_source: str
+    submission_evidence_type: str | None = None
+    ats_provider: str | None = None
+    job_external_id: str | None = None
+    job_title: str
+    company_name: str
+    job_url: str | None = None
+    source_url: str | None = None
+    job_description_snapshot: str | None = None
+    resume: SnapshotArtifactResponse
+    cover_letter_used: bool
+    cover_letter: SnapshotArtifactResponse
+    cover_letter_text_snapshot: str | None = None
+    answers: list[SnapshotAnswerResponse] = Field(default_factory=list)
+    applied_at: datetime
+    created_at: datetime

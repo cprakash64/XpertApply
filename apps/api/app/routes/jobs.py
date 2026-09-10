@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -18,6 +18,10 @@ from app.applications.mark_applied import (
     serialize_application,
 )
 from app.applications.observability import metric
+from app.applications.tracker_lifecycle import (
+    cancel_application_deletion,
+    update_application_status,
+)
 from app.core.config import settings
 from app.db.session import get_db
 from app.documents.cover_letter_generation_service import generate_cover_letter
@@ -43,6 +47,7 @@ from app.jobs.job_normalization_service import DEMO_COMPANIES, is_placeholder_ur
 from app.jobs.job_search_criteria_service import build_search_criteria
 from app.jobs.safe_fetch import FetchFailedError, UnsafeUrlError, safe_fetch_image
 from app.models.entities import (
+    ApplicationSnapshot,
     ApplicationStatus,
     ApplicationTracker,
     CompanyBranding,
@@ -598,6 +603,22 @@ def _tracker_payload(
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
     documents = _tracker_documents(db, user_id, [tracker.job_id for tracker, _ in rows])
+    tracker_ids = [tracker.id for tracker, _ in rows]
+    snapshot_counts = (
+        {
+            tracker_id: count
+            for tracker_id, count in db.execute(
+                select(
+                    ApplicationSnapshot.application_tracker_id,
+                    func.count(ApplicationSnapshot.id),
+                )
+                .where(ApplicationSnapshot.application_tracker_id.in_(tracker_ids))
+                .group_by(ApplicationSnapshot.application_tracker_id)
+            ).all()
+        }
+        if tracker_ids
+        else {}
+    )
     return {
         "applications": [
             {
@@ -613,6 +634,11 @@ def _tracker_payload(
                 "opened_at": tracker.opened_at,
                 "application_url": tracker.last_application_url or job.application_url,
                 "follow_up_date": tracker.follow_up_date,
+                "deletion_scheduled_at": tracker.deletion_scheduled_at,
+                "confirmation_required_at": tracker.confirmation_required_at,
+                "confirmation_prompt_dismissed_at": tracker.confirmation_prompt_dismissed_at,
+                "snapshot_available": snapshot_counts.get(tracker.id, 0) > 0,
+                "snapshot_count": snapshot_counts.get(tracker.id, 0),
                 "created_at": tracker.created_at,
                 "updated_at": tracker.updated_at,
                 "documents": documents.get(tracker.job_id, {"resume": None, "cover_letter": None}),
@@ -994,9 +1020,9 @@ def upsert_tracker(
         )
     )
     if tracker is None:
-        tracker = ApplicationTracker(user_id=user.id, job_id=job_id, status=status_value)
+        tracker = ApplicationTracker(user_id=user.id, job_id=job_id, status=ApplicationStatus.saved)
         db.add(tracker)
-    tracker.status = status_value
+    update_application_status(tracker, status_value)
     tracker.notes = payload.notes
     # A downstream outcome implies the application was submitted at some point.
     # Only ever fills a MISSING date — it never overwrites the real submission
@@ -1009,6 +1035,26 @@ def upsert_tracker(
     }
     if status_value in downstream_of_applied and tracker.applied_at is None:
         tracker.applied_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(tracker)
+    return {"tracker": serialize_application(tracker)}
+
+
+@router.post("/tracker/{tracker_id}/cancel-deletion")
+def cancel_tracker_deletion(
+    tracker_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Keep a terminal application without changing its outcome status."""
+    tracker = db.scalar(
+        select(ApplicationTracker).where(
+            (ApplicationTracker.id == tracker_id) & (ApplicationTracker.user_id == user.id)
+        )
+    )
+    if tracker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    cancel_application_deletion(tracker)
     db.commit()
     db.refresh(tracker)
     return {"tracker": serialize_application(tracker)}

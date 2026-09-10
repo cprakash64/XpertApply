@@ -43,6 +43,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.applications.observability import metric
+from app.applications.tracker_lifecycle import clear_lifecycle_after_confirmation
 from app.models.entities import (
     ApplicationStatus,
     ApplicationTracker,
@@ -234,6 +235,8 @@ def mark_application_applied(
     if application_url:
         tracker.last_application_url = application_url[:2000]
 
+    clear_lifecycle_after_confirmation(tracker)
+
     # Everything below is deliberately NOT touched, so a confirmation can never
     # destroy work the user or the apply pipeline already did:
     #   notes, follow_up_date, opened_at, created_at
@@ -301,6 +304,9 @@ def serialize_application(tracker: ApplicationTracker) -> dict[str, Any]:
         "application_url": tracker.last_application_url,
         "notes": tracker.notes,
         "follow_up_date": tracker.follow_up_date,
+        "deletion_scheduled_at": tracker.deletion_scheduled_at,
+        "confirmation_required_at": tracker.confirmation_required_at,
+        "confirmation_prompt_dismissed_at": tracker.confirmation_prompt_dismissed_at,
         "created_at": tracker.created_at,
         "updated_at": tracker.updated_at,
     }

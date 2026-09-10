@@ -78,6 +78,18 @@ class ApplicationSessionStatus(StrEnum):
     cancelled = "cancelled"
 
 
+class SnapshotConfirmationSource(StrEnum):
+    extension_confirmed = "extension_confirmed"
+    auto_apply_confirmed = "auto_apply_confirmed"
+    user_confirmed = "user_confirmed"
+
+
+class SubmissionEvidenceType(StrEnum):
+    success_page = "success_page"
+    success_response = "success_response"
+    success_message = "success_message"
+
+
 class ScoreState(StrEnum):
     """Lifecycle of a per-user, per-job fit score.
 
@@ -863,9 +875,79 @@ class ApplicationTracker(Base):
     last_application_url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     follow_up_date: Mapped[DateValue | None] = mapped_column(Date)
+    deletion_scheduled_at: Mapped[DateTimeValue | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    deletion_cancelled_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    confirmation_required_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    confirmation_prompt_dismissed_at: Mapped[DateTimeValue | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ApplicationSnapshot(Base):
+    """Immutable history for one genuine submission attempt.
+
+    Stage 2A deliberately exposes no mutation or public creation route. Artifact
+    population and document freezing are deferred to Stage 2B.
+    """
+
+    __tablename__ = "application_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "application_tracker_id", "attempt_number", name="uq_snapshot_tracker_attempt"
+        ),
+        UniqueConstraint("source_session_id", name="uq_snapshot_source_session"),
+        Index("ix_snapshot_user_created", "user_id", "created_at"),
+        Index("ix_snapshot_tracker_applied", "application_tracker_id", "applied_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    application_tracker_id: Mapped[int] = mapped_column(
+        ForeignKey("application_tracker.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("job_postings.id", ondelete="SET NULL"), nullable=True
+    )
+    # Durable historical identifier, intentionally not an FK: session cleanup
+    # must never erase the idempotency/provenance key of a retained snapshot.
+    source_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    confirmation_source: Mapped[SnapshotConfirmationSource] = mapped_column(
+        Enum(SnapshotConfirmationSource)
+    )
+    submission_evidence_type: Mapped[SubmissionEvidenceType | None] = mapped_column(
+        Enum(SubmissionEvidenceType), nullable=True
+    )
+    submission_evidence_metadata: Mapped[dict] = mapped_column(JsonType, default=dict)
+    ats_provider: Mapped[str | None] = mapped_column(String(40))
+    job_external_id: Mapped[str | None] = mapped_column(String(300))
+    job_title: Mapped[str] = mapped_column(String(500))
+    company_name: Mapped[str] = mapped_column(String(300))
+    job_url: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    job_description_snapshot: Mapped[str | None] = mapped_column(Text)
+    resume_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generated_documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    resume_filename: Mapped[str | None] = mapped_column(String(500))
+    resume_content_hash: Mapped[str | None] = mapped_column(String(64))
+    cover_letter_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    cover_letter_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generated_documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    cover_letter_filename: Mapped[str | None] = mapped_column(String(500))
+    cover_letter_content_hash: Mapped[str | None] = mapped_column(String(64))
+    cover_letter_text_snapshot: Mapped[str | None] = mapped_column(Text)
+    answers_snapshot: Mapped[list] = mapped_column(JsonType, default=list)
+    applied_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
