@@ -66,6 +66,9 @@ def serialize_document(
         "plain_text": record.plain_text or "",
         "quality": quality,
         "model_used": record.model_used,
+        "content_hash": record.content_hash,
+        "immutable_at": record.immutable_at,
+        "source_document_id": record.source_document_id,
         # Kept for backward compatibility; the frontend now reads quality.warnings.
         "warnings": warnings if warnings is not None else quality.get("warnings", []),
         "unsupported_claims_removed": (
@@ -78,6 +81,27 @@ def serialize_document(
             "pdf": f"/jobs/documents/{record.id}/download/pdf",
         },
     }
+
+
+def copy_document_for_edit(record: GeneratedDocument) -> GeneratedDocument:
+    """Create an unfrozen version whose canonical content can safely diverge."""
+    return GeneratedDocument(
+        user_id=record.user_id,
+        job_id=record.job_id,
+        type=record.type,
+        format=record.format,
+        title=record.title,
+        content=dict(record.content or {}),
+        content_markdown=record.content_markdown,
+        plain_text=record.plain_text,
+        quality=dict(record.quality or {}),
+        source_profile_snapshot=dict(record.source_profile_snapshot or {}),
+        job_snapshot=dict(record.job_snapshot or {}),
+        format_version=record.format_version,
+        model_used=record.model_used,
+        prompt_version=record.prompt_version,
+        source_document_id=record.id,
+    )
 
 
 def export_document(record: GeneratedDocument, fmt: DocumentFormat) -> str:

@@ -139,7 +139,10 @@ class ApplicationSnapshotResponse(BaseModel):
     source_url: str | None = None
     job_description_snapshot: str | None = None
     resume: SnapshotArtifactResponse
+    resume_used: bool = False
+    resume_provenance: str | None = None
     cover_letter_used: bool
+    cover_letter_mode: str = "unused"
     cover_letter: SnapshotArtifactResponse
     cover_letter_text_snapshot: str | None = None
     answers: list[SnapshotAnswerResponse] = Field(default_factory=list)

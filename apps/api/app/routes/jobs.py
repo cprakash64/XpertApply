@@ -18,6 +18,11 @@ from app.applications.mark_applied import (
     serialize_application,
 )
 from app.applications.observability import metric
+from app.applications.snapshots import (
+    get_owned_snapshot,
+    list_owned_snapshots,
+    serialize_snapshot,
+)
 from app.applications.tracker_lifecycle import (
     cancel_application_deletion,
     update_application_status,
@@ -27,8 +32,8 @@ from app.db.session import get_db
 from app.documents.cover_letter_generation_service import generate_cover_letter
 from app.documents.filenames import build_document_filename
 from app.documents.resume_generation_service import generate_resume
+from app.documents.store import copy_document_for_edit, persist_document, serialize_document
 from app.documents.store import export_document as render_document_file
-from app.documents.store import persist_document, serialize_document
 from app.jobs.company_logo_service import (
     is_safe_logo_url,
     is_untrusted_simplify_logo_url,
@@ -910,6 +915,9 @@ def update_document(
     record = db.get(GeneratedDocument, document_id)
     if record is None or record.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if record.immutable_at is not None:
+        record = copy_document_for_edit(record)
+        db.add(record)
     if payload.markdown is not None:
         record.content_markdown = payload.markdown
     if payload.plain_text is not None:
@@ -918,6 +926,12 @@ def update_document(
         record.content = payload.content
     if payload.title is not None:
         record.title = payload.title
+    # Materialized exports are derived caches. Any editable version must render
+    # fresh files from its new canonical content.
+    record.file_path = None
+    record.docx_file_path = None
+    record.pdf_file_path = None
+    record.content_hash = None
     db.commit()
     db.refresh(record)
     return serialize_document(record)
@@ -1058,3 +1072,34 @@ def cancel_tracker_deletion(
     db.commit()
     db.refresh(tracker)
     return {"tracker": serialize_application(tracker)}
+
+
+@router.get("/tracker/{tracker_id}/snapshots")
+def list_tracker_snapshots(
+    tracker_id: int,
+    limit: int = Query(default=100, ge=1, le=100),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracker = db.scalar(select(ApplicationTracker.id).where(
+        ApplicationTracker.id == tracker_id, ApplicationTracker.user_id == user.id
+    ))
+    if tracker is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    snapshots = list_owned_snapshots(db, user_id=user.id, tracker_id=tracker_id, limit=limit)
+    return {"snapshots": [serialize_snapshot(snapshot) for snapshot in snapshots]}
+
+
+@router.get("/tracker/{tracker_id}/snapshots/{snapshot_id}")
+def get_tracker_snapshot(
+    tracker_id: int,
+    snapshot_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    snapshot = get_owned_snapshot(
+        db, user_id=user.id, tracker_id=tracker_id, snapshot_id=snapshot_id
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
+    return {"snapshot": serialize_snapshot(snapshot)}

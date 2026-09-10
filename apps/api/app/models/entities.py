@@ -833,6 +833,11 @@ class GeneratedDocument(Base):
     pdf_file_path: Mapped[str | None] = mapped_column(String(1000))
     model_used: Mapped[str | None] = mapped_column(String(120))
     prompt_version: Mapped[str] = mapped_column(String(50), default="v1")
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    immutable_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    source_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generated_documents.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -935,9 +940,12 @@ class ApplicationSnapshot(Base):
     resume_document_id: Mapped[int | None] = mapped_column(
         ForeignKey("generated_documents.id", ondelete="RESTRICT"), nullable=True
     )
+    resume_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    resume_provenance: Mapped[str | None] = mapped_column(String(40))
     resume_filename: Mapped[str | None] = mapped_column(String(500))
     resume_content_hash: Mapped[str | None] = mapped_column(String(64))
     cover_letter_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    cover_letter_mode: Mapped[str] = mapped_column(String(20), default="unused")
     cover_letter_document_id: Mapped[int | None] = mapped_column(
         ForeignKey("generated_documents.id", ondelete="RESTRICT"), nullable=True
     )

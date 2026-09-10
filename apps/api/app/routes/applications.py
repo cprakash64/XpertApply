@@ -7,6 +7,7 @@ ownership server-side, independent of what the frontend hides.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from collections import deque
@@ -55,6 +56,7 @@ from app.applications.session_service import (
     log_action,
     touch_session,
 )
+from app.applications.snapshots import SnapshotProvenanceError
 from app.core.security import decode_access_token
 from app.core.session_tokens import decode_scoped_token
 from app.db.session import get_db
@@ -64,6 +66,7 @@ from app.models.entities import (
     ApplicationActionType,
     ApplicationSession,
     ApplicationSessionStatus,
+    ApplicationSnapshot,
     DocumentFormat,
     GeneratedDocument,
     JobPosting,
@@ -73,6 +76,7 @@ from app.models.entities import (
 from app.schemas.applications import (
     AnswerUpsertIn,
     ApplicationOverrideIn,
+    ArtifactUseIn,
     AutofillResultIn,
     CompleteSessionIn,
     CreateSessionIn,
@@ -478,6 +482,34 @@ async def regenerate_cover_letter(
 # --------------------------------------------------------------------------- #
 # Events, complete, cancel
 # --------------------------------------------------------------------------- #
+@router.post("/{session_id}/artifact-use")
+def record_artifact_use(
+    payload: ArtifactUseIn,
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Persist bounded proof reported after a successful upload/paste interaction."""
+    if payload.artifact == "resume" and payload.mode != "uploaded":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Resume must use upload mode")
+    normalized_text = None
+    metadata = {"artifact": payload.artifact, "mode": payload.mode}
+    if payload.mode == "pasted_text":
+        normalized_text = (payload.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not normalized_text:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pasted text is required")
+        metadata["content_hash"] = hashlib.sha256(normalized_text.encode()).hexdigest()
+    elif payload.text is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Text is only valid for paste mode",
+        )
+    log_action(
+        db, session.id, "artifact_use", source="extension", status="verified", metadata=metadata
+    )
+    db.commit()
+    return {"ok": True, "artifact": payload.artifact, "mode": payload.mode}
+
+
 @router.post("/{session_id}/events")
 def post_event(
     payload: SessionEventIn,
@@ -781,13 +813,19 @@ def confirm_submission(
             evidence={
                 "ats": ats,
                 "evidence_type": payload.evidence_type,
-                "submission_reference": payload.submission_reference,
             },
+            evidence_type=payload.evidence_type,
+            resume_used=payload.resume_used,
+            cover_letter_mode=payload.cover_letter_mode,
+            cover_letter_text=payload.cover_letter_text,
         )
     except ApplicationJobNotFound as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
     except SessionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except SnapshotProvenanceError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
@@ -803,6 +841,9 @@ def confirm_submission(
         "created": result.created,
         "already_applied": result.already_applied,
         "job_id": session.job_id,
+        "snapshot_id": db.scalar(
+            select(ApplicationSnapshot.id).where(ApplicationSnapshot.source_session_id == session.id)
+        ),
     }
 
 

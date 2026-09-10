@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -57,6 +57,19 @@ class SubmissionConfirmedIn(BaseModel):
     submission_reference: str | None = Field(default=None, max_length=200)
     #: Applicant tracking system id, for metrics only.
     ats: str | None = Field(default=None, max_length=40)
+    resume_used: bool = False
+    cover_letter_mode: Literal["unused", "file", "pasted_text"] = "unused"
+    cover_letter_text: str | None = Field(default=None, max_length=40_000)
+
+
+class ArtifactUseIn(BaseModel):
+    """A session-scoped, successful employer-form artifact interaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: Literal["resume", "cover_letter"]
+    mode: Literal["uploaded", "pasted_text"]
+    text: str | None = Field(default=None, max_length=40_000)
 
 
 class ConfirmAppliedIn(BaseModel):

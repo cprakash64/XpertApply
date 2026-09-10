@@ -33,6 +33,7 @@ from app.applications.preparation import (
     profile_incomplete,
 )
 from app.applications.session_refresh import current_profile_revision
+from app.applications.snapshots import create_snapshot_from_confirmed_session
 from app.applications.url_validation import InvalidApplicationURL, validate_official_url
 from app.core.session_tokens import (
     create_launch_token,
@@ -55,6 +56,8 @@ from app.models.entities import (
     GeneratedDocument,
     JobPosting,
     Project,
+    SnapshotConfirmationSource,
+    SubmissionEvidenceType,
     User,
     UserProfile,
 )
@@ -370,6 +373,10 @@ def complete_session(
     submitted_at: datetime | None = None,
     submission_reference: str | None = None,
     evidence: dict[str, Any] | None = None,
+    evidence_type: SubmissionEvidenceType | None = None,
+    resume_used: bool = False,
+    cover_letter_mode: str = "unused",
+    cover_letter_text: str | None = None,
 ) -> MarkAppliedResult:
     """Close an apply session as submitted and move the job into the Tracker.
 
@@ -393,6 +400,18 @@ def complete_session(
         submission_reference=submission_reference,
         application_url=session.source_url,
         metadata=evidence,
+    )
+
+    create_snapshot_from_confirmed_session(
+        db,
+        session=session,
+        tracker=result.tracker,
+        confirmation_source=SnapshotConfirmationSource(applied_source.value),
+        evidence_type=(SubmissionEvidenceType(evidence_type) if isinstance(evidence_type, str) else evidence_type),
+        evidence_metadata=evidence,
+        resume_used=resume_used,
+        cover_letter_mode=cover_letter_mode,
+        cover_letter_text=cover_letter_text,
     )
 
     session.status = ApplicationSessionStatus.completed
