@@ -1,41 +1,87 @@
 import re
 import zipfile
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from docx import Document
 from fastapi import UploadFile
 from pypdf import PdfReader
-from pypdf.errors import PdfReadError
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_PDF_PAGES = 100
+MAX_DOCX_MEMBERS = 512
+MAX_DOCX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
+MAX_DOCX_MEMBER_BYTES = 10 * 1024 * 1024
+MAX_DOCX_COMPRESSION_RATIO = 100
+MAX_EXTRACTED_TEXT_CHARS = 2 * 1024 * 1024
 MIN_EXTRACTED_TEXT_CHARS = 100
 NO_TEXT_ERROR = (
     "We could not extract text from this file. Please upload a text-based PDF/DOCX "
     "or paste your resume text."
 )
 
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/plain",
+#: The declared media type each supported extension must arrive with. The
+#: extension is what selects the parser, so a part whose declared type disagrees
+#: with its extension is a contradiction rather than a preference — ".pdf"
+#: announced as "text/plain" would still be handed to the PDF parser. No browser
+#: produces that pairing; only a hand-built request does.
+CONTENT_TYPE_FOR_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
 }
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+ALLOWED_CONTENT_TYPES = set(CONTENT_TYPE_FOR_EXTENSION.values())
+ALLOWED_EXTENSIONS = set(CONTENT_TYPE_FOR_EXTENSION)
 
 
 class DocumentParserError(ValueError):
     pass
 
 
-def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> None:
-    filename = file.filename or ""
-    extension = Path(filename).suffix.lower()
-    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+def _resource_limit_error() -> DocumentParserError:
+    return DocumentParserError(
+        "This document is too complex to process safely. Please upload a smaller PDF/DOCX or paste your resume text."
+    )
+
+
+def validate_upload_metadata(filename: str | None, content_type: str | None) -> None:
+    """Check the declared filename and media type before any bytes are read.
+
+    Separated from the content checks so the route can refuse an unsupported
+    upload without streaming it first: rejecting an unsupported extension costs
+    nothing, and doing it early keeps unsupported bytes out of memory entirely.
+
+    A part that declares NO content type is refused rather than accepted. It used
+    to skip the media-type check altogether (``if content_type and ...``), which
+    made the allow-list opt-out: omitting the header was enough to be judged on
+    the filename alone. Browsers always send one — the spec substitutes
+    ``application/octet-stream`` when the OS reports no type — so only a
+    hand-built request reaches this branch.
+    """
+    extension = Path(filename or "").suffix.lower()
+    declared = (content_type or "").split(";", 1)[0].strip().lower()
 
     if extension not in ALLOWED_EXTENSIONS:
         raise DocumentParserError("Unsupported file extension. Upload a PDF, DOCX, or TXT file.")
-    if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+    if not declared:
+        raise DocumentParserError("Uploaded file is missing its content type. Upload a PDF, DOCX, or TXT file.")
+    if declared not in ALLOWED_CONTENT_TYPES:
         raise DocumentParserError("Unsupported file type. Upload a PDF, DOCX, or TXT file.")
+    if declared != CONTENT_TYPE_FOR_EXTENSION[extension]:
+        raise DocumentParserError(
+            "The file's content type does not match its extension. Upload a PDF, DOCX, or TXT file."
+        )
+
+
+def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> None:
+    """Full validation for an upload that has already been read into memory.
+
+    The route validates metadata up front and bounds the size while streaming, so
+    both checks are already satisfied by the time it calls in. They stay here as
+    this helper's own contract, for any caller that hands over a complete
+    ``bytes`` body instead of streaming it.
+    """
+    validate_upload_metadata(file.filename, file.content_type)
     if content is not None:
         if not content:
             raise DocumentParserError("Uploaded file is empty.")
@@ -45,14 +91,71 @@ def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> No
 
 def extract_text_from_pdf(content: bytes) -> str:
     try:
+        if not content.startswith(b"%PDF-"):
+            raise DocumentParserError(NO_TEXT_ERROR)
         reader = PdfReader(BytesIO(content))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except (PdfReadError, OSError, ValueError) as exc:
+        if reader.is_encrypted or len(reader.pages) > MAX_PDF_PAGES:
+            raise _resource_limit_error()
+        parts: list[str] = []
+        extracted_chars = 0
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            extracted_chars += len(page_text)
+            if extracted_chars > MAX_EXTRACTED_TEXT_CHARS:
+                raise _resource_limit_error()
+            parts.append(page_text)
+        text = "\n".join(parts)
+    except DocumentParserError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - untrusted parser failures share one safe API error
         raise DocumentParserError(NO_TEXT_ERROR) from exc
     return normalize_extracted_text(text)
 
 
+def _validate_docx_archive(content: bytes) -> None:
+    """Validate the OPC container before python-docx expands or parses XML."""
+    if not content.startswith(b"PK"):
+        raise DocumentParserError(NO_TEXT_ERROR)
+    try:
+        with zipfile.ZipFile(BytesIO(content)) as archive:
+            members = archive.infolist()
+            if len(members) > MAX_DOCX_MEMBERS:
+                raise _resource_limit_error()
+
+            names: set[str] = set()
+            total_uncompressed = 0
+            for member in members:
+                normalized_name = member.filename.replace("\\", "/")
+                path = PurePosixPath(normalized_name)
+                if not path.parts or path.is_absolute() or ".." in path.parts or ":" in path.parts[0]:
+                    raise DocumentParserError(NO_TEXT_ERROR)
+                if member.flag_bits & 0x1:
+                    raise DocumentParserError(NO_TEXT_ERROR)
+                if member.is_dir():
+                    continue
+
+                names.add(normalized_name)
+                total_uncompressed += member.file_size
+                if (
+                    member.file_size > MAX_DOCX_MEMBER_BYTES
+                    or total_uncompressed > MAX_DOCX_UNCOMPRESSED_BYTES
+                    or (
+                        member.file_size > 0
+                        and member.file_size / max(member.compress_size, 1) > MAX_DOCX_COMPRESSION_RATIO
+                    )
+                ):
+                    raise _resource_limit_error()
+
+            if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                raise DocumentParserError(NO_TEXT_ERROR)
+    except DocumentParserError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - malformed ZIP metadata must not escape as a 500
+        raise DocumentParserError(NO_TEXT_ERROR) from exc
+
+
 def extract_text_from_docx(content: bytes) -> str:
+    _validate_docx_archive(content)
     try:
         document = Document(BytesIO(content))
         paragraphs = [paragraph.text for paragraph in document.paragraphs]
@@ -63,9 +166,12 @@ def extract_text_from_docx(content: bytes) -> str:
             for cell in row.cells
             if cell.text
         ]
-    except (ValueError, zipfile.BadZipFile, KeyError) as exc:
+    except Exception as exc:  # noqa: BLE001 - python-docx/lxml failures share one safe API error
         raise DocumentParserError(NO_TEXT_ERROR) from exc
-    return normalize_extracted_text("\n".join([*paragraphs, *table_cells]))
+    text = "\n".join([*paragraphs, *table_cells])
+    if len(text) > MAX_EXTRACTED_TEXT_CHARS:
+        raise _resource_limit_error()
+    return normalize_extracted_text(text)
 
 
 # Characters that PDF extraction commonly mangles, mapped to clean equivalents.

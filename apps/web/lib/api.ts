@@ -301,10 +301,21 @@ export type ApiErrorCode =
   | "forbidden"
   | "not_found"
   | "validation"
+  | "payload_too_large"
   | "rate_limited"
   | "service_unavailable"
   | "server_error"
   | "request_failed";
+
+/** Shown when a 413 carries no readable JSON body of its own.
+ *
+ * The API returns its own JSON detail for an over-limit upload, but a request
+ * that exceeds the reverse proxy's limit is rejected at the edge and never
+ * reaches the API — nginx answers with an HTML error page, which this client
+ * deliberately refuses to render. Without this, the user saw "Request failed
+ * with 413". Keep the size in step with MAX_UPLOAD_BYTES in
+ * apps/api/app/services/document_parser.py. */
+export const PAYLOAD_TOO_LARGE_MESSAGE = "That file is too large. The maximum upload size is 5 MB.";
 
 /** A stable, machine-readable code from the backend's structured error envelope
  * (`{ error: { code, message, stage, retryable, request_id } }`). Used to show a
@@ -409,6 +420,8 @@ function codeForStatus(status: number): { code: ApiErrorCode; retryable: boolean
   if (status === 403) return { code: "forbidden", retryable: false };
   if (status === 404) return { code: "not_found", retryable: false };
   if (status === 400 || status === 422) return { code: "validation", retryable: false };
+  // Not retryable: the same file will be the same size next time.
+  if (status === 413) return { code: "payload_too_large", retryable: false };
   if (status === 429) return { code: "rate_limited", retryable: true };
   if (status === 503) return { code: "service_unavailable", retryable: true };
   if (status >= 500) return { code: "server_error", retryable: true };
@@ -508,6 +521,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       message = `Request failed with ${response.status}`;
     }
     const fallback = codeForStatus(response.status);
+    // An edge-generated 413 has an HTML body, so the parse above left `message`
+    // as the generic "Request failed with 413". Replace it with something the
+    // user can act on; an API-generated 413 already carries its own detail and
+    // is left alone.
+    if (fallback.code === "payload_too_large" && message === `Request failed with ${response.status}`) {
+      message = PAYLOAD_TOO_LARGE_MESSAGE;
+    }
     const normalizedDetails = details ?? structured?.details;
     const validation =
       fallback.code === "validation"

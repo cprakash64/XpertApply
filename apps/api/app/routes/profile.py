@@ -1,11 +1,12 @@
 import logging
 from datetime import UTC, date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.ai.provider import ai_provider
 from app.api.deps import get_current_user
@@ -53,8 +54,19 @@ from app.services.document_parser import (
     DocumentParserError,
     detect_document_kind,
     extract_uploaded_file_text,
+    validate_upload_metadata,
 )
 from app.services.profile_import import normalize_import_draft
+from app.services.upload_guard import (
+    FILE_FIELD,
+    SOURCE_TYPE_FIELD,
+    UploadRejected,
+    body_capped_request,
+    enforce_declared_body_size,
+    parse_single_file_form,
+    read_upload_capped,
+    require_multipart_upload,
+)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -485,18 +497,70 @@ async def import_profile_text(
     return import_response(draft, model_used)
 
 
+#: Accepted values for the multipart ``source_type`` field. Read from the same
+#: Literal the API has always published, so the manual parse below cannot drift
+#: from the declared contract.
+_FILE_SOURCE_TYPES: frozenset[str] = frozenset(get_args(FileSourceType))
+
+
 @router.post("/import/file")
 async def import_profile_file(
-    source_type: FileSourceType = Form("auto"),
-    file: UploadFile = File(...),
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> ImportProfileResponse:
+    """Import a profile from an uploaded resume (PDF/DOCX/TXT).
+
+    The signature is deliberately body-free. Declaring ``file: UploadFile =
+    File(...)`` here made the request body part of FastAPI's dependency graph,
+    and FastAPI resolves the body alongside the security dependencies rather
+    than after them — so Starlette and python-multipart parsed **unauthenticated**
+    input, which is what made a quadratic parsing defect in python-multipart
+    reachable with no credentials.
+
+    Taking a bare ``Request`` moves that decision into the handler body, which
+    runs only once ``get_current_user`` has succeeded. Everything the parsers
+    might touch is gated behind the guards in ``app.services.upload_guard``.
+    """
+    form = None
     try:
-        content = await file.read()
-        text = extract_uploaded_file_text(file, content)
-    except DocumentParserError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    detected_kind = detect_document_kind(text, file.filename)
+        # Nothing below reads the body until the media type has been accepted,
+        # so a URL-encoded or JSON body never reaches a form parser at all.
+        require_multipart_upload(request)
+        enforce_declared_body_size(request)
+        form = await parse_single_file_form(body_capped_request(request))
+
+        upload = form.get(FILE_FIELD)
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"A file must be uploaded in the '{FILE_FIELD}' field.",
+            )
+
+        raw_source_type = form.get(SOURCE_TYPE_FIELD) or "auto"
+        if not isinstance(raw_source_type, str) or raw_source_type not in _FILE_SOURCE_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unsupported source_type. Expected one of: {', '.join(sorted(_FILE_SOURCE_TYPES))}.",
+            )
+        source_type: FileSourceType = raw_source_type  # type: ignore[assignment]
+
+        try:
+            # Metadata first: an unsupported extension or media type is refused
+            # without reading the file, so unsupported bytes never enter memory.
+            validate_upload_metadata(upload.filename, upload.content_type)
+            content = await read_upload_capped(upload)
+            text = extract_uploaded_file_text(upload, content)
+        except DocumentParserError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+        detected_kind = detect_document_kind(text, upload.filename)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    finally:
+        # Releases the spooled temporary files the parser created, on every path.
+        if form is not None:
+            await form.close()
+
     draft_source = detected_kind if source_type == "auto" else source_type
     if draft_source == "auto":
         draft_source = "unknown"
