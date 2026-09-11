@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveApplicationRoot } from "../ats/formRoot";
 import { awaitApplicationReadiness } from "../content/applicationReadiness";
 import { discoverAll } from "../fields/discovery";
@@ -35,6 +35,8 @@ describe("XA-09 application control budget", () => {
   beforeEach(() => {
     document.body.innerHTML = "<main><h1>Apply for this job</h1><form id='application'><button type='submit'>Submit application</button></form></main>";
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   it("accepts the exact boundary and rejects the first control above it", () => {
     const form = document.querySelector("form")!;
@@ -89,6 +91,7 @@ describe("XA-09 application control budget", () => {
 
   it("ends readiness immediately with the named recoverable failure", async () => {
     appendControls(document.querySelector("form")!, MAX_APPLICATION_CONTROLS + 1);
+    const scheduled = vi.spyOn(window, "setTimeout");
 
     const result = await awaitApplicationReadiness({ doc: document, timeoutMs: 20_000, quietMs: 0 });
     expect(result).toMatchObject({
@@ -96,6 +99,10 @@ describe("XA-09 application control budget", () => {
       failureCode: "APPLICATION_FORM_TOO_LARGE",
       root: { reason: "APPLICATION_FORM_TOO_LARGE" }
     });
-    expect(result.elapsedMs).toBeLessThan(2_000);
+    // "Immediate" is an algorithmic property, not a host-scheduler deadline:
+    // the refusal must return before installing either the quiet-window timer
+    // or the 20-second readiness deadline. This remains deterministic even
+    // when Vitest runs many JSDOM files concurrently on a loaded host.
+    expect(scheduled).not.toHaveBeenCalled();
   });
 });

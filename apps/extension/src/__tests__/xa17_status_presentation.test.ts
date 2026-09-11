@@ -3,7 +3,8 @@ import { clearJobPilotFields, fillField, highlight, removeHighlight } from "../f
 import { discoverFields } from "../fields/discovery";
 import {
   fieldStatusPresentationCssForTest,
-  fieldStatusPresentationForTest
+  fieldStatusPresentationForTest,
+  resetFieldStatusPresentation
 } from "../fields/statusPresentation";
 
 const targets: HTMLElement[] = [];
@@ -35,6 +36,9 @@ async function settle(): Promise<void> {
 
 afterEach(() => {
   for (const element of targets.splice(0)) removeHighlight(element);
+  resetFieldStatusPresentation();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
@@ -156,5 +160,49 @@ describe("XA-17 extension-owned status presentation", () => {
     review.style.outline = "";
     styled.style.outline = original;
     expect(styled.style.outline).toBe(original);
+  });
+
+  it("cancels pending positioning when the status layer is reset", () => {
+    vi.useFakeTimers();
+    const input = target("pending-reset");
+    highlight(input, "verified");
+    window.dispatchEvent(new Event("resize"));
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    resetFieldStatusPresentation();
+    resetFieldStatusPresentation();
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(() => vi.runAllTimers()).not.toThrow();
+    expect(fieldStatusPresentationForTest(input)).toBeNull();
+  });
+
+  it("a reset presentation callback cannot mutate its replacement", () => {
+    vi.useFakeTimers();
+    const first = target("first-instance");
+    highlight(first, "review");
+    window.dispatchEvent(new Event("resize"));
+    resetFieldStatusPresentation();
+
+    const replacement = target("replacement-instance");
+    const rect = replacement.getBoundingClientRect as ReturnType<typeof vi.fn>;
+    highlight(replacement, "verified");
+    const callsAfterRender = rect.mock.calls.length;
+    vi.runAllTimers();
+
+    expect(rect).toHaveBeenCalledTimes(callsAfterRender);
+    expect(fieldStatusPresentationForTest(replacement)?.status).toBe("verified");
+  });
+
+  it("leaves no callback that can outlive environment cleanup", () => {
+    vi.useFakeTimers();
+    const input = target("environment-teardown");
+    highlight(input, "invalid");
+    document.dispatchEvent(new Event("scroll"));
+    resetFieldStatusPresentation();
+    document.body.innerHTML = "";
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(() => vi.runAllTimers()).not.toThrow();
   });
 });

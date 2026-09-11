@@ -112,6 +112,8 @@ export interface ApplicationSessionData {
   officialUrl: string;
   jobTitle: string | null;
   company: string | null;
+  confirmationRequiredAt?: string | null;
+  confirmationPromptDismissedAt?: string | null;
   /** The posting's location, as XpertApply recorded it when the job was
    * ingested. First-party metadata about the JOB — never read from the
    * employer's page — and the only jurisdiction evidence available when a

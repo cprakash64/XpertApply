@@ -44,31 +44,39 @@ let host: HTMLElement | null = null;
 let root: ShadowRoot | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let mutationObserver: MutationObserver | null = null;
-let frame = 0;
+let ownerWindow: Window | null = null;
+let ownerDocument: Document | null = null;
+let generation = 0;
+let scheduled: { id: number; kind: "animation-frame" | "timeout"; owner: Window; generation: number } | null = null;
 
 function ensureLayer(): ShadowRoot | null {
   if (host?.isConnected && root) return root;
-  if (host || root) resetLayer(false);
+  if (host || root) resetLayer();
   try {
     host = document.createElement("div");
+    ownerDocument = document;
+    ownerWindow = document.defaultView ?? window;
     root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>${LAYER_CSS}</style>`;
     (document.documentElement || document.body)?.append(host);
     installSharedTracking();
     return root;
   } catch {
-    resetLayer(false);
+    resetLayer();
     return null;
   }
 }
 
 function installSharedTracking(): void {
-  window.addEventListener("resize", schedulePosition, { passive: true });
-  document.addEventListener("scroll", schedulePosition, { capture: true, passive: true });
+  const view = ownerWindow;
+  const doc = ownerDocument;
+  if (!view || !doc) return;
+  view.addEventListener("resize", schedulePosition, { passive: true });
+  doc.addEventListener("scroll", schedulePosition, { capture: true, passive: true });
   if (typeof ResizeObserver !== "undefined") resizeObserver = new ResizeObserver(schedulePosition);
-  if (typeof MutationObserver !== "undefined" && document.documentElement) {
+  if (typeof MutationObserver !== "undefined" && doc.documentElement) {
     mutationObserver = new MutationObserver(schedulePosition);
-    mutationObserver.observe(document.documentElement, {
+    mutationObserver.observe(doc.documentElement, {
       subtree: true,
       childList: true,
       attributes: true,
@@ -78,17 +86,20 @@ function installSharedTracking(): void {
 }
 
 function schedulePosition(): void {
-  if (frame) return;
-  if (typeof requestAnimationFrame === "function") {
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      positionAll();
-    });
+  if (scheduled || !ownerWindow || !host) return;
+  const view = ownerWindow;
+  const scheduledGeneration = generation;
+  const run = (): void => {
+    scheduled = null;
+    if (generation !== scheduledGeneration || ownerWindow !== view || !host) return;
+    positionAll();
+  };
+  if (typeof view.requestAnimationFrame === "function") {
+    const id = view.requestAnimationFrame(run);
+    scheduled = { id, kind: "animation-frame", owner: view, generation: scheduledGeneration };
   } else {
-    frame = globalThis.setTimeout(() => {
-      frame = 0;
-      positionAll();
-    }, 0);
+    const id = view.setTimeout(run, 0);
+    scheduled = { id, kind: "timeout", owner: view, generation: scheduledGeneration };
   }
 }
 
@@ -106,7 +117,7 @@ function positionAll(): void {
     }
     position(record, target);
   }
-  if (records.size === 0) resetLayer(true);
+  if (records.size === 0) resetLayer();
 }
 
 function position(record: DecorationRecord, target: HTMLElement): void {
@@ -166,29 +177,36 @@ export function removeFieldStatus(target: HTMLElement): void {
   record.badge.remove();
   records.delete(record);
   recordsByTarget.delete(target);
-  if (records.size === 0) resetLayer(true);
+  if (records.size === 0) resetLayer();
 }
 
-function resetLayer(removeHost: boolean): void {
-  if (frame) {
-    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
-    else globalThis.clearTimeout(frame);
-    frame = 0;
+function resetLayer(): void {
+  generation += 1;
+  const pending = scheduled;
+  scheduled = null;
+  if (pending) {
+    if (pending.kind === "animation-frame") pending.owner.cancelAnimationFrame(pending.id);
+    else pending.owner.clearTimeout(pending.id);
   }
-  window.removeEventListener("resize", schedulePosition);
-  document.removeEventListener("scroll", schedulePosition, true);
+  ownerWindow?.removeEventListener("resize", schedulePosition);
+  ownerDocument?.removeEventListener("scroll", schedulePosition, true);
   resizeObserver?.disconnect();
   mutationObserver?.disconnect();
   resizeObserver = null;
   mutationObserver = null;
-  if (removeHost) host?.remove();
+  host?.remove();
+  for (const record of records) record.badge.remove();
+  records.clear();
+  recordsByTarget = new WeakMap<HTMLElement, DecorationRecord>();
   host = null;
   root = null;
-  if (!removeHost) {
-    for (const record of records) record.badge.remove();
-    records.clear();
-    recordsByTarget = new WeakMap<HTMLElement, DecorationRecord>();
-  }
+  ownerWindow = null;
+  ownerDocument = null;
+}
+
+/** Explicitly end this module's presentation lifecycle. Safe to call more than once. */
+export function resetFieldStatusPresentation(): void {
+  resetLayer();
 }
 
 /** Isolated diagnostics for unit tests; never bridged to page JavaScript. */

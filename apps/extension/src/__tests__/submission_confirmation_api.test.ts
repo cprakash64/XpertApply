@@ -7,7 +7,12 @@
  *   2. retrying is safe and converges on the same application record.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, confirmSubmission } from "../api/client";
+import {
+  ApiError,
+  confirmSubmission,
+  dismissSubmissionConfirmation,
+  requireSubmissionConfirmation
+} from "../api/client";
 import { MSG, parseRuntimeMessage } from "../messages";
 
 type Captured = { url: string; init: RequestInit | undefined };
@@ -54,6 +59,17 @@ const BODY = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("confirmSubmission request", () => {
+  it("persists prompt-required and Not-yet choices on session-scoped endpoints", async () => {
+    const { calls } = mockFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await requireSubmissionConfirmation("sess-tok", 55);
+    await dismissSubmissionConfirmation("sess-tok", 55);
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining("/application-sessions/55/confirmation-required"),
+      expect.stringContaining("/application-sessions/55/confirmation-dismissed")
+    ]);
+    expect(calls.every((call) => call.init?.method === "POST")).toBe(true);
+  });
+
   it("posts to the session-scoped endpoint with the session token", async () => {
     const { calls } = mockFetch(() => new Response(JSON.stringify(successBody()), { status: 200 }));
     await confirmSubmission("sess-tok", 55, BODY);
@@ -148,6 +164,17 @@ describe("submission confirmation messages", () => {
       reason: "SUBMIT_CLICK_ONLY"
     });
     expect(parsed?.type).toBe(MSG.MANUAL_CONFIRMATION_REQUIRED);
+  });
+
+  it("accepts the gesture and explicit user-choice messages", () => {
+    expect(parseRuntimeMessage({ type: MSG.SUBMISSION_GESTURE_CANDIDATE })?.type)
+      .toBe(MSG.SUBMISSION_GESTURE_CANDIDATE);
+    expect(parseRuntimeMessage({ type: MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED })?.type)
+      .toBe(MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED);
+    expect(parseRuntimeMessage({ type: MSG.USER_CONFIRMED_SUBMITTED, sessionId: 55 })?.type)
+      .toBe(MSG.USER_CONFIRMED_SUBMITTED);
+    expect(parseRuntimeMessage({ type: MSG.USER_CONFIRMED_NOT_SUBMITTED, sessionId: 55 })?.type)
+      .toBe(MSG.USER_CONFIRMED_NOT_SUBMITTED);
   });
 
   it("rejects an unknown message type", () => {

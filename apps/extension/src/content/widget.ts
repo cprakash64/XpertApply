@@ -188,6 +188,8 @@ export function createWidget(actions: {
   captureControl?: () => void;
   /** Toggle "Teach XpertApply" observation. */
   teach?: (enabled: boolean) => void;
+  confirmSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
+  confirmNotSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
 }): {
   update: (value: WidgetUpdate) => void;
   showReview: (items: ReviewItem[], handlers: ReviewHandlers, counts?: LedgerCounts) => void;
@@ -207,6 +209,8 @@ export function createWidget(actions: {
   setInteractionMode: (active: boolean) => void;
   /** Ask the user whether (and at what scope) to remember a learned answer. */
   askToRemember: (prompt: RememberPrompt) => void;
+  showSubmissionConfirmation: () => void;
+  hideSubmissionConfirmation: () => void;
   destroy: () => void;
 } {
   // A prior content script can leave a frozen widget behind after the
@@ -241,6 +245,8 @@ export function createWidget(actions: {
       .footer{flex:0 0 auto;padding:10px 14px 12px;border-top:1px solid var(--line);background:rgba(245,249,246,.98)}
       .footer button{width:100%;white-space:normal;overflow-wrap:anywhere}
       .message{font-size:13px;color:#354139}
+      .submission-confirmation{display:none;margin-top:12px;padding:12px;border:1px solid rgba(173,134,45,.25);border-radius:14px;background:rgba(255,249,231,.82)}
+      .submission-confirmation.open{display:block}.submission-confirmation h3{margin:0;font-size:14px}.submission-confirmation p{margin:5px 0 0;color:#53615a;font-size:12px}.submission-confirmation .row{display:flex;gap:7px;margin-top:10px}.submission-confirmation .row button{flex:1}.submission-confirmation [data-confirm="yes"]{background:#1b704a;border-color:#1b704a;color:#fff}
       .count{color:var(--muted);margin-top:3px;font-size:12px}
       .counts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:11px;font-size:11px;color:var(--muted)}
       .counts-row span{padding:7px 9px;border:1px solid rgba(71,92,79,.10);border-radius:10px;background:rgba(255,255,255,.54)}
@@ -329,6 +335,12 @@ export function createWidget(actions: {
       <header><span class="dot" aria-hidden="true"></span><div class="heading"><h2 id="xpertapply-heading">XpertApply assisted application</h2><span class="title">Preparing</span></div><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
       <div class="body">
         <div class="message" role="status" aria-atomic="true">Preparing your application…</div>
+        <section class="submission-confirmation" aria-labelledby="xpertapply-submission-question">
+          <h3 id="xpertapply-submission-question">Application submitted?</h3>
+          <p>We couldn't confirm whether the employer received your application. Did you submit it?</p>
+          <div class="row"><button type="button" data-confirm="yes">Yes, I applied</button><button type="button" data-confirm="no">Not yet</button></div>
+          <p class="confirmation-status"></p>
+        </section>
         <div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div>
         <div class="count"></div>
         <div class="counts-row"></div>
@@ -371,6 +383,32 @@ export function createWidget(actions: {
   const reviewPanel = root.querySelector<HTMLElement>(".review-panel")!;
   const actionPanel = root.querySelector<HTMLElement>(".action-panel")!;
   const countsRow = root.querySelector<HTMLElement>(".counts-row")!;
+  const submissionConfirmation = root.querySelector<HTMLElement>(".submission-confirmation")!;
+  const confirmationStatus = root.querySelector<HTMLElement>(".confirmation-status")!;
+  const confirmYes = root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!;
+  const confirmNo = root.querySelector<HTMLButtonElement>('[data-confirm="no"]')!;
+  let confirmationBusy = false;
+  async function answerSubmission(answer: "yes" | "no"): Promise<void> {
+    if (confirmationBusy) return;
+    confirmationBusy = true;
+    confirmYes.disabled = true;
+    confirmNo.disabled = true;
+    confirmationStatus.textContent = answer === "yes" ? "Recording your application…" : "Keeping this application open…";
+    const result = answer === "yes"
+      ? await actions.confirmSubmitted?.()
+      : await actions.confirmNotSubmitted?.();
+    confirmationBusy = false;
+    if (!result?.ok) {
+      confirmYes.disabled = false;
+      confirmNo.disabled = false;
+      confirmationStatus.textContent = result?.error ?? "XpertApply couldn't save that choice. Try again.";
+      return;
+    }
+    submissionConfirmation.classList.remove("open");
+    confirmationStatus.textContent = "";
+  }
+  confirmYes.addEventListener("click", () => { void answerSubmission("yes"); });
+  confirmNo.addEventListener("click", () => { void answerSubmission("no"); });
 
   // Keyboard containment. A Space or Enter pressed on a widget button must not
   // continue on to the employer's document, where it could reach a default
@@ -1063,6 +1101,16 @@ export function createWidget(actions: {
     askToRemember(prompt) {
       teachPanel.appendChild(renderRememberPrompt(prompt));
       box.classList.remove("collapsed");
+    },
+    showSubmissionConfirmation() {
+      submissionConfirmation.classList.add("open");
+      confirmYes.disabled = false;
+      confirmNo.disabled = false;
+      confirmationStatus.textContent = "";
+    },
+    hideSubmissionConfirmation() {
+      submissionConfirmation.classList.remove("open");
+      confirmationStatus.textContent = "";
     },
     setInteractionMode(active) {
       // Collapse to the header and become click-through. The widget is fixed

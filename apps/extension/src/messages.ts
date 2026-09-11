@@ -218,6 +218,10 @@ export interface LaunchViewState {
   running: boolean;
   failureCode: string | null;
   failureMessage: string | null;
+  confirmationRequired: boolean;
+  confirmationDismissed: boolean;
+  submissionGestureAt: number | null;
+  submissionAttempt: number;
   /** false for a terminal failure (expired/consumed handoff, URL mismatch) —
    * the UI must not offer a Retry that will just repeat the same failure. */
   failureRecoverable: boolean | null;
@@ -304,8 +308,12 @@ export const MSG = {
   // employer content script → background → API (runtime). Sent ONLY when the
   // ATS itself confirmed the submission; see ats/submissionEvidence.ts.
   SUBMISSION_CONFIRMED: "JOBPILOT_SUBMISSION_CONFIRMED",
+  SUBMISSION_GESTURE_CANDIDATE: "JOBPILOT_SUBMISSION_GESTURE_CANDIDATE",
+  SUBMISSION_GESTURE_CANDIDATE_CANCELLED: "JOBPILOT_SUBMISSION_GESTURE_CANDIDATE_CANCELLED",
   /** The extension could not prove the submission — the web app must ask. */
   MANUAL_CONFIRMATION_REQUIRED: "JOBPILOT_MANUAL_CONFIRMATION_REQUIRED",
+  USER_CONFIRMED_SUBMITTED: "JOBPILOT_USER_CONFIRMED_SUBMITTED",
+  USER_CONFIRMED_NOT_SUBMITTED: "JOBPILOT_USER_CONFIRMED_NOT_SUBMITTED",
   /** The employer is asking the user to sign in. Autofill pauses; the
    * application session stays valid across the detour. */
   EMPLOYER_AUTH_REQUIRED: "JOBPILOT_EMPLOYER_AUTH_REQUIRED",
@@ -455,12 +463,16 @@ export type RuntimeMessage =
       submissionReference: string | null;
       ats: string | null;
     }
+  | { type: typeof MSG.SUBMISSION_GESTURE_CANDIDATE }
+  | { type: typeof MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED }
   | {
       type: typeof MSG.MANUAL_CONFIRMATION_REQUIRED;
       sessionId: number;
       /** Machine reason code from evaluateSubmissionEvidence. Never free text. */
       reason: string;
     }
+  | { type: typeof MSG.USER_CONFIRMED_SUBMITTED; sessionId: number }
+  | { type: typeof MSG.USER_CONFIRMED_NOT_SUBMITTED; sessionId: number }
   | {
       type: typeof MSG.EMPLOYER_AUTH_REQUIRED;
       sessionId: number;
@@ -517,7 +529,9 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
-  MSG.SUBMISSION_CONFIRMED, MSG.MANUAL_CONFIRMATION_REQUIRED, MSG.EMPLOYER_AUTH_REQUIRED,
+  MSG.SUBMISSION_CONFIRMED, MSG.SUBMISSION_GESTURE_CANDIDATE,
+  MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED, MSG.MANUAL_CONFIRMATION_REQUIRED,
+  MSG.USER_CONFIRMED_SUBMITTED, MSG.USER_CONFIRMED_NOT_SUBMITTED, MSG.EMPLOYER_AUTH_REQUIRED,
   MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
   MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT
 ]);
@@ -592,7 +606,8 @@ const WEAK_EVIDENCE_REASONS = [
   "SUBMIT_CLICK_ONLY",
   "FORM_DISAPPEARED_ONLY",
   "URL_CHANGED_ONLY",
-  "AMBIGUOUS_CONFIRMATION"
+  "AMBIGUOUS_CONFIRMATION",
+  "VALIDATION_FAILED"
 ] as const;
 
 const SESSION_ID: FieldSpec = { kind: "integer", required: true };
@@ -688,10 +703,14 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     submissionReference: { kind: "string", max: LIMIT.text, nullable: true },
     ats: { kind: "string", max: LIMIT.key, nullable: true }
   },
+  [MSG.SUBMISSION_GESTURE_CANDIDATE]: {},
+  [MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED]: {},
   [MSG.MANUAL_CONFIRMATION_REQUIRED]: {
     sessionId: SESSION_ID,
     reason: { kind: "string", max: LIMIT.key, required: true, oneOf: WEAK_EVIDENCE_REASONS }
   },
+  [MSG.USER_CONFIRMED_SUBMITTED]: { sessionId: SESSION_ID },
+  [MSG.USER_CONFIRMED_NOT_SUBMITTED]: { sessionId: SESSION_ID },
   [MSG.EMPLOYER_AUTH_REQUIRED]: {
     sessionId: SESSION_ID,
     emailPrefilled: { kind: "boolean" }

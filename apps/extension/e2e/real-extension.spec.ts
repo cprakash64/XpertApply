@@ -175,7 +175,10 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
     if (text.includes("[XpertApply]")) states.push(text.slice(0, 160));
   });
 
-  await page.goto(applicationUrl);
+  // The behavior under test can perform a same-document transition before the
+  // original document reaches `load`. Waiting for commit proves navigation
+  // began without racing the extension-driven transition itself.
+  await page.goto(applicationUrl, { waitUntil: "commit" });
 
   // No user interaction of any kind happens after this point.
   await page.waitForSelector("#application-form", { timeout: 20_000 });
@@ -249,7 +252,7 @@ test("the shipped extension never activates the final Submit control", async ({
 
   const page = await context.newPage();
 
-  await page.goto(applicationUrl);
+  await page.goto(applicationUrl, { waitUntil: "commit" });
   await page.waitForSelector("#application-form", { timeout: 20_000 });
   // Give any mutation-driven follow-up a chance to misbehave.
   await page.waitForTimeout(2500);
@@ -305,7 +308,7 @@ test("a user-submitted application reaching strong confirmation evidence is repo
   });
 
   const page = await context.newPage();
-  await page.goto(applicationUrl);
+  await page.goto(applicationUrl, { waitUntil: "commit" });
   await page.waitForSelector("#application-form", { timeout: 20_000 });
   await page.locator("#first_name").fill("Test");
   await page.locator("#last_name").fill("Candidate");

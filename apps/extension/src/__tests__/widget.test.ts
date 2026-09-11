@@ -321,3 +321,49 @@ describe("XA-19 action layout preserves workflow authority", () => {
     widget.destroy();
   });
 });
+
+describe("submission confirmation prompt", () => {
+  it.each([
+    ["yes", "confirmSubmitted"],
+    ["no", "confirmNotSubmitted"]
+  ] as const)("records an explicit %s choice once and closes only after success", async (choice, handlerName) => {
+    let resolve!: (value: { ok: boolean }) => void;
+    const handler = vi.fn(() => new Promise<{ ok: boolean }>((done) => { resolve = done; }));
+    const widget = createWidget({
+      retry: vi.fn(), clear: vi.fn(), complete: vi.fn(),
+      confirmSubmitted: handlerName === "confirmSubmitted" ? handler : vi.fn(async () => ({ ok: true })),
+      confirmNotSubmitted: handlerName === "confirmNotSubmitted" ? handler : vi.fn(async () => ({ ok: true }))
+    });
+    widget.showSubmissionConfirmation();
+    const root = shadowRoot();
+    const prompt = root.querySelector<HTMLElement>(".submission-confirmation")!;
+    const button = root.querySelector<HTMLButtonElement>(`[data-confirm="${choice}"]`)!;
+    expect(prompt.textContent).toContain("Did you submit it?");
+    button.click();
+    button.click();
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(root.querySelectorAll<HTMLButtonElement>("[data-confirm]")[0].disabled).toBe(true);
+    resolve({ ok: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prompt.classList.contains("open")).toBe(false);
+    widget.destroy();
+  });
+
+  it("keeps the prompt actionable when persistence fails", async () => {
+    const widget = createWidget({
+      retry: vi.fn(), clear: vi.fn(), complete: vi.fn(),
+      confirmSubmitted: vi.fn(async () => ({ ok: false, error: "Could not save" })),
+      confirmNotSubmitted: vi.fn(async () => ({ ok: true }))
+    });
+    widget.showSubmissionConfirmation();
+    const root = shadowRoot();
+    root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(root.querySelector(".submission-confirmation")?.classList.contains("open")).toBe(true);
+    expect(root.querySelector(".confirmation-status")?.textContent).toBe("Could not save");
+    expect(root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!.disabled).toBe(false);
+    widget.destroy();
+  });
+});

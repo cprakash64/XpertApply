@@ -280,6 +280,91 @@ def test_extension_confirmation_creates_applied_application(client: TestClient) 
     assert body["already_applied"] is False
 
 
+def test_ambiguous_submission_prompt_is_server_persisted_without_snapshot(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    user_id = user_id_for(client, headers)
+    session = client.post("/application-sessions", headers=headers, json={"job_id": job_id}).json()
+
+    response = client.post(
+        f"/application-sessions/{session['session_id']}/confirmation-required", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["confirmation_required_at"] is not None
+
+    refreshed = client.get(
+        f"/application-sessions/{session['session_id']}", headers=headers
+    ).json()
+    assert refreshed["confirmation_required_at"] is not None
+    assert refreshed["confirmation_prompt_dismissed_at"] is None
+    rows = tracker_rows(user_id, job_id)
+    assert len(rows) == 1
+    assert rows[0].status == E.ApplicationStatus.applying
+    db = db_session()
+    try:
+        assert db.scalar(select(E.ApplicationSnapshot).where(
+            E.ApplicationSnapshot.source_session_id == session["session_id"]
+        )) is None
+    finally:
+        db.close()
+
+
+def test_not_yet_keeps_applying_and_creates_no_snapshot(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    user_id = user_id_for(client, headers)
+    client.post(f"/jobs/{job_id}/save", headers=headers)
+    session = client.post("/application-sessions", headers=headers, json={"job_id": job_id}).json()
+    client.post(f"/application-sessions/{session['session_id']}/confirmation-required", headers=headers)
+
+    response = client.post(
+        f"/application-sessions/{session['session_id']}/confirmation-dismissed", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "applying"
+    assert response.json()["confirmation_required_at"] is not None
+    assert response.json()["confirmation_prompt_dismissed_at"] is not None
+    assert tracker_rows(user_id, job_id)[0].status == E.ApplicationStatus.applying
+    db = db_session()
+    try:
+        assert db.scalar(select(E.ApplicationSnapshot).where(
+            E.ApplicationSnapshot.source_session_id == session["session_id"]
+        )) is None
+    finally:
+        db.close()
+
+
+def test_yes_after_ambiguous_prompt_is_authoritative_and_idempotent(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    session = client.post("/application-sessions", headers=headers, json={"job_id": job_id}).json()
+    session_id = session["session_id"]
+    client.post(f"/application-sessions/{session_id}/confirmation-required", headers=headers)
+
+    first = client.post(
+        f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": True}
+    )
+    second = client.post(
+        f"/application-sessions/{session_id}/complete", headers=headers, json={"confirmed": True}
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["status"] == "completed"
+    assert first.json()["confirmation_required_at"] is None
+    db = db_session()
+    try:
+        snapshots = list(db.scalars(select(E.ApplicationSnapshot).where(
+            E.ApplicationSnapshot.source_session_id == session_id
+        )).all())
+        assert len(snapshots) == 1
+        assert snapshots[0].confirmation_source.value == "user_confirmed"
+    finally:
+        db.close()
+
+
 def test_auto_apply_confirmation_creates_applied_application(client: TestClient) -> None:
     headers = auth(client)
     complete_profile(client, headers)

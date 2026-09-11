@@ -52,6 +52,8 @@ type RawSession = {
   resume?: { status: string; document_id: number | null; download_url: string | null };
   cover_letter?: { status: string; document_id: number | null; download_url: string | null };
   profile?: Record<string, unknown>;
+  confirmation_required_at?: string | null;
+  confirmation_prompt_dismissed_at?: string | null;
 };
 
 export async function fetchSessionData(token: string, sessionId: number): Promise<ApplicationSessionData> {
@@ -69,6 +71,8 @@ export async function fetchSessionData(token: string, sessionId: number): Promis
     officialUrl: session.official_application_url,
     jobTitle: session.job?.title ?? null,
     company: session.job?.company ?? null,
+    confirmationRequiredAt: session.confirmation_required_at ?? null,
+    confirmationPromptDismissedAt: session.confirmation_prompt_dismissed_at ?? null,
     jobLocation: session.job?.location ?? null,
     profileData: session.profile ?? {},
     profileRevision: answers.profile_revision ?? null,
@@ -197,6 +201,14 @@ export async function completeSession(token: string, sessionId: number): Promise
     method: "POST",
     body: JSON.stringify({ confirmed: true })
   });
+}
+
+export async function requireSubmissionConfirmation(token: string, sessionId: number): Promise<void> {
+  await request(`/application-sessions/${sessionId}/confirmation-required`, token, { method: "POST" });
+}
+
+export async function dismissSubmissionConfirmation(token: string, sessionId: number): Promise<void> {
+  await request(`/application-sessions/${sessionId}/confirmation-dismissed`, token, { method: "POST" });
 }
 
 export interface ConfirmedApplication {

@@ -57,6 +57,10 @@ from app.applications.session_service import (
     touch_session,
 )
 from app.applications.snapshots import SnapshotProvenanceError
+from app.applications.tracker_lifecycle import (
+    dismiss_submission_confirmation,
+    require_submission_confirmation,
+)
 from app.core.security import decode_access_token
 from app.core.session_tokens import decode_scoped_token
 from app.db.session import get_db
@@ -67,6 +71,8 @@ from app.models.entities import (
     ApplicationSession,
     ApplicationSessionStatus,
     ApplicationSnapshot,
+    ApplicationStatus,
+    ApplicationTracker,
     DocumentFormat,
     GeneratedDocument,
     JobPosting,
@@ -734,6 +740,55 @@ def complete(
     return _serialize_session(db, session)
 
 
+def _confirmation_tracker(db: Session, session: ApplicationSession) -> ApplicationTracker:
+    """Return the session owner's provisional Tracker row without claiming submission."""
+    tracker = db.scalar(select(ApplicationTracker).where(
+        ApplicationTracker.user_id == session.user_id,
+        ApplicationTracker.job_id == session.job_id,
+    ))
+    if tracker is None:
+        tracker = ApplicationTracker(
+            user_id=session.user_id,
+            job_id=session.job_id,
+            status=ApplicationStatus.applying,
+            last_application_url=session.source_url,
+        )
+        db.add(tracker)
+        db.flush()
+    elif tracker.status in {ApplicationStatus.saved, ApplicationStatus.ready_to_apply}:
+        tracker.status = ApplicationStatus.applying
+    return tracker
+
+
+@router.post("/{session_id}/confirmation-required")
+def require_confirmation(
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracker = _confirmation_tracker(db, session)
+    require_submission_confirmation(tracker)
+    session.tracker_id = tracker.id
+    db.commit()
+    return {"ok": True, "confirmation_required_at": tracker.confirmation_required_at}
+
+
+@router.post("/{session_id}/confirmation-dismissed")
+def dismiss_confirmation(
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracker = _confirmation_tracker(db, session)
+    dismiss_submission_confirmation(tracker)
+    session.tracker_id = tracker.id
+    db.commit()
+    return {
+        "ok": True,
+        "confirmation_required_at": tracker.confirmation_required_at,
+        "confirmation_prompt_dismissed_at": tracker.confirmation_prompt_dismissed_at,
+        "status": tracker.status.value,
+    }
+
+
 # Evidence the server accepts as proof that an ATS actually took the submission.
 # A closed set, checked here rather than trusted from the client: every entry
 # describes something the ATS itself did *after* accepting the application.
@@ -948,6 +1003,10 @@ def _serialize_session(db: Session, session: ApplicationSession) -> dict[str, An
     answers = session.generated_answers or []
     review_count = sum(1 for a in answers if a.get("requires_review")) + len(session.unresolved_questions or [])
     job = session.job_snapshot or {}
+    tracker = db.scalar(select(ApplicationTracker).where(
+        ApplicationTracker.user_id == session.user_id,
+        ApplicationTracker.job_id == session.job_id,
+    ))
     return {
         "session_id": session.id,
         # Lets the web and extension diagnostics prove they are authenticated
@@ -972,6 +1031,8 @@ def _serialize_session(db: Session, session: ApplicationSession) -> dict[str, An
         "created_at": session.created_at,
         "expires_at": session.expires_at,
         "completed_at": session.completed_at,
+        "confirmation_required_at": tracker.confirmation_required_at if tracker else None,
+        "confirmation_prompt_dismissed_at": tracker.confirmation_prompt_dismissed_at if tracker else None,
     }
 
 

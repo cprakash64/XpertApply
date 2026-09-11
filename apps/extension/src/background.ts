@@ -18,12 +18,14 @@ import {
   completeSession,
   confirmSessionName,
   confirmSubmission,
+  dismissSubmissionConfirmation,
   exchangeLaunchToken,
   fetchApplicationOverrides,
   fetchSessionData,
   resolveQuestions,
   postEvent,
   reportAutofillResult,
+  requireSubmissionConfirmation,
   saveSessionAnswer,
   setApplicationOverride
 } from "./api/client";
@@ -562,8 +564,11 @@ chrome.tabs.onCreated.addListener((tab) => {
 // SPA navigation reported as complete), make sure the content script is ready.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   const generation = captureAuthorityGeneration();
-  // A top-frame navigation invalidates every frame in the tab.
-  if (changeInfo.url) clearFrameRegistry(tabId);
+  // URL changes include same-document SPA transitions. Keep the registration:
+  // its immutable Chrome documentId still rejects a genuinely new document,
+  // whose CONTENT_READY replaces this entry. The fill lease is URL-scoped and
+  // can be safely reacquired on either kind of transition.
+  if (changeInfo.url) clearFillLease(tabId);
   void (async () => {
     const activation = await readPendingActivation();
     if (activation && (tabId === activation.sourceTabId || tabId === activation.destinationTabId) && changeInfo.url) {
@@ -903,14 +908,37 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
       return true;
 
+    case MSG.SUBMISSION_GESTURE_CANDIDATE:
+      void recordSubmissionGestureForSender(sender, generation)
+        .then((attempt) => sendResponse({ ok: true, attempt }))
+        .catch((err) => {
+          log.info("submission gesture rejected", { reason: safeMessage(err) });
+          sendResponse({ ok: false, error: safeMessage(err) });
+        });
+      return true;
+
+    case MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED:
+      void cancelSubmissionGestureForSender(sender, generation)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
+      return true;
+
     case MSG.MANUAL_CONFIRMATION_REQUIRED:
-      // The extension could not prove the submission. It records WHY and stops:
-      // nothing is marked applied, and the user is asked in the web app.
-      void patchView(sender.tab?.id ?? -1, {
-        failureCode: message.reason,
-        failureRecoverable: true
-      }, generation).then(() => sendResponse({ ok: true }))
-        .catch(() => sendResponse({ ok: true }));
+      void persistManualConfirmation(message.sessionId, message.reason, sender, generation)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
+      return true;
+
+    case MSG.USER_CONFIRMED_SUBMITTED:
+      void applyUserSubmissionChoice(message.sessionId, true, sender, generation)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
+      return true;
+
+    case MSG.USER_CONFIRMED_NOT_SUBMITTED:
+      void applyUserSubmissionChoice(message.sessionId, false, sender, generation)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
       return true;
 
     case MSG.GET_SITE_ACCESS:
@@ -1264,7 +1292,9 @@ async function handleContentReady(
       packageLoaded: true,
       company: pkg.session.company,
       jobTitle: pkg.session.jobTitle,
-      sessionId: pkg.session.sessionId
+      sessionId: pkg.session.sessionId,
+      confirmationRequired: Boolean(pkg.session.confirmationRequiredAt),
+      confirmationDismissed: Boolean(pkg.session.confirmationPromptDismissedAt)
     }, generation);
     const rebound = await readPendingActivation();
     if (rebound && (tabId === rebound.sourceTabId || tabId === rebound.destinationTabId)) {
@@ -1275,7 +1305,13 @@ async function handleContentReady(
       }, generation);
     }
     // Hand the content script the meta + session so it can autofill immediately.
-    sendResponse({ ok: true, matched: true, launch: sanitize(pending), session: pkg.session, reason: "automatic_launch" as AutofillReason });
+    const currentView = await getView(tabId);
+    sendResponse({
+      ok: true, matched: true, launch: sanitize(pending), session: pkg.session,
+      submissionGestureAt: currentView?.submissionGestureAt ?? null,
+      submissionAttempt: currentView?.submissionAttempt ?? 0,
+      reason: "automatic_launch" as AutofillReason
+    });
   } catch (err) {
     const code = classifyPackageError(err);
     // Name the stage as well as the code: a 401 here means the launch token was
@@ -2228,6 +2264,14 @@ async function confirmSubmissionForSession(
   if (!authorizeFrameForSubmission(context, pending).ok) {
     throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
   }
+  const registered = frameRegistry.get(frameKey(context.tabId, context.frameId));
+  if (!registered || !sender.documentId || registered.documentId !== sender.documentId) {
+    throw new Error("STALE_DOCUMENT");
+  }
+  const senderPattern = patternForOrigin(context.frameOrigin?.origin ?? null);
+  if (!senderPattern || !(await chrome.permissions.contains({ origins: [senderPattern] }).catch(() => false))) {
+    throw new Error("HOST_PERMISSION_MISSING");
+  }
   if (CONFIRMED_SESSIONS.has(message.sessionId)) {
     return { alreadyConfirmed: true };
   }
@@ -2243,6 +2287,105 @@ async function confirmSubmissionForSession(
   if (generation !== captureAuthorityGeneration()) throw new Error("STALE_AUTHORITY_GENERATION");
   CONFIRMED_SESSIONS.add(message.sessionId);
   return { alreadyConfirmed: result.already_applied };
+}
+
+async function authorizedSubmissionPackage(
+  sessionId: number,
+  sender: chrome.runtime.MessageSender
+): Promise<{ tabId: number; entry: SessionPackage }> {
+  const context = describeSender(sender);
+  if (!context) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  const [pending, entry] = await Promise.all([getPending(context.tabId), getPackage(context.tabId)]);
+  if (!pending || !entry || pending.sessionId !== sessionId || entry.session.sessionId !== sessionId) {
+    throw new Error("SESSION_MISMATCH");
+  }
+  if (Date.now() > pending.expiresAt || !isSessionAuthorityActive(sessionId)) throw new Error("SESSION_NOT_FOUND");
+  if (!authorizeFrameForSubmission(context, pending).ok) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  const registered = frameRegistry.get(frameKey(context.tabId, context.frameId));
+  if (!registered) throw new Error("FRAME_NOT_REGISTERED");
+  if (!sender.documentId) throw new Error("DOCUMENT_ID_UNAVAILABLE");
+  if (registered.documentId !== sender.documentId) throw new Error("STALE_DOCUMENT");
+  const pattern = patternForOrigin(context.frameOrigin?.origin ?? null);
+  if (!pattern || !(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) {
+    throw new Error("HOST_PERMISSION_MISSING");
+  }
+  return { tabId: context.tabId, entry };
+}
+
+async function persistManualConfirmation(
+  sessionId: number,
+  reason: string,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<void> {
+  if (reason === "VALIDATION_FAILED") return;
+  const { tabId, entry } = await authorizedSubmissionPackage(sessionId, sender);
+  await requireSubmissionConfirmation(entry.sessionToken, sessionId);
+  if (generation !== captureAuthorityGeneration()) throw new Error("STALE_AUTHORITY_GENERATION");
+  await patchView(tabId, { confirmationRequired: true, confirmationDismissed: false }, generation);
+}
+
+async function recordSubmissionGesture(
+  sessionId: number,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<number> {
+  const { tabId } = await authorizedSubmissionPackage(sessionId, sender);
+  const view = await getView(tabId);
+  const attempt = (view?.submissionAttempt ?? 0) + 1;
+  await patchView(tabId, { submissionGestureAt: Date.now(), submissionAttempt: attempt }, generation);
+  return attempt;
+}
+
+async function cancelSubmissionGesture(
+  sessionId: number,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<void> {
+  const { tabId } = await authorizedSubmissionPackage(sessionId, sender);
+  await patchView(tabId, { submissionGestureAt: null }, generation);
+}
+
+async function recordSubmissionGestureForSender(
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<number> {
+  const tabId = sender.tab?.id;
+  if (tabId == null) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  const pending = await getPending(tabId);
+  if (!pending) throw new Error("SESSION_NOT_FOUND");
+  return recordSubmissionGesture(pending.sessionId, sender, generation);
+}
+
+async function cancelSubmissionGestureForSender(
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<void> {
+  const tabId = sender.tab?.id;
+  if (tabId == null) throw new Error("UNTRUSTED_CONFIRMATION_SENDER");
+  const pending = await getPending(tabId);
+  if (!pending) throw new Error("SESSION_NOT_FOUND");
+  await cancelSubmissionGesture(pending.sessionId, sender, generation);
+}
+
+async function applyUserSubmissionChoice(
+  sessionId: number,
+  submitted: boolean,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<void> {
+  const { tabId, entry } = await authorizedSubmissionPackage(sessionId, sender);
+  if (submitted) await completeSession(entry.sessionToken, sessionId);
+  else await dismissSubmissionConfirmation(entry.sessionToken, sessionId);
+  if (generation !== captureAuthorityGeneration()) throw new Error("STALE_AUTHORITY_GENERATION");
+  await patchView(tabId, {
+    confirmationRequired: !submitted,
+    confirmationDismissed: !submitted,
+    failureCode: null,
+    failureMessage: null,
+    submissionGestureAt: null
+  }, generation);
+  if (submitted) CONFIRMED_SESSIONS.add(sessionId);
 }
 
 async function clearSession(tabId: number | undefined, generation: AuthorityGeneration): Promise<void> {

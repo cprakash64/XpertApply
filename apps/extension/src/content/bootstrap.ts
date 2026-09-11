@@ -56,7 +56,7 @@ import {
 import { createApplicationAnswerHandlers } from "./applicationAnswer";
 import { startTeachMode, type LearnScope, type LearnedAnswer } from "./teach";
 import { resolveApplicationForm } from "../ats/base";
-import { evaluateSubmissionEvidence } from "../ats/submissionEvidence";
+import { evaluateSubmissionEvidence, isLikelyFinalSubmitLabel, matchesSuccessMessage, matchesSuccessUrl } from "../ats/submissionEvidence";
 import type { FormRootResult } from "../ats/formRoot";
 import { probeFrame } from "../frames/probe";
 import { deepQueryAll, scopedElementById } from "../dom/deepDom";
@@ -249,6 +249,9 @@ let submissionObservationStarted = false;
 let submitGestureObserved = false;
 let submissionOutcomeReported = false;
 let manualConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+let successSignalPresentBeforeSubmit = false;
+let submissionGestureAt: number | null = null;
+const SUBMISSION_OBSERVATION_MS = 15_000;
 
 /**
  * Ask the background to re-establish this tab's workflow binding.
@@ -365,6 +368,7 @@ const TERMINAL_FAILURE_CODES = new Set([
 ]);
 
 async function initAtsPage(): Promise<void> {
+  installSubmissionGestureObserver();
   // Cheap and always safe to register: answers liveness pings and gives an
   // unmatched frame a second chance if the tab becomes bound to a handoff
   // shortly after this frame's own (negative) initial check — e.g. an
@@ -427,6 +431,44 @@ async function initAtsPage(): Promise<void> {
   await checkHandoffAndStart("automatic_launch");
 }
 
+function installSubmissionGestureObserver(): void {
+  if (submissionObservationStarted) return;
+  submissionObservationStarted = true;
+  document.addEventListener("submit", (event) => {
+    if (!isCurrentInstance() || submissionOutcomeReported) return;
+    const submitter = typeof SubmitEvent !== "undefined" && event instanceof SubmitEvent && event.submitter instanceof HTMLElement
+      ? event.submitter
+      : outcome?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+    const label = submitter
+      ? `${accessibleName(submitter)} ${(submitter as HTMLInputElement).value ?? ""}`.trim()
+      : "";
+    if (!isLikelyFinalSubmitLabel(label)) return;
+    submitGestureObserved = true;
+    submissionGestureAt = Date.now();
+    void sendRuntime({ type: MSG.SUBMISSION_GESTURE_CANDIDATE });
+    queueMicrotask(() => {
+      if (event.defaultPrevented) {
+        submitGestureObserved = false;
+        submissionGestureAt = null;
+        void sendRuntime({ type: MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED });
+        return;
+      }
+      if (session) {
+        clearSubmissionTimer();
+        manualConfirmationTimer = setTimeout(() => {
+          manualConfirmationTimer = null;
+          void evaluateCurrentSubmission(true);
+        }, 2_000);
+      }
+    });
+  }, true);
+}
+
+function clearSubmissionTimer(): void {
+  if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
+  manualConfirmationTimer = null;
+}
+
 function mirrorFrameProgress(progress: ProgressPayload): void {
   if (!matched) return;
   // A frame that has its own authoritative ledger does NOT take its stage or
@@ -465,7 +507,7 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   if (!isCurrentInstance()) return;
   const resp = (await sendRuntime({ type: MSG.CONTENT_READY })) as
-    | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null }
+    | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null; submissionGestureAt?: number | null }
     | undefined;
 
   if (!resp?.matched) {
@@ -530,10 +572,18 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   });
   if (session?.sessionId !== resp.session.sessionId) preparedDocuments = null;
   session = resp.session;
+  if (resp.submissionGestureAt && Date.now() - resp.submissionGestureAt <= SUBMISSION_OBSERVATION_MS) {
+    submitGestureObserved = true;
+    submissionGestureAt = resp.submissionGestureAt;
+    successSignalPresentBeforeSubmit = false;
+  }
   outcome = detectAdapter({ url: location.href, document });
   if (isTopFrame) {
     widget = ensureWidget();
     widget.update({ stage: "detecting", message: "Waiting for the application form…" });
+    if (session.confirmationRequiredAt && !session.confirmationPromptDismissedAt) {
+      widget.showSubmissionConfirmation();
+    }
   }
   started = true;
   if (await startSubmissionObservation()) return;
@@ -547,22 +597,19 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
  */
 async function startSubmissionObservation(): Promise<boolean> {
   if (!session || submissionOutcomeReported) return submissionOutcomeReported;
-  if (!submissionObservationStarted) {
-    submissionObservationStarted = true;
-    document.addEventListener("submit", () => {
-      if (!session || submissionOutcomeReported) return;
-      submitGestureObserved = true;
-      if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
-      // Give the ATS time to render or navigate. Weak evidence only asks for
-      // manual confirmation; it can never mark the application applied.
-      manualConfirmationTimer = setTimeout(() => { void evaluateCurrentSubmission(true); }, 2_000);
-    }, true);
+  if (!successSignalPresentBeforeSubmit && !submitGestureObserved) {
+    const initialText = (document.body?.innerText || document.body?.textContent || "").slice(0, 20_000);
+    successSignalPresentBeforeSubmit = matchesSuccessUrl(location.href) || matchesSuccessMessage(initialText);
   }
   return evaluateCurrentSubmission(false);
 }
 
 async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<boolean> {
   if (!session || submissionOutcomeReported || !isCurrentInstance()) return submissionOutcomeReported;
+  if (submitGestureObserved && submissionGestureAt && Date.now() - submissionGestureAt > SUBMISSION_OBSERVATION_MS) {
+    submitGestureObserved = false;
+    submissionGestureAt = null;
+  }
   const resolved = resolveApplicationForm(document);
   const adapterSubmit = outcome?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
   const evidence = evaluateSubmissionEvidence({
@@ -570,12 +617,13 @@ async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<b
     visibleText: (document.body?.innerText || document.body?.textContent || "").slice(0, 20_000),
     formStillPresent: Boolean(resolved.root || adapterSubmit),
     submitClicked: submitGestureObserved,
+    successSignalWasPresentBeforeSubmit: successSignalPresentBeforeSubmit,
     submissionResponse: null
   });
 
   if (evidence.confirmed) {
     submissionOutcomeReported = true;
-    if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
+    clearSubmissionTimer();
     automaticRunSettled = true;
     const response = await sendRuntime({
       type: MSG.SUBMISSION_CONFIRMED,
@@ -593,6 +641,12 @@ async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<b
         stage: "review",
         message: "Submission detected, but XpertApply could not record it. Confirm it in XpertApply."
       });
+      await sendRuntime({
+        type: MSG.MANUAL_CONFIRMATION_REQUIRED,
+        sessionId: session.sessionId,
+        reason: "AMBIGUOUS_CONFIRMATION"
+      });
+      widget?.showSubmissionConfirmation();
       return true;
     }
     widget?.update({ stage: "ready", message: "Application submitted and recorded in your Tracker." });
@@ -600,12 +654,18 @@ async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<b
   }
 
   if (reportWeakEvidence && submitGestureObserved) {
+    if (evidence.reason === "VALIDATION_FAILED") {
+      submitGestureObserved = false;
+      widget?.update({ stage: "review", message: "The employer form needs changes before it can be submitted." });
+      return false;
+    }
     submissionOutcomeReported = true;
-    await sendRuntime({
+    const response = await sendRuntime({
       type: MSG.MANUAL_CONFIRMATION_REQUIRED,
       sessionId: session.sessionId,
       reason: evidence.reason
-    });
+    }) as { ok?: boolean } | undefined;
+    if (response?.ok) widget?.showSubmissionConfirmation();
   }
   return false;
 }
@@ -657,6 +717,27 @@ function ensureWidget(): ReturnType<typeof createWidget> {
             completingWidget.update({ stage: "failed", message: "Application completion could not be saved. Please try again." });
           }
         });
+      },
+      confirmSubmitted: async () => {
+        if (!session) return { ok: false, error: "This application session is no longer available." };
+        const response = await sendRuntime({ type: MSG.USER_CONFIRMED_SUBMITTED, sessionId: session.sessionId }) as { ok?: boolean; error?: string } | undefined;
+        if (!response?.ok) return { ok: false, error: response?.error ?? "XpertApply couldn't record this application." };
+        submissionOutcomeReported = true;
+        clearSubmissionTimer();
+        widget?.update({ stage: "ready", message: "Application marked as applied and added to Tracker." });
+        return { ok: true };
+      },
+      confirmNotSubmitted: async () => {
+        if (!session) return { ok: false, error: "This application session is no longer available." };
+        const response = await sendRuntime({ type: MSG.USER_CONFIRMED_NOT_SUBMITTED, sessionId: session.sessionId }) as { ok?: boolean; error?: string } | undefined;
+        if (!response?.ok) return { ok: false, error: response?.error ?? "XpertApply couldn't save that choice." };
+        submissionOutcomeReported = false;
+        clearSubmissionTimer();
+        submitGestureObserved = false;
+        submissionGestureAt = null;
+        successSignalPresentBeforeSubmit = matchesSuccessUrl(location.href) || matchesSuccessMessage((document.body?.innerText || document.body?.textContent || "").slice(0, 20_000));
+        widget?.update({ stage: "review", message: "Not marked as applied. Continue when you're ready." });
+        return { ok: true };
       },
       diagnostics: copyDiagnostics,
       captureControl: captureCurrentEligibilityControls,

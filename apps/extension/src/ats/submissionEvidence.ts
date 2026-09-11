@@ -14,7 +14,8 @@ export type WeakEvidenceReason =
   | "SUBMIT_CLICK_ONLY"
   | "FORM_DISAPPEARED_ONLY"
   | "URL_CHANGED_ONLY"
-  | "AMBIGUOUS_CONFIRMATION";
+  | "AMBIGUOUS_CONFIRMATION"
+  | "VALIDATION_FAILED";
 
 export type SubmissionEvidence =
   | { confirmed: true; evidenceType: EvidenceType; reference: string | null }
@@ -25,6 +26,7 @@ export interface ObservedSubmissionSignals {
   visibleText: string;
   formStillPresent: boolean;
   submitClicked: boolean;
+  successSignalWasPresentBeforeSubmit?: boolean;
   submissionResponse?: { ok: boolean; status: number; reference?: string | null } | null;
 }
 
@@ -83,11 +85,24 @@ export function extractSubmissionReference(text: string): string | null {
   return null;
 }
 
+export function isLikelyFinalSubmitLabel(value: string): boolean {
+  const label = value.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!label || /\b(next|continue|save|review|preview|back)\b/.test(label)) return false;
+  return /^(submit(?: application)?|send application|finish(?: application)?|apply)$/.test(label);
+}
+
 export function evaluateSubmissionEvidence(
   signals: ObservedSubmissionSignals
 ): SubmissionEvidence {
+  const sample = signals.visibleText.slice(0, MAX_TEXT);
+  if (NEGATIVE_MESSAGE_PATTERNS.some((pattern) => pattern.test(sample))) {
+    return { confirmed: false, reason: "VALIDATION_FAILED" };
+  }
+  // Success-looking state is never self-authenticating. It must be new and
+  // temporally downstream of the user's own final-submit gesture.
+  const correlated = signals.submitClicked && !signals.successSignalWasPresentBeforeSubmit;
   const response = signals.submissionResponse;
-  if (response?.ok && response.status >= 200 && response.status < 300) {
+  if (correlated && response?.ok && response.status >= 200 && response.status < 300) {
     return {
       confirmed: true,
       evidenceType: "success_response",
@@ -95,7 +110,7 @@ export function evaluateSubmissionEvidence(
     };
   }
 
-  if (matchesSuccessUrl(signals.url)) {
+  if (correlated && matchesSuccessUrl(signals.url)) {
     return {
       confirmed: true,
       evidenceType: "success_page",
@@ -103,7 +118,7 @@ export function evaluateSubmissionEvidence(
     };
   }
 
-  if (matchesSuccessMessage(signals.visibleText)) {
+  if (correlated && matchesSuccessMessage(signals.visibleText)) {
     if (signals.formStillPresent) return { confirmed: false, reason: "AMBIGUOUS_CONFIRMATION" };
     return {
       confirmed: true,
