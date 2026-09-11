@@ -55,6 +55,44 @@ export type GeneratedDocument = {
   download_urls: { docx: string | null; pdf: string | null };
 };
 
+export type SnapshotArtifact = {
+  document_id: number | null;
+  filename: string | null;
+  content_hash: string | null;
+};
+
+export type ApplicationSnapshotAnswer = {
+  canonical_key: string;
+  display_value: string;
+  source?: string | null;
+  requires_review?: boolean;
+};
+
+export type ApplicationSnapshot = {
+  id: number;
+  application_tracker_id: number;
+  attempt_number: number;
+  confirmation_source: string;
+  submission_evidence_type?: string | null;
+  ats_provider?: string | null;
+  job_external_id?: string | null;
+  job_title: string;
+  company_name: string;
+  job_url?: string | null;
+  source_url?: string | null;
+  job_description_snapshot?: string | null;
+  resume: SnapshotArtifact;
+  resume_used: boolean;
+  resume_provenance?: string | null;
+  cover_letter_used: boolean;
+  cover_letter_mode: "unused" | "file" | "pasted_text" | string;
+  cover_letter: SnapshotArtifact;
+  cover_letter_text_snapshot?: string | null;
+  answers: ApplicationSnapshotAnswer[];
+  applied_at: string;
+  created_at: string;
+};
+
 export type RefreshSummary = {
   matched_count: number;
   rescored_count: number;
@@ -553,4 +591,23 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export function listApplicationSnapshots(trackerId: number): Promise<{ snapshots: ApplicationSnapshot[] }> {
+  return api(`/jobs/tracker/${trackerId}/snapshots`);
+}
+
+export function getApplicationSnapshot(
+  trackerId: number,
+  snapshotId: number
+): Promise<{ snapshot: ApplicationSnapshot }> {
+  return api(`/jobs/tracker/${trackerId}/snapshots/${snapshotId}`);
+}
+
+export function cancelApplicationDeletion<T>(trackerId: number): Promise<{ tracker: T }> {
+  return api(`/jobs/tracker/${trackerId}/cancel-deletion`, { method: "POST" });
+}
+
+export function fetchHistoricalDocument(documentId: number, format: "docx" | "pdf"): Promise<Response> {
+  return apiResponse(`/jobs/documents/${documentId}/download/${format}`);
 }

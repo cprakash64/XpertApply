@@ -1,26 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
   ExternalLink,
-  FileText,
   Loader2,
-  Mail,
   MapPin,
   Search,
   Trophy
 } from "lucide-react";
 import Link from "next/link";
+import { ApplicationMemoryDialog } from "@/components/ApplicationMemoryDialog";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { Alert, Chip, StatusBadge } from "@/components/ui";
 import {
   formatApplicationStatus,
   getApplicationStatusTone
 } from "@/lib/applicationStatus";
-import { api, type Job } from "@/lib/api";
+import {
+  api,
+  cancelApplicationDeletion,
+  type ApplicationSnapshot,
+  type Job
+} from "@/lib/api";
 import { invalidateDashboardSummary } from "@/lib/dashboardSummary";
 
 export type TrackerStatus =
@@ -46,6 +50,12 @@ export type TrackerApplication = {
   submission_reference?: string | null;
   opened_at?: string | null;
   application_url?: string | null;
+  deletion_scheduled_at?: string | null;
+  deletion_cancelled_at?: string | null;
+  confirmation_required_at?: string | null;
+  confirmation_prompt_dismissed_at?: string | null;
+  snapshot_available?: boolean;
+  snapshot_count?: number;
   /** The tailored documents that were prepared for this application, if any. */
   documents?: { resume: TrackerDocument | null; cover_letter: TrackerDocument | null };
   created_at?: string | null;
@@ -106,6 +116,8 @@ export function TrackerClient() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [detailsId, setDetailsId] = useState<number | null>(null);
+  const [snapshotCache, setSnapshotCache] = useState<Record<number, ApplicationSnapshot[]>>({});
 
   useEffect(() => {
     let active = true;
@@ -131,7 +143,7 @@ export function TrackerClient() {
     setUpdatingId(application.id);
     setError("");
     try {
-      await api(`/jobs/${application.job_id}/tracker`, {
+      const result = await api<{ tracker: Partial<TrackerApplication> }>(`/jobs/${application.job_id}/tracker`, {
         method: "PUT",
         body: JSON.stringify({ status })
       });
@@ -141,15 +153,7 @@ export function TrackerClient() {
       setApplications((current) =>
         current.map((row) =>
           row.id === application.id
-            ? {
-                ...row,
-                status,
-                applied_at:
-                  row.applied_at ??
-                  (["applied", "interview", "offer", "rejected"].includes(status)
-                    ? new Date().toISOString()
-                    : null)
-              }
+            ? { ...row, ...result.tracker }
             : row
         )
       );
@@ -161,6 +165,25 @@ export function TrackerClient() {
       setUpdatingId(null);
     }
   }
+
+  async function undoDeletion(application: TrackerApplication) {
+    setUpdatingId(application.id);
+    setError("");
+    try {
+      const { tracker } = await cancelApplicationDeletion<Partial<TrackerApplication>>(application.id);
+      setApplications((current) => current.map((row) => row.id === application.id ? { ...row, ...tracker } : row));
+      setMessage("Scheduled deletion cancelled.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not cancel deletion.");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  const cacheSnapshots = useCallback((trackerId: number, snapshots: ApplicationSnapshot[]) => {
+    setSnapshotCache((current) => ({ ...current, [trackerId]: snapshots }));
+  }, []);
+  const closeDetails = useCallback(() => setDetailsId(null), []);
 
   const counts = useMemo(
     () => ({
@@ -305,6 +328,8 @@ export function TrackerClient() {
             application={application}
             updating={updatingId === application.id}
             onUpdate={(status) => update(application, status)}
+            onOpenDetails={() => setDetailsId(application.id)}
+            onUndoDeletion={() => undoDeletion(application)}
           />
         ))}
       </div>
@@ -332,6 +357,14 @@ export function TrackerClient() {
           )}
         </div>
       )}
+      {detailsId != null ? (
+        <ApplicationMemoryDialog
+          trackerId={detailsId}
+          cachedSnapshots={snapshotCache[detailsId]}
+          onLoaded={cacheSnapshots}
+          onClose={closeDetails}
+        />
+      ) : null}
     </section>
   );
 }
@@ -367,11 +400,15 @@ function SummaryCard({
 function ApplicationCard({
   application,
   updating,
-  onUpdate
+  onUpdate,
+  onOpenDetails,
+  onUndoDeletion
 }: {
   application: TrackerApplication;
   updating: boolean;
   onUpdate: (status: TrackerStatus) => void;
+  onOpenDetails: () => void;
+  onUndoDeletion: () => void;
 }) {
   const { job } = application;
   const fitScore = job.match?.fit_score;
@@ -421,16 +458,6 @@ function ApplicationCard({
               {application.applied_source && (
                 <span>{APPLIED_SOURCE_LABEL[application.applied_source]}</span>
               )}
-              {application.documents?.resume && (
-                <span className="inline-flex items-center gap-1">
-                  <FileText aria-hidden className="h-3 w-3" /> Tailored resume
-                </span>
-              )}
-              {application.documents?.cover_letter && (
-                <span className="inline-flex items-center gap-1">
-                  <Mail aria-hidden className="h-3 w-3" /> Cover letter
-                </span>
-              )}
               {application.application_url && (
                 <a
                   className="ds-focus-ring inline-flex items-center gap-1 rounded-control font-medium text-foreground-link underline"
@@ -442,10 +469,21 @@ function ApplicationCard({
                 </a>
               )}
             </div>
+            {application.deletion_scheduled_at ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-status-warning">
+                <span>{deletionScheduleLabel(application.deletion_scheduled_at)}</span>
+                <button type="button" className="ds-focus-ring rounded-control font-semibold underline" disabled={updating} onClick={onUndoDeletion}>Undo deletion</button>
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {application.snapshot_available ? (
+            <button type="button" className="ds-focus-ring inline-flex h-10 items-center rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground hover:bg-action-ghost-hover" onClick={onOpenDetails}>
+              Application details
+            </button>
+          ) : null}
           <label className="relative">
             <span className="sr-only">Update status for {job.title}</span>
             <select
@@ -538,4 +576,17 @@ function formatDate(value: string): string {
     day: "numeric",
     year: "numeric"
   }).format(date);
+}
+
+function deletionScheduleLabel(value: string): string {
+  const scheduled = new Date(value);
+  if (Number.isNaN(scheduled.getTime())) return "Deletion scheduled";
+  const remainingMs = scheduled.getTime() - Date.now();
+  const date = formatDate(value);
+  if (remainingMs <= 0) return `Scheduled for deletion ${date}`;
+  const remainingHours = Math.ceil(remainingMs / 3_600_000);
+  const remaining = remainingHours >= 24
+    ? `${Math.ceil(remainingHours / 24)} days remaining`
+    : `${remainingHours} ${remainingHours === 1 ? "hour" : "hours"} remaining`;
+  return `Scheduled for deletion ${date} · ${remaining}`;
 }
