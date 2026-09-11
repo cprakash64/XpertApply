@@ -390,6 +390,11 @@ def complete_session(
     (server-derived) user and job and links the resulting record back."""
     if not confirmed:
         raise SessionError("Completion requires explicit user confirmation.")
+    if session.status == ApplicationSessionStatus.completed and session.tracker_id is None:
+        # Stage 2E retains completed sessions after their rejected/withdrawn
+        # Tracker expires. A delayed duplicate confirmation must not recreate
+        # application history the retention executor already deleted.
+        raise SessionError("Application history was removed by retention cleanup.")
 
     result = mark_application_applied(
         db,

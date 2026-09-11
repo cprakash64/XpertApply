@@ -742,6 +742,13 @@ def complete(
 
 def _confirmation_tracker(db: Session, session: ApplicationSession) -> ApplicationTracker:
     """Return the session owner's provisional Tracker row without claiming submission."""
+    if session.status == ApplicationSessionStatus.completed and session.tracker_id is None:
+        # A retained session detached by Stage 2E is a tombstone boundary, not
+        # authority to recreate the deleted Tracker through a stale prompt.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Application history was removed by retention cleanup.",
+        )
     tracker = db.scalar(select(ApplicationTracker).where(
         ApplicationTracker.user_id == session.user_id,
         ApplicationTracker.job_id == session.job_id,

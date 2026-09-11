@@ -48,12 +48,17 @@ def _crontab_from_expr(expr: str) -> crontab:
     return crontab(minute=minute, hour=hour, day_of_month=dom, month_of_year=month, day_of_week=dow)
 
 
+celery_app.conf.beat_schedule = {
+    "hourly-application-retention-cleanup": {
+        "task": "cleanup_due_application_trackers",
+        "schedule": crontab(minute=0),
+    }
+}
+
 if settings.job_ingestion_enabled:
-    celery_app.conf.beat_schedule = {
-        "daily-job-ingestion": {
-            "task": "run_daily_ingestion",
-            "schedule": _crontab_from_expr(settings.job_ingestion_schedule),
-        }
+    celery_app.conf.beat_schedule["daily-job-ingestion"] = {
+        "task": "run_daily_ingestion",
+        "schedule": _crontab_from_expr(settings.job_ingestion_schedule),
     }
 
 
@@ -117,5 +122,26 @@ def run_daily_ingestion_task(self, trigger: str = "scheduled") -> dict:
             "jobs_expired": outcome.jobs_expired,
             "scoring_tasks_queued": outcome.scoring_tasks_queued,
         }
+    finally:
+        db.close()
+
+
+@celery_app.task(
+    name="cleanup_due_application_trackers",
+    bind=True,
+    max_retries=3,
+    acks_late=True,
+)
+def cleanup_due_application_trackers_task(self) -> dict:
+    """Beat-triggered deletion of one bounded due-retention batch."""
+    from app.applications.retention_cleanup import cleanup_due_application_trackers
+
+    db = SessionLocal()
+    try:
+        return cleanup_due_application_trackers(db).as_dict()
+    except Exception as exc:  # noqa: BLE001 - retry transient transaction/infrastructure failures
+        db.rollback()
+        logger.exception("retention cleanup task failed; retrying")
+        raise self.retry(exc=exc, countdown=30) from exc
     finally:
         db.close()
