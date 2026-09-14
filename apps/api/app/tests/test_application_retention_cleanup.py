@@ -290,18 +290,35 @@ def test_stale_confirmation_cannot_resurrect_retention_deleted_history(db: Sessi
     )) is None
 
 
-def test_task_and_hourly_schedule_are_registered_once() -> None:
+def test_the_task_is_registered_with_its_retry_contract() -> None:
+    """The task always EXISTS; whether it is scheduled is a separate decision.
+
+    This used to assert the hourly beat entry was present unconditionally,
+    which is precisely the defect NEW-01 records: registration was not the
+    operator's choice. Scheduling is now owned by RETENTION_CLEANUP_ENABLED and
+    is covered in test_retention_cleanup_kill_switch.py, in both states. What
+    belongs here is the task's own Stage 2E contract, which is unchanged.
+    """
     from app.workers.tasks import celery_app
 
-    entries = [
-        entry for entry in celery_app.conf.beat_schedule.values()
-        if entry["task"] == "cleanup_due_application_trackers"
-    ]
-    assert len(entries) == 1
     assert "cleanup_due_application_trackers" in celery_app.tasks
     task = celery_app.tasks["cleanup_due_application_trackers"]
     assert task.max_retries == 3
     assert task.acks_late is True
+
+
+def test_the_hourly_entry_is_registered_exactly_once_when_enabled(monkeypatch) -> None:
+    """The Stage 2E cadence itself, asserted where it is now decided."""
+    from app.core.config import settings
+    from app.workers.tasks import build_beat_schedule
+
+    monkeypatch.setattr(settings, "retention_cleanup_enabled", True, raising=False)
+    entries = [
+        entry for entry in build_beat_schedule().values()
+        if entry["task"] == "cleanup_due_application_trackers"
+    ]
+    assert len(entries) == 1
+    assert entries[0]["schedule"].minute == {0}
 
 
 @pytest.fixture()

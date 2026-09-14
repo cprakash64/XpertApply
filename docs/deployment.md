@@ -46,6 +46,10 @@ scripts/production-compose.sh run --rm api alembic heads
 scripts/production-compose.sh exec -T api alembic current
 
 # 5. Build and recreate only the services required by the reviewed release.
+#    Starting `scheduler` does NOT arm Tracker retention deletion: it is gated
+#    behind RETENTION_CLEANUP_ENABLED, which defaults to false. Turning it on is
+#    a separate authorised procedure — see
+#    docs/plans/xpertapply-stage-2gb-retention-kill-switch.md §7.
 scripts/production-compose.sh build api worker scheduler web
 scripts/production-compose.sh up -d api worker scheduler web
 

@@ -134,6 +134,22 @@ class Settings(BaseSettings):
     # most of an hour after a user explicitly asks for fresh jobs.
     job_discovery_cache_ttl_minutes: int = 15
 
+    # --- Retention cleanup (scheduler) ---
+    #
+    # The Stage 2E hourly cleanup DELETES terminal Tracker rows and cascades to
+    # their snapshots. That is irreversible, so it is off unless an operator
+    # turns it on deliberately — a deployment or a scheduler restart must never
+    # be what arms it.
+    #
+    # False is the safe production value and stays correct indefinitely:
+    # retention deadlines keep accruing in the database untouched, and enabling
+    # the flag later processes whatever has become overdue in the meantime.
+    #
+    # Read at call time by BOTH guards (beat registration and the task itself),
+    # so a stale message queued while enabled still refuses once this is false.
+    # See docs/plans/xpertapply-stage-2gb-retention-kill-switch.md.
+    retention_cleanup_enabled: bool = False
+
     # --- Daily automated ingestion (scheduler) ---
     job_ingestion_enabled: bool = True
     # Cron expression (m h dom mon dow). The default performs one authoritative

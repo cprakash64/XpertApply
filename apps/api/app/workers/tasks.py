@@ -48,18 +48,39 @@ def _crontab_from_expr(expr: str) -> crontab:
     return crontab(minute=minute, hour=hour, day_of_month=dom, month_of_year=month, day_of_week=dow)
 
 
-celery_app.conf.beat_schedule = {
-    "hourly-application-retention-cleanup": {
-        "task": "cleanup_due_application_trackers",
-        "schedule": crontab(minute=0),
-    }
-}
+RETENTION_CLEANUP_BEAT_ENTRY = "hourly-application-retention-cleanup"
 
-if settings.job_ingestion_enabled:
-    celery_app.conf.beat_schedule["daily-job-ingestion"] = {
-        "task": "run_daily_ingestion",
-        "schedule": _crontab_from_expr(settings.job_ingestion_schedule),
-    }
+
+def build_beat_schedule() -> dict[str, dict]:
+    """The periodic schedule this process should run, given current settings.
+
+    A function rather than a literal so the registration decision can be
+    exercised directly, in both states, without re-importing this module or
+    standing up a broker.
+
+    Retention cleanup is registered ONLY when it is explicitly enabled. It is
+    deliberately not scheduled-but-inert: an hourly message that always refuses
+    is hourly noise, and a schedule that is present-but-disabled invites the
+    reading that deletion is armed. Disabled means genuinely unscheduled.
+    """
+    schedule: dict[str, dict] = {}
+
+    if settings.retention_cleanup_enabled:
+        schedule[RETENTION_CLEANUP_BEAT_ENTRY] = {
+            "task": "cleanup_due_application_trackers",
+            "schedule": crontab(minute=0),
+        }
+
+    if settings.job_ingestion_enabled:
+        schedule["daily-job-ingestion"] = {
+            "task": "run_daily_ingestion",
+            "schedule": _crontab_from_expr(settings.job_ingestion_schedule),
+        }
+
+    return schedule
+
+
+celery_app.conf.beat_schedule = build_beat_schedule()
 
 
 @celery_app.task(name="match_jobs_for_user")
@@ -133,7 +154,29 @@ def run_daily_ingestion_task(self, trigger: str = "scheduled") -> dict:
     acks_late=True,
 )
 def cleanup_due_application_trackers_task(self) -> dict:
-    """Beat-triggered deletion of one bounded due-retention batch."""
+    """Beat-triggered deletion of one bounded due-retention batch.
+
+    The second of the two kill-switch guards, and the one that matters when
+    something has gone wrong. Beat registration decides what is SCHEDULED; this
+    decides what actually EXECUTES, and it is checked on every invocation
+    against the settings this process holds now.
+
+    That ordering is the whole point. A message queued while cleanup was
+    enabled can still be sitting on the broker after an operator disables it,
+    and a task can always be invoked by hand. Either would delete rows if the
+    schedule were the only guard, so the runtime flag wins: no candidate rows
+    are selected, no locks are taken, the destructive service is never reached,
+    and no retention deadline is touched.
+    """
+    from app.applications.retention_cleanup import RetentionCleanupResult
+
+    if not settings.retention_cleanup_enabled:
+        # Structural fact only — no user, job, tracker or candidate-row detail.
+        # Not noisy in practice: when disabled nothing is scheduled, so this
+        # fires only for a stale or hand-run invocation, which is worth seeing.
+        logger.info("retention cleanup disabled; task refused")
+        return {**RetentionCleanupResult().as_dict(), "disabled": True}
+
     from app.applications.retention_cleanup import cleanup_due_application_trackers
 
     db = SessionLocal()

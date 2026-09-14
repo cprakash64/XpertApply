@@ -90,6 +90,11 @@ services:
       # Explicit: only the API image's start script may migrate, and only in
       # development. A worker that migrates races the API and every other worker.
       RUN_MIGRATIONS_ON_STARTUP: "false"
+      # Retention deletion is irreversible, so it is OFF unless an operator
+      # sets it. Declared explicitly on both Celery services — env_file would
+      # already carry it, but an omission there must fail closed rather than
+      # inherit whatever the image or a stale shell happens to hold.
+      RETENTION_CLEANUP_ENABLED: ${RETENTION_CLEANUP_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +124,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jobpilot:jobpilot_dev_password@postgres:5432/jobpilot}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       RUN_MIGRATIONS_ON_STARTUP: "false"
+      # Retention deletion is irreversible, so it is OFF unless an operator
+      # sets it. Declared explicitly on both Celery services — env_file would
+      # already carry it, but an omission there must fail closed rather than
+      # inherit whatever the image or a stale shell happens to hold.
+      RETENTION_CLEANUP_ENABLED: ${RETENTION_CLEANUP_ENABLED:-false}
       JOB_INGESTION_ENABLED: ${JOB_INGESTION_ENABLED:-true}
       JOB_INGESTION_SCHEDULE: ${JOB_INGESTION_SCHEDULE:-0 6 * * *}
       JOB_INGESTION_TIMEZONE: ${JOB_INGESTION_TIMEZONE:-UTC}
