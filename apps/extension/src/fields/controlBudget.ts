@@ -7,6 +7,23 @@ import { deepQueryAll } from "../dom/deepDom";
  */
 export const MAX_APPLICATION_CONTROLS = 1_000;
 
+/**
+ * Options processed for ONE custom dropdown.
+ *
+ * The largest legitimate list an application renders is a country or
+ * nationality picker at roughly 250 entries; a state, year or dial-code list is
+ * smaller still. 2,000 leaves nearly an order of magnitude of headroom above
+ * that while bounding a hostile page that renders tens of thousands of options
+ * to make the extension walk them — every option costs a visibility read, which
+ * forces layout.
+ *
+ * Applied to the RAW node list, before any per-option work, on both dropdown
+ * paths. A menu over the bound is truncated rather than refused: the approved
+ * option still has to be found among what was read, and a control whose answer
+ * is past the ceiling fails closed as OPTION_NOT_FOUND like any other miss.
+ */
+export const MAX_DROPDOWN_OPTIONS = 2_000;
+
 export const APPLICATION_CONTROL_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])",
   "textarea",

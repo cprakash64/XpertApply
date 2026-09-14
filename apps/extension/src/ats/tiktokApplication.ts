@@ -735,7 +735,14 @@ export async function actuateTikTokLegalField(
   return selectApprovedOption(initial.field, approvedDisplay, {
     canonicalKey: initial.canonicalKey,
     typedAnswer
-  }, { reacquire, callerOpened: assisted });
+  }, {
+    reacquire,
+    callerOpened: assisted,
+    // The assisted action IS the user asking for this answer to be put in the
+    // control, so replacing what is there is what they requested. An automatic
+    // run never sets this.
+    allowOverwrite: assisted
+  });
 }
 
 export const TikTokApplicationAdapter = {

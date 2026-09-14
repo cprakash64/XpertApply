@@ -483,7 +483,16 @@ async function verifyUpload(input: HTMLInputElement, filename: string): Promise<
     await delay(150);
   }
   // Last resort: the file is set on the input even if the UI text is not found.
-  return Boolean(input.files && input.files.length === 1 && input.files[0].name === filename);
+  //
+  // Only on an input that is STILL IN THE DOCUMENT. A framework that replaces
+  // the file input after an upload leaves the old node detached with its
+  // `files` list intact, so reading it back proves nothing about what the
+  // employer's form now holds — and reporting that as upload_verified is a
+  // false success on the one field the user cannot check from the ledger.
+  // A replaced input with no visible filename is honestly unverifiable.
+  return Boolean(
+    input.isConnected && input.files && input.files.length === 1 && input.files[0].name === filename
+  );
 }
 
 function delay(ms: number): Promise<void> {

@@ -94,6 +94,7 @@ import { ResolutionRunCoordinator, type EligibilityRun } from "./resolutionRun";
 import { fillStructuredRepeaters } from "../fields/repeaters";
 import { discoverFields } from "../fields/discovery";
 import { checkSemanticCompatibility, isConsequentialKey } from "../fields/answerSemantics";
+import { checkConsequentialOption } from "../fields/consequentialAnswer";
 import type { CanonicalField } from "../fields/taxonomy";
 import { scan } from "../fields/runner";
 import { AtsLifecycleRun, domMetrics, waitForAtsParse } from "./atsLifecycle";
@@ -2111,7 +2112,16 @@ function stableTransactionFailure(reason: string): string | null {
     backing_value_mismatch: "CONTROL_VALUE_VERIFICATION_FAILED",
     validation_failed: "CONTROL_VALUE_VERIFICATION_FAILED",
     stale_resolution: "CANONICAL_RESOLUTION_CONFLICT",
-    timeout: "CONTROL_VALUE_VERIFICATION_FAILED"
+    timeout: "CONTROL_VALUE_VERIFICATION_FAILED",
+    // Deliberate safety refusals, not verification failures. Falling through to
+    // CONTROL_VALUE_VERIFICATION_FAILED would report a gate that worked as a
+    // control that misbehaved, and would send a diagnostics reader looking for
+    // a DOM problem that does not exist.
+    semantics_incompatible: "ANSWER_SEMANTICS_INCOMPATIBLE",
+    consequential_answer_refused: "CONSEQUENTIAL_ANSWER_REFUSED",
+    option_contradicts_answer: "OPTION_CONTRADICTS_ANSWER",
+    // Not a failure at all: the user answered this one themselves.
+    user_value_present: "USER_VALUE_PRESENT"
   };
   return reason === "verified" ? null : codes[reason] ?? "CONTROL_VALUE_VERIFICATION_FAILED";
 }
@@ -2591,7 +2601,8 @@ async function resolveAndApply(
 
     const outcome = await applyResolvedAnswer(root, entry, labelToApply, {
       canonicalKey: result.canonical_key,
-      typedAnswer: typeof result.typed_answer === "boolean" ? result.typed_answer : null
+      typedAnswer: typeof result.typed_answer === "boolean" ? result.typed_answer : null,
+      safeSource: result.safe_source
     });
     if (!isActiveResolutionRun(runId)) continue;
     emitStage(
@@ -3185,7 +3196,7 @@ async function applyResolvedAnswer(
   root: ParentNode,
   entry: PreparedQuestion,
   approvedLabel: string,
-  answer: { canonicalKey: string | null; typedAnswer: boolean | null }
+  answer: { canonicalKey: string | null; typedAnswer: boolean | null; safeSource: string }
 ): Promise<{ status: QuestionState; reason: string; displayed?: string; backing?: string; transaction?: TransactionResult }> {
   // THE CLIENT GATE IS FINAL, INCLUDING FOR THE SERVER'S OWN ANSWER.
   //
@@ -3239,6 +3250,40 @@ async function applyResolvedAnswer(
     };
   }
 
+  // B-03. The resolver's recommendation is ADVISORY for a consequential key.
+  //
+  // Everything above established that the QUESTION is one this answer may speak
+  // to — same jurisdiction, same polarity — and that the option set has not
+  // changed underneath us. None of it established that the option the resolver
+  // pointed at MEANS what the canonical answer says, and a provider returning
+  // the exactly-offered wrong option with confidence 1.0 passed every one of
+  // them. The deterministic gate runs here, against the option set as it stands
+  // right now, and BEFORE anything is opened or clicked: a refusal leaves the
+  // employer's control untouched.
+  const consequential = checkConsequentialOption({
+    canonicalKey: answer.canonicalKey,
+    typedAnswer: answer.typedAnswer,
+    approvedLabel,
+    offeredLabels: (live.options ?? []).filter((label) => label.trim().length > 0),
+    safeSource: answer.safeSource,
+    storedAnswer: answer.canonicalKey
+      ? session?.answers.find((stored) => stored.canonical_key === answer.canonicalKey)
+      : undefined
+  });
+  if (!consequential.ok) {
+    log.info("consequential answer refused by the client gate", { reason: consequential.reason });
+    return {
+      status: "requires_confirmation" as const,
+      reason: consequential.reason,
+      transaction: {
+        ok: false,
+        reason: "consequential_answer_refused",
+        states: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED", "QUEUED_FOR_ACTUATION", "CONTROL_LOCATED"],
+        adapter: live.element instanceof HTMLSelectElement ? "native_select" : "custom_choice"
+      }
+    };
+  }
+
   const reacquire = (): DiscoveredField | null => {
     const candidates = discoverQuestionFields(root);
     const exact = candidates.find((candidate) =>
@@ -3264,9 +3309,17 @@ async function applyResolvedAnswer(
         root
       )
     : await selectApprovedOption(live, approvedLabel, answer, { reacquire });
-  return result.ok
-    ? { status: "filled_verified" as const, reason: "verified", displayed: result.displayed, backing: result.backing, transaction: result }
-    : { status: "interaction_failed" as const, reason: result.reason, displayed: result.displayed, backing: result.backing, transaction: result };
+  if (result.ok) {
+    return { status: "filled_verified" as const, reason: "verified", displayed: result.displayed, backing: result.backing, transaction: result };
+  }
+  // The user answered this one themselves while the request was in flight. That
+  // is not a technical failure and there is nothing to retry — their answer
+  // stands, and it is surfaced for them to confirm rather than reported as
+  // something XpertApply filled.
+  const status = result.reason === "user_value_present"
+    ? ("requires_confirmation" as const)
+    : ("interaction_failed" as const);
+  return { status, reason: result.reason, displayed: result.displayed, backing: result.backing, transaction: result };
 }
 
 // A repeated DOM mutation must never click the same navigation control twice.

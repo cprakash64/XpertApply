@@ -12,6 +12,9 @@
  */
 
 import { deepQueryAll, scopedElementById } from "../dom/deepDom";
+import { MAX_DROPDOWN_OPTIONS } from "../fields/controlBudget";
+import { isBlankValue } from "../fields/dropdown/dom";
+import { optionPolarity, type OptionPolarity } from "../fields/consequentialAnswer";
 import type { DiscoveredField } from "../types";
 
 export type TransactionFailure =
@@ -32,6 +35,13 @@ export type TransactionFailure =
   // control: the question's jurisdiction or polarity could not be positively
   // established against the key the answer belongs to.
   | "semantics_incompatible"
+  // B-03: the approved option says the opposite of the canonical answer, or
+  // could not be shown to say the same thing. Refused before any mutation.
+  | "consequential_answer_refused"
+  | "option_contradicts_answer"
+  // The control already holds a value XpertApply did not write — the user's own
+  // answer, or the employer's. Never overwritten by an automatic resolution.
+  | "user_value_present"
   | "timeout";
 
 export interface TransactionResult {
@@ -87,6 +97,47 @@ export interface ChoiceTransactionOptions {
    * "whatever is open now" is unambiguously this one's.
    */
   callerOpened?: boolean;
+  /**
+   * Overwrite a value XpertApply did not write.
+   *
+   * Set ONLY by an explicit user action — the review widget's "apply this
+   * answer", where replacing what is in the control is precisely what the user
+   * asked for. An automatic resolution never sets it, so a value the user typed
+   * or chose while the resolver request was in flight is preserved rather than
+   * replaced by an answer computed before they acted.
+   */
+  allowOverwrite?: boolean;
+}
+
+/**
+ * What XpertApply itself last committed to a control, so its own value can be
+ * told apart from one the user or the employer put there.
+ *
+ * Extension-private and weakly keyed (XA-14): nothing is written to the
+ * employer's DOM, and a detached control is not retained.
+ */
+const committedByXpertApply = new WeakMap<HTMLElement, string>();
+
+/**
+ * Is the value this control currently shows one XpertApply may replace?
+ *
+ * A blank or placeholder control has no answer to protect. A control still
+ * showing what XpertApply last wrote there is XpertApply's own to update — which
+ * is what keeps a targeted re-resolution (the user answers a question for this
+ * application, and the affected controls refresh) working.
+ *
+ * Anything else was authored by the user or the employer, and an automatic
+ * resolution does not get to replace it.
+ */
+function mayReplaceCurrentValue(element: HTMLElement, current: string): boolean {
+  // The project's ONE definition of "this control holds no answer". Writing a
+  // second, looser one here is how "None" — a real answer to "how many years of
+  // management experience" or "prior convictions" — would have been mistaken
+  // for a placeholder and silently replaced. `isBlankValue` deliberately
+  // matches "none selected" and "no selection" but never a bare "None".
+  if (isBlankValue(current)) return true;
+  const ours = committedByXpertApply.get(element);
+  return ours !== undefined && normalize(ours) === normalize(current);
 }
 
 const SETTLE_MS = 120;
@@ -206,21 +257,17 @@ function validationFailed(element: HTMLElement): boolean {
   return Boolean(hidden && (!hidden.validity.valid || hidden.getAttribute("aria-invalid") === "true"));
 }
 
-type Polarity = "affirmative" | "negative" | "unknown";
+type Polarity = OptionPolarity;
 
-/** Interpret only explicit boolean wording. Negated forms are tested before
- * positive forms, and unknown wording never receives a polarity. */
-export function booleanPolarity(value: string): Polarity {
-  const normalized = normalize(value).replace(/[.!]$/g, "");
-  if (/^(?:no|n|false|0|off)$/.test(normalized)) return "negative";
-  if (/^(?:yes|y|true|1|on)$/.test(normalized)) return "affirmative";
-  if (/\b(?:not authorized|not authorised|do not require|don't require|will not require|no sponsorship)\b/.test(normalized)) {
-    return "negative";
-  }
-  if (/^(?:authorized|authorised)$/.test(normalized)) return "affirmative";
-  if (/\b(?:i require sponsorship|will require sponsorship)\b/.test(normalized)) return "affirmative";
-  return "unknown";
-}
+/**
+ * Interpret only explicit boolean wording.
+ *
+ * Re-exported from `fields/consequentialAnswer`, which owns the single
+ * definition. Selection, verification and the B-03 pre-actuation gate must read
+ * an option label the SAME way — two engines that drift apart would let a label
+ * the gate refuses be accepted by verification, or the reverse.
+ */
+export const booleanPolarity = optionPolarity;
 
 /**
  * Would this control SUBMIT the approved answer?
@@ -285,13 +332,30 @@ export function committedValueMatches(
 ): boolean {
   const shown = normalize(displayed);
   if (!shown) return false;
+  // A placeholder is never an answer — including one that happens to contain an
+  // option's wording. "No selection" contains the token "no", and the
+  // containment test below would otherwise read an untouched control as having
+  // committed the answer "No" and record it verified.
+  if (isBlankValue(shown)) return false;
   const wanted = normalize(approvedLabel);
-  if (shown === wanted) return true;
 
   const wantedPolarity: Polarity =
     typeof typedAnswer === "boolean"
       ? typedAnswer ? "affirmative" : "negative"
       : booleanPolarity(approvedLabel);
+
+  // B-03: the canonical answer outranks the label, including when the label
+  // matches the control exactly. `shown === wanted` used to return true here
+  // before `typedAnswer` was ever consulted, so a control correctly displaying
+  // the option the provider named verified as filled even when that option said
+  // the opposite of the answer it was supposedly expressing. Existence is not
+  // correctness; an exact label is not a semantic authorization.
+  if (typeof typedAnswer === "boolean") {
+    const approvedPolarity = booleanPolarity(approvedLabel);
+    if (approvedPolarity !== "unknown" && approvedPolarity !== wantedPolarity) return false;
+  }
+
+  if (shown === wanted) return true;
 
   // A control showing a DIFFERENT approved option is a hard no, whatever else
   // its markup contains.
@@ -464,7 +528,14 @@ function distanceTo(triggerBox: DOMRect, node: HTMLElement): number {
 }
 
 function collectOptionLists(root: HTMLElement, trigger: HTMLElement, out: HTMLElement[], depth = 0): void {
-  if (depth > 6 || out.length >= 8 || !isVisible(root)) return;
+  if (depth > 6 || out.length >= 8) return;
+  // Breadth guard, BEFORE the visibility read. A container with more children
+  // than any menu could offer is not a menu, and descending into it costs one
+  // layout-forcing visibility read per child — which is how a page rendering
+  // tens of thousands of options turns menu attribution into seconds of blocked
+  // CPU on every open poll. Reading `children.length` costs nothing.
+  if (root.children.length > MAX_DROPDOWN_OPTIONS) return;
+  if (!isVisible(root)) return;
   if (!root.contains(trigger) && isOptionShaped(root)) {
     out.push(root);
     return;
@@ -494,7 +565,17 @@ function isOptionShaped(node: HTMLElement): boolean {
   const style = node.ownerDocument.defaultView?.getComputedStyle(node);
   const floating = style?.position === "absolute" || style?.position === "fixed";
   if (!floating && !node.matches(MENU_SHAPED_SELECTOR)) return false;
-  const options = optionNodes(node);
+  // Cheap rejection first. A container holding more option-shaped nodes than
+  // any real menu could is not a menu to attribute — deciding that from the
+  // node count costs no layout, where reading the visibility of each one costs
+  // a great deal.
+  const declared = rawOptionNodes(node);
+  if (declared.length > MAX_DROPDOWN_OPTIONS) return false;
+  const raw = declared.length > 0 ? declared : roleLessOptions(node);
+  // Counted only as far as the ceiling this test compares against: the 61st
+  // visible option already settles it, and the remainder is layout work spent
+  // on a foregone conclusion.
+  const options = visibleOptions(raw, 61);
   if (options.length > 60) return false;
   // Two or more choices, or a container that names itself a menu. One
   // text-bearing child of an unnamed floating box is a tooltip, not an answer.
@@ -759,9 +840,35 @@ async function openCustomControl(element: HTMLElement, callerOpened = false): Pr
  * When the menu itself is empty we look one level out, to the container that
  * holds this menu, and no further.
  */
-function optionNodes(menu: HTMLElement): HTMLElement[] {
+/**
+ * The option-shaped nodes inside a menu, before any visibility work.
+ *
+ * Bounded here and nowhere else. Every `isVisible` read forces layout, so on a
+ * page that renders tens of thousands of options the cheap half of the work is
+ * the page's and the expensive half is ours — and menu attribution re-runs this
+ * for several candidate containers on every open poll, which is how a hostile
+ * list turns into seconds of blocked CPU rather than a failed match.
+ */
+function rawOptionNodes(menu: HTMLElement): HTMLElement[] {
   const selector = '[role="option"],[role="menuitem"],li,[data-option]';
-  const inMenu = deepQueryAll<HTMLElement>(menu, selector);
+  // One PAST the ceiling, so "there are more than we will process" stays
+  // distinguishable from "there are exactly the ceiling". Slicing to the
+  // ceiling itself hides the overflow from the guard that exists to catch it.
+  return deepQueryAll<HTMLElement>(menu, selector).slice(0, MAX_DROPDOWN_OPTIONS + 1);
+}
+
+/** Visible, enabled option nodes — stopping early once `limit` are found. */
+function visibleOptions(nodes: HTMLElement[], limit = Number.POSITIVE_INFINITY): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const node of nodes) {
+    if (out.length >= limit) break;
+    if (isVisible(node) && node.getAttribute("aria-disabled") !== "true") out.push(node);
+  }
+  return out;
+}
+
+function optionNodes(menu: HTMLElement): HTMLElement[] {
+  const inMenu = rawOptionNodes(menu).slice(0, MAX_DROPDOWN_OPTIONS);
   const scoped = inMenu.length > 0
     ? inMenu
     // The menu has already been attributed to this control, so its own children
@@ -769,7 +876,7 @@ function optionNodes(menu: HTMLElement): HTMLElement[] {
     // Requiring `role="option"` is why a visibly open Yes/No menu could read as
     // empty and the selection was reported as impossible.
     : roleLessOptions(menu);
-  return scoped.filter((node) => isVisible(node) && node.getAttribute("aria-disabled") !== "true");
+  return visibleOptions(scoped);
 }
 
 /**
@@ -790,26 +897,59 @@ function roleLessOptions(menu: HTMLElement): HTMLElement[] {
     );
   let current = menu;
   let deepest: HTMLElement[] = [];
+  // Same ceiling on the role-less path, which reads a menu's own children.
   for (let depth = 0; depth < 5; depth += 1) {
     const children = textBearing(current);
     if (children.length === 0) break;
-    deepest = children;
+    deepest = children.slice(0, MAX_DROPDOWN_OPTIONS);
     if (children.length > 1) break;
     current = children[0];
   }
   return deepest;
 }
 
-function matchOption(nodes: HTMLElement[], answer: ChoiceAnswer): { node: HTMLElement | null; ambiguous: boolean } {
+/**
+ * Which rendered option is the approved one?
+ *
+ * An exact label match is the primary reading, but it is NOT on its own an
+ * authorization. When the canonical answer is an explicit boolean, an exactly
+ * matching label whose own wording says the OPPOSITE is refused — that is B-03,
+ * and it used to be accepted precisely because the label matched. Existence is
+ * not correctness, and an exact label is not a semantic authorization.
+ *
+ * The caller has already run the full `checkConsequentialOption` gate before
+ * anything was opened; this is the same rule applied again against the options
+ * as actually rendered, because the menu is read fresh at actuation time.
+ */
+function matchOption(nodes: HTMLElement[], answer: ChoiceAnswer): { node: HTMLElement | null; ambiguous: boolean; contradicts?: boolean } {
+  const wantedPolarity: Polarity =
+    typeof answer.typedAnswer === "boolean"
+      ? answer.typedAnswer ? "affirmative" : "negative"
+      : "unknown";
+  const agreesWithAnswer = (node: HTMLElement): boolean => {
+    if (wantedPolarity === "unknown") return true;
+    const label = booleanPolarity(node.textContent ?? "");
+    const value = booleanPolarity(node.getAttribute("data-value") ?? node.getAttribute("value") ?? "");
+    // An option that reads as the opposite answer is disqualified outright. One
+    // whose wording carries no polarity at all is left to the exact-label
+    // reading, which the pre-actuation gate has already had to approve.
+    if (label !== "unknown") return label === wantedPolarity;
+    if (value !== "unknown") return value === wantedPolarity;
+    return true;
+  };
+
   const exact = nodes.filter((node) => normalize(node.textContent ?? "") === normalize(answer.displayAnswer));
-  if (exact.length === 1) return { node: exact[0], ambiguous: false };
   if (exact.length > 1) return { node: null, ambiguous: true };
-  if (typeof answer.typedAnswer !== "boolean") return { node: null, ambiguous: false };
-  const wanted: Polarity = answer.typedAnswer ? "affirmative" : "negative";
+  if (exact.length === 1) {
+    return agreesWithAnswer(exact[0])
+      ? { node: exact[0], ambiguous: false }
+      : { node: null, ambiguous: false, contradicts: true };
+  }
+  if (wantedPolarity === "unknown") return { node: null, ambiguous: false };
   const matches = nodes.filter((node) => {
     const label = node.textContent ?? "";
     const value = node.getAttribute("data-value") ?? node.getAttribute("value") ?? "";
-    return booleanPolarity(label) === wanted || booleanPolarity(value) === wanted;
+    return booleanPolarity(label) === wantedPolarity || booleanPolarity(value) === wantedPolarity;
   });
   return { node: matches.length === 1 ? matches[0] : null, ambiguous: matches.length > 1 };
 }
@@ -859,7 +999,12 @@ async function fillCustomSelect(
   states.push("OPTIONS_DISCOVERED");
 
   const matched = matchOption(options, answer);
-  if (!matched.node) return { ok: false, reason: matched.ambiguous ? "ambiguous_option" : "option_not_found", states, adapter: "custom_choice", trigger: triggerSummary(afterOpen), listboxFound: true, options: optionLabels, openStrategy: opened.strategy };
+  if (!matched.node) {
+    const reason: TransactionFailure = matched.contradicts
+      ? "option_contradicts_answer"
+      : matched.ambiguous ? "ambiguous_option" : "option_not_found";
+    return { ok: false, reason, states, adapter: "custom_choice", trigger: triggerSummary(afterOpen), listboxFound: true, options: optionLabels, openStrategy: opened.strategy };
+  }
   states.push("OPTION_MATCHED");
   const option = matched.node;
   try {
@@ -969,14 +1114,46 @@ export async function selectApprovedOption(
     return { ok: true, reason: "verified", displayed, backing, states, adapter, trigger: triggerSummary(element), verificationSource: hidden ? "display+hidden_input" : "display" };
   }
 
+  // The control holds an answer, and it is not the one we are about to write.
+  //
+  // A resolver request takes real time on a real connection, and the user is
+  // looking at the same form while it is in flight. If they answer this question
+  // themselves in that window, the response that arrives afterwards was computed
+  // before they acted — it is stale with respect to THEM, not to the DOM, so
+  // neither re-discovery nor the option-set staleness check notices. Writing it
+  // would silently replace a consequential answer a person had just chosen.
+  //
+  // The same rule protects a value the EMPLOYER pre-filled. Only an explicit
+  // user action ("apply this answer") sets `allowOverwrite`.
+  if (!options.allowOverwrite && !menuAlreadyOpen) {
+    const current = displayedValue(element);
+    if (!mayReplaceCurrentValue(element, current)) {
+      return {
+        ok: false,
+        reason: "user_value_present",
+        displayed: current,
+        states,
+        adapter,
+        trigger: triggerSummary(element)
+      };
+    }
+  }
+
   try {
     if (element instanceof HTMLSelectElement) {
       states.push("OPEN_ATTEMPTED", "CONTROL_OPENED", "OPTIONS_DISCOVERED", "OPTION_MATCHED");
       const result = await fillNativeSelect(element, approvedLabel);
-      if (result.ok) states.push("OPTION_SELECTED", "COMMIT_OBSERVED", "VERIFIED", "FILLED");
+      if (result.ok) {
+        states.push("OPTION_SELECTED", "COMMIT_OBSERVED", "VERIFIED", "FILLED");
+        committedByXpertApply.set(element, displayedValue(element));
+      }
       return { ...result, states, adapter, trigger: triggerSummary(element), listboxFound: true, options: Array.from(element.options).map((item) => item.textContent ?? ""), matchedOption: result.ok ? "[present]" : undefined, verificationSource: "native_select" };
     }
-    return await fillCustomSelect(element, { ...answer, displayAnswer: approvedLabel }, states, options.reacquire, options.callerOpened);
+    const custom = await fillCustomSelect(element, { ...answer, displayAnswer: approvedLabel }, states, options.reacquire, options.callerOpened);
+    // Remember what WE wrote, so a later re-resolution can tell its own value
+    // apart from one the user has since changed.
+    if (custom.ok && custom.displayed !== undefined) committedByXpertApply.set(element, custom.displayed);
+    return custom;
   } catch {
     return { ok: false, reason: "interaction_failed", states, adapter, trigger: triggerSummary(element) };
   }
