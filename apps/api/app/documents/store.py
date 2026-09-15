@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.models.entities import DocumentFormat, DocumentType, GeneratedDocument, JobPosting
 from app.services.documents import profile_payload, public_dict
+from app.services.profile_projection import scrub_credential_keys
 
 
 def persist_document(
@@ -84,7 +85,15 @@ def serialize_document(
 
 
 def copy_document_for_edit(record: GeneratedDocument) -> GeneratedDocument:
-    """Create an unfrozen version whose canonical content can safely diverge."""
+    """Create an unfrozen version whose canonical content can safely diverge.
+
+    The snapshot is scrubbed on the way across. Rows written before NEW-07 still
+    hold ``workday_password_ciphertext``, and editing such a document would
+    otherwise copy that credential into a brand-new row — re-creating the
+    exposure faster than a one-time cleanup could retire it. Sanitizing at copy
+    time means no NEW write can inherit it, whatever the source row contains.
+    """
+    snapshot, _ = scrub_credential_keys(dict(record.source_profile_snapshot or {}))
     return GeneratedDocument(
         user_id=record.user_id,
         job_id=record.job_id,
@@ -95,7 +104,7 @@ def copy_document_for_edit(record: GeneratedDocument) -> GeneratedDocument:
         content_markdown=record.content_markdown,
         plain_text=record.plain_text,
         quality=dict(record.quality or {}),
-        source_profile_snapshot=dict(record.source_profile_snapshot or {}),
+        source_profile_snapshot=snapshot,
         job_snapshot=dict(record.job_snapshot or {}),
         format_version=record.format_version,
         model_used=record.model_used,

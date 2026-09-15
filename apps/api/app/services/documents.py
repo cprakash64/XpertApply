@@ -17,6 +17,7 @@ from app.models.entities import (
     Project,
     UserProfile,
 )
+from app.services.profile_projection import safe_profile_dict
 
 
 def public_dict(model: Any) -> dict[str, Any]:
@@ -28,9 +29,25 @@ def public_dict(model: Any) -> dict[str, Any]:
 
 
 def profile_payload(db: Session, user_id: int) -> dict[str, Any]:
+    """The candidate payload for AI generation and document snapshots.
+
+    Every caller of this function is an AI prompt or a persisted snapshot —
+    ``resume``/``cover_letter`` generation, ``generate_document``,
+    ``session_service``, and ``store.persist_document``. None of them is a
+    user-facing API response, which is why the profile section is narrowed here
+    rather than at each call site: one boundary covers them all.
+
+    The profile goes through :func:`safe_profile_dict`, an explicit allow-list,
+    instead of ``public_dict``. ``public_dict`` copies every column minus
+    ``hashed_password``, which is fail-open: it is what sent
+    ``workday_password_ciphertext`` to OpenAI and into every document snapshot
+    (NEW-07). ``public_dict`` is unchanged for its other callers, which serialize
+    ``JobPosting`` — shared catalogue data with no credential columns — and the
+    career models.
+    """
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
     return {
-        "profile": public_dict(profile) if profile else {},
+        "profile": safe_profile_dict(profile) if profile else {},
         "education": [public_dict(item) for item in db.scalars(select(Education).where(Education.user_id == user_id))],
         "experience": [
             public_dict(item) for item in db.scalars(select(Experience).where(Experience.user_id == user_id))

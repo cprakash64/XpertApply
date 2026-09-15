@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
+from app.services.profile_projection import scrub_credential_keys
 
 logger = logging.getLogger("jobpilot.ai")
 PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -82,6 +83,22 @@ class AIProvider:
         callers can tell the user exactly why AI was not used (missing key,
         model-not-found, or request failure) instead of a generic message.
         """
+        # Defense in depth for NEW-07. The authoritative control is the
+        # allow-list in `services.profile_projection.safe_profile_dict`, which is
+        # what keeps credential columns out of the payload in the first place.
+        # This guard sits before model selection and before `_call`, so any
+        # credential-shaped key arriving from some other model or helper — now or
+        # under a future provider — is dropped on the way out rather than
+        # serialized into a prompt. Key names only; values are never inspected.
+        payload, removed = scrub_credential_keys(payload)
+        if removed:
+            logger.warning(
+                "Stripped %d credential-shaped key(s) from the %s payload before "
+                "the provider call; the payload should not have contained them",
+                removed,
+                prompt_name,
+            )
+
         if self.client is None:
             return AIResult(
                 data=self._fallback(prompt_name, payload),
