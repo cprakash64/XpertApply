@@ -972,7 +972,13 @@ async def create_document(
         record = await generate_document(db, user.id, job_id, doc_type)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return {"document": record}
+    # `generate_document` returns the persisted ORM row. Handing that straight
+    # back made the endpoint answer 500 for every caller — including the owner —
+    # because the declared `dict` contract serializes through pydantic, which
+    # cannot encode a GeneratedDocument. `serialize_document` is the same
+    # representation every other document route returns, and it deliberately
+    # omits the internal storage paths in favour of `download_urls`.
+    return {"document": serialize_document(record)}
 
 
 @router.post("/documents/{document_id}/export/{fmt}")
