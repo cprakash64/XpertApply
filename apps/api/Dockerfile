@@ -15,6 +15,11 @@ RUN apt-get update \
 # Dependencies first: this layer stays cached until requirements.txt changes.
 # requirements.txt is fully pinned (==) so the same commit rebuilds to the same
 # dependency set.
+#
+# RUNTIME ONLY. Test and lint tooling lives in requirements-dev.txt and is
+# deliberately never installed here: pytest previously shipped in this image
+# and carried an advisory into a runtime that has no reason to contain a test
+# runner (NEW-02). Do not add -r requirements-dev.txt to this build.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && apt-get purge -y --auto-remove build-essential \

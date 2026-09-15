@@ -1,0 +1,19 @@
+# Development and test tooling for the API.
+#
+# Deliberately NOT in requirements.txt: the production image installs that file
+# and only that file, so anything listed here is absent from the shipped
+# runtime. Before the split, pytest 8.3.2 shipped in production and carried
+# PYSEC-2026-1845 (`/tmp/pytest-of-{user}` local privilege escalation) into an
+# image that has no reason to contain a test runner at all (NEW-02).
+#
+# Install for development and CI:
+#     pip install -r requirements-dev.txt
+# which pulls the runtime set first, so the two can never drift apart.
+
+-r requirements.txt
+
+# PYSEC-2026-1845 is fixed in 9.0.3. pytest-asyncio 1.x is the line that
+# supports pytest 9 — 0.23.x caps at pytest <9 — so the two move together.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.5.6

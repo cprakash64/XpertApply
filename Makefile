@@ -34,7 +34,7 @@ test: test-api test-web test-extension
 
 test-api:
 	@$(API_PYTHON) -c "import pytest" 2>/dev/null || \
-		(echo "Backend test dependencies are missing. Run: cd apps/api && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1)
+		(echo "Backend test dependencies are missing. Run: cd apps/api && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt"; exit 1)
 	$(API_PYTHON) -m compileall apps/api/app scripts
 	cd apps/api && env APP_ENV=test DEBUG=false $(API_PYTHON) -m pytest
 

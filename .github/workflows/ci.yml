@@ -14,7 +14,10 @@ jobs:
           python-version: "3.12"
       - name: Install backend
         working-directory: apps/api
-        run: pip install -r requirements.txt
+        # The DEV set: CI runs ruff and pytest, neither of which is in the
+        # production runtime file. `requirements-dev.txt` pulls the runtime set
+        # first, so the two cannot drift.
+        run: pip install -r requirements-dev.txt
       - name: Lint backend
         working-directory: apps/api
         run: ruff check app
