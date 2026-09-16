@@ -932,7 +932,7 @@ async def create_document(
         record = await generate_document(db, user.id, job_id, doc_type)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return {"document": record}
+    return {"document": serialize_document(record)}
 
 
 @router.post("/documents/{document_id}/export/{fmt}")
