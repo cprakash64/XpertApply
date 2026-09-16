@@ -112,8 +112,10 @@ class Report:
     def __init__(self) -> None:
         self.scanned = 0
         self.candidates = 0
+        self.safe = 0
         self.sanitized = 0
         self.keys_removed = 0
+        self.keys_would_remove = 0
         self.skipped_malformed = 0
         self.skipped_null = 0
         self.failed_batches = 0
@@ -131,8 +133,9 @@ class Report:
             f"mode                : {mode}",
             f"rows scanned        : {self.scanned}",
             f"rows with credential: {self.candidates}",
+            f"safe rows observed  : {self.safe}",
             f"rows sanitized      : {self.sanitized}",
-            f"{keys_label}: {self.keys_removed}",
+            f"{keys_label}: {self.keys_removed if applied else self.keys_would_remove}",
             f"malformed skipped   : {self.skipped_malformed}",
             f"null snapshots      : {self.skipped_null}",
             f"failed batches      : {self.failed_batches}",
@@ -186,6 +189,7 @@ def sanitize_target(
                 continue
             paths = find_credential_key_paths(snapshot)
             if not paths:
+                report.safe += 1
                 continue
             report.candidates += 1
             report.note_paths(paths)
@@ -199,22 +203,27 @@ def sanitize_target(
             # opens a fresh one — per-batch atomicity without an explicit
             # begin(), which would raise against the autobegun transaction.
             try:
+                batch_sanitized = 0
+                batch_keys_removed = 0
                 for row_id, cleaned, removed in pending:
                     connection.execute(
                         sa.update(table)
                         .where(id_column == row_id)
                         .values({column: cleaned})
                     )
-                    report.sanitized += 1
-                    report.keys_removed += removed
+                    batch_sanitized += 1
+                    batch_keys_removed += removed
                 connection.commit()
+                # Mutation counters describe committed database effects only.
+                # Do not expose attempted work globally until commit succeeds.
+                report.sanitized += batch_sanitized
+                report.keys_removed += batch_keys_removed
             except Exception:  # noqa: BLE001 - reported as a failed batch, never re-raised
                 connection.rollback()
                 report.failed_batches += 1
-                report.sanitized -= len(pending)
-                report.keys_removed -= sum(removed for _, _, removed in pending)
         elif pending:
-            report.keys_removed += sum(removed for _, _, removed in pending)
+            # Preserve dry-run visibility without claiming committed removals.
+            report.keys_would_remove += sum(removed for _, _, removed in pending)
 
         # The cursor advances past every row examined — sanitized, skipped or
         # untouched — so the walk always terminates and a malformed row can

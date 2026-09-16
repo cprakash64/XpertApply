@@ -917,3 +917,209 @@ def test_an_orm_coupled_query_would_fail_on_production_shape(
         assert "content_hash" in str(excinfo.value)
     finally:
         engine.dispose()
+
+
+def _candidate_count(connection) -> int:
+    return connection.execute(text(
+        "SELECT count(*) FROM generated_documents "
+        "WHERE jsonb_path_exists(source_profile_snapshot, "
+        "CAST('$.**.\"" + CREDENTIAL_COLUMN + "\"' AS jsonpath))"
+    )).scalar_one()
+
+
+def _install_failure_trigger(connection, failing_ids: list[int]) -> None:
+    ids = ", ".join(str(value) for value in failing_ids)
+    connection.execute(text(
+        "CREATE FUNCTION new07_fail_update() RETURNS trigger LANGUAGE plpgsql AS $$ "
+        f"BEGIN IF NEW.id IN ({ids}) THEN RAISE EXCEPTION 'forced update failure'; "
+        "END IF; RETURN NEW; END $$"
+    ))
+    connection.execute(text(
+        "CREATE TRIGGER new07_fail_update BEFORE UPDATE ON generated_documents "
+        "FOR EACH ROW EXECUTE FUNCTION new07_fail_update()"
+    ))
+    connection.commit()
+
+
+@requires_postgres
+@pytest.mark.parametrize("failure_id", [1, 2, 3, 4])
+def test_failed_batch_counts_only_committed_effects_at_every_update_position(
+    production_shape_database: str, failure_id: int,
+) -> None:
+    """Before-first through after-last-update failures contribute zero.
+
+    The trigger fires before the selected update. ``failure_id == 4`` therefore
+    proves that three successful executions followed by a final failure still
+    report no committed mutations for the rolled-back four-row batch.
+    """
+    url = production_shape_database
+    _seed_production_shape(url, 4)
+    module = load_cleanup_module()
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            _install_failure_trigger(conn, [failure_id])
+            report = module.Report()
+            module.sanitize_target(
+                conn, module.GENERATED_DOCUMENTS, "source_profile_snapshot",
+                apply_changes=True, batch_size=4, max_rows=None, report=report,
+            )
+            assert report.scanned == report.candidates == 4
+            assert report.sanitized == report.keys_removed == 0
+            assert report.failed_batches == 1
+            assert report.sanitized >= 0 and report.keys_removed >= 0
+            assert _candidate_count(conn) == 4
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_successful_batches_surround_a_failed_batch_and_reconcile(
+    production_shape_database: str,
+) -> None:
+    url = production_shape_database
+    _seed_production_shape(url, 6)
+    module = load_cleanup_module()
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            _install_failure_trigger(conn, [3])
+            report = module.Report()
+            module.sanitize_target(
+                conn, module.GENERATED_DOCUMENTS, "source_profile_snapshot",
+                apply_changes=True, batch_size=2, max_rows=None, report=report,
+            )
+            assert report.scanned == report.candidates == 6
+            assert report.sanitized == report.keys_removed == 4
+            assert report.failed_batches == 1
+            assert _candidate_count(conn) == 2
+            assert 6 - report.sanitized == _candidate_count(conn)
+            assert report.last_id == 6  # failed rows remain for a later rerun
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_multiple_failed_batches_preserve_successful_totals(
+    production_shape_database: str,
+) -> None:
+    url = production_shape_database
+    _seed_production_shape(url, 6)
+    module = load_cleanup_module()
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            _install_failure_trigger(conn, [1, 3])
+            report = module.Report()
+            module.sanitize_target(
+                conn, module.GENERATED_DOCUMENTS, "source_profile_snapshot",
+                apply_changes=True, batch_size=2, max_rows=None, report=report,
+            )
+            assert report.sanitized == report.keys_removed == 2
+            assert report.failed_batches == 2
+            assert _candidate_count(conn) == 4
+            assert 6 - report.sanitized == _candidate_count(conn)
+    finally:
+        engine.dispose()
+
+
+class _CommitFailOnce:
+    """Connection proxy that fails the first commit after updates execute."""
+
+    def __init__(self, connection) -> None:
+        self.connection = connection
+        self.failed = False
+
+    def execute(self, *args, **kwargs):
+        return self.connection.execute(*args, **kwargs)
+
+    def commit(self) -> None:
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("forced commit failure")
+        self.connection.commit()
+
+    def rollback(self) -> None:
+        self.connection.rollback()
+
+
+@requires_postgres
+def test_commit_failure_rolls_back_without_committed_accounting(
+    production_shape_database: str,
+) -> None:
+    url = production_shape_database
+    _seed_production_shape(url, 4)
+    module = load_cleanup_module()
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            report = module.Report()
+            module.sanitize_target(
+                _CommitFailOnce(conn), module.GENERATED_DOCUMENTS,
+                "source_profile_snapshot", apply_changes=True, batch_size=4,
+                max_rows=None, report=report,
+            )
+            assert report.sanitized == report.keys_removed == 0
+            assert report.failed_batches == 1
+            assert _candidate_count(conn) == 4
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_multi_key_commits_count_keys_and_failed_multi_key_counts_nothing(
+    production_shape_database: str,
+) -> None:
+    url = production_shape_database
+    _seed_production_shape(url, 1)
+    module = load_cleanup_module()
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "UPDATE generated_documents SET source_profile_snapshot = "
+                "CAST(:snapshot AS jsonb) WHERE id = 1"
+            ), {"snapshot": json.dumps({
+                "profile": {CREDENTIAL_COLUMN: "cipher-canary", "api_key": "key-canary"},
+                "safe": "retained",
+            })})
+            conn.commit()
+            failed = module.Report()
+            module.sanitize_target(
+                _CommitFailOnce(conn), module.GENERATED_DOCUMENTS,
+                "source_profile_snapshot", apply_changes=True, batch_size=1,
+                max_rows=None, report=failed,
+            )
+            assert failed.sanitized == failed.keys_removed == 0
+            assert failed.failed_batches == 1 and _candidate_count(conn) == 1
+
+            applied = module.Report()
+            module.sanitize_target(
+                conn, module.GENERATED_DOCUMENTS, "source_profile_snapshot",
+                apply_changes=True, batch_size=1, max_rows=None, report=applied,
+            )
+            assert applied.sanitized == 1
+            assert applied.keys_removed == 2
+            assert _candidate_count(conn) == 0
+    finally:
+        engine.dispose()
+
+
+def test_dry_run_separates_proposed_keys_from_committed_counts(client: TestClient) -> None:
+    seed_snapshot_rows(3, unsafe=3)
+    report = run_cleanup(apply_changes=False, batch_size=2, max_rows=None)
+    assert report.sanitized == 0
+    assert report.keys_removed == 0
+    assert report.keys_would_remove == 3
+    assert unsafe_row_count() == 3
+
+
+def test_main_returns_failure_when_any_batch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_cleanup_module()
+    monkeypatch.setattr(module, "TARGETS", [("test", module.GENERATED_DOCUMENTS, "x")])
+
+    def fake_sanitize(*args, report, **kwargs):
+        report.failed_batches += 1
+
+    monkeypatch.setattr(module, "sanitize_target", fake_sanitize)
+    assert module.main(["--database-url", "sqlite://"]) == 1
