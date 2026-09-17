@@ -16,21 +16,15 @@ the extension's isolated context.
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import hmac
-import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from app.core.config import settings
+import jwt
+from jwt import InvalidTokenError
 
-try:  # mirror app.core.security's optional jose dependency
-    from jose import JWTError, jwt
-except ModuleNotFoundError:  # pragma: no cover - jose is installed in this project
-    JWTError = Exception
-    jwt = None
+from app.core.config import settings
 
 ALGORITHM = "HS256"
 LAUNCH_TOKEN_TTL_MINUTES = 5
@@ -72,57 +66,14 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-# --------------------------------------------------------------------------- #
-# Encoding (jose when available, HMAC fallback otherwise — matches core.security)
-# --------------------------------------------------------------------------- #
 def _encode(claims: dict[str, Any], *, ttl_minutes: int) -> str:
     expires = datetime.now(UTC) + timedelta(minutes=ttl_minutes)
     payload = {**claims, "exp": int(expires.timestamp())}
-    if jwt:
-        return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
-    return _encode_hs256(payload)
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
 def _decode(token: str) -> dict[str, Any] | None:
-    if jwt:
-        try:
-            return jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        except JWTError:
-            return None
-    return _decode_hs256(token)
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(data: str) -> bytes:
-    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-
-
-def _encode_hs256(payload: dict) -> str:
-    header = {"alg": ALGORITHM, "typ": "JWT"}
-    signing_input = ".".join(
-        [
-            _b64url(json.dumps(header, separators=(",", ":")).encode()),
-            _b64url(json.dumps(payload, separators=(",", ":")).encode()),
-        ]
-    )
-    signature = hmac.new(settings.secret_key.encode(), signing_input.encode(), hashlib.sha256).digest()
-    return f"{signing_input}.{_b64url(signature)}"
-
-
-def _decode_hs256(token: str) -> dict | None:
     try:
-        header_segment, payload_segment, signature_segment = token.split(".")
-        signing_input = f"{header_segment}.{payload_segment}"
-        expected = hmac.new(settings.secret_key.encode(), signing_input.encode(), hashlib.sha256).digest()
-        actual = _b64url_decode(signature_segment)
-        if not hmac.compare_digest(expected, actual):
-            return None
-        payload = json.loads(_b64url_decode(payload_segment))
-        if int(payload.get("exp", 0)) < int(datetime.now(UTC).timestamp()):
-            return None
-        return payload
-    except (ValueError, json.JSONDecodeError, TypeError):
+        return jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    except InvalidTokenError:
         return None
