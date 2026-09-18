@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from docx import Document
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
+from app.documents.materialized_files import generated_root, owned_path
 from app.models.entities import DocumentFormat, DocumentType, GeneratedDocument, JobPosting
 from app.services.documents import profile_payload, public_dict
 
@@ -81,23 +83,34 @@ def serialize_document(
 
 
 def export_document(record: GeneratedDocument, fmt: DocumentFormat) -> str:
-    out_dir = Path(os.getenv("UPLOAD_DIR", "uploads")).parent / "generated"
+    out_dir = generated_root()
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"document-{record.id}.{fmt.value}"
+    path = owned_path(record.id, fmt.value, root=out_dir)
     is_resume = record.type == DocumentType.resume
     content = (
         _normalize_resume_content(record.content or {})
         if is_resume
         else (record.content or {})
     )
+    # A temporary entry in the same root makes same-format replacement atomic
+    # and never follows an existing symlink outside the generated directory.
+    fd, temporary = tempfile.mkstemp(prefix=".document-", suffix=".tmp", dir=out_dir)
+    os.close(fd)
+    temp_path = Path(temporary)
+    try:
+        if fmt == DocumentFormat.docx:
+            _render_docx(content, is_resume, temp_path)
+        elif fmt == DocumentFormat.pdf:
+            _render_pdf(content, is_resume, temp_path)
+        else:
+            temp_path.write_text(record.plain_text or "", encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     if fmt == DocumentFormat.docx:
-        _render_docx(content, is_resume, path)
         record.docx_file_path = str(path)
     elif fmt == DocumentFormat.pdf:
-        _render_pdf(content, is_resume, path)
         record.pdf_file_path = str(path)
-    else:
-        path.write_text(record.plain_text or "", encoding="utf-8")
     return str(path)
 
 

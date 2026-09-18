@@ -22,6 +22,11 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.documents.cover_letter_generation_service import generate_cover_letter
 from app.documents.filenames import build_document_filename
+from app.documents.materialized_files import (
+    MaterializedFileError,
+    remove_document_exports,
+    remove_replaced_export,
+)
 from app.documents.resume_generation_service import generate_resume
 from app.documents.store import export_document as render_document_file
 from app.documents.store import persist_document, serialize_document
@@ -884,6 +889,16 @@ def update_document(
     record = db.get(GeneratedDocument, document_id)
     if record is None or record.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    # The deployed document model edits this row in place. Remove all derived
+    # exports before the content or its path references change.
+    try:
+        remove_document_exports(db, record)
+    except MaterializedFileError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document update could not be completed. Please retry.",
+        ) from exc
     if payload.markdown is not None:
         record.content_markdown = payload.markdown
     if payload.plain_text is not None:
@@ -892,6 +907,9 @@ def update_document(
         record.content = payload.content
     if payload.title is not None:
         record.title = payload.title
+    record.file_path = None
+    record.docx_file_path = None
+    record.pdf_file_path = None
     db.commit()
     db.refresh(record)
     return serialize_document(record)
@@ -945,6 +963,14 @@ def export_document(
     record = db.get(GeneratedDocument, document_id)
     if record is None or record.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    try:
+        remove_replaced_export(db, record, fmt)
+    except MaterializedFileError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document export could not be completed. Please retry.",
+        ) from exc
     file_path = render_document_file(record, fmt)
     record.format = fmt
     record.file_path = file_path
