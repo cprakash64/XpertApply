@@ -863,6 +863,10 @@ class ApplicationTracker(Base):
     last_application_url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     follow_up_date: Mapped[DateValue | None] = mapped_column(Date)
+    confirmation_required_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    confirmation_prompt_dismissed_at: Mapped[DateTimeValue | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

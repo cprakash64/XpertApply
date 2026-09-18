@@ -43,6 +43,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.applications.observability import metric
+from app.applications.tracker_lifecycle import clear_submission_confirmation
 from app.models.entities import (
     ApplicationStatus,
     ApplicationTracker,
@@ -233,6 +234,8 @@ def mark_application_applied(
 
     if application_url:
         tracker.last_application_url = application_url[:2000]
+
+    clear_submission_confirmation(tracker)
 
     # Everything below is deliberately NOT touched, so a confirmation can never
     # destroy work the user or the apply pipeline already did:

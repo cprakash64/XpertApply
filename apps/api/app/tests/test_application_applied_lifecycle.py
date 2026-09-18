@@ -280,6 +280,99 @@ def test_extension_confirmation_creates_applied_application(client: TestClient) 
     assert body["already_applied"] is False
 
 
+def test_submission_confirmation_prompt_contract(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job(external="confirmation-contract")
+    user_id = user_id_for(client, headers)
+    session = client.post("/application-sessions", headers=headers, json={"job_id": job_id}).json()
+    session_id = session["session_id"]
+    token = client.post(
+        "/application-sessions/token",
+        json={"launch_token": session["extension_launch_token"]},
+    ).json()["session_token"]
+    extension_headers = {"Authorization": f"Bearer {token}"}
+
+    required = client.post(
+        f"/application-sessions/{session_id}/confirmation-required",
+        headers=extension_headers,
+    )
+    assert required.status_code == 200, required.text
+    assert required.json()["ok"] is True
+    assert required.json()["confirmation_required_at"] is not None
+
+    restored = client.get(
+        f"/application-sessions/{session_id}", headers=extension_headers
+    ).json()
+    assert restored["confirmation_required_at"] is not None
+    assert restored["confirmation_prompt_dismissed_at"] is None
+    assert "workday_password_ciphertext" not in required.text
+    assert "workday_password_ciphertext" not in restored
+
+    dismissed = client.post(
+        f"/application-sessions/{session_id}/confirmation-dismissed",
+        headers=extension_headers,
+    )
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["confirmation_required_at"] is not None
+    assert dismissed.json()["confirmation_prompt_dismissed_at"] is not None
+    assert dismissed.json()["status"] == "applying"
+
+    repeated = client.post(
+        f"/application-sessions/{session_id}/confirmation-required",
+        headers=extension_headers,
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["confirmation_required_at"] is not None
+    assert len(tracker_rows(user_id, job_id)) == 1
+    refreshed = client.get(
+        f"/application-sessions/{session_id}", headers=extension_headers
+    ).json()
+    assert refreshed["confirmation_prompt_dismissed_at"] is None
+
+
+def test_confirmation_prompt_authorization_and_safe_failures(client: TestClient) -> None:
+    a_headers = auth(client, "confirmation-a@example.com")
+    b_headers = auth(client, "confirmation-b@example.com")
+    complete_profile(client, a_headers)
+    complete_profile(client, b_headers)
+    job_id = seed_job(external="confirmation-auth")
+    session = client.post(
+        "/application-sessions", headers=a_headers, json={"job_id": job_id}
+    ).json()
+    path = f"/application-sessions/{session['session_id']}/confirmation-required"
+
+    assert client.post(path, headers=b_headers).status_code == 403
+    assert client.post(path, headers={"Authorization": "Bearer invalid"}).status_code == 403
+    assert client.post("/application-sessions/999999/confirmation-required", headers=a_headers).status_code == 404
+    assert client.post("/application-sessions/not-an-id/confirmation-required", headers=a_headers).status_code == 422
+    assert tracker_rows(user_id_for(client, a_headers), job_id) == []
+
+
+def test_confirmed_submission_clears_pending_prompt(client: TestClient) -> None:
+    headers = auth(client, "confirmation-clear@example.com")
+    complete_profile(client, headers)
+    job_id = seed_job(external="confirmation-clear")
+    session = client.post("/application-sessions", headers=headers, json={"job_id": job_id}).json()
+    session_id = session["session_id"]
+    assert client.post(
+        f"/application-sessions/{session_id}/confirmation-required", headers=headers
+    ).status_code == 200
+
+    confirmed = confirm_via_session(client, headers, session_id)
+    assert confirmed.status_code == 200, confirmed.text
+    restored = client.get(f"/application-sessions/{session_id}", headers=headers).json()
+    assert restored["confirmation_required_at"] is None
+
+
+def test_confirmation_routes_are_in_openapi(client: TestClient) -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+    for suffix in ("confirmation-required", "confirmation-dismissed"):
+        operation = paths[f"/application-sessions/{{session_id}}/{suffix}"]["post"]
+        assert "requestBody" not in operation
+        assert operation["security"] == [{"HTTPBearer": []}]
+
+
 def test_auto_apply_confirmation_creates_applied_application(client: TestClient) -> None:
     headers = auth(client)
     complete_profile(client, headers)
