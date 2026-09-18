@@ -16,9 +16,6 @@
     "scripting",
     "tabs"
   ],
-  "optional_permissions": [
-    "webNavigation"
-  ],
   "host_permissions": [
     "https://api.xpertapply.com/*",
     "https://xpertapply.com/*",

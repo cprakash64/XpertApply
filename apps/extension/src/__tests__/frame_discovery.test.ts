@@ -9,7 +9,6 @@
  *    which frames existed from `scripting.executeScript({ allFrames: true })`,
  *    which reports one result per INJECTABLE frame — so the ungranted frame,
  *    the only one whose problem was the missing grant, never appeared. The
- *    optional `webNavigation` path that would have seen it is never requested.
  *    `APPLICATION_FRAME_PERMISSION_MISSING` was therefore unreachable in the
  *    shipped build and the user was offered "reopen as a tab" instead of the
  *    one grant that would have worked.
@@ -23,9 +22,9 @@
  * These tests drive the REAL `chrome.runtime.onMessage` listener that
  * background.ts registers, against a chrome mock that models the ACTUAL
  * production permission state. In particular `permissions.contains` is NOT
- * stubbed to `true`: it answers from a granted set, `webNavigation` is absent
- * and ungranted, and `executeScript` omits frames the extension may not inject
- * into — which is precisely the condition that hid the defect.
+ * stubbed to `true`: it answers from a granted set, and `executeScript` omits
+ * frames the extension may not inject into — precisely the condition that hid
+ * the defect.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,7 +84,6 @@ function installProductionChrome(options: {
   granted: string[];
   /** Every frame really in the tab, granted or not. Chrome reveals a subset. */
   liveFrames: { frameId: number; url: string; fieldCount?: number; evidence?: boolean }[];
-  webNavigationGranted?: boolean;
 }) {
   const store: Record<string, unknown> = {};
   const messageListeners: Listener[] = [];
@@ -164,16 +162,10 @@ function installProductionChrome(options: {
       })
     },
     permissions: {
-      contains: vi.fn(async (q: { origins?: string[]; permissions?: string[] }) => {
-        // The optional API permission. Nothing in the extension requests it, so
-        // in production this is false and getAllFrames is unavailable.
-        if (q.permissions) return options.webNavigationGranted === true;
-        return (q.origins ?? []).every((origin) => granted.has(origin));
-      }),
+      contains: vi.fn(async (q: { origins?: string[] }) =>
+        (q.origins ?? []).every((origin) => granted.has(origin))),
       request: vi.fn(async () => true)
     },
-    // Absent, exactly as it is when the optional permission was never granted.
-    webNavigation: undefined,
     sidePanel: { setPanelBehavior: vi.fn(async () => undefined) }
   };
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
@@ -402,14 +394,18 @@ describe("embedded ATS discovery, employer granted and ATS not", () => {
     expect(report.candidateOrigin).toBe(ATS_ORIGIN);
   });
 
-  it("does not require webNavigation to reach the permission-missing verdict", async () => {
-    const report = await inspect({
+  it("uses the incomplete scripting fallback to reach the permission-missing verdict", async () => {
+    const run = await inspectRuntime({
       granted: [EMPLOYER_ORIGIN],
       liveFrames: [...TOP_ONLY, { frameId: 1, url: ATS }],
-      observed: [observedFrame(0, ATS_ORIGIN)],
-      webNavigationGranted: false
+      observed: [observedFrame(0, ATS_ORIGIN)]
     });
-    expect(report.outcome).toBe("APPLICATION_FRAME_PERMISSION_MISSING");
+    expect(run.report.outcome).toBe("APPLICATION_FRAME_PERMISSION_MISSING");
+    expect(run.fakeChrome.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7, allFrames: true },
+      func: expect.any(Function)
+    });
+    expect(run.fakeChrome.permissions.contains.mock.calls.every(([query]) => !("permissions" in query))).toBe(true);
   });
 });
 

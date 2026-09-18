@@ -83,7 +83,6 @@ function installChrome() {
       }),
       request: vi.fn(async () => true)
     },
-    webNavigation: undefined,
     sidePanel: { setPanelBehavior: vi.fn(async () => undefined) }
   };
   (globalThis as unknown as { chrome: unknown }).chrome = chromeMock;

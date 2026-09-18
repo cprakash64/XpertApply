@@ -1381,42 +1381,15 @@ function redactedFramePath(raw: string | undefined): string | null {
 }
 
 /**
- * Enumerate this tab's frames.
- *
- * `chrome.webNavigation.getAllFrames` is the only API that reports frames the
- * extension CANNOT reach — which is precisely the case being diagnosed — so it
- * is preferred when the optional permission has been granted. It is optional
- * rather than required because it carries a "read your browsing history"
- * install warning that would otherwise be charged to every user for a
- * diagnostic path most never hit.
- *
- * The fallback derives frame ids from `chrome.scripting.executeScript`, which
- * reports one result per injectable frame. That silently omits frames we lack
- * permission for — a real limitation, and reported as one rather than papered
- * over.
+ * Enumerate injectable frames in this tab. Chrome omits frames without host
+ * permission; the result stays explicitly incomplete so a frame id is never
+ * invented from a top-document observation.
  */
 async function enumerateFrames(tabId: number): Promise<{
   frames: { frameId: number; parentFrameId: number; url?: string }[];
-  source: "web_navigation" | "scripting_probe";
+  source: "scripting_probe";
   complete: boolean;
 }> {
-  const canUseWebNavigation = await chrome.permissions
-    .contains({ permissions: ["webNavigation"] })
-    .catch(() => false);
-  if (canUseWebNavigation && chrome.webNavigation?.getAllFrames) {
-    const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
-    if (frames) {
-      return {
-        frames: frames.map((frame) => ({
-          frameId: frame.frameId,
-          parentFrameId: frame.parentFrameId,
-          url: frame.url
-        })),
-        source: "web_navigation",
-        complete: true
-      };
-    }
-  }
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
@@ -2539,9 +2512,7 @@ export function registerFrameProbe(
 /**
  * How long a frame probe may vouch for a page.
  *
- * Frame lifecycle is tracked by age rather than chrome.webNavigation: that API
- * would add a "read your browsing history" permission warning purely for a
- * bookkeeping nicety. A frame that still exists re-registers on every
+ * Frame lifecycle is tracked by age. A frame that still exists re-registers on every
  * CONTENT_READY, so a live application frame stays fresh; a frame that has
  * navigated away simply stops refreshing and expires.
  */

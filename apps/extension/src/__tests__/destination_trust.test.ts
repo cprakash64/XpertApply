@@ -77,7 +77,6 @@ function installChrome() {
         (q.origins ?? []).every((o) => o === `${EMPLOYER_ORIGIN}/*`)),
       request: vi.fn(async () => true)
     },
-    webNavigation: undefined,
     sidePanel: { setPanelBehavior: vi.fn(async () => undefined) }
   };
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;

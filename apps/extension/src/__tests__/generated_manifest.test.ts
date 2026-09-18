@@ -115,6 +115,7 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
   it("does not request browsing-history permissions", () => {
     const permissions: string[] = manifest.permissions ?? [];
     expect(permissions).not.toContain("webNavigation");
+    expect(manifest.optional_permissions ?? []).not.toContain("webNavigation");
     expect(permissions).not.toContain("history");
   });
 

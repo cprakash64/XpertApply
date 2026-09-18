@@ -104,7 +104,7 @@ describe("XA-06 · the built manifest takes no authority over employer sites", (
   it("keeps API permissions minimal and unchanged by this stage", () => {
     // `scripting` is now load-bearing (programmatic injection) and must stay.
     expect(manifest.permissions).toContain("scripting");
-    expect(manifest.optional_permissions).toContain("webNavigation");
+    expect(manifest.optional_permissions ?? []).toEqual([]);
     for (const risky of ["cookies", "webRequest", "downloads", "history", "<all_urls>"]) {
       expect(manifest.permissions ?? []).not.toContain(risky);
     }

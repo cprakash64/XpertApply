@@ -10,8 +10,7 @@
  * from `scripting.executeScript({ allFrames: true })`, which reports one result
  * per INJECTABLE frame. The ungranted ATS frame is by definition not injectable,
  * so Chrome omitted it, the worker saw only the employer's top frame, and the
- * "this frame needs permission" verdict became unreachable. The optional
- * `webNavigation` path that would have seen it is never requested.
+ * "this frame needs permission" verdict became unreachable.
  *
  * The circularity: the one API that could report the frame requiring permission
  * was itself gated on already having that permission.
