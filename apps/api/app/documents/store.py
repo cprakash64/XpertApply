@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from docx import Document
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
+from app.documents.materialized_files import generated_root, owned_path
 from app.models.entities import DocumentFormat, DocumentType, GeneratedDocument, JobPosting
 from app.services.documents import profile_payload, public_dict
 from app.services.profile_projection import scrub_credential_keys
@@ -114,23 +116,35 @@ def copy_document_for_edit(record: GeneratedDocument) -> GeneratedDocument:
 
 
 def export_document(record: GeneratedDocument, fmt: DocumentFormat) -> str:
-    out_dir = Path(os.getenv("UPLOAD_DIR", "uploads")).parent / "generated"
+    out_dir = generated_root()
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"document-{record.id}.{fmt.value}"
+    path = owned_path(record.id, fmt.value, root=out_dir)
     is_resume = record.type == DocumentType.resume
     content = (
         _normalize_resume_content(record.content or {})
         if is_resume
         else (record.content or {})
     )
+    # Render into an owned temporary entry, then atomically replace the
+    # deterministic export. Re-export never accumulates a second filename, and
+    # replacing a pre-existing symlink does not follow it outside the root.
+    fd, temporary = tempfile.mkstemp(prefix=".document-", suffix=".tmp", dir=out_dir)
+    os.close(fd)
+    temp_path = Path(temporary)
+    try:
+        if fmt == DocumentFormat.docx:
+            _render_docx(content, is_resume, temp_path)
+        elif fmt == DocumentFormat.pdf:
+            _render_pdf(content, is_resume, temp_path)
+        else:
+            temp_path.write_text(record.plain_text or "", encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     if fmt == DocumentFormat.docx:
-        _render_docx(content, is_resume, path)
         record.docx_file_path = str(path)
     elif fmt == DocumentFormat.pdf:
-        _render_pdf(content, is_resume, path)
         record.pdf_file_path = str(path)
-    else:
-        path.write_text(record.plain_text or "", encoding="utf-8")
     return str(path)
 
 

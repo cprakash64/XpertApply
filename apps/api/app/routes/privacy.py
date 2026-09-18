@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.audit import record_audit
 from app.db.session import get_db
+from app.documents.materialized_files import MaterializedFileError, remove_document_exports
 from app.documents.store import serialize_document
 from app.models.entities import (
     ApplicationTracker,
@@ -110,6 +111,23 @@ def export_user_data(user: User = Depends(get_current_user), db: Session = Depen
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    # Keep the rows available until filesystem cleanup succeeds. If a later DB
+    # commit fails, the retained document can render a missing export again.
+    # Returning success after a file failure would instead orphan user content.
+    documents = list(db.scalars(
+        select(GeneratedDocument)
+        .where(GeneratedDocument.user_id == user.id)
+        .with_for_update()
+    ))
+    try:
+        for document in documents:
+            remove_document_exports(db, document)
+    except MaterializedFileError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account deletion could not be completed. Please retry.",
+        ) from exc
     record_audit(db, user.id, "account_deleted")
     db.flush()
     db.execute(delete(User).where(User.id == user.id))
