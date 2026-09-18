@@ -4,6 +4,12 @@
   "short_name": "XpertApply",
   "version": "0.2.0",
   "description": "AI-powered job application autofill and career copilot by XpertApply. You always review and submit every application yourself.",
+  "icons": {
+    "16": "icons/xpertapply-16.png",
+    "32": "icons/xpertapply-32.png",
+    "48": "icons/xpertapply-48.png",
+    "128": "icons/xpertapply-128.png"
+  },
   "permissions": [
     "sidePanel",
     "storage",

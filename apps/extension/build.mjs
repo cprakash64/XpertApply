@@ -55,6 +55,7 @@ function sourceFingerprint() {
     }
   };
   walk("src");
+  walk("icons");
   files.push("manifest.json", "build.mjs");
 
   const hash = createHash("sha256");
@@ -131,6 +132,7 @@ await build({
   writeFileSync(`${outdir}/manifest.json`, JSON.stringify(generated, null, 2));
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
+cpSync("icons", `${outdir}/icons`, { recursive: true });
 
 // Fail the build if the manifest references a file that does not exist in dist/
 // (a renamed entry point or a typo would otherwise ship a broken extension).

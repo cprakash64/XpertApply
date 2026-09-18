@@ -11,7 +11,7 @@
  * this file draws exactly that line — legacy spellings are allowed in code, and
  * forbidden in anything a user reads.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import manifest from "../../manifest.json";
@@ -22,6 +22,13 @@ const read = (relative: string) => readFileSync(resolve(process.cwd(), relative)
 
 /** Every spelling the product has shipped under before XpertApply. */
 const RETIRED_NAMES = /EZ\s?Job\s?Find|EZJobFind|JobPilot/i;
+
+function pngDimensions(relative: string): { width: number; height: number } {
+  const bytes = readFileSync(resolve(process.cwd(), relative));
+  expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  expect(bytes.subarray(12, 16).toString("ascii")).toBe("IHDR");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
 
 describe("extension branding", () => {
   it("presents XpertApply to Chrome", () => {
@@ -47,6 +54,19 @@ describe("extension branding", () => {
     expect(manifest.short_name.length).toBeLessThanOrEqual(12);
     expect(manifest.name.length).toBeLessThanOrEqual(75);
     expect(manifest.description.length).toBeLessThanOrEqual(132);
+  });
+
+  it("declares valid Chrome Web Store icons at every required size", () => {
+    expect(manifest.icons).toEqual({
+      "16": "icons/xpertapply-16.png",
+      "32": "icons/xpertapply-32.png",
+      "48": "icons/xpertapply-48.png",
+      "128": "icons/xpertapply-128.png"
+    });
+    for (const [size, relative] of Object.entries(manifest.icons)) {
+      expect(existsSync(resolve(process.cwd(), relative)), `${relative} missing`).toBe(true);
+      expect(pngDimensions(relative)).toEqual({ width: Number(size), height: Number(size) });
+    }
   });
 
   it("titles and labels the side panel as XpertApply", () => {
