@@ -134,8 +134,8 @@ function renderSiteAccess(v: LaunchViewState): void {
   setText(
     "siteAccessText",
     v.siteAccess === "site_access_denied"
-      ? `${where} XpertApply has no access to it, so it can't fill this application. You can allow it below.`
-      : `${where} XpertApply needs access to ${site} to fill it — and to nothing else.`
+      ? `${where} Access was declined. If you choose to allow this site, XpertApply will read relevant application-page and form information to help fill this application. Relevant information may be sent to XpertApply's service for the features you request.`
+      : `${where} To help fill this application, XpertApply needs access to this site. It will read relevant application-page and form information. Relevant information may be sent to XpertApply's service for the features you request.`
   );
   setText("grantSiteAccess", `Allow XpertApply on ${site}`);
 }

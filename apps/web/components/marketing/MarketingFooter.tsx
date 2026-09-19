@@ -54,7 +54,7 @@ export function MarketingFooter() {
                 <li>
                   <span className="xa-footer__static">Careers</span>
                 </li>
-                <li><span className="xa-footer__static">Contact</span></li>
+                <li><a href="mailto:privacy@xpertapply.com" className="xa-footer__link">Privacy contact</a></li>
               </ul>
             </div>
 
