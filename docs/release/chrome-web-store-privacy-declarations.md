@@ -59,10 +59,10 @@ Location: `apps/extension/src/ui/sidepanel.ts`, site-access warning rendered bef
 
 ## Policy, contact and processors
 
-- Privacy URL: https://xpertapply.com/privacy (public page source: `apps/web/app/privacy/page.tsx`; deploy separately before Store submission).
+- Privacy URL: https://xpertapply.com/privacy (public page source: `apps/web/app/privacy/page.tsx`; production Web backport `6903b7a02b5512a666c8592f776638065c5b039b` was deployed and verified September 19, 2026).
 - Contact: privacy@xpertapply.com.
 - Current recipients: OpenAI, People Data Labs, Apollo, Hunter, Hostinger (hosting infrastructure). See [processor and flow audit](./chrome-web-store-privacy-audit.md).
 - Owner account-contract check: exact Hostinger contracting entity. Do not add an invented legal entity to public copy.
 - Provider contract follow-up: verify any desired OpenAI/other provider training, access or retention guarantees before making stronger claims. None are asserted here.
 
-**Remaining publication gate:** this branch must be reviewed and deployed to the public privacy URL, the final Dashboard choices matched to its live labels, and the operator must submit the declarations. This draft does not perform those actions.
+**Remaining publication gate:** match final Dashboard choices to its live labels, complete the Store listing and other release gates, and submit declarations under later authorization. This draft does not perform those actions.
