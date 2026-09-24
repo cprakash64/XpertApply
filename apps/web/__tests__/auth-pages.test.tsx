@@ -172,7 +172,9 @@ describe("auth pages", () => {
     expect(form).not.toBeNull();
     fireEvent.submit(form!);
     fireEvent.submit(form!);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/auth/login"))
+    ).toHaveLength(1);
     release(jsonResponse({ access_token: "login-token", token_type: "bearer" }));
     await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"));
   });

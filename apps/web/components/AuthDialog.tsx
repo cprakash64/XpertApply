@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
-import { api, ApiError } from "@/lib/api";
+import { API_URL, api, ApiError } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
+import { beginGoogleAuth } from "@/lib/googleAuth";
 
 export type AuthMode = "login" | "signup";
 
@@ -36,9 +37,20 @@ export function AuthDialog({
   const [formError, setFormError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleStarting, setGoogleStarting] = useState(false);
   const submittingRef = useRef(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch(`${API_URL}/auth/providers`)
+      .then((response) => response.clone().json() as Promise<{ google?: { enabled?: boolean } }>)
+      .then((result) => { if (active) setGoogleEnabled(result.google?.enabled === true); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (presentation !== "modal") return;
@@ -144,6 +156,19 @@ export function AuthDialog({
       </div>
 
       <form onSubmit={submit} className="px-7 pb-7 sm:px-9 sm:pb-9">
+        {googleEnabled && <>
+          <button type="button" disabled={submitting || googleStarting} onClick={() => {
+            setGoogleStarting(true);
+            const destination = safeReturnPath(new URLSearchParams(window.location.search).get("next"));
+            void beginGoogleAuth(destination).catch(() => {
+              setGoogleStarting(false);
+              setFormError("Google sign-in could not start. Please try again.");
+            });
+          }} className="focus-ring flex h-12 w-full items-center justify-center rounded-xl border border-line bg-white/70 px-5 text-sm font-semibold transition hover:bg-panel disabled:opacity-70">
+            {googleStarting ? "Opening Google…" : "Continue with Google"}
+          </button>
+          <div className="my-5 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-line" /><span className="text-xs text-[var(--text-muted)]">or</span><span className="h-px flex-1 bg-line" /></div>
+        </>}
         <label className="block text-sm font-medium" htmlFor="auth-email">Email address</label>
         <input
           ref={emailRef}

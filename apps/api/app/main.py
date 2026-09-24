@@ -17,6 +17,7 @@ from app.routes import (
     auth,
     dashboard,
     debug,
+    google_auth,
     jobs,
     people,
     privacy,
@@ -143,6 +144,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(google_auth.router)
 app.include_router(profile.router)
 app.include_router(dashboard.router)
 app.include_router(jobs.router)

@@ -846,6 +846,27 @@ def _check_debug(debug: bool) -> list[Finding]:
     return [Finding("DEBUG", "is enabled in production")] if debug else []
 
 
+def _check_google_oauth(settings) -> list[Finding]:
+    if not bool(getattr(settings, "google_oauth_enabled", False)):
+        return []
+    findings: list[Finding] = []
+    for name in ("google_oauth_client_id", "google_oauth_client_secret"):
+        if not str(getattr(settings, name, "") or "").strip():
+            findings.append(Finding(name.upper(), "is required when Google OAuth is enabled"))
+    for name in ("google_oauth_redirect_uri", "google_oauth_web_callback_url"):
+        value = str(getattr(settings, name, "") or "").strip()
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            parsed = None
+        if parsed is None or parsed.scheme != "https" or not parsed.hostname:
+            findings.append(Finding(name.upper(), "must be an absolute HTTPS URL in production"))
+    ttl = int(getattr(settings, "google_oauth_transaction_ttl_seconds", 0) or 0)
+    if ttl < 300 or ttl > 600:
+        findings.append(Finding("GOOGLE_OAUTH_TRANSACTION_TTL_SECONDS", "must be between 300 and 600"))
+    return findings
+
+
 def collect_findings(settings) -> list[Finding]:
     """Every unsafe production setting. Empty means the config is acceptable.
 
@@ -868,6 +889,7 @@ def collect_findings(settings) -> list[Finding]:
     findings += _check_people_email_configuration(settings)
     findings += _check_people_employment_verification_configuration(settings)
     findings += _check_people_discovery_configuration(settings)
+    findings += _check_google_oauth(settings)
     findings += _check_cors(
         getattr(settings, "cors_origins", None),
         allow_credentials=bool(getattr(settings, "cors_allow_credentials", True)),

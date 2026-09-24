@@ -90,6 +90,12 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./jobpilot.db"
     redis_url: str = "redis://localhost:6379/0"
+    google_oauth_enabled: bool = False
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    google_oauth_web_callback_url: str = "http://localhost:3000/auth/google/callback"
+    google_oauth_transaction_ttl_seconds: int = 600
     secret_key: str = Field(default="dev-only-change-me", min_length=12)
     jwt_expires_minutes: int = 60 * 24 * 7
     cors_origins: list[str] = ["http://localhost:3000"]
