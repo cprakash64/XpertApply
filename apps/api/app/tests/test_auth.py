@@ -49,6 +49,13 @@ def test_signup_succeeds(client: TestClient) -> None:
     body = response.json()
     assert body["access_token"]
     assert body["token_type"] == "bearer"
+    override = app.dependency_overrides[get_db]
+    db_generator = override()
+    db = next(db_generator)
+    try:
+        assert db.scalar(select(entities.User.hashed_password))
+    finally:
+        db_generator.close()
 
 
 def test_signup_rejects_invalid_email_and_short_password(client: TestClient) -> None:
@@ -129,6 +136,25 @@ def test_bad_login_returns_401(client: TestClient) -> None:
     response = client.post(
         "/auth/login",
         json={"email": "bad-login@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
+
+
+def test_provider_only_user_password_login_is_generic_401(client: TestClient) -> None:
+    override = app.dependency_overrides[get_db]
+    db_generator = override()
+    db = next(db_generator)
+    try:
+        db.add(entities.User(email="provider-only@example.com", hashed_password=None))
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "provider-only@example.com", "password": "any-password"},
     )
 
     assert response.status_code == 401

@@ -53,7 +53,11 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> TokenRespon
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     try:
         user = db.scalar(select(User).where(User.email == payload.email.lower()))
-        if user is None or not verify_password(payload.password, user.hashed_password):
+        if (
+            user is None
+            or user.hashed_password is None
+            or not verify_password(payload.password, user.hashed_password)
+        ):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         return TokenResponse(access_token=create_access_token(str(user.id)))
     except HTTPException:

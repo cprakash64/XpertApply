@@ -143,7 +143,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -151,6 +151,37 @@ class User(Base):
 
     profile: Mapped[UserProfile | None] = relationship(back_populates="user")
     demographics: Mapped[SensitiveDemographics | None] = relationship(back_populates="user")
+    external_identities: Mapped[list[ExternalIdentity]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class ExternalIdentity(Base):
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_external_identity_provider_subject"),
+        UniqueConstraint("user_id", "provider", name="uq_external_identity_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_email: Mapped[str | None] = mapped_column(String(320))
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    display_name: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="external_identities")
 
 
 class UserProfile(Base):
