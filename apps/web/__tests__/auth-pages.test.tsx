@@ -58,7 +58,7 @@ describe("auth pages", () => {
     );
   });
 
-  it("signup displays backend errors", async () => {
+  it("signup displays a safe duplicate-account form error", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "Email already registered" }, 409)
     );
@@ -67,7 +67,81 @@ describe("auth pages", () => {
     await fillCredentials();
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
-    expect(await screen.findByText("Email already registered")).toBeInTheDocument();
+    expect(
+      await screen.findByText("An account with this email already exists. Sign in or use a different email.")
+    ).toHaveAttribute("role", "alert");
+  });
+
+  it.each([
+    ["email", "Email address", "value is not a valid email address"],
+    ["password", "Password", "String should have at least 10 characters"]
+  ])("maps server validation onto the %s field", async (field, label, message) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(
+        {
+          detail: [
+            {
+              type: "value_error",
+              loc: ["body", field],
+              msg: message,
+              input: "redacted"
+            }
+          ]
+        },
+        422
+      )
+    );
+
+    render(React.createElement(SignupPage));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    const input = screen.getByLabelText(label);
+    const error = await screen.findByText(message);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAttribute("aria-describedby", error.id);
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some fields need attention before this can be saved."
+    );
+  });
+
+  it("keeps the browser password rule aligned with the backend", () => {
+    render(React.createElement(SignupPage));
+
+    expect(screen.getByLabelText("Password")).toHaveAttribute("minlength", "10");
+    expect(screen.getByText("Use at least 10 characters.")).toHaveAttribute(
+      "id",
+      "auth-password-help"
+    );
+  });
+
+  it("shows a safe retry message for an unexpected server error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream stack trace must not render", { status: 500 })
+    );
+
+    render(React.createElement(SignupPage));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(
+      await screen.findByText("XpertApply could not create your account right now. Please try again.")
+    ).toHaveAttribute("role", "alert");
+    expect(document.body).not.toHaveTextContent("upstream stack trace");
+  });
+
+  it("shows a safe connection message when the backend is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("connection refused"));
+
+    render(React.createElement(SignupPage));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(
+      await screen.findByText("We could not reach XpertApply. Check your connection and try again.")
+    ).toHaveAttribute("role", "alert");
+    expect(document.body).not.toHaveTextContent("connection refused");
   });
 
   it("login submits, stores token, and redirects to dashboard", async () => {

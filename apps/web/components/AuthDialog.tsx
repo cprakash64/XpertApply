@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 
 export type AuthMode = "login" | "signup";
@@ -33,9 +33,12 @@ export function AuthDialog({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (presentation !== "modal") return;
@@ -53,14 +56,16 @@ export function AuthDialog({
 
   function changeMode(nextMode: AuthMode) {
     setMode(nextMode);
-    setError("");
+    setFormError("");
+    setFieldErrors({});
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (submittingRef.current) return;
     submittingRef.current = true;
-    setError("");
+    setFormError("");
+    setFieldErrors({});
     setSubmitting(true);
     try {
       const result = await api<{ access_token: string }>(`/auth/${mode}`, {
@@ -74,7 +79,31 @@ export function AuthDialog({
           : safeReturnPath(new URLSearchParams(window.location.search).get("next"));
       router.replace(requestedDestination ?? "/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : mode === "login" ? "Login failed." : "Signup failed.");
+      const apiError = err instanceof ApiError ? err : null;
+      const nextFieldErrors = apiError?.fieldErrors ?? {};
+      setFieldErrors(nextFieldErrors);
+      if (mode === "signup" && apiError?.status === 409) {
+        setFormError("An account with this email already exists. Sign in or use a different email.");
+      } else if (apiError?.code === "network_unreachable") {
+        setFormError("We could not reach XpertApply. Check your connection and try again.");
+      } else if (apiError?.code === "server_error" || apiError?.code === "service_unavailable") {
+        setFormError("XpertApply could not create your account right now. Please try again.");
+      } else {
+        setFormError(
+          apiError?.formError ??
+            (Object.keys(nextFieldErrors).length > 0
+              ? "Some fields need attention before this can be saved."
+              : err instanceof Error
+                ? err.message
+                : mode === "login"
+                  ? "Login failed."
+                  : "Signup failed.")
+        );
+      }
+      window.requestAnimationFrame(() => {
+        if (nextFieldErrors.email) emailRef.current?.focus();
+        else if (nextFieldErrors.password) passwordRef.current?.focus();
+      });
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -117,6 +146,7 @@ export function AuthDialog({
       <form onSubmit={submit} className="px-7 pb-7 sm:px-9 sm:pb-9">
         <label className="block text-sm font-medium" htmlFor="auth-email">Email address</label>
         <input
+          ref={emailRef}
           id="auth-email"
           className="auth-input mt-2 h-12 w-full rounded-xl border border-line px-4 text-sm"
           type="email"
@@ -125,22 +155,38 @@ export function AuthDialog({
           autoFocus={presentation === "modal"}
           required
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          aria-invalid={fieldErrors.email ? "true" : undefined}
+          aria-describedby={fieldErrors.email ? "auth-email-error" : undefined}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            if (fieldErrors.email) setFieldErrors((current) => ({ ...current, email: "" }));
+          }}
         />
+        {fieldErrors.email && (
+          <p id="auth-email-error" className="mt-2 text-sm text-[var(--danger)]">
+            {fieldErrors.email}
+          </p>
+        )}
 
         <div className="mt-5 flex items-center justify-between">
           <label className="text-sm font-medium" htmlFor="auth-password">Password</label>
         </div>
         <div className="relative mt-2">
           <input
+            ref={passwordRef}
             id="auth-password"
             className="auth-input h-12 w-full rounded-xl border border-line px-4 pr-12 text-sm"
             type={showPassword ? "text" : "password"}
             autoComplete={isLogin ? "current-password" : "new-password"}
-            minLength={8}
+            minLength={isLogin ? undefined : 10}
             required
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            aria-invalid={fieldErrors.password ? "true" : undefined}
+            aria-describedby={fieldErrors.password ? "auth-password-error" : isLogin ? undefined : "auth-password-help"}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              if (fieldErrors.password) setFieldErrors((current) => ({ ...current, password: "" }));
+            }}
           />
           <button
             className="focus-ring absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-lg text-[var(--text-muted)] hover:bg-panel"
@@ -151,10 +197,20 @@ export function AuthDialog({
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
+        {!isLogin && !fieldErrors.password && (
+          <p id="auth-password-help" className="mt-2 text-xs text-[var(--text-muted)]">
+            Use at least 10 characters.
+          </p>
+        )}
+        {fieldErrors.password && (
+          <p id="auth-password-error" className="mt-2 text-sm text-[var(--danger)]">
+            {fieldErrors.password}
+          </p>
+        )}
 
-        {error && (
+        {formError && (
           <p className="mt-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2.5 text-sm text-[var(--danger)]" role="alert">
-            {error}
+            {formError}
           </p>
         )}
 
