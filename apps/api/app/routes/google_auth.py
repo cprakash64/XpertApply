@@ -22,6 +22,7 @@ from app.auth.google_oauth import (
     HANDOFF_PATTERN,
     Completion,
     GoogleOIDCClient,
+    GoogleTokenExchangeError,
     OAuthTransaction,
     PendingLink,
     TemporaryAuthStore,
@@ -244,6 +245,16 @@ def google_callback(
                 if result.outcome is ExternalIdentityOutcome.CREATED
                 else "google_auth_existing_user"
             )
+        _clear_cookie(response)
+        return response
+    except GoogleTokenExchangeError as exc:
+        db.rollback()
+        logger.warning(
+            "auth_event=google_auth_failure category=token_exchange_%s upstream_status=%d",
+            exc.category,
+            exc.status_code,
+        )
+        response = _web_redirect(error="GOOGLE_TOKEN_INVALID")
         _clear_cookie(response)
         return response
     except Exception as exc:

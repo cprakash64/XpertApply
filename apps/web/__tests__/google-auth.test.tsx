@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import React from "react";
+import React, { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "../app/login/page";
 import SignupPage from "../app/signup/page";
@@ -57,11 +57,12 @@ describe("Google authentication", () => {
     sessionStorage.setItem(GOOGLE_HANDOFF_VERIFIER_KEY, "v".repeat(43));
     window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ result: "authenticated", access_token: "xpert-jwt", return_to: "/profile" }));
-    render(React.createElement(GoogleCallbackPage));
+    render(<StrictMode><GoogleCallbackPage /></StrictMode>);
     await waitFor(() => expect(localStorage.getItem("jobpilot_token")).toBe("xpert-jwt"));
     expect(window.location.search).toBe("");
     expect(sessionStorage.getItem(GOOGLE_HANDOFF_VERIFIER_KEY)).toBeNull();
     expect(routerMock.replace).toHaveBeenCalledWith("/profile");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("renders link-required reauthentication and keeps wrong-password errors generic", async () => {
@@ -79,10 +80,27 @@ describe("Google authentication", () => {
 
   it("renders a safe OAuth error after removing it from browser history", async () => {
     window.history.replaceState({}, "", "/auth/google/callback?error=GOOGLE_AUTH_CANCELLED&state=secret");
-    render(React.createElement(GoogleCallbackPage));
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    render(<StrictMode><GoogleCallbackPage /></StrictMode>);
     expect(await screen.findByRole("alert")).toHaveTextContent("Google sign-in was cancelled.");
+    await Promise.resolve();
+    expect(screen.getByRole("alert")).toHaveTextContent("Google sign-in was cancelled.");
     expect(window.location.search).toBe("");
     expect(screen.queryByText(/secret/)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a genuinely missing callback completion", async () => {
+    window.history.replaceState({}, "", "/auth/google/callback");
+    render(<StrictMode><GoogleCallbackPage /></StrictMode>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Google sign-in completion is missing.");
+  });
+
+  it("distinguishes a missing verifier from a missing completion", async () => {
+    window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
+    render(<StrictMode><GoogleCallbackPage /></StrictMode>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Google sign-in session is missing.");
+    expect(window.location.search).toBe("");
   });
 
   it("links after password reauthentication and uses a safe return path", async () => {

@@ -26,6 +26,22 @@ GOOGLE_JWKS_ENDPOINT = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = {"https://accounts.google.com", "accounts.google.com"}
 GOOGLE_ALGORITHMS = ["RS256"]
 HANDOFF_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+SAFE_TOKEN_ERRORS = {
+    "invalid_client",
+    "invalid_grant",
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_grant_type",
+}
+
+
+class GoogleTokenExchangeError(Exception):
+    """Non-sensitive classification of a rejected Google token exchange."""
+
+    def __init__(self, status_code: int, category: str):
+        super().__init__(f"Google token exchange failed ({status_code}, {category})")
+        self.status_code = status_code
+        self.category = category
 
 
 def random_token() -> str:
@@ -124,7 +140,15 @@ class GoogleOIDCClient:
             },
             timeout=8.0,
         )
-        response.raise_for_status()
+        if not response.is_success:
+            category = "upstream_failure"
+            try:
+                error = response.json().get("error")
+            except (ValueError, AttributeError):
+                error = None
+            if isinstance(error, str) and error in SAFE_TOKEN_ERRORS:
+                category = error
+            raise GoogleTokenExchangeError(response.status_code, category)
         token = response.json().get("id_token")
         if not isinstance(token, str):
             raise ValueError("ID token missing")

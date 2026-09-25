@@ -70,6 +70,31 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+class QueryFreeUvicornAccessFilter(logging.Filter):
+    """Remove query strings from Uvicorn's structured access-log arguments.
+
+    Uvicorn 0.30.x emits ``(client, method, full_path, http_version, status)``.
+    Mutating the target before ``AccessFormatter`` runs preserves operational
+    metadata without ever serializing query values into a handler or sink.
+    Unknown record shapes are left untouched rather than risking logging
+    failures during an incident.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "uvicorn.access":
+            return True
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        full_path = args[2]
+        if not isinstance(full_path, str):
+            return True
+        path, separator, _query = full_path.partition("?")
+        if separator:
+            record.args = (*args[:2], path or "/", *args[3:])
+        return True
+
+
 def install(root: logging.Logger | None = None) -> None:
     """Attach the filter to the root logger's handlers (and the root itself, so
     handlers added later by uvicorn/gunicorn inherit the filtered records)."""
@@ -80,3 +105,11 @@ def install(root: logging.Logger | None = None) -> None:
     for handler in target.handlers:
         if not any(isinstance(f, RedactingFilter) for f in handler.filters):
             handler.addFilter(log_filter)
+
+    # ``uvicorn.access`` logs directly with ``propagate=False`` under the
+    # default server configuration, so root filters do not see these records.
+    # Install on the named logger before lifespan startup completes and the
+    # server begins accepting requests.
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, QueryFreeUvicornAccessFilter) for f in access_logger.filters):
+        access_logger.addFilter(QueryFreeUvicornAccessFilter())

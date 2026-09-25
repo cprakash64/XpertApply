@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { completeGoogleAuth, finishGoogleLogin } from "@/lib/googleAuth";
@@ -19,8 +19,11 @@ export default function GoogleCallbackPage() {
   const [password, setPassword] = useState("");
   const [linking, setLinking] = useState(false);
   const [returnTo, setReturnTo] = useState("/dashboard");
+  const callbackHandled = useRef(false);
 
   useEffect(() => {
+    if (callbackHandled.current) return;
+    callbackHandled.current = true;
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const oauthError = params.get("error");

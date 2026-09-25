@@ -5,6 +5,7 @@ import time
 from collections.abc import Generator
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -14,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
-from app.auth.google_oauth import GoogleOIDCClient, s256
+from app.auth.google_oauth import GoogleOIDCClient, GoogleTokenExchangeError, s256
 from app.core.config import settings
 from app.main import app
 from app.models.entities import ExternalIdentity, User, UserProfile
@@ -386,3 +387,47 @@ def test_google_id_token_refreshes_jwks_once_for_key_rotation(monkeypatch):
     monkeypatch.setattr(client, "_fetch_jwks", fetch)
     assert client.verify_id_token(_signed_token(private_key), "expected-nonce")["sub"] == "signed-subject"
     assert calls == [False, True]
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"error": "invalid_client", "error_description": "synthetic secret detail"}, "invalid_client"),
+        ({"error": "invalid_grant", "error_description": "synthetic code detail"}, "invalid_grant"),
+        ({"error": "future_google_error", "error_description": "synthetic unknown"}, "upstream_failure"),
+        (b"not-json synthetic raw body", "upstream_failure"),
+    ],
+)
+def test_token_exchange_failure_retains_only_safe_metadata(monkeypatch, caplog, body, expected):
+    request = httpx.Request("POST", "https://oauth2.googleapis.com/token")
+    if isinstance(body, bytes):
+        response = httpx.Response(502, content=body, request=request)
+    else:
+        response = httpx.Response(400, json=body, request=request)
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: response)
+    client = GoogleOIDCClient()
+    with pytest.raises(GoogleTokenExchangeError) as caught:
+        client.exchange_code("SYNTHETIC_AUTH_CODE", "SYNTHETIC_PKCE_VERIFIER")
+    assert caught.value.status_code == response.status_code
+    assert caught.value.category == expected
+    logged = caplog.text
+    for forbidden in (
+        "synthetic secret detail",
+        "synthetic code detail",
+        "synthetic unknown",
+        "not-json synthetic raw body",
+        "SYNTHETIC_AUTH_CODE",
+        "SYNTHETIC_PKCE_VERIFIER",
+    ):
+        assert forbidden not in logged
+
+
+def test_callback_logs_safe_token_exchange_category_only(google_client, caplog):
+    client, _, oidc = google_client
+    oidc.error = GoogleTokenExchangeError(401, "invalid_client")
+    _, query, _ = start(client)
+    with caplog.at_level("WARNING", logger="jobpilot.auth.google"):
+        response = callback(client, query)
+    assert response.headers["location"].endswith("error=GOOGLE_TOKEN_INVALID")
+    assert "category=token_exchange_invalid_client upstream_status=401" in caplog.text
+    assert "synthetic-code" not in caplog.text

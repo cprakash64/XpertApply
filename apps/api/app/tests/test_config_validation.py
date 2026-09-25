@@ -19,7 +19,7 @@ from app.core.config_validation import (
     enforce,
     is_production,
 )
-from app.core.log_redaction import RedactingFilter, redact
+from app.core.log_redaction import QueryFreeUvicornAccessFilter, RedactingFilter, redact
 
 STRONG_KEY = "Zq7pR2vK9wX4mB6nT1yH8jL5sD3fG0aC"
 SAFE_DB = "postgresql+psycopg://jobpilot:F9x2Qv7LmR4t@db.internal:5432/jobpilot"
@@ -391,3 +391,29 @@ def test_the_filter_redacts_lazily_formatted_log_arguments() -> None:
     )
     RedactingFilter().filter(record)
     assert "t0psecret" not in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/auth/google/callback?code=CANARY_CODE&state=CANARY_STATE",
+        "/some/path?token=CANARY_TOKEN",
+        "/some/path?password=CANARY_PASSWORD&normal=value",
+        "/encoded?value=CANARY%5FENCODED",
+        "/multiple?a=one&a=two&b=three",
+        "/long?value=" + "x" * 4096,
+    ],
+)
+def test_uvicorn_access_filter_removes_the_entire_query(target: str) -> None:
+    record = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1", "GET", target, "1.1", 200),
+        exc_info=None,
+    )
+    QueryFreeUvicornAccessFilter().filter(record)
+    assert record.args[2] == target.partition("?")[0]
+    assert "?" not in record.getMessage()
