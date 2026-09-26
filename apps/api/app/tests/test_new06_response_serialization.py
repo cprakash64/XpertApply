@@ -161,7 +161,7 @@ def provider_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 
 
 EXPORT_CATEGORIES = {
-    "user", "profile", "career", "sensitive_demographics", "matches",
+    "user", "external_identities", "profile", "career", "sensitive_demographics", "matches",
     "documents", "applications", "people_recommendations",
     "people_discovery_runs", "people_feedback",
 }
@@ -258,6 +258,35 @@ def test_privacy_export_excludes_credentials_and_storage_paths(client: TestClien
     assert "workday_password_ciphertext" not in body["profile"]
     # The profile is still genuinely present, so the assertion is not vacuous.
     assert body["profile"]["full_name"] == "Creds User"
+
+
+def test_privacy_export_includes_only_safe_external_identity_metadata(client: TestClient) -> None:
+    headers = signup(client, "linked@mailbox.test-domain.co")
+    db = db_session()
+    try:
+        user = db.scalar(select(E.User).where(E.User.email == "linked@mailbox.test-domain.co"))
+        db.add(E.ExternalIdentity(
+            user_id=user.id,
+            provider="google",
+            subject="provider-subject-must-stay-private",
+            provider_email="linked@example.com",
+            email_verified=True,
+            display_name="Linked User",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/privacy/export", headers=headers)
+
+    assert response.status_code == 200
+    identity = response.json()["external_identities"][0]
+    assert identity["provider"] == "google"
+    assert identity["provider_email"] == "linked@example.com"
+    assert identity["email_verified"] is True
+    assert identity["display_name"] == "Linked User"
+    assert "subject" not in identity
+    assert "token" not in response.text.lower()
 
 
 def test_privacy_export_requires_authentication(client: TestClient) -> None:

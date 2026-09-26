@@ -2,7 +2,7 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -49,6 +49,59 @@ def test_signup_succeeds(client: TestClient) -> None:
     body = response.json()
     assert body["access_token"]
     assert body["token_type"] == "bearer"
+    override = app.dependency_overrides[get_db]
+    db_generator = override()
+    db = next(db_generator)
+    try:
+        assert db.scalar(select(entities.User.hashed_password))
+    finally:
+        db_generator.close()
+
+
+def test_signup_rejects_invalid_email_and_short_password(client: TestClient) -> None:
+    invalid_email = client.post(
+        "/auth/signup",
+        json={"email": "not-an-email", "password": "password123"},
+    )
+    short_password = client.post(
+        "/auth/signup",
+        json={"email": "short@example.com", "password": "12345678"},
+    )
+
+    assert invalid_email.status_code == 422
+    assert invalid_email.json()["detail"][0]["loc"] == ["body", "email"]
+    assert short_password.status_code == 422
+    assert short_password.json()["detail"][0]["loc"] == ["body", "password"]
+    assert short_password.json()["detail"][0]["ctx"]["min_length"] == 10
+
+
+def test_signup_normalizes_email_and_creates_one_user_and_profile(client: TestClient) -> None:
+    response = client.post(
+        "/auth/signup",
+        json={"email": "  Person@Example.COM  ", "password": "password123"},
+    )
+    duplicate = client.post(
+        "/auth/signup",
+        json={"email": "person@example.com", "password": "password123"},
+    )
+
+    assert response.status_code == 200
+    assert duplicate.status_code == 409
+    me = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {response.json()['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == "person@example.com"
+
+    override = app.dependency_overrides[get_db]
+    db_generator = override()
+    db = next(db_generator)
+    try:
+        assert db.scalar(select(func.count()).select_from(entities.User)) == 1
+        assert db.scalar(select(func.count()).select_from(entities.UserProfile)) == 1
+    finally:
+        db_generator.close()
 
 
 def test_duplicate_signup_returns_clean_error(client: TestClient) -> None:
@@ -83,6 +136,25 @@ def test_bad_login_returns_401(client: TestClient) -> None:
     response = client.post(
         "/auth/login",
         json={"email": "bad-login@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
+
+
+def test_provider_only_user_password_login_is_generic_401(client: TestClient) -> None:
+    override = app.dependency_overrides[get_db]
+    db_generator = override()
+    db = next(db_generator)
+    try:
+        db.add(entities.User(email="provider-only@example.com", hashed_password=None))
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "provider-only@example.com", "password": "any-password"},
     )
 
     assert response.status_code == 401

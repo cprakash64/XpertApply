@@ -70,6 +70,24 @@ class RedactingFilter(logging.Filter):
         return True
 
 
+class QueryFreeUvicornAccessFilter(logging.Filter):
+    """Strip the entire query string before Uvicorn formats an access record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "uvicorn.access":
+            return True
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
+            return True
+        full_path = args[2]
+        if not isinstance(full_path, str):
+            return True
+        path, separator, _query = full_path.partition("?")
+        if separator:
+            record.args = (*args[:2], path or "/", *args[3:])
+        return True
+
+
 def install(root: logging.Logger | None = None) -> None:
     """Attach the filter to the root logger's handlers (and the root itself, so
     handlers added later by uvicorn/gunicorn inherit the filtered records)."""
@@ -80,3 +98,7 @@ def install(root: logging.Logger | None = None) -> None:
     for handler in target.handlers:
         if not any(isinstance(f, RedactingFilter) for f in handler.filters):
             handler.addFilter(log_filter)
+
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, QueryFreeUvicornAccessFilter) for f in access_logger.filters):
+        access_logger.addFilter(QueryFreeUvicornAccessFilter())

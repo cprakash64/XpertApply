@@ -13,6 +13,7 @@ from app.models.entities import (
     Certification,
     Education,
     Experience,
+    ExternalIdentity,
     GeneratedDocument,
     JobMatch,
     PeopleDiscoveryRun,
@@ -53,6 +54,19 @@ def export_user_data(user: User = Depends(get_current_user), db: Session = Depen
     )
     data = {
         "user": {"id": user.id, "email": user.email, "created_at": user.created_at},
+        "external_identities": [
+            {
+                "provider": identity.provider,
+                "provider_email": identity.provider_email,
+                "email_verified": identity.email_verified,
+                "display_name": identity.display_name,
+                "created_at": identity.created_at,
+                "updated_at": identity.updated_at,
+            }
+            for identity in db.scalars(
+                select(ExternalIdentity).where(ExternalIdentity.user_id == user.id)
+            )
+        ],
         "profile": _export_dict(profile) if profile is not None else None,
         "career": {
             "education": _rows(db, Education, user.id),

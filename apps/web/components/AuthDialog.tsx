@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { API_URL, api } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
+import { beginGoogleAuth } from "@/lib/googleAuth";
+import { mapAuthError, validatePasswordAuth } from "@/lib/authErrors";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 export type AuthMode = "login" | "signup";
 
@@ -33,8 +36,24 @@ export function AuthDialog({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleStarting, setGoogleStarting] = useState(false);
+  const submittingRef = useRef(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const formErrorRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch(`${API_URL}/auth/providers`)
+      .then((response) => response.clone().json() as Promise<{ google?: { enabled?: boolean } }>)
+      .then((result) => { if (active) setGoogleEnabled(result.google?.enabled === true); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (presentation !== "modal") return;
@@ -52,27 +71,49 @@ export function AuthDialog({
 
   function changeMode(nextMode: AuthMode) {
     setMode(nextMode);
-    setError("");
+    setFormError("");
+    setFieldErrors({});
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (submitting) return;
-    setError("");
+    if (submittingRef.current) return;
+    const validation = validatePasswordAuth(mode, email, password);
+    if (validation) {
+      setFormError("");
+      setFieldErrors(validation.fieldErrors);
+      window.requestAnimationFrame(() => {
+        if (validation.fieldErrors.email) emailRef.current?.focus();
+        else passwordRef.current?.focus();
+      });
+      return;
+    }
+    submittingRef.current = true;
+    setFormError("");
+    setFieldErrors({});
     setSubmitting(true);
     try {
       const result = await api<{ access_token: string }>(`/auth/${mode}`, {
         method: "POST",
         body: JSON.stringify({ email, password })
       });
-      storeAuthToken(result.access_token);
+      await storeAuthToken(result.access_token);
       const requestedDestination =
         typeof window === "undefined"
           ? null
           : safeReturnPath(new URLSearchParams(window.location.search).get("next"));
       router.replace(requestedDestination ?? "/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : mode === "login" ? "Login failed." : "Signup failed.");
+      const mapped = mapAuthError(mode, err);
+      const nextFieldErrors = mapped.fieldErrors;
+      setFieldErrors(nextFieldErrors);
+      setFormError(mapped.formError ?? "");
+      window.requestAnimationFrame(() => {
+        if (nextFieldErrors.email) emailRef.current?.focus();
+        else if (nextFieldErrors.password) passwordRef.current?.focus();
+        else formErrorRef.current?.focus();
+      });
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -111,9 +152,29 @@ export function AuthDialog({
         </p>
       </div>
 
-      <form onSubmit={submit} className="px-7 pb-7 sm:px-9 sm:pb-9">
+      <form onSubmit={submit} noValidate className="px-7 pb-7 sm:px-9 sm:pb-9">
+        {googleEnabled && <>
+          <GoogleAuthButton type="button" aria-label="Continue with Google" disabled={submitting || googleStarting} onClick={() => {
+            setGoogleStarting(true);
+            setFormError("");
+            const destination = safeReturnPath(new URLSearchParams(window.location.search).get("next"));
+            void beginGoogleAuth(destination).catch((cause) => {
+              setGoogleStarting(false);
+              setFormError(mapAuthError("google", cause).formError ?? "");
+            });
+          }}>
+            {googleStarting ? "Opening Google…" : "Continue with Google"}
+          </GoogleAuthButton>
+          <div className="my-5 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-line-subtle" /><span className="text-xs text-foreground-muted">or</span><span className="h-px flex-1 bg-line-subtle" /></div>
+        </>}
+        {formError && (
+          <p ref={formErrorRef} tabIndex={-1} className="mb-4 break-words rounded-field border border-status-danger-border bg-status-danger-surface px-3 py-2.5 text-sm text-status-danger" role="alert">
+            {formError}
+          </p>
+        )}
         <label className="block text-sm font-medium" htmlFor="auth-email">Email address</label>
         <input
+          ref={emailRef}
           id="auth-email"
           className="auth-input ds-field mt-2 h-12 w-full rounded-field border border-line-default px-4 text-sm text-foreground"
           type="email"
@@ -122,22 +183,38 @@ export function AuthDialog({
           autoFocus={presentation === "modal"}
           required
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          aria-invalid={fieldErrors.email ? "true" : undefined}
+          aria-describedby={fieldErrors.email ? "auth-email-error" : undefined}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            if (fieldErrors.email) setFieldErrors((current) => ({ ...current, email: "" }));
+          }}
         />
+        {fieldErrors.email && (
+          <p id="auth-email-error" className="mt-2 text-sm text-status-danger" role="alert">
+            {fieldErrors.email}
+          </p>
+        )}
 
         <div className="mt-5 flex items-center justify-between">
           <label className="text-sm font-medium" htmlFor="auth-password">Password</label>
         </div>
         <div className="relative mt-2">
           <input
+            ref={passwordRef}
             id="auth-password"
             className="auth-input ds-field h-12 w-full rounded-field border border-line-default px-4 pr-12 text-sm text-foreground"
             type={showPassword ? "text" : "password"}
             autoComplete={isLogin ? "current-password" : "new-password"}
-            minLength={8}
+            minLength={isLogin ? undefined : 10}
             required
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            aria-invalid={fieldErrors.password ? "true" : undefined}
+            aria-describedby={fieldErrors.password ? "auth-password-error" : isLogin ? undefined : "auth-password-help"}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              if (fieldErrors.password) setFieldErrors((current) => ({ ...current, password: "" }));
+            }}
           />
           <button
             className="ds-focus-ring absolute inset-y-0 right-0 grid w-12 place-items-center rounded-r-field text-foreground-muted transition duration-fast ease-standard hover:text-foreground"
@@ -148,10 +225,14 @@ export function AuthDialog({
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
-
-        {error && (
-          <p className="mt-4 rounded-field border border-status-danger-border bg-status-danger-surface px-3 py-2.5 text-sm text-status-danger" role="alert">
-            {error}
+        {!isLogin && !fieldErrors.password && (
+          <p id="auth-password-help" className="mt-2 text-xs text-foreground-muted">
+            Use at least 10 characters.
+          </p>
+        )}
+        {fieldErrors.password && (
+          <p id="auth-password-error" className="mt-2 text-sm text-status-danger" role="alert">
+            {fieldErrors.password}
           </p>
         )}
 

@@ -424,7 +424,12 @@ export async function apiResponse(path: string, options: RequestInit = {}): Prom
   // Login and signup must remain usable when a stale token happens to exist.
   // They neither need a bearer credential nor participate in session-expiry
   // redirects when the submitted credentials themselves receive a 401.
-  const publicAuthRequest = path === "/auth/login" || path === "/auth/signup";
+  const publicAuthRequest =
+    path === "/auth/login" ||
+    path === "/auth/signup" ||
+    path === "/auth/providers" ||
+    path === "/auth/google/complete" ||
+    path === "/auth/google/link";
   const token = publicAuthRequest ? null : readAuthToken();
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
