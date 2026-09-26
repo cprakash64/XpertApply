@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
-import { API_URL, api, ApiError } from "@/lib/api";
+import { API_URL, api } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 import { beginGoogleAuth } from "@/lib/googleAuth";
+import { mapAuthError, validatePasswordAuth } from "@/lib/authErrors";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 export type AuthMode = "login" | "signup";
 
@@ -42,6 +44,7 @@ export function AuthDialog({
   const submittingRef = useRef(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const formErrorRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -75,6 +78,16 @@ export function AuthDialog({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (submittingRef.current) return;
+    const validation = validatePasswordAuth(mode, email, password);
+    if (validation) {
+      setFormError("");
+      setFieldErrors(validation.fieldErrors);
+      window.requestAnimationFrame(() => {
+        if (validation.fieldErrors.email) emailRef.current?.focus();
+        else passwordRef.current?.focus();
+      });
+      return;
+    }
     submittingRef.current = true;
     setFormError("");
     setFieldErrors({});
@@ -91,30 +104,14 @@ export function AuthDialog({
           : safeReturnPath(new URLSearchParams(window.location.search).get("next"));
       router.replace(requestedDestination ?? "/dashboard");
     } catch (err) {
-      const apiError = err instanceof ApiError ? err : null;
-      const nextFieldErrors = apiError?.fieldErrors ?? {};
+      const mapped = mapAuthError(mode, err);
+      const nextFieldErrors = mapped.fieldErrors;
       setFieldErrors(nextFieldErrors);
-      if (mode === "signup" && apiError?.status === 409) {
-        setFormError("An account with this email already exists. Sign in or use a different email.");
-      } else if (apiError?.code === "network_unreachable") {
-        setFormError("We could not reach XpertApply. Check your connection and try again.");
-      } else if (apiError?.code === "server_error" || apiError?.code === "service_unavailable") {
-        setFormError("XpertApply could not create your account right now. Please try again.");
-      } else {
-        setFormError(
-          apiError?.formError ??
-            (Object.keys(nextFieldErrors).length > 0
-              ? "Some fields need attention before this can be saved."
-              : err instanceof Error
-                ? err.message
-                : mode === "login"
-                  ? "Login failed."
-                  : "Signup failed.")
-        );
-      }
+      setFormError(mapped.formError ?? "");
       window.requestAnimationFrame(() => {
         if (nextFieldErrors.email) emailRef.current?.focus();
         else if (nextFieldErrors.password) passwordRef.current?.focus();
+        else formErrorRef.current?.focus();
       });
       submittingRef.current = false;
       setSubmitting(false);
@@ -155,20 +152,26 @@ export function AuthDialog({
         </p>
       </div>
 
-      <form onSubmit={submit} className="px-7 pb-7 sm:px-9 sm:pb-9">
+      <form onSubmit={submit} noValidate className="px-7 pb-7 sm:px-9 sm:pb-9">
         {googleEnabled && <>
-          <button type="button" disabled={submitting || googleStarting} onClick={() => {
+          <GoogleAuthButton type="button" aria-label="Continue with Google" disabled={submitting || googleStarting} onClick={() => {
             setGoogleStarting(true);
+            setFormError("");
             const destination = safeReturnPath(new URLSearchParams(window.location.search).get("next"));
-            void beginGoogleAuth(destination).catch(() => {
+            void beginGoogleAuth(destination).catch((cause) => {
               setGoogleStarting(false);
-              setFormError("Google sign-in could not start. Please try again.");
+              setFormError(mapAuthError("google", cause).formError ?? "");
             });
-          }} className="focus-ring flex h-12 w-full items-center justify-center rounded-xl border border-line bg-white/70 px-5 text-sm font-semibold transition hover:bg-panel disabled:opacity-70">
+          }}>
             {googleStarting ? "Opening Google…" : "Continue with Google"}
-          </button>
+          </GoogleAuthButton>
           <div className="my-5 flex items-center gap-3" aria-hidden="true"><span className="h-px flex-1 bg-line" /><span className="text-xs text-[var(--text-muted)]">or</span><span className="h-px flex-1 bg-line" /></div>
         </>}
+        {formError && (
+          <p ref={formErrorRef} tabIndex={-1} className="mb-4 break-words rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2.5 text-sm text-[var(--danger)]" role="alert">
+            {formError}
+          </p>
+        )}
         <label className="block text-sm font-medium" htmlFor="auth-email">Email address</label>
         <input
           ref={emailRef}
@@ -188,7 +191,7 @@ export function AuthDialog({
           }}
         />
         {fieldErrors.email && (
-          <p id="auth-email-error" className="mt-2 text-sm text-[var(--danger)]">
+          <p id="auth-email-error" className="mt-2 text-sm text-[var(--danger)]" role="alert">
             {fieldErrors.email}
           </p>
         )}
@@ -228,14 +231,8 @@ export function AuthDialog({
           </p>
         )}
         {fieldErrors.password && (
-          <p id="auth-password-error" className="mt-2 text-sm text-[var(--danger)]">
+          <p id="auth-password-error" className="mt-2 text-sm text-[var(--danger)]" role="alert">
             {fieldErrors.password}
-          </p>
-        )}
-
-        {formError && (
-          <p className="mt-4 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-surface)] px-3 py-2.5 text-sm text-[var(--danger)]" role="alert">
-            {formError}
           </p>
         )}
 

@@ -30,7 +30,9 @@ describe("Google authentication", () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ google: { enabled: true } }));
       render(React.createElement(Page));
       expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
-      expect(await screen.findByRole("button", { name: "Continue with Google" })).toHaveClass("focus-ring");
+      const button = await screen.findByRole("button", { name: "Continue with Google" });
+      expect(button).toHaveClass("focus-ring");
+      expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     }
   );
 
@@ -65,7 +67,7 @@ describe("Google authentication", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("renders link-required reauthentication and keeps wrong-password errors generic", async () => {
+  it("renders the exact safe wrong-password linking error", async () => {
     sessionStorage.setItem(GOOGLE_HANDOFF_VERIFIER_KEY, "v".repeat(43));
     window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
     vi.spyOn(globalThis, "fetch")
@@ -75,7 +77,38 @@ describe("Google authentication", () => {
     const password = await screen.findByLabelText("Password");
     await userEvent.type(password, "wrong-password");
     await userEvent.click(screen.getByRole("button", { name: "Sign in and connect Google" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The password was not accepted.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Wrong password, please try again.");
+    expect(password).toHaveAttribute("aria-invalid", "true");
+    await waitFor(() => expect(password).toHaveFocus());
+  });
+
+  it("validates an empty linking password next to the field", async () => {
+    sessionStorage.setItem(GOOGLE_HANDOFF_VERIFIER_KEY, "v".repeat(43));
+    window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({ result: "link_required", link_ticket: "opaque-link", return_to: "/dashboard" }));
+    render(React.createElement(GoogleCallbackPage));
+    const password = await screen.findByLabelText("Password");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in and connect Google" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter your password.");
+    expect(password).toHaveAttribute("aria-describedby", "google-link-error");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [400, "GOOGLE_LINK_EXPIRED", "This Google connection request expired. Start Google sign-in again."],
+    [429, "GOOGLE_LINK_INVALID", "Too many attempts. Please wait and try again."],
+    [409, "GOOGLE_PROVIDER_CONFLICT", "We couldn't connect Google to this account. Please sign in again and retry."]
+  ])("maps linking failures without rendering backend details", async (status, code, message) => {
+    sessionStorage.setItem(GOOGLE_HANDOFF_VERIFIER_KEY, "v".repeat(43));
+    window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(json({ result: "link_required", link_ticket: "opaque-link", return_to: "/dashboard" }))
+      .mockResolvedValueOnce(json({ error: { code, message: "raw provider diagnostic" } }, status));
+    render(React.createElement(GoogleCallbackPage));
+    await userEvent.type(await screen.findByLabelText("Password"), "password-value");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in and connect Google" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(document.body).not.toHaveTextContent("raw provider diagnostic");
   });
 
   it("renders a safe OAuth error after removing it from browser history", async () => {
@@ -99,7 +132,20 @@ describe("Google authentication", () => {
   it("distinguishes a missing verifier from a missing completion", async () => {
     window.history.replaceState({}, "", "/auth/google/callback?code=opaque-completion");
     render(<StrictMode><GoogleCallbackPage /></StrictMode>);
-    expect(await screen.findByRole("alert")).toHaveTextContent("The Google sign-in session is missing.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your Google sign-in session expired. Please try again.");
+    expect(window.location.search).toBe("");
+  });
+
+  it.each([
+    ["GOOGLE_SESSION_EXPIRED", "Your Google sign-in session expired. Please try again."],
+    ["GOOGLE_AUTH_UNAVAILABLE", "Google sign-in is currently unavailable."],
+    ["OAUTH_TEMPORARY_FAILURE", "Google sign-in is temporarily unavailable. Please try again."],
+    ["invalid_client", "We couldn't sign you in with Google. Please try again."]
+  ])("maps callback category %s to safe copy", async (code, message) => {
+    window.history.replaceState({}, "", `/auth/google/callback?error=${code}&error_description=raw-secret-detail`);
+    render(React.createElement(GoogleCallbackPage));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(document.body).not.toHaveTextContent(/invalid_client|raw-secret-detail/);
     expect(window.location.search).toBe("");
   });
 

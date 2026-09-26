@@ -68,14 +68,15 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
-      await screen.findByText("An account with this email already exists. Sign in or use a different email.")
+      await screen.findByText("We couldn't create this account. Try signing in instead.")
     ).toHaveAttribute("role", "alert");
+    expect(document.body).not.toHaveTextContent("Email already registered");
   });
 
   it.each([
-    ["email", "Email address", "value is not a valid email address"],
-    ["password", "Password", "String should have at least 10 characters"]
-  ])("maps server validation onto the %s field", async (field, label, message) => {
+    ["email", "Email address", "value is not a valid email address", "Enter a valid email address."],
+    ["password", "Password", "String should have at least 10 characters", "Password must be at least 10 characters."]
+  ])("maps server validation safely onto the %s field", async (field, label, backendMessage, safeMessage) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(
         {
@@ -83,7 +84,7 @@ describe("auth pages", () => {
             {
               type: "value_error",
               loc: ["body", field],
-              msg: message,
+              msg: backendMessage,
               input: "redacted"
             }
           ]
@@ -97,13 +98,41 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     const input = screen.getByLabelText(label);
-    const error = await screen.findByText(message);
+    const error = await screen.findByText(safeMessage);
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAttribute("aria-describedby", error.id);
     await waitFor(() => expect(input).toHaveFocus());
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Some fields need attention before this can be saved."
-    );
+    expect(document.body).not.toHaveTextContent(backendMessage);
+  });
+
+  it.each([
+    [LoginPage, "Log in", "Enter your email address.", "Enter your password."],
+    [SignupPage, "Create account", "Enter your email address.", "Create a password."]
+  ])("shows exact empty-field guidance", async (Page, button, emailMessage, passwordMessage) => {
+    render(React.createElement(Page));
+    await userEvent.click(screen.getByRole("button", { name: button }));
+    expect(screen.getByText(emailMessage)).toHaveAttribute("role", "alert");
+    expect(screen.getByText(passwordMessage)).toHaveAttribute("role", "alert");
+    await waitFor(() => expect(screen.getByLabelText("Email address")).toHaveFocus());
+  });
+
+  it.each([[LoginPage, "Log in"], [SignupPage, "Create account"]])(
+    "shows exact malformed-email guidance",
+    async (Page, button) => {
+      render(React.createElement(Page));
+      await fillCredentials("not-an-email");
+      await userEvent.click(screen.getByRole("button", { name: button }));
+      expect(screen.getByText("Enter a valid email address.")).toHaveAttribute("role", "alert");
+      await waitFor(() => expect(screen.getByLabelText("Email address")).toHaveFocus());
+    }
+  );
+
+  it("shows the exact client-side signup minimum", async () => {
+    render(React.createElement(SignupPage));
+    await fillCredentials("person@work.test", "short");
+    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
+    expect(screen.getByText("Password must be at least 10 characters.")).toHaveAttribute("role", "alert");
+    await waitFor(() => expect(screen.getByLabelText("Password")).toHaveFocus());
   });
 
   it("keeps the browser password rule aligned with the backend", () => {
@@ -126,7 +155,7 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
-      await screen.findByText("XpertApply could not create your account right now. Please try again.")
+      await screen.findByText("We couldn't create your account. Please try again.")
     ).toHaveAttribute("role", "alert");
     expect(document.body).not.toHaveTextContent("upstream stack trace");
   });
@@ -139,7 +168,7 @@ describe("auth pages", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(
-      await screen.findByText("We could not reach XpertApply. Check your connection and try again.")
+      await screen.findByText("We couldn't create your account. Check your connection and try again.")
     ).toHaveAttribute("role", "alert");
     expect(document.body).not.toHaveTextContent("connection refused");
   });
@@ -179,16 +208,41 @@ describe("auth pages", () => {
     await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith("/dashboard"));
   });
 
-  it("login displays backend errors", async () => {
+  it.each(["unknown@work.test", "person@work.test"])(
+    "login keeps incorrect credentials enumeration-safe for %s",
+    async (email) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ detail: "Invalid credentials" }, 401)
     );
 
     render(React.createElement(LoginPage));
-    await fillCredentials();
+    await fillCredentials(email);
     await userEvent.click(screen.getByRole("button", { name: "Log in" }));
 
-    expect(await screen.findByText("Invalid credentials")).toBeInTheDocument();
+    expect(await screen.findByText("Email or password is incorrect. Please try again.")).toHaveAttribute("role", "alert");
+    expect(document.body).not.toHaveTextContent("Invalid credentials");
+    }
+  );
+
+  it("shows a safe sign-in network failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network internals"));
+    render(React.createElement(LoginPage));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: "Log in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't sign you in. Check your connection and try again.");
+    expect(document.body).not.toHaveTextContent("network internals");
+  });
+
+  it.each([
+    [LoginPage, "Log in", "Too many sign-in attempts. Please wait a few minutes and try again."],
+    [SignupPage, "Create account", "Too many attempts. Please wait a few minutes and try again."]
+  ])("shows a safe rate-limit message", async (Page, button, message) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ detail: "raw limiter detail" }, 429));
+    render(React.createElement(Page));
+    await fillCredentials();
+    await userEvent.click(screen.getByRole("button", { name: button }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(document.body).not.toHaveTextContent("raw limiter detail");
   });
 
   it("returns a successful login to a safe protected deep link", async () => {
