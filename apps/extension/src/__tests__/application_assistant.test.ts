@@ -199,7 +199,7 @@ describe("shared application assistant", () => {
     document.getElementById("complete")?.click();
     await deferred();
     expect(confirmSpy).toHaveBeenCalled();
-    expect(actions.completeSession).toHaveBeenCalledWith(7);
+    expect(actions.completeSession).toHaveBeenCalledWith(42, 7);
   });
 
   it("disposes subscriptions once and recreates without duplicate DOM actions", async () => {

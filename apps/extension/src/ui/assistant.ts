@@ -1,39 +1,114 @@
-import { MSG } from "../messages";
 import type { AssistantContext } from "../assistantWindow";
+import { lastError } from "../logger";
+import { MSG, type AutofillReason, type LaunchViewState } from "../messages";
+import { STORAGE_KEYS } from "../state";
+import {
+  createApplicationAssistant,
+  type ActionResponse,
+  type ApplicationAssistantContext
+} from "./applicationAssistant";
 
-const status = document.querySelector<HTMLElement>("#status")!;
-const detail = document.querySelector<HTMLElement>("#detail")!;
-
-function render(context: AssistantContext | null): void {
-  detail.hidden = true;
-  detail.textContent = "";
-  if (!context || context.status === "waiting") {
-    status.textContent = "Open or select a job application page to begin.";
-    return;
-  }
-  if (context.status === "missing") {
-    status.textContent = "The selected job tab is no longer available. Select a job application page to continue.";
-    return;
-  }
-  if (context.status === "unsupported") {
-    status.textContent = "Application assistance is unavailable on the current page.";
-    return;
-  }
-  status.textContent = "A job application tab is connected.";
-  const label = context.title?.trim() || "Job application page";
-  detail.textContent = label;
-  detail.hidden = false;
+interface AssistantContextResponse {
+  ok?: boolean;
+  context?: AssistantContext;
 }
 
-async function refresh(): Promise<void> {
-  const response = await chrome.runtime.sendMessage({ type: MSG.ASSISTANT_GET_CONTEXT }).catch(() => null) as
-    | { ok?: boolean; context?: AssistantContext }
-    | null;
-  render(response?.ok ? response.context ?? null : null);
+function sendWorker(message: object): Promise<ActionResponse | undefined> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const error = lastError();
+        if (error) return resolve({ ok: false, error });
+        resolve(response as ActionResponse | undefined);
+      });
+    } catch (error) {
+      resolve({ ok: false, error: String(error) });
+    }
+  });
 }
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === MSG.ASSISTANT_CONTEXT_CHANGED) void refresh();
+function getWorkerContext(): Promise<AssistantContextResponse | undefined> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: MSG.ASSISTANT_GET_CONTEXT }, (response) => {
+        if (lastError()) return resolve(undefined);
+        resolve(response as AssistantContextResponse | undefined);
+      });
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+
+const assistant = createApplicationAssistant({
+  document,
+  context: {
+    async get(): Promise<ApplicationAssistantContext> {
+      const response = await getWorkerContext();
+      const workerContext = response?.ok ? response.context : undefined;
+      const tabId = workerContext?.status === "bound" ? workerContext.state.boundJobTabId : undefined;
+      return { tabId, available: tabId != null, status: workerContext?.status ?? "waiting" };
+    },
+    subscribe(listener) {
+      const onMessage = (message: unknown, sender: chrome.runtime.MessageSender) => {
+        if (sender.id === chrome.runtime.id
+          && typeof message === "object"
+          && message !== null
+          && "type" in message
+          && message.type === MSG.ASSISTANT_CONTEXT_CHANGED) {
+          listener();
+        }
+      };
+      chrome.runtime.onMessage.addListener(onMessage);
+      return () => chrome.runtime.onMessage.removeListener(onMessage);
+    }
+  },
+  views: {
+    async get(tabId) {
+      const stored = await (chrome.storage.session ?? chrome.storage.local).get(STORAGE_KEYS.VIEW_KEY);
+      const map = (stored[STORAGE_KEYS.VIEW_KEY] as Record<string, LaunchViewState>) || {};
+      return map[String(tabId)] ?? null;
+    },
+    subscribe(listener) {
+      const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+        if (areaName !== "session" && chrome.storage.session) return;
+        const change = changes[STORAGE_KEYS.VIEW_KEY];
+        if (!change) return;
+        const prior = (change.oldValue as Record<string, LaunchViewState>) || {};
+        const next = (change.newValue as Record<string, LaunchViewState>) || {};
+        for (const id of new Set([...Object.keys(prior), ...Object.keys(next)])) {
+          listener(Number(id), next[id] ?? null);
+        }
+      };
+      chrome.storage.onChanged.addListener(onChanged);
+      return () => chrome.storage.onChanged.removeListener(onChanged);
+    }
+  },
+  actions: {
+    startAutofill: (tabId: number, reason: AutofillReason) => sendWorker({
+      type: MSG.ASSISTANT_START_AUTOFILL,
+      tabId,
+      reason
+    }),
+    clearSession: (tabId) => sendWorker({ type: MSG.ASSISTANT_CLEAR_SESSION, tabId }),
+    completeSession: (tabId, sessionId) => sendWorker({
+      type: MSG.ASSISTANT_COMPLETE_SESSION,
+      tabId,
+      sessionId
+    }),
+    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [pattern] }),
+    reportSiteAccess: (tabId, pattern, granted) => sendWorker({
+      type: MSG.ASSISTANT_SITE_ACCESS_RESULT,
+      tabId,
+      pattern,
+      granted
+    })
+  },
+  diagnostics: {
+    enabled: !chrome.runtime.getManifest().update_url,
+    surface: "assistant"
+  }
 });
 
-void refresh();
+window.addEventListener("unload", () => assistant.dispose(), { once: true });
+void assistant.refresh();

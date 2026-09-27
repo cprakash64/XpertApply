@@ -100,3 +100,49 @@ active-window discovery; reuse of the typed action/view contracts; and parity
 qualification before any toolbar cutover. E3A does not wire the assistant UI,
 change toolbar behavior, add auto-open, or alter permissions, authentication,
 submission, version, packaging, or Store state.
+
+## E3B persistent assistant integration
+
+E3B replaces the dormant assistant shell with the same product markup contract
+and `applicationAssistant` controller used by the Side Panel. The markup is
+intentionally duplicated for now because each extension page must be a
+self-contained MV3 artifact, while all rendering and workflow behavior remains
+shared TypeScript. Parity tests pin the required element IDs. The 460×800
+assistant layout supports 420–480px widths, wraps long labels, scrolls
+vertically, preserves visible focus, and keeps status and error text semantic.
+
+The assistant context adapter never queries tabs. It asks the worker through
+`ASSISTANT_GET_CONTEXT`, accepts a tab only when the response is `bound`, and
+reads the existing session-scoped `LaunchViewState` map under that exact tab
+ID. `ASSISTANT_CONTEXT_CHANGED` immediately clears local action authority,
+generation-fences any prior refresh, fetches a new worker snapshot, and then
+loads only the newly bound tab's view. Missing, closed, internal, extension,
+or absent tabs render non-actionable waiting guidance without active-tab
+fallback.
+
+Assistant UI intents use four narrow typed routes for autofill, clear,
+completion, and site-access results. On every route the worker verifies the
+exact assistant sender, reads its own `boundJobTabId`, requires equality with
+the requested tab, calls `tabs.get`, accepts only a normal HTTP(S) tab, and
+re-reads assistant state after that asynchronous validation. Completion also
+requires the tab's current view session; permission results require the exact
+current view pattern. Existing fill, permission, frame/document, session,
+generation, ledger, and submission checks remain downstream authorities.
+
+The assistant calls `permissions.request` only from the shared controller's
+direct site-access button handler and only for the pattern in the bound tab's
+view. When the prompt resolves, the worker repeats bound-tab validation and
+pattern validation, so a binding change, closure, navigation invalidation, or
+worker wake fails closed rather than redirecting work. Assistant focus and
+unrelated active tabs are never consulted.
+
+Both controller and assistant-owned runtime/storage subscriptions are disposed
+on unload. Closing the assistant still preserves the worker binding, session,
+ledger, and host grants. Side Panel toolbar fallback remains unchanged and
+fully operational.
+
+Toolbar cutover prerequisites are: final E3B checkpoint review; an explicitly
+qualified action-click policy; no regression in Side Panel fallback; deliberate
+manual browser acceptance of persistent-window focus and permission UX; and a
+separate decision on auto-open. E3B does not alter toolbar behavior or add
+auto-open.

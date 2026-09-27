@@ -4,6 +4,7 @@ import { PROTOCOL_VERSION, type AutofillReason, type LaunchViewState } from "../
 export interface ApplicationAssistantContext {
   tabId?: number;
   available: boolean;
+  status?: "bound" | "waiting" | "missing" | "unsupported";
 }
 
 export interface ActionResponse {
@@ -14,7 +15,7 @@ export interface ActionResponse {
 export interface ApplicationAssistantActions {
   startAutofill(tabId: number, reason: AutofillReason): Promise<ActionResponse | undefined>;
   clearSession(tabId: number): Promise<ActionResponse | undefined>;
-  completeSession(sessionId: number): Promise<ActionResponse | undefined>;
+  completeSession(tabId: number, sessionId: number): Promise<ActionResponse | undefined>;
   requestSiteAccess(pattern: string): Promise<boolean>;
   reportSiteAccess(tabId: number, pattern: string, granted: boolean): Promise<ActionResponse | undefined>;
 }
@@ -109,7 +110,16 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
 
   function renderUnavailable(): void {
     setText("job", "Waiting for an application…");
-    setText("stage", context.available ? "Open an application from XpertApply to begin." : "No active application tab is available.");
+    const message = context.status === "missing"
+      ? "The selected job tab is no longer available. Open or select a job application page to continue."
+      : context.status === "unsupported"
+        ? "Application assistance is unavailable on the selected page."
+        : context.status === "waiting"
+          ? "Open or select a job application page to begin."
+          : context.available
+            ? "Open an application from XpertApply to begin."
+            : "No active application tab is available.";
+    setText("stage", message);
     for (const id of ["fill", "rescan", "next", "clear", "complete", "grantSiteAccess"]) button(id).disabled = true;
   }
 
@@ -181,6 +191,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
 
   async function refresh(): Promise<void> {
     const generation = ++refreshGeneration;
+    context = { available: false, status: "waiting" };
+    view = null;
+    render();
     const nextContext = await options.context.get();
     if (disposed || generation !== refreshGeneration) return;
     context = nextContext;
@@ -193,6 +206,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const nextView = await options.views.get(id);
     if (disposed || generation !== refreshGeneration) return;
     view = nextView;
+    if (!nextView && context.status === "bound") context = { ...context, status: "unsupported" };
     render();
   }
 
@@ -229,16 +243,19 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     await refresh();
   });
   listen("complete", "click", async () => {
+    const tabId = context.tabId;
     const sessionId = view?.sessionId;
-    if (!sessionId || !confirm("Confirm you submitted this application on the employer's website?")) return;
-    const response = await options.actions.completeSession(sessionId);
+    if (!context.available || tabId == null || !sessionId
+      || !confirm("Confirm you submitted this application on the employer's website?")) return;
+    const response = await options.actions.completeSession(tabId, sessionId);
     if (response?.ok === false) showButtonError(`Couldn’t mark complete: ${response.error ?? "unknown error"}`);
   });
 
   ownedListeners.push(options.context.subscribe(() => void refresh()));
   ownedListeners.push(options.views.subscribe((tabId, nextView) => {
     if (disposed || tabId !== context.tabId) return;
-    view = nextView ?? view;
+    view = nextView;
+    if (!nextView && context.status === "bound") context = { ...context, status: "unsupported" };
     render();
   }));
 

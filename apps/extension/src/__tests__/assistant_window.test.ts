@@ -12,9 +12,11 @@ import {
   isTrustedAssistantSender,
   openOrFocusAssistant,
   readAssistantState,
+  requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake,
   validateJobTab
 } from "../assistantWindow";
+import { MSG, parseRuntimeMessage } from "../messages";
 
 type Stored = Record<string, unknown>;
 let stored: Stored;
@@ -185,18 +187,98 @@ describe("assistant window lifecycle", () => {
   });
 
   it("keeps the Side Panel entrypoint and avoids current-window tab authority", async () => {
-    const [manifest, assistantSource] = await Promise.all([
+    const [manifest, assistantSource, assistantHtml, sharedSource] = await Promise.all([
       import("../../manifest.json", { with: { type: "json" } }),
-      import("node:fs/promises").then((fs) => fs.readFile("src/ui/assistant.ts", "utf8"))
+      import("node:fs/promises").then((fs) => fs.readFile("src/ui/assistant.ts", "utf8")),
+      import("node:fs/promises").then((fs) => fs.readFile("src/ui/assistant.html", "utf8")),
+      import("node:fs/promises").then((fs) => fs.readFile("src/ui/applicationAssistant.ts", "utf8"))
     ]);
     expect(manifest.default.side_panel.default_path).toBe("sidepanel.html");
     expect(manifest.default.permissions).toContain("sidePanel");
     expect(assistantSource).not.toContain("currentWindow");
+    expect(assistantSource).not.toContain("tabs.query");
+    expect(sharedSource).not.toContain("currentWindow");
+    for (const id of ["job", "stage", "siteAccess", "fill", "clear", "complete", "diag"]) {
+      expect(assistantHtml).toContain(`id="${id}"`);
+    }
+  });
+
+  it("parses only complete typed assistant action messages", () => {
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_START_AUTOFILL, tabId: 42, reason: "manual_retry" })).not.toBeNull();
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_CLEAR_SESSION, tabId: 42 })).not.toBeNull();
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_COMPLETE_SESSION, tabId: 42, sessionId: 7 })).not.toBeNull();
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_SITE_ACCESS_RESULT, tabId: 42, pattern: "https://jobs.example/*", granted: true })).not.toBeNull();
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_START_AUTOFILL, reason: "manual_retry" })).toBeNull();
+    expect(parseRuntimeMessage({ type: MSG.ASSISTANT_COMPLETE_SESSION, tabId: 42 })).toBeNull();
   });
 
   it("can clear only a verified assistant reference", async () => {
     stored[ASSISTANT_STATE_KEY] = { assistantWindowId: 8, boundJobTabId: 5 };
     await clearAssistantWindowReference(7);
     expect((await readAssistantState()).assistantWindowId).toBe(8);
+  });
+});
+
+describe("assistant action tab authority", () => {
+  const trustedSender = { id: "abcdefghijklmnopabcdefghijklmnop", url: extensionUrl };
+
+  it("revalidates worker-owned boundJobTabId with tabs.get on every action", async () => {
+    stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+    tabs.set(42, { id: 42, url: "https://jobs.example/apply" });
+    expect((await requireAuthorizedAssistantJobTab(trustedSender, 42)).id).toBe(42);
+    expect(chrome.tabs.get).toHaveBeenCalledWith(42);
+  });
+
+  it("rejects untrusted extension pages and stale UI-supplied tab IDs", async () => {
+    stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+    tabs.set(42, { id: 42, url: "https://jobs.example/apply" });
+    await expect(requireAuthorizedAssistantJobTab({ id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel.html") }, 42))
+      .rejects.toThrow("UNTRUSTED_ASSISTANT_SENDER");
+    await expect(requireAuthorizedAssistantJobTab(trustedSender, 41))
+      .rejects.toThrow("ASSISTANT_TAB_AUTHORITY_MISMATCH");
+  });
+
+  it("clears and rejects a closed, internal, or assistant-owned bound tab", async () => {
+    for (const url of [undefined, "chrome://settings/", extensionUrl]) {
+      stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+      tabs.clear();
+      if (url) tabs.set(42, { id: 42, url });
+      await expect(requireAuthorizedAssistantJobTab(trustedSender, 42))
+        .rejects.toThrow("ASSISTANT_BOUND_TAB_UNAVAILABLE");
+      expect((await readAssistantState()).boundJobTabId).toBeUndefined();
+    }
+  });
+
+  it("fails closed when binding changes while tabs.get is in flight", async () => {
+    stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+    tabs.set(42, { id: 42, url: "https://jobs.example/apply" });
+    vi.mocked(chrome.tabs.get).mockImplementationOnce(async () => {
+      stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 77 };
+      return tabs.get(42)!;
+    });
+    await expect(requireAuthorizedAssistantJobTab(trustedSender, 42))
+      .rejects.toThrow("ASSISTANT_TAB_AUTHORITY_CHANGED");
+  });
+
+  it("does not consult focused windows or unrelated active tabs", async () => {
+    stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+    tabs.set(42, { id: 42, windowId: 1, active: false, url: "https://jobs.example/apply" });
+    tabs.set(77, { id: 77, windowId: 2, active: true, url: "https://unrelated.example/" });
+    windows = [popup(9)];
+    expect((await requireAuthorizedAssistantJobTab(trustedSender, 42)).id).toBe(42);
+    expect(chrome.windows.getAll).not.toHaveBeenCalled();
+  });
+
+  it("never substitutes an unrelated active tab when the binding is absent or invalid", async () => {
+    tabs.set(77, { id: 77, windowId: 2, active: true, url: "https://unrelated.example/" });
+    await expect(requireAuthorizedAssistantJobTab(trustedSender, 42))
+      .rejects.toThrow("ASSISTANT_TAB_AUTHORITY_MISMATCH");
+    expect(chrome.tabs.get).not.toHaveBeenCalledWith(77);
+
+    stored[ASSISTANT_STATE_KEY] = { boundJobTabId: 42 };
+    await expect(requireAuthorizedAssistantJobTab(trustedSender, 42))
+      .rejects.toThrow("ASSISTANT_BOUND_TAB_UNAVAILABLE");
+    expect(chrome.tabs.get).toHaveBeenCalledWith(42);
+    expect(chrome.tabs.get).not.toHaveBeenCalledWith(77);
   });
 });

@@ -144,8 +144,38 @@ export async function getAssistantContext(): Promise<AssistantContext> {
   const state = await readAssistantState();
   if (state.boundJobTabId == null) return { state, status: "waiting" };
   const tab = await validateJobTab(state.boundJobTabId);
-  if (!tab) return { state, status: "missing" };
+  if (!tab) {
+    await clearBoundJobTab(state.boundJobTabId);
+    return {
+      state: { ...state, boundJobTabId: undefined },
+      status: "missing"
+    };
+  }
   return { state, status: "bound", title: tab.title || undefined, url: tab.url || tab.pendingUrl };
+}
+
+/**
+ * Resolve assistant action authority from worker-owned state on every use.
+ * The second state read closes the race where a permission dialog or an async
+ * tabs.get allows the binding to change while an action is being accepted.
+ */
+export async function requireAuthorizedAssistantJobTab(
+  sender: chrome.runtime.MessageSender,
+  requestedTabId: number
+): Promise<chrome.tabs.Tab> {
+  if (!isTrustedAssistantSender(sender)) throw new Error("UNTRUSTED_ASSISTANT_SENDER");
+  const before = await readAssistantState();
+  if (before.boundJobTabId == null || before.boundJobTabId !== requestedTabId) {
+    throw new Error("ASSISTANT_TAB_AUTHORITY_MISMATCH");
+  }
+  const tab = await validateJobTab(before.boundJobTabId);
+  if (!tab) {
+    await clearBoundJobTab(before.boundJobTabId);
+    throw new Error("ASSISTANT_BOUND_TAB_UNAVAILABLE");
+  }
+  const after = await readAssistantState();
+  if (after.boundJobTabId !== requestedTabId) throw new Error("ASSISTANT_TAB_AUTHORITY_CHANGED");
+  return tab;
 }
 
 export async function restoreAssistantAfterServiceWorkerWake(): Promise<AssistantContext> {

@@ -118,6 +118,7 @@ import {
   handleBoundTabUpdated,
   isTrustedAssistantSender,
   readAssistantState,
+  requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
 
@@ -728,6 +729,44 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     case MSG.ASSISTANT_CONTEXT_CHANGED:
       sendResponse({ ok: true });
       return false;
+
+    case MSG.ASSISTANT_START_AUTOFILL:
+      void requireAuthorizedAssistantJobTab(sender, message.tabId)
+        .then(() => startAutofillForTab(message.tabId, message.reason, generation))
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.ASSISTANT_CLEAR_SESSION:
+      void requireAuthorizedAssistantJobTab(sender, message.tabId)
+        .then(() => clearSession(message.tabId, generation))
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.ASSISTANT_COMPLETE_SESSION:
+      void requireAuthorizedAssistantJobTab(sender, message.tabId)
+        .then(async () => {
+          const view = await getView(message.tabId);
+          if (view?.sessionId !== message.sessionId) throw new Error("ASSISTANT_SESSION_AUTHORITY_MISMATCH");
+          await completeActive(message.sessionId, generation);
+        })
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.ASSISTANT_SITE_ACCESS_RESULT:
+      void requireAuthorizedAssistantJobTab(sender, message.tabId)
+        .then(async () => {
+          const view = await getView(message.tabId);
+          if (!view || view.siteAccessPattern !== message.pattern) {
+            throw new Error("ASSISTANT_SITE_ACCESS_AUTHORITY_MISMATCH");
+          }
+          return applySiteAccessResult(message.tabId, message.pattern, message.granted, generation);
+        })
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
 
     case MSG.STAGE_LAUNCH:
       void rememberWebRuntime(

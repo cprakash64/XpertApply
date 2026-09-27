@@ -339,6 +339,10 @@ export const MSG = {
   REQUEST_FILL_LEASE: "JOBPILOT_REQUEST_FILL_LEASE",
   ASSISTANT_GET_CONTEXT: "XPERTAPPLY_ASSISTANT_GET_CONTEXT",
   ASSISTANT_CONTEXT_CHANGED: "XPERTAPPLY_ASSISTANT_CONTEXT_CHANGED",
+  ASSISTANT_START_AUTOFILL: "XPERTAPPLY_ASSISTANT_START_AUTOFILL",
+  ASSISTANT_CLEAR_SESSION: "XPERTAPPLY_ASSISTANT_CLEAR_SESSION",
+  ASSISTANT_COMPLETE_SESSION: "XPERTAPPLY_ASSISTANT_COMPLETE_SESSION",
+  ASSISTANT_SITE_ACCESS_RESULT: "XPERTAPPLY_ASSISTANT_SITE_ACCESS_RESULT",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -510,6 +514,10 @@ export type RuntimeMessage =
     }
   | { type: typeof MSG.ASSISTANT_GET_CONTEXT }
   | { type: typeof MSG.ASSISTANT_CONTEXT_CHANGED }
+  | { type: typeof MSG.ASSISTANT_START_AUTOFILL; tabId: number; reason: AutofillReason }
+  | { type: typeof MSG.ASSISTANT_CLEAR_SESSION; tabId: number }
+  | { type: typeof MSG.ASSISTANT_COMPLETE_SESSION; tabId: number; sessionId: number }
+  | { type: typeof MSG.ASSISTANT_SITE_ACCESS_RESULT; tabId: number; pattern: string; granted: boolean }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -538,7 +546,9 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.USER_CONFIRMED_SUBMITTED, MSG.USER_CONFIRMED_NOT_SUBMITTED, MSG.EMPLOYER_AUTH_REQUIRED,
   MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
   MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT,
-  MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED
+  MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED,
+  MSG.ASSISTANT_START_AUTOFILL, MSG.ASSISTANT_CLEAR_SESSION,
+  MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -623,6 +633,20 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.CONTENT_READY]: {},
   [MSG.ASSISTANT_GET_CONTEXT]: {},
   [MSG.ASSISTANT_CONTEXT_CHANGED]: {},
+  [MSG.ASSISTANT_START_AUTOFILL]: {
+    tabId: { kind: "integer", required: true },
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.ASSISTANT_CLEAR_SESSION]: { tabId: { kind: "integer", required: true } },
+  [MSG.ASSISTANT_COMPLETE_SESSION]: {
+    tabId: { kind: "integer", required: true },
+    sessionId: SESSION_ID
+  },
+  [MSG.ASSISTANT_SITE_ACCESS_RESULT]: {
+    tabId: { kind: "integer", required: true },
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  },
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
   [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },

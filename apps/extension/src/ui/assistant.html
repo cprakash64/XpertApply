@@ -9,25 +9,63 @@
       * { box-sizing: border-box; }
       html, body { min-width: 0; margin: 0; overflow-x: hidden; }
       body { min-height: 100vh; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: #fff; }
-      header { padding: 18px 20px; border-bottom: 1px solid var(--line); }
+      header { padding: 16px 18px; border-bottom: 1px solid var(--line); }
       h1 { margin: 0; color: var(--pine); font-size: 18px; }
-      main { padding: 20px; }
-      .card { max-width: 100%; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-      h2 { margin: 0 0 8px; font-size: 15px; }
-      p { margin: 0; overflow-wrap: anywhere; }
-      .muted { margin-top: 8px; color: var(--muted); }
-      :focus-visible { outline: 3px solid #2d7658; outline-offset: 3px; }
+      header p { margin: 5px 0 0; }
+      main { padding: 16px 18px 22px; display: grid; gap: 14px; }
+      p, span, pre { overflow-wrap: anywhere; }
+      .muted { color: var(--muted); }
+      .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; }
+      .row > :last-child { min-width: 0; text-align: right; }
+      .badge { display: inline-block; max-width: 70%; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; }
+      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .stat { min-width: 0; padding: 9px 6px; text-align: center; border: 1px solid var(--line); border-radius: 10px; }
+      .stat b { display: block; font-size: 19px; }
+      .actions { display: grid; gap: 8px; }
+      button { width: 100%; min-height: 42px; padding: 9px 11px; cursor: pointer; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; }
+      button.primary { border-color: var(--pine); background: var(--pine); color: #fff; }
+      button:disabled { cursor: not-allowed; opacity: .58; }
+      .warn { padding: 9px 11px; border: 1px solid #ead191; border-radius: 8px; background: #fff9e8; font-size: 13px; }
+      .note { padding: 9px 11px; border-radius: 8px; background: var(--panel); font-size: 13px; }
+      :focus-visible { outline: 3px solid #2d7658; outline-offset: 2px; }
       @media (max-width: 430px) { header, main { padding-left: 14px; padding-right: 14px; } }
     </style>
   </head>
   <body>
-    <header><h1>XpertApply Assistant</h1></header>
+    <header>
+      <h1>XpertApply Assistant</h1>
+      <p class="muted" id="job">Waiting for an application…</p>
+      <p class="muted" id="stage" role="status" aria-live="polite">Checking for a job application page…</p>
+    </header>
     <main>
-      <section class="card" aria-labelledby="statusHeading">
-        <h2 id="statusHeading">Application context</h2>
-        <p id="status" role="status" aria-live="polite">Checking for a job application page…</p>
-        <p id="detail" class="muted" hidden></p>
-      </section>
+      <div class="row"><span class="muted">ATS</span><span class="badge" id="ats">—</span></div>
+      <div id="siteAccess" class="warn" hidden>
+        <p id="siteAccessText">To help fill this application, XpertApply needs access to this site. It will read relevant application-page and form information. Relevant information may be sent to XpertApply's service for the features you request.</p>
+        <button class="primary" id="grantSiteAccess">Allow XpertApply on this site</button>
+      </div>
+      <div id="limited" class="warn" hidden>Limited support for this ATS. Standard fields only — complete the rest manually.</div>
+      <div class="row"><span class="muted">Fields discovered</span><span id="discovered">0</span></div>
+      <div class="stats">
+        <div class="stat"><b id="filled">0</b><span class="muted">Filled</span></div>
+        <div class="stat"><b id="skipped">0</b><span class="muted">Skipped</span></div>
+        <div class="stat"><b id="review">0</b><span class="muted">Review</span></div>
+      </div>
+      <div class="row"><span class="muted">Resume</span><span id="resume">—</span></div>
+      <div class="row"><span class="muted">Cover letter</span><span id="cover">—</span></div>
+      <div id="errors" role="alert" hidden class="warn"></div>
+      <div id="final" hidden class="warn">You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.</div>
+      <div class="actions">
+        <button class="primary" id="fill">Fill application</button>
+        <button id="rescan">Continue filling</button>
+        <button id="next">Jump to next issue</button>
+        <button id="clear">Clear XpertApply-filled fields</button>
+        <button id="complete">Mark application complete</button>
+      </div>
+      <p class="note">Your application is ready for review. Verify the information, then submit directly on the employer’s website.</p>
+      <details id="diag" hidden>
+        <summary class="muted">Diagnostics</summary>
+        <pre id="diagBody" style="white-space: pre-wrap; font-size: 11px; margin: 6px 0 0;"></pre>
+      </details>
     </main>
     <script src="assistant.js"></script>
   </body>
