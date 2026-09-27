@@ -146,3 +146,51 @@ qualified action-click policy; no regression in Side Panel fallback; deliberate
 manual browser acceptance of persistent-window focus and permission UX; and a
 separate decision on auto-open. E3B does not alter toolbar behavior or add
 auto-open.
+
+## E4O-A in-page overlay foundation
+
+The separate popup-window E4 product direction was rejected after manual UX
+testing. Its uncommitted diff was preserved outside the repository for forensic
+reference, and the branch was restored to the qualified E3B checkpoint before
+E4O-A began. The popup assistant and Side Panel remain dormant/qualified
+fallbacks; toolbar behavior, permissions, manifest, authentication, filling,
+submission, and Store metadata are unchanged.
+
+`src/content/applicationOverlay.ts` is the dormant foundation for the future
+in-page assistant. It is intentionally not imported by the production content
+entrypoint in this stage. Tests instantiate it through direct module calls, so
+there is no runtime message, page global, action listener, or other production
+test hook. The module owns one `#xpertapply-assistant-overlay-v1` host per
+document and an open ShadowRoot. Its small state contract is `ABSENT`, `OPEN`,
+`MINIMIZED`, and `HIDDEN`, exposed through idempotent ensure/show/minimize/
+restore/hide/focus/destroy operations. User-facing close destroys the host and
+listeners but does not touch authentication, workflow, ledger, permissions, or
+session state.
+
+The host is a fixed viewport layer with `pointer-events:none` and an intentional
+author-stack z-index of `2147483000`; only the 400px panel or 44px restore pill
+uses `pointer-events:auto`. The panel is top/right 16px, at most 420px wide and
+`calc(100dvh - 32px)` tall, with a 100vh fallback, a 20px radius, near-white 96%
+surface, 18px/120% backdrop treatment with a solid fallback, restrained border
+and shadow, system typography, navy/cyan accents, and narrow-viewport rules.
+Shadow CSS begins with `:host { all: initial; }` and never styles employer DOM.
+The shell has no backdrop and never changes page scrolling.
+
+The shell is a labelled `role="complementary"` aside, not a dialog. It has no
+`aria-modal`, inert state, focus trap, or global keyboard handling. Minimize,
+close, and restore are native buttons with explicit accessible names. Showing
+does not steal focus; an explicit focus operation targets the labelled heading.
+Focus indicators, forced-colors behavior, status text that is not color-only,
+and reduced-motion rules are part of the foundation.
+
+The existing `src/content/widget.ts` remains the production workflow UI for the
+qualified content script. It uses `#jobpilot-assisted-apply`, a closed
+ShadowRoot, and is created only after application workflow activation. It is
+deeply coupled to filling, review actions, application answers, diagnostics,
+and ledger/submission state, so changing it in E4O-A would exceed the shell-only
+scope. The new foundation is never activated in production and therefore
+cannot appear beside it. E4O-B must generalize the shared application
+controller for a scoped ShadowRoot, integrate it into this foundation, define
+the existing widget feature migration, preserve sender/tab/frame/document
+authority, and prove behavioral parity before any toolbar cutover or widget
+retirement.

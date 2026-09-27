@@ -36,6 +36,10 @@ const ENTRY_POINTS = new Set([
  * record. Removing an entry must either wire the module or delete it.
  */
 const KNOWN_ORPHANS: Record<string, string> = {
+  // E4O-A: deliberately dormant until E4O-B connects the generalized shared
+  // controller. Importing it from bootstrap now would activate a second UI
+  // beside the qualified production widget or add a production test hook.
+  "content/applicationOverlay.ts": "E4O-A — dormant in-page overlay foundation",
   // XA-22 (Informational): run-level frame coordination, superseded in practice
   // by the background's frame registry and the fill lease built on it.
   "frames/runCoordinator.ts": "XA-22 — orphaned run coordinator"
