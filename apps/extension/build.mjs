@@ -1,5 +1,5 @@
 // Bundles the MV3 extension into dist/ with esbuild, then copies static assets.
-// Content script + sidepanel are IIFE (self-contained); background is ESM
+// Content script + extension pages are IIFE (self-contained); background is ESM
 // (MV3 service workers support type: module).
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -108,7 +108,8 @@ await build({
   format: "iife",
   entryPoints: {
     content: "src/content/bootstrap.ts",
-    sidepanel: "src/ui/sidepanel.ts"
+    sidepanel: "src/ui/sidepanel.ts",
+    assistant: "src/ui/assistant.ts"
   },
   outdir
 });
@@ -132,6 +133,7 @@ await build({
   writeFileSync(`${outdir}/manifest.json`, JSON.stringify(generated, null, 2));
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
+cpSync("src/ui/assistant.html", `${outdir}/assistant.html`);
 cpSync("icons", `${outdir}/icons`, { recursive: true });
 
 // Fail the build if the manifest references a file that does not exist in dist/

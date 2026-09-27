@@ -111,6 +111,15 @@ import {
   activateGrantedApplicationFrame,
   type PostGrantActivationResult
 } from "./frames/postGrantActivation";
+import {
+  clearBoundJobTab,
+  getAssistantContext,
+  handleAssistantWindowRemoved,
+  handleBoundTabUpdated,
+  isTrustedAssistantSender,
+  readAssistantState,
+  restoreAssistantAfterServiceWorkerWake
+} from "./assistantWindow";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -124,6 +133,7 @@ const RUNTIME_REVIVAL_KEY = "jobpilotRuntimeRevivedV1";
 // extension runtime, so this runs once after a real extension-context reset —
 // not every time the service worker merely wakes up.
 void reviveAfterRuntimeReset();
+void restoreAssistantAfterServiceWorkerWake().catch(() => undefined);
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined);
@@ -196,10 +206,16 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const generation = captureAuthorityGeneration();
   clearFrameRegistry(tabId);
   void (async () => {
+    const assistantState = await readAssistantState().catch(() => ({ boundJobTabId: undefined }));
+    if (assistantState.boundJobTabId === tabId) await clearBoundJobTab(tabId);
     const pending = await getPending(tabId);
     if (pending) await putActive({ ...pending, targetTabId: undefined, status: "prepared", state: "package_ready" }, generation);
     await clearTab(tabId, generation);
   })();
+});
+
+chrome.windows.onRemoved?.addListener((windowId) => {
+  void handleAssistantWindowRemoved(windowId);
 });
 
 // --------------------------------------------------------------------------- //
@@ -564,6 +580,9 @@ chrome.tabs.onCreated.addListener((tab) => {
 // SPA navigation reported as complete), make sure the content script is ready.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   const generation = captureAuthorityGeneration();
+  if (changeInfo.url || changeInfo.status === "complete") {
+    void handleBoundTabUpdated(tabId);
+  }
   // URL changes include same-document SPA transitions. Keep the registration:
   // its immutable Chrome documentId still rejects a genuinely new document,
   // whose CONTENT_READY replaces this entry. The fill lease is URL-scoped and
@@ -696,6 +715,20 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   }
 
   switch (message.type) {
+    case MSG.ASSISTANT_GET_CONTEXT:
+      if (!isTrustedAssistantSender(sender)) {
+        sendResponse({ ok: false, error: "UNTRUSTED_ASSISTANT_SENDER" });
+        return false;
+      }
+      void getAssistantContext()
+        .then((context) => sendResponse({ ok: true, context }))
+        .catch(() => sendResponse({ ok: false, error: "ASSISTANT_CONTEXT_UNAVAILABLE" }));
+      return true;
+
+    case MSG.ASSISTANT_CONTEXT_CHANGED:
+      sendResponse({ ok: true });
+      return false;
+
     case MSG.STAGE_LAUNCH:
       void rememberWebRuntime(
         sender.origin ?? "",

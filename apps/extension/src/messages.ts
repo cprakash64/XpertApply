@@ -337,6 +337,8 @@ export const MSG = {
    * same-origin vendor widget, a second embedded ATS — and filling all of them
    * puts the user's profile and résumé somewhere they never applied. */
   REQUEST_FILL_LEASE: "JOBPILOT_REQUEST_FILL_LEASE",
+  ASSISTANT_GET_CONTEXT: "XPERTAPPLY_ASSISTANT_GET_CONTEXT",
+  ASSISTANT_CONTEXT_CHANGED: "XPERTAPPLY_ASSISTANT_CONTEXT_CHANGED",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -506,6 +508,8 @@ export type RuntimeMessage =
        * claim: the worker takes tab and frame from the sender. */
       rootConfident: boolean;
     }
+  | { type: typeof MSG.ASSISTANT_GET_CONTEXT }
+  | { type: typeof MSG.ASSISTANT_CONTEXT_CHANGED }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -533,7 +537,8 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED, MSG.MANUAL_CONFIRMATION_REQUIRED,
   MSG.USER_CONFIRMED_SUBMITTED, MSG.USER_CONFIRMED_NOT_SUBMITTED, MSG.EMPLOYER_AUTH_REQUIRED,
   MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
-  MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT
+  MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT,
+  MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -616,6 +621,8 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
   [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
   [MSG.CONTENT_READY]: {},
+  [MSG.ASSISTANT_GET_CONTEXT]: {},
+  [MSG.ASSISTANT_CONTEXT_CHANGED]: {},
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
   [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },

@@ -25,6 +25,7 @@ const ENTRY_POINTS = new Set([
   "background.ts",
   "content/bootstrap.ts",
   "ui/sidepanel.ts",
+  "ui/assistant.ts",
   "e2e-harness.ts"
 ]);
 
