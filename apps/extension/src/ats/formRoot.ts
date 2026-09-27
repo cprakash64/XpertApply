@@ -72,7 +72,7 @@ const EXCLUDE_TEXT_RE =
 
 function exclusionFor(el: Element): string | null {
   // XpertApply's own widget must never be treated as page content.
-  if (deepClosest(el, "#jobpilot-assisted-apply")) return "jobpilot_widget";
+  if (deepClosest(el, "#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1")) return "jobpilot_widget";
   if (deepClosest(el, EXCLUDE_ANCESTOR)) return "site_chrome";
 
   const role = (el.getAttribute("role") || "").toLowerCase();

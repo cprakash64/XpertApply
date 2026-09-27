@@ -343,6 +343,12 @@ export const MSG = {
   ASSISTANT_CLEAR_SESSION: "XPERTAPPLY_ASSISTANT_CLEAR_SESSION",
   ASSISTANT_COMPLETE_SESSION: "XPERTAPPLY_ASSISTANT_COMPLETE_SESSION",
   ASSISTANT_SITE_ACCESS_RESULT: "XPERTAPPLY_ASSISTANT_SITE_ACCESS_RESULT",
+  OVERLAY_GET_CONTEXT: "XPERTAPPLY_OVERLAY_GET_CONTEXT",
+  OVERLAY_GET_VIEW: "XPERTAPPLY_OVERLAY_GET_VIEW",
+  OVERLAY_START_AUTOFILL: "XPERTAPPLY_OVERLAY_START_AUTOFILL",
+  OVERLAY_CLEAR_SESSION: "XPERTAPPLY_OVERLAY_CLEAR_SESSION",
+  OVERLAY_COMPLETE_SESSION: "XPERTAPPLY_OVERLAY_COMPLETE_SESSION",
+  OVERLAY_SITE_ACCESS_RESULT: "XPERTAPPLY_OVERLAY_SITE_ACCESS_RESULT",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -518,6 +524,12 @@ export type RuntimeMessage =
   | { type: typeof MSG.ASSISTANT_CLEAR_SESSION; tabId: number }
   | { type: typeof MSG.ASSISTANT_COMPLETE_SESSION; tabId: number; sessionId: number }
   | { type: typeof MSG.ASSISTANT_SITE_ACCESS_RESULT; tabId: number; pattern: string; granted: boolean }
+  | { type: typeof MSG.OVERLAY_GET_CONTEXT }
+  | { type: typeof MSG.OVERLAY_GET_VIEW }
+  | { type: typeof MSG.OVERLAY_START_AUTOFILL; reason: AutofillReason }
+  | { type: typeof MSG.OVERLAY_CLEAR_SESSION }
+  | { type: typeof MSG.OVERLAY_COMPLETE_SESSION; sessionId: number }
+  | { type: typeof MSG.OVERLAY_SITE_ACCESS_RESULT; pattern: string; granted: boolean }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -548,7 +560,10 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT,
   MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED,
   MSG.ASSISTANT_START_AUTOFILL, MSG.ASSISTANT_CLEAR_SESSION,
-  MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT
+  MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT,
+  MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
+  MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
+  MSG.OVERLAY_SITE_ACCESS_RESULT
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -644,6 +659,17 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   },
   [MSG.ASSISTANT_SITE_ACCESS_RESULT]: {
     tabId: { kind: "integer", required: true },
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  },
+  [MSG.OVERLAY_GET_CONTEXT]: {},
+  [MSG.OVERLAY_GET_VIEW]: {},
+  [MSG.OVERLAY_START_AUTOFILL]: {
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.OVERLAY_CLEAR_SESSION]: {},
+  [MSG.OVERLAY_COMPLETE_SESSION]: { sessionId: SESSION_ID },
+  [MSG.OVERLAY_SITE_ACCESS_RESULT]: {
     pattern: { kind: "string", max: LIMIT.url, required: true },
     granted: { kind: "boolean", required: true }
   },

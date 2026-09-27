@@ -12,6 +12,7 @@ export interface ApplicationOverlayController {
   hide(): void;
   focus(): void;
   destroy(): void;
+  onDestroy(listener: () => void): () => void;
   getState(): ApplicationOverlayState;
 }
 
@@ -21,6 +22,7 @@ interface OverlayInstance {
 }
 
 const instances = new WeakMap<Document, OverlayInstance>();
+const dismissedDocuments = new WeakSet<Document>();
 const OVERLAY_MARKER = "xpertapply-application-overlay";
 
 export function ensureOverlay(ownerDocument: Document = document): ApplicationOverlayController {
@@ -49,6 +51,7 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
   const minimizeButton = ownedElement<HTMLButtonElement>(root, "[data-overlay-minimize]");
   const closeButton = ownedElement<HTMLButtonElement>(root, "[data-overlay-close]");
   let state: ApplicationOverlayState = "HIDDEN";
+  const destroyListeners = new Set<() => void>();
 
   const render = (): void => {
     panel.hidden = state !== "OPEN";
@@ -77,7 +80,10 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
   let destroyed = false;
   const onMinimize = (): void => minimize();
   const onRestore = (): void => restore();
-  const onClose = (): void => destroy();
+  const onClose = (): void => {
+    dismissedDocuments.add(ownerDocument);
+    destroy();
+  };
   minimizeButton.addEventListener("click", onMinimize);
   pill.addEventListener("click", onRestore);
   closeButton.addEventListener("click", onClose);
@@ -92,10 +98,17 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
     state = "ABSENT";
     disposeListeners();
     host.remove();
+    for (const listener of destroyListeners) listener();
+    destroyListeners.clear();
     if (instances.get(ownerDocument)?.controller === controller) instances.delete(ownerDocument);
   };
   const controller: ApplicationOverlayController = {
-    host, root, show, minimize, restore, hide, focus, destroy, getState: () => state
+    host, root, show, minimize, restore, hide, focus, destroy,
+    onDestroy(listener) {
+      destroyListeners.add(listener);
+      return () => { destroyListeners.delete(listener); };
+    },
+    getState: () => state
   };
 
   ownerDocument.documentElement.appendChild(host);
@@ -105,9 +118,13 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
 }
 
 export function showOverlay(ownerDocument: Document = document): ApplicationOverlayController {
+  dismissedDocuments.delete(ownerDocument);
   const overlay = ensureOverlay(ownerDocument);
   overlay.show();
   return overlay;
+}
+export function isOverlayDismissed(ownerDocument: Document = document): boolean {
+  return dismissedDocuments.has(ownerDocument);
 }
 export function minimizeOverlay(ownerDocument: Document = document): void { instances.get(ownerDocument)?.controller.minimize(); }
 export function restoreOverlay(ownerDocument: Document = document): void { instances.get(ownerDocument)?.controller.restore(); }
@@ -160,10 +177,25 @@ function overlayMarkup(): string {
       .close-icon::before, .close-icon::after { content: ""; position: absolute; left: 6px; top: 1px; width: 1.5px; height: 12px; border-radius: 2px; background: currentColor; }
       .close-icon::before { transform: rotate(45deg); }
       .close-icon::after { transform: rotate(-45deg); }
-      .body { padding: 24px 20px; overflow: auto; }
+      .body { max-height: calc(100vh - 86px); max-height: calc(100dvh - 86px); padding: 20px; overflow: auto; overflow-wrap: anywhere; }
       .status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #155d78; font-size: 12px; font-weight: 650; }
       .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #1da8c7; }
       .message { margin: 0; color: #44566a; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+      .assistant-main { display: grid; gap: 16px; }
+      .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; }
+      .row > :last-child { min-width: 0; text-align: right; }
+      .muted { color: #667687; }
+      .badge { display: inline-block; max-width: 70%; padding: 2px 8px; border-radius: 999px; background: rgba(21, 152, 189, 0.08); font-size: 12px; }
+      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .stat { min-width: 0; padding: 8px 4px; text-align: center; }
+      .stat b { display: block; font-size: 18px; color: #10243a; }
+      .actions { display: grid; gap: 8px; }
+      .actions button, #grantSiteAccess { min-height: 40px; padding: 9px 12px; border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 10px; background: rgba(255,255,255,.72); }
+      .actions .primary, #grantSiteAccess { border-color: #155d78; background: #155d78; color: #fff; }
+      button:disabled { cursor: not-allowed; opacity: .55; }
+      .warn { padding: 10px 12px; border-radius: 12px; background: #fff8e8; color: #594711; font-size: 13px; }
+      .note { margin: 0; padding: 12px; border-radius: 12px; background: rgba(16,36,58,.04); color: #526276; font-size: 13px; }
+      .workflow-extensions:empty { display: none; }
       .restore-pill {
         position: fixed; right: 16px; bottom: 16px; min-width: 126px; height: 44px;
         display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -190,13 +222,40 @@ function overlayMarkup(): string {
     <div data-overlay-root="${OVERLAY_MARKER}">
       <aside class="panel" data-overlay-panel role="complementary" aria-labelledby="xpertapply-overlay-heading" hidden>
         <header class="header">
-          <div class="identity"><h2 class="brand" id="xpertapply-overlay-heading" tabindex="-1">XpertApply</h2><p class="context">Application Assistant</p></div>
+          <div class="identity"><h2 class="brand" id="xpertapply-overlay-heading" tabindex="-1">XpertApply</h2><p class="context" id="job">Application Assistant</p></div>
           <div class="controls">
             <button class="icon-button" data-overlay-minimize type="button" aria-label="Minimize XpertApply assistant"><span class="icon minimize-icon" aria-hidden="true"></span></button>
             <button class="icon-button" data-overlay-close type="button" aria-label="Close XpertApply assistant"><span class="icon close-icon" aria-hidden="true"></span></button>
           </div>
         </header>
-        <div class="body"><p class="status" role="status"><span class="status-dot" aria-hidden="true"></span><span>Ready when you are</span></p><p class="message">XpertApply will help you complete this application while you remain in control.</p></div>
+        <div class="body">
+          <main class="assistant-main">
+            <p class="status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="stage">Ready when you are</span></p>
+            <div class="row"><span class="muted">ATS</span><span class="badge" id="ats">—</span></div>
+            <div id="siteAccess" class="warn" hidden><p id="siteAccessText"></p><button id="grantSiteAccess" type="button">Allow XpertApply on this site</button></div>
+            <div id="limited" class="warn" hidden>Limited support for this ATS. Complete unsupported fields manually.</div>
+            <div class="row"><span class="muted">Fields discovered</span><span id="discovered">0</span></div>
+            <div class="stats">
+              <div class="stat"><b id="filled">0</b><span class="muted">Filled</span></div>
+              <div class="stat"><b id="skipped">0</b><span class="muted">Skipped</span></div>
+              <div class="stat"><b id="review">0</b><span class="muted">Review</span></div>
+            </div>
+            <div class="row"><span class="muted">Resume</span><span id="resume">—</span></div>
+            <div class="row"><span class="muted">Cover letter</span><span id="cover">—</span></div>
+            <div id="errors" role="alert" hidden class="warn"></div>
+            <div id="final" hidden class="warn">You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.</div>
+            <div class="actions">
+              <button class="primary" id="fill" type="button">Fill application</button>
+              <button id="rescan" type="button">Continue filling</button>
+              <button id="next" type="button">Refresh application status</button>
+              <button id="clear" type="button">Clear XpertApply-filled fields</button>
+              <button id="complete" type="button">Mark application complete</button>
+            </div>
+            <p class="note">Review the information, then submit directly on the employer’s website.</p>
+            <details id="diag" hidden><summary class="muted">Diagnostics</summary><pre id="diagBody"></pre></details>
+            <div class="workflow-extensions" data-overlay-workflow-extensions></div>
+          </main>
+        </div>
       </aside>
       <button class="restore-pill" data-overlay-restore type="button" aria-label="Restore XpertApply assistant" hidden><span class="status-dot" aria-hidden="true"></span><span>XpertApply</span></button>
     </div>`;

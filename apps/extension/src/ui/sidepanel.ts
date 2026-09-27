@@ -51,7 +51,8 @@ function sendBackground(message: object): Promise<ActionResponse | undefined> {
 }
 
 const assistant = createApplicationAssistant({
-  document,
+  root: document,
+  confirmAction: (message) => window.confirm(message),
   context: {
     async get() {
       const tabId = await currentTabId();

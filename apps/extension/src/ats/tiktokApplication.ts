@@ -396,7 +396,7 @@ function candidateTriggers(container: HTMLElement, question: HTMLElement): HTMLE
   const nodes = Array.from(container.querySelectorAll<HTMLElement>(TRIGGER_SELECTOR));
   if (container.matches(TRIGGER_SELECTOR)) nodes.unshift(container);
   return Array.from(new Set(nodes)).filter((element) => {
-    if (!rendered(element) || element.closest("#jobpilot-assisted-apply")) return false;
+    if (!rendered(element) || element.closest("#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1")) return false;
     if (element instanceof HTMLButtonElement && element.type === "submit") return false;
     if (isTikTokLegalQuestionText(element.innerText || element.textContent || "") && element !== question) return false;
     return true;

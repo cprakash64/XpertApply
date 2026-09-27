@@ -251,7 +251,8 @@ describe("Samsara/Greenhouse field ledger (section M)", () => {
   it("M20: the widget renders in-page (no side panel required)", () => {
     mountFixture(SAMSARA_GREENHOUSE_FIXTURE);
     const widget = mountWidget();
-    expect(document.getElementById("jobpilot-assisted-apply")).toBeTruthy();
+    expect(document.getElementById("xpertapply-assistant-overlay-v1")).toBeTruthy();
+    expect(document.getElementById("jobpilot-assisted-apply")).toBeNull();
     widget.destroy();
   });
 });

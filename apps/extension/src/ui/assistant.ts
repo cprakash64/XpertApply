@@ -41,7 +41,8 @@ function getWorkerContext(): Promise<AssistantContextResponse | undefined> {
 }
 
 const assistant = createApplicationAssistant({
-  document,
+  root: document,
+  confirmAction: (message) => window.confirm(message),
   context: {
     async get(): Promise<ApplicationAssistantContext> {
       const response = await getWorkerContext();

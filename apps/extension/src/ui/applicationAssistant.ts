@@ -31,14 +31,20 @@ export interface ApplicationAssistantViewAdapter {
 }
 
 export interface ApplicationAssistantOptions {
-  document: Document;
+  root: AssistantLookupRoot;
   context: ApplicationAssistantContextAdapter;
   views: ApplicationAssistantViewAdapter;
   actions: ApplicationAssistantActions;
+  confirmAction: (message: string) => boolean | Promise<boolean>;
   diagnostics?: {
     enabled: boolean;
     surface: string;
   };
+}
+
+/** The controller needs only ID-scoped lookup, not ambient page access. */
+export interface AssistantLookupRoot {
+  getElementById(id: string): HTMLElement | null;
 }
 
 export interface ApplicationAssistantController {
@@ -90,7 +96,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   let view: LaunchViewState | null = null;
 
   const element = (id: string): HTMLElement => {
-    const found = options.document.getElementById(id);
+    const found = options.root.getElementById(id);
     if (!found) throw new Error(`Missing application assistant element: ${id}`);
     return found;
   };
@@ -246,7 +252,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const tabId = context.tabId;
     const sessionId = view?.sessionId;
     if (!context.available || tabId == null || !sessionId
-      || !confirm("Confirm you submitted this application on the employer's website?")) return;
+      || !(await options.confirmAction("Confirm you submitted this application on the employer's website?"))) return;
     const response = await options.actions.completeSession(tabId, sessionId);
     if (response?.ok === false) showButtonError(`Couldn’t mark complete: ${response.error ?? "unknown error"}`);
   });

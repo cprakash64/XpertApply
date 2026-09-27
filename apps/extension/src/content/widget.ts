@@ -6,6 +6,7 @@
 import type { LedgerCounts } from "../fields/ledger";
 import type { AuthoritativeReviewItem } from "./reviewItems";
 import { answerNotesFor, overrideFailureMessage, type OverrideRequest } from "./reviewActions";
+import { mountApplicationAssistantOverlay } from "./applicationOverlayAssistant";
 
 export type WidgetStage = "preparing" | "opening" | "detecting" | "filling" | "uploading" | "review" | "ready" | "failed";
 
@@ -216,10 +217,18 @@ export function createWidget(actions: {
   // A prior content script can leave a frozen widget behind after the
   // extension is reloaded. The newly connected instance owns the UI and
   // replaces that inert host rather than creating a duplicate panel.
+  // Legacy host cleanup only. The active UI now lives in the one canonical
+  // E4O overlay; this compatibility surface keeps the established workflow API
+  // without creating a second user-facing assistant.
   document.getElementById("jobpilot-assisted-apply")?.remove();
-  const host = document.createElement("div");
-  host.id = "jobpilot-assisted-apply";
-  const root = host.attachShadow({ mode: "closed" });
+  const mountedOverlay = mountApplicationAssistantOverlay();
+  const host = mountedOverlay.overlay.host;
+  const extensionSlot = mountedOverlay.overlay.root.querySelector<HTMLElement>("[data-overlay-workflow-extensions]")!;
+  extensionSlot.replaceChildren();
+  const legacyHost = document.createElement("div");
+  legacyHost.dataset.overlayWorkflowFacade = "";
+  extensionSlot.appendChild(legacyHost);
+  const root = legacyHost.attachShadow({ mode: "open" });
   root.innerHTML = `
     <style>
       :host{all:initial}
@@ -330,6 +339,9 @@ export function createWidget(actions: {
         .message,.title{color:CanvasText}
       }
       @media(prefers-reduced-motion:reduce){button{transition:none}}
+      .box{position:static;right:auto;bottom:auto;z-index:auto;width:auto;max-height:none;overflow:visible;border:0;border-radius:0;background:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+      .box>header,.message,.count,.counts-row,.footer,[data-a="retry"],[data-a="continue"],[data-a="next"],[data-a="clear"],[data-a="rescan"]{display:none!important}
+      .body{padding:0;overflow:visible}.actions{margin-top:12px}.more-actions{margin-top:0}
     </style>
     <section class="box" aria-labelledby="xpertapply-heading">
       <header><span class="dot" aria-hidden="true"></span><div class="heading"><h2 id="xpertapply-heading">XpertApply assisted application</h2><span class="title">Preparing</span></div><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
@@ -377,7 +389,6 @@ export function createWidget(actions: {
         <button type="button" data-a="complete">Mark application complete</button>
       </footer>
     </section>`;
-  document.documentElement.appendChild(host);
   const box = root.querySelector<HTMLElement>(".box")!;
   const reviewToggle = root.querySelector<HTMLButtonElement>(".review-toggle")!;
   const reviewPanel = root.querySelector<HTMLElement>(".review-panel")!;
@@ -1119,7 +1130,7 @@ export function createWidget(actions: {
       box.classList.toggle("interacting", active);
       host.style.pointerEvents = active ? "none" : "";
     },
-    destroy: () => host.remove()
+    destroy: () => mountedOverlay.overlay.destroy()
   };
 }
 

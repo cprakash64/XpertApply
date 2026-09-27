@@ -85,6 +85,7 @@ import { urlsMatchForHandoff } from "./url";
 import {
   authorizeFrameForSubmission,
   authorizeFrameForLaunch,
+  authorizeOverlayDocument,
   describeSender,
   originJoinsLaunchWorkflow,
   originJoinsWorkflow,
@@ -716,6 +717,57 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   }
 
   switch (message.type) {
+    case MSG.OVERLAY_GET_CONTEXT:
+      void requireAuthorizedOverlaySender(sender)
+        .then(({ tabId }) => sendResponse({ ok: true, context: { tabId, available: true, status: "bound" } }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.OVERLAY_GET_VIEW:
+      void requireAuthorizedOverlaySender(sender)
+        .then(({ tabId }) => getView(tabId))
+        .then((view) => sendResponse({ ok: true, view }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.OVERLAY_START_AUTOFILL:
+      void requireAuthorizedOverlaySender(sender)
+        .then(({ tabId }) => startAutofillForTab(tabId, message.reason, generation))
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.OVERLAY_CLEAR_SESSION:
+      void requireAuthorizedOverlaySender(sender)
+        .then(({ tabId }) => clearSession(tabId, generation))
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.OVERLAY_COMPLETE_SESSION:
+      void requireAuthorizedOverlaySender(sender)
+        .then(async ({ tabId }) => {
+          const view = await getView(tabId);
+          if (view?.sessionId !== message.sessionId) throw new Error("OVERLAY_SESSION_AUTHORITY_MISMATCH");
+          await completeActive(message.sessionId, generation);
+        })
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.OVERLAY_SITE_ACCESS_RESULT:
+      void requireAuthorizedOverlaySender(sender)
+        .then(async ({ tabId }) => {
+          const view = await getView(tabId);
+          if (!view || view.siteAccessPattern !== message.pattern) {
+            throw new Error("OVERLAY_SITE_ACCESS_AUTHORITY_MISMATCH");
+          }
+          return applySiteAccessResult(tabId, message.pattern, message.granted, generation);
+        })
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
     case MSG.ASSISTANT_GET_CONTEXT:
       if (!isTrustedAssistantSender(sender)) {
         sendResponse({ ok: false, error: "UNTRUSTED_ASSISTANT_SENDER" });
@@ -2560,6 +2612,25 @@ type RegisteredFrame = {
 const frameRegistry = new Map<string, RegisteredFrame>();
 
 const frameKey = (tabId: number, frameId: number): string => `${tabId}:${frameId}`;
+
+/**
+ * Bind overlay controls to Chrome's sender metadata and the exact live top
+ * document registered by CONTENT_READY. Message payloads never establish tab,
+ * frame, document, origin, or workflow authority.
+ */
+export async function requireAuthorizedOverlaySender(
+  sender: chrome.runtime.MessageSender
+): Promise<{ tabId: number; documentId: string }> {
+  const senderTabId = sender.tab?.id;
+  const registered = typeof senderTabId === "number" ? frameRegistry.get(frameKey(senderTabId, 0)) : undefined;
+  const structural = authorizeOverlayDocument(sender, chrome.runtime.id, registered?.documentId);
+  if (!structural.ok) throw new Error(structural.reason);
+  const pending = await getPending(structural.tabId);
+  if (!pending) throw new Error("OVERLAY_WORKFLOW_NOT_BOUND");
+  const authorized = authorizeFrameForLaunch(describeSender(sender), pending);
+  if (!authorized.ok || !authorized.isTopFrame) throw new Error(authorized.ok ? "OVERLAY_TOP_FRAME_REQUIRED" : authorized.reason);
+  return { tabId: structural.tabId, documentId: structural.documentId };
+}
 
 export function registerFrameProbe(
   tabId: number,

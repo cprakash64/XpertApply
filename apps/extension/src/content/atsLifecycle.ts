@@ -194,7 +194,7 @@ export async function waitForAtsParse(
 function isRelevantMutation(record: MutationRecord): boolean {
   const target = record.target instanceof Element ? record.target : record.target.parentElement;
   if (!target) return false;
-  if (target.closest("#jobpilot-assisted-apply")) return false;
+  if (target.closest("#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1")) return false;
   if (record.type === "attributes") {
     return ["value", "aria-expanded", "aria-busy", "aria-disabled", "disabled", "hidden", "class"]
       .includes(record.attributeName ?? "");

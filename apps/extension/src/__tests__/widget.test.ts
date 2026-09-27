@@ -6,11 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWidget, type ReviewHandlers, type ReviewItem } from "../content/widget";
+import { APPLICATION_OVERLAY_HOST_ID, getOverlayState } from "../content/applicationOverlay";
+import { reopenApplicationAssistantOverlay } from "../content/applicationOverlayAssistant";
 
-// The widget uses attachShadow({ mode: "closed" }) so ATS page scripts can't
-// reach into it — which also hides it from Element.shadowRoot in a real
-// browser (and in jsdom). Capture the root via the attachShadow call itself,
-// exactly as the browser's own devtools/testing hooks would.
+// The compatibility surface remains isolated in a nested ShadowRoot. Capture
+// that root while the canonical outer assistant stays openly inspectable.
 let capturedRoot: ShadowRoot | null = null;
 let originalAttachShadow: typeof Element.prototype.attachShadow;
 
@@ -45,9 +45,34 @@ describe("review widget", () => {
     document.documentElement.appendChild(old);
 
     const widget = mountWidget();
-    const current = document.querySelectorAll("#jobpilot-assisted-apply");
+    expect(document.querySelectorAll("#jobpilot-assisted-apply")).toHaveLength(0);
+    const current = document.querySelectorAll("#xpertapply-assistant-overlay-v1");
     expect(current).toHaveLength(1);
     expect((current[0] as HTMLElement).dataset.instance).not.toBe("stale");
+    widget.destroy();
+  });
+
+  it("keeps one canonical outer panel and passive updates do not undo close", () => {
+    const widget = mountWidget();
+    const host = document.getElementById(APPLICATION_OVERLAY_HOST_ID)!;
+    expect(document.querySelectorAll(`#${APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
+    expect(document.getElementById("jobpilot-assisted-apply")).toBeNull();
+    host.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
+    expect(getOverlayState(document)).toBe("ABSENT");
+    widget.update({ stage: "filling", message: "Passive progress" });
+    expect(document.getElementById(APPLICATION_OVERLAY_HOST_ID)).toBeNull();
+    const reopened = reopenApplicationAssistantOverlay(document);
+    expect(getOverlayState(document)).toBe("OPEN");
+    reopened.overlay.destroy();
+  });
+
+  it("keeps the canonical assistant minimized across passive workflow updates", () => {
+    const widget = mountWidget();
+    const host = document.getElementById(APPLICATION_OVERLAY_HOST_ID)!;
+    host.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
+    expect(getOverlayState(document)).toBe("MINIMIZED");
+    widget.update({ stage: "review", message: "Review changed" });
+    expect(getOverlayState(document)).toBe("MINIMIZED");
     widget.destroy();
   });
 

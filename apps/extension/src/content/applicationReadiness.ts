@@ -134,7 +134,7 @@ export interface ReadinessOptions {
 }
 
 /** XpertApply's own UI is never evidence of an employer application. */
-const WIDGET_ROOT = "#jobpilot-assisted-apply";
+const WIDGET_ROOT = "#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1";
 
 const APPLICANT_CONTROL_SELECTOR =
   'input:not([type=hidden]):not([type=submit]):not([type=button]),textarea,select,[contenteditable=true],[role=combobox],[role=listbox]';

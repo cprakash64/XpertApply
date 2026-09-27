@@ -493,7 +493,7 @@ function findRoleLessMenu(trigger: HTMLElement, exclude: ReadonlySet<HTMLElement
   const roots: HTMLElement[] = [];
   for (const child of Array.from(doc.body?.children ?? [])) {
     if (!(child instanceof HTMLElement)) continue;
-    if (child.contains(trigger) || child.id === "jobpilot-assisted-apply") continue;
+    if (child.contains(trigger) || child.id === "jobpilot-assisted-apply" || child.id === "xpertapply-assistant-overlay-v1") continue;
     roots.push(child);
   }
   const row = trigger.closest<HTMLElement>("[data-jobpilot-control],fieldset,[role='group'],li,div");

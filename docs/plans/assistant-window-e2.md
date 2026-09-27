@@ -194,3 +194,45 @@ controller for a scoped ShadowRoot, integrate it into this foundation, define
 the existing widget feature migration, preserve sender/tab/frame/document
 authority, and prove behavioral parity before any toolbar cutover or widget
 retirement.
+
+## E4O-B canonical in-page assistant integration
+
+E4O-B makes `#xpertapply-assistant-overlay-v1` the single production assistant
+surface after the existing, qualified content workflow activates. The shell
+retains its open ShadowRoot and now mounts the shared application-assistant
+controller against that root. Controller DOM lookup is explicitly scoped to a
+`Document` or `ShadowRoot`, and confirmation is supplied by the host adapter so
+popup, Side Panel, and in-page behavior remain testable and independent.
+
+The former `#jobpilot-assisted-apply` outer host is retired. Its workflow-only
+review, teaching, transaction, and submission-confirmation renderers remain as
+a temporary compatibility surface nested inside the canonical panel; duplicate
+status, count, and standard-action chrome is hidden. This preserves the mature
+workflow features while enforcing one visible outer panel and one canonical
+application status/action owner. The compatibility surface can be removed in a
+later stage after those specialized renderers move into shared components.
+
+Overlay worker commands contain no caller-selected tab id. The service worker
+derives tab, top-frame, URL, and document identity exclusively from
+`MessageSender`, requires the exact top-document `documentId` registered by the
+current frame probe, and then reuses the active workflow URL authorization.
+Navigation therefore invalidates the old document immediately; the replacement
+document becomes authoritative only after normal registration. Session and
+permission actions additionally require equality with the current worker view.
+
+User close is a UI dismissal only: it destroys the host and subscriptions but
+does not clear binding, session, ledger, grants, or submission state. Passive
+workflow updates target the detached compatibility surface and never recreate
+the overlay. Minimize likewise survives passive updates. The reserved explicit
+reopen adapter is the only future toolbar path allowed to recreate a dismissed
+assistant. This stage deliberately leaves toolbar behavior, popup and Side
+Panel fallback, manifest permissions, authentication, autofill, and submission
+authority unchanged.
+
+Validation covers scoped ShadowRoot lookup, injected confirmation, canonical
+host uniqueness, legacy-host absence, close/minimize persistence, structural
+sender rejection, stale-document denial and navigation re-registration, module
+reachability, TypeScript, the extension suite, production build, manifest
+inspection, and repository release checks. Rollback is a code revert to the
+E4O-A dormant shell plus the former widget host; no migration, stored state, or
+permission rollback is required.

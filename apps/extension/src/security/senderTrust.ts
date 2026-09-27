@@ -115,6 +115,53 @@ export interface SenderContext {
   tabUrl: string | null;
 }
 
+export type OverlaySenderDenial =
+  | "UNTRUSTED_EXTENSION_SENDER"
+  | "OVERLAY_SENDER_TAB_MISSING"
+  | "OVERLAY_SENDER_FRAME_INVALID"
+  | "OVERLAY_DOCUMENT_ID_MISSING"
+  | "OVERLAY_SENDER_URL_INVALID"
+  | "OVERLAY_DOCUMENT_STALE";
+
+export type OverlaySenderAuthority =
+  | { ok: true; tabId: number; documentId: string; url: URL }
+  | { ok: false; reason: OverlaySenderDenial };
+
+/** Structural content-script identity for user-facing overlay controls. */
+export function describeOverlaySender(
+  sender: chrome.runtime.MessageSender,
+  extensionId: string
+): OverlaySenderAuthority {
+  if (sender.id !== extensionId) return { ok: false, reason: "UNTRUSTED_EXTENSION_SENDER" };
+  const tabId = sender.tab?.id;
+  if (!Number.isInteger(tabId) || tabId == null || tabId < 0) {
+    return { ok: false, reason: "OVERLAY_SENDER_TAB_MISSING" };
+  }
+  if (sender.frameId !== 0) return { ok: false, reason: "OVERLAY_SENDER_FRAME_INVALID" };
+  const documentId = sender.documentId;
+  if (typeof documentId !== "string" || documentId.length === 0) {
+    return { ok: false, reason: "OVERLAY_DOCUMENT_ID_MISSING" };
+  }
+  const url = parseHttpUrl(sender.url);
+  if (!url) return { ok: false, reason: "OVERLAY_SENDER_URL_INVALID" };
+  return { ok: true, tabId, documentId, url };
+}
+
+/** Bind an overlay action to the exact top-level document that registered for
+ * the active workflow. Same-tab navigation gets a new documentId and remains
+ * denied until that document completes normal frame registration. */
+export function authorizeOverlayDocument(
+  sender: chrome.runtime.MessageSender,
+  extensionId: string,
+  registeredDocumentId: string | null | undefined
+): OverlaySenderAuthority {
+  const authority = describeOverlaySender(sender, extensionId);
+  if (!authority.ok) return authority;
+  return authority.documentId === registeredDocumentId
+    ? authority
+    : { ok: false, reason: "OVERLAY_DOCUMENT_STALE" };
+}
+
 function parseHttpUrl(value: string | undefined | null): URL | null {
   if (!value) return null;
   try {

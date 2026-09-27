@@ -83,7 +83,8 @@ describe("shared application assistant", () => {
       reportSiteAccess: vi.fn().mockResolvedValue({ ok: true })
     };
     createController = () => createApplicationAssistant({
-        document,
+        root: document,
+        confirmAction: (message) => window.confirm(message),
         context: {
           get: vi.fn(async () => context),
           subscribe(listener) { contextListener = listener; return removeContext; }
@@ -216,5 +217,51 @@ describe("shared application assistant", () => {
     await deferred();
     expect(actions.startAutofill).toHaveBeenCalledTimes(1);
     replacement.dispose();
+  });
+
+  it("scopes every lookup to the supplied ShadowRoot", async () => {
+    document.body.innerHTML = '<div id="job">employer decoy</div><div id="errors">employer error</div>';
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = [
+      ...ids.map((id) => `<div id="${id}" hidden></div>`),
+      ...buttons.map((id) => `<button id="${id}">${id}</button>`)
+    ].join("");
+    const isolated = createApplicationAssistant({
+      root,
+      confirmAction: vi.fn(async () => true),
+      context: { get: async () => context, subscribe: () => () => undefined },
+      views: { get: async () => view, subscribe: () => () => undefined },
+      actions,
+      diagnostics: { enabled: false, surface: "sidePanel" }
+    });
+    await isolated.refresh();
+    expect(root.getElementById("job")?.textContent).toBe("Engineer · Example Co");
+    expect(document.getElementById("job")?.textContent).toBe("employer decoy");
+    isolated.dispose();
+  });
+
+  it("uses the injected confirmation adapter and cancels safely", async () => {
+    const confirmAction = vi.fn(async () => false);
+    controller.dispose();
+    controller = createApplicationAssistant({
+      root: document,
+      confirmAction,
+      context: { get: async () => context, subscribe: () => () => undefined },
+      views: { get: async () => view, subscribe: () => () => undefined },
+      actions,
+      diagnostics: { enabled: false, surface: "sidePanel" }
+    });
+    await controller.refresh();
+    document.getElementById("complete")?.click();
+    await deferred();
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(actions.completeSession).not.toHaveBeenCalled();
+  });
+
+  it("fails deterministically when a required scoped control is missing", () => {
+    document.getElementById("fill")?.remove();
+    expect(() => createController()).toThrow("Missing application assistant element: fill");
   });
 });
