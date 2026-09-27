@@ -14,150 +14,16 @@
 import { lastError } from "../logger";
 import { BUILD_INFO } from "../buildInfo";
 import { getApiBase } from "../config";
-import { MSG, PROTOCOL_VERSION, type LaunchViewState } from "../messages";
+import { MSG, type LaunchViewState } from "../messages";
 import { classifyEnvironment, safeApiBase, SIDE_PANEL_RUNTIME_KEY } from "../runtimeIdentity";
 import { STORAGE_KEYS } from "../state";
-
-const el = (id: string) => document.getElementById(id) as HTMLElement;
-const setText = (id: string, text: string) => {
-  el(id).textContent = text;
-};
-
-let tabId: number | undefined;
-let view: LaunchViewState | null = null;
-
-const STAGE_LABEL: Record<string, string> = {
-  idle: "Idle",
-  preparing: "Preparing…",
-  package_ready: "Ready",
-  opening_tab: "Opening application…",
-  waiting_for_tab: "Opening application…",
-  waiting_for_content_script: "Loading the application form…",
-  fetching_package: "Loading your prepared application…",
-  detecting_ats: "Detecting application…",
-  discovering_fields: "Reading the form…",
-  filling: "Filling your application…",
-  completed: "Filled — review and submit",
-  completed_with_review: "Filled — some items need your review",
-  failed: "Something needs your attention"
-};
-
-const FAILURE_LABEL: Record<string, string> = {
-  CONTENT_SCRIPT_NOT_INJECTED: "Couldn’t reach the application page. Reload it and click “Fill application”.",
-  FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION: "Site access is granted, but Chrome hasn’t confirmed the embedded application yet. Click “Fill application” to retry.",
-  SESSION_PACKAGE_FAILED: "Your prepared application couldn’t be loaded. Reopen from XpertApply.",
-  SESSION_UNAUTHORIZED: "Your session is no longer valid. Reopen the application from XpertApply.",
-  SESSION_NOT_FOUND: "This application session no longer exists. Reopen from XpertApply.",
-  TOKEN_CONSUMED: "This launch was already used. Reopen the application from XpertApply.",
-  HANDOFF_EXPIRED: "This launch expired. Reopen the application from XpertApply.",
-  HANDOFF_SCHEMA_OUTDATED: "The extension was updated. Reload this page to continue.",
-  ADAPTER_NOT_DETECTED: "This application form isn’t supported yet. Fill it manually.",
-  WRONG_ORIGIN: "The opened page didn’t match the expected employer. Nothing was filled.",
-  WRONG_TAB: "This panel is bound to a different tab.",
-  DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
-  HOST_PERMISSION_MISSING: "XpertApply needs permission to access this site. Check the extension's site access settings.",
-  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from XpertApply.",
-  HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
-  FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
-  NO_FIELDS_DISCOVERED: "No fillable fields were found on this page."
-};
+import { createApplicationAssistant, type ActionResponse } from "./applicationAssistant";
 
 async function currentTabId(): Promise<number | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.id;
 }
 
-function render(): void {
-  const v = view;
-  if (!v) {
-    setText("job", "Waiting for an application…");
-    setText("stage", "Open an application from XpertApply to begin.");
-    return;
-  }
-  setText("job", v.jobTitle ? `${v.jobTitle}${v.company ? " · " + v.company : ""}` : "Application detected");
-  setText("stage", STAGE_LABEL[v.state] ?? v.state);
-  setText("ats", v.atsDisplayName ? (v.limited ? `${v.atsDisplayName} (limited)` : v.atsDisplayName) : "Detecting…");
-  setText("discovered", String(v.fieldsDiscovered));
-  setText("filled", String(v.filled));
-  setText("skipped", String(v.skipped));
-  setText("review", String(v.reviewRequired));
-  el("limited").hidden = !v.limited;
-  el("final").hidden = !v.reachedFinalStep;
-  setText("resume", docLabel(v.resumeStatus));
-  setText("cover", docLabel(v.coverStatus));
-
-  const errBox = el("errors");
-  if (v.failureCode) {
-    errBox.hidden = false;
-    errBox.textContent = FAILURE_LABEL[v.failureCode] ?? v.failureMessage ?? `Issue: ${v.failureCode}`;
-  } else {
-    errBox.hidden = true;
-  }
-
-  // A terminal failure (expired/consumed/mismatched handoff) can't be fixed
-  // by retrying — the user has to reopen the application from XpertApply.
-  const terminal = v.failureCode != null && v.failureRecoverable === false;
-  (el("fill") as HTMLButtonElement).disabled = v.running || terminal;
-  setText("fill", v.running ? "Filling…" : terminal ? "Reopen from XpertApply" : "Fill application");
-  renderSiteAccess(v);
-
-  renderDiagnostics(v);
-}
-
-function docLabel(status: string): string {
-  switch (status) {
-    case "uploaded": return "Uploaded ✓";
-    case "review": return "Attach manually";
-    case "pending": return "Preparing…";
-    case "unavailable": return "Unavailable";
-    default: return "—";
-  }
-}
-
-/**
- * Chrome host access, asked for here and nowhere else.
- *
- * `chrome.permissions.request()` requires a user gesture and cannot run in a
- * service worker, so the worker decides WHICH origin a workflow needs and the
- * panel — an extension page with real clicks — is the only place that can ask
- * for it. The button below is that gesture.
- */
-function renderSiteAccess(v: LaunchViewState): void {
-  const block = el("siteAccess");
-  const needed = v.siteAccess === "site_access_required" || v.siteAccess === "site_access_denied";
-  block.hidden = !needed;
-  if (!needed) return;
-  const site = v.siteAccessOrigin ?? "this site";
-  const where = v.siteAccessScope === "frame"
-    ? `The application is embedded from ${site}.`
-    : `The application is on ${site}.`;
-  setText(
-    "siteAccessText",
-    v.siteAccess === "site_access_denied"
-      ? `${where} Access was declined. If you choose to allow this site, XpertApply will read relevant application-page and form information to help fill this application. Relevant information may be sent to XpertApply's service for the features you request.`
-      : `${where} To help fill this application, XpertApply needs access to this site. It will read relevant application-page and form information. Relevant information may be sent to XpertApply's service for the features you request.`
-  );
-  setText("grantSiteAccess", `Allow XpertApply on ${site}`);
-}
-
-function renderDiagnostics(v: LaunchViewState): void {
-  const isDev = !chrome.runtime.getManifest().update_url;
-  const diag = el("diag");
-  diag.hidden = !isDev;
-  if (!isDev) return;
-  el("diagBody").textContent = [
-    `version: ${BUILD_INFO.version}`,
-    `sidePanelBuild: ${BUILD_INFO.buildId}`,
-    `builtAt: ${BUILD_INFO.builtAt}`,
-    `protocol: ${PROTOCOL_VERSION}`,
-    `tabId: ${v.tabId}`,
-    `state: ${v.state}`,
-    `contentReady: ${v.contentReady}`,
-    `packageLoaded: ${v.packageLoaded}`,
-    `adapter: ${v.atsId ?? "—"}`,
-    `lastFailure: ${v.failureCode ?? "—"}`
-  ].join("\n");
-}
 
 async function publishRuntimeIdentity(): Promise<void> {
   await chrome.storage.local.set({
@@ -170,35 +36,13 @@ async function publishRuntimeIdentity(): Promise<void> {
   });
 }
 
-async function refresh(): Promise<void> {
-  tabId = await currentTabId();
-  if (tabId == null) return;
-  const store = await (chrome.storage.session ?? chrome.storage.local).get(STORAGE_KEYS.VIEW_KEY);
-  const map = (store[STORAGE_KEYS.VIEW_KEY] as Record<string, LaunchViewState>) || {};
-  view = map[String(tabId)] ?? null;
-  render();
-}
-
-// React live to any change in the stored view state for our tab.
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "session" && chrome.storage.session) return;
-  const change = changes[STORAGE_KEYS.VIEW_KEY];
-  if (!change || tabId == null) return;
-  const map = (change.newValue as Record<string, LaunchViewState>) || {};
-  view = map[String(tabId)] ?? view;
-  render();
-});
-
-// Re-bind if the user switches which tab is active.
-chrome.tabs.onActivated.addListener(() => void refresh());
-
-function sendBackground(message: object): Promise<{ ok?: boolean; error?: string } | undefined> {
+function sendBackground(message: object): Promise<ActionResponse | undefined> {
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(message, (resp) => {
         const err = lastError();
         if (err) return resolve({ ok: false, error: err });
-        resolve(resp as { ok?: boolean; error?: string });
+        resolve(resp as ActionResponse);
       });
     } catch (e) {
       resolve({ ok: false, error: String(e) });
@@ -206,47 +50,49 @@ function sendBackground(message: object): Promise<{ ok?: boolean; error?: string
   });
 }
 
-function showButtonError(message: string): void {
-  const errBox = el("errors");
-  errBox.hidden = false;
-  errBox.textContent = message;
-}
-
-el("fill").addEventListener("click", async () => {
-  const resp = await sendBackground({ type: MSG.START_AUTOFILL, tabId, reason: "manual_retry" });
-  if (resp && resp.ok === false) {
-    showButtonError(FAILURE_LABEL[resp.error ?? ""] ?? `Couldn’t start: ${resp.error ?? "unknown error"}`);
+const assistant = createApplicationAssistant({
+  document,
+  context: {
+    async get() {
+      const tabId = await currentTabId();
+      return { tabId, available: tabId != null };
+    },
+    subscribe(listener) {
+      const onActivated = () => listener();
+      chrome.tabs.onActivated.addListener(onActivated);
+      return () => chrome.tabs.onActivated.removeListener(onActivated);
+    }
+  },
+  views: {
+    async get(tabId) {
+      const store = await (chrome.storage.session ?? chrome.storage.local).get(STORAGE_KEYS.VIEW_KEY);
+      const map = (store[STORAGE_KEYS.VIEW_KEY] as Record<string, LaunchViewState>) || {};
+      return map[String(tabId)] ?? null;
+    },
+    subscribe(listener) {
+      const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+        if (areaName !== "session" && chrome.storage.session) return;
+        const change = changes[STORAGE_KEYS.VIEW_KEY];
+        if (!change) return;
+        const map = (change.newValue as Record<string, LaunchViewState>) || {};
+        for (const [id, nextView] of Object.entries(map)) listener(Number(id), nextView);
+      };
+      chrome.storage.onChanged.addListener(onChanged);
+      return () => chrome.storage.onChanged.removeListener(onChanged);
+    }
+  },
+  actions: {
+    startAutofill: (tabId, reason) => sendBackground({ type: MSG.START_AUTOFILL, tabId, reason }),
+    clearSession: (tabId) => sendBackground({ type: MSG.CLEAR_SESSION, tabId }),
+    completeSession: (sessionId) => sendBackground({ type: MSG.COMPLETE_SESSION, sessionId }),
+    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [pattern] }),
+    reportSiteAccess: (tabId, pattern, granted) => sendBackground({ type: MSG.SITE_ACCESS_RESULT, tabId, pattern, granted })
+  },
+  diagnostics: {
+    enabled: !chrome.runtime.getManifest().update_url,
+    surface: "sidePanel"
   }
 });
-el("rescan").addEventListener("click", async () => {
-  const resp = await sendBackground({ type: MSG.START_AUTOFILL, tabId, reason: "continue_after_navigation" });
-  if (resp && resp.ok === false) showButtonError(`Couldn’t continue: ${resp.error ?? "unknown error"}`);
-});
-el("grantSiteAccess").addEventListener("click", async () => {
-  // Inside the click handler, which is what makes this a user gesture Chrome
-  // will accept. Only ever the one pattern the worker asked for.
-  const pattern = view?.siteAccessPattern;
-  if (!pattern) return;
-  let granted = false;
-  try {
-    granted = await chrome.permissions.request({ origins: [pattern] });
-  } catch (err) {
-    showButtonError(`Couldn't ask for site access: ${String(err).slice(0, 80)}`);
-    return;
-  }
-  const resp = await sendBackground({ type: MSG.SITE_ACCESS_RESULT, tabId, pattern, granted });
-  if (!granted) showButtonError("XpertApply can't fill this application without access to the site.");
-  else if (resp && resp.ok === false) showButtonError("Site access granted, but the application couldn't be reached.");
-  await refresh();
-});
 
-el("next").addEventListener("click", () => void refresh());
-el("clear").addEventListener("click", () => void sendBackground({ type: MSG.CLEAR_SESSION, tabId }));
-el("complete").addEventListener("click", async () => {
-  if (!view?.sessionId) return;
-  if (!confirm("Confirm you submitted this application on the employer's website?")) return;
-  const resp = await sendBackground({ type: MSG.COMPLETE_SESSION, sessionId: view.sessionId });
-  if (resp && resp.ok === false) showButtonError(`Couldn’t mark complete: ${resp.error ?? "unknown error"}`);
-});
-
-void publishRuntimeIdentity().then(refresh);
+window.addEventListener("unload", () => assistant.dispose(), { once: true });
+void publishRuntimeIdentity().then(() => assistant.refresh());

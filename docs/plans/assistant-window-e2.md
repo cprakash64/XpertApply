@@ -61,3 +61,42 @@ passed 30/30; and two independent complete suites each passed 77 files and
 manifest validation, and `git diff --check` also passed. No production behavior,
 permission, authentication, submission, Side Panel, version, or Store setting
 changed.
+
+## E3A shared-controller extraction
+
+E3A extracts the existing Side Panel presentation and application-assistance
+workflow into `src/ui/applicationAssistant.ts`. The shared controller owns DOM
+rendering, view-state reactions, fill/review/clear/completion intents, the
+permission-button gesture, and its own listener lifecycle. Its contract is
+explicitly split into a tab-context adapter, a tab-keyed view adapter, typed
+worker actions, an injected `Document`, and non-authoritative diagnostics.
+
+The Side Panel remains the Chrome-specific bootstrap. It alone resolves the
+legacy active tab with `tabs.query({ active: true, currentWindow: true })`,
+publishes runtime identity, adapts session storage/runtime messages, and calls
+`permissions.request` from the controller's direct click callback. The shared
+controller contains no tab discovery and never infers authority from a browser
+or DOM window. This preserves Side Panel fallback behavior while making the
+future assistant-window adapter able to supply worker-owned `boundJobTabId`.
+
+Controller disposal is explicit and idempotent. It removes every DOM,
+context, and view subscription installed by the controller and fences pending
+asynchronous refreshes by generation. Context loss clears controller authority
+and disables actions, so a stale tab cannot be targeted after activation or
+closure changes.
+
+E3A qualification covers unauthenticated and failure presentation, supported
+and unsupported pages, permission grant/denial/revocation, discovery/fill and
+review status, clear/reset, manual completion confirmation, storage/context
+updates, error presentation, stale-context rejection, and controller
+disposal/recreation. The source gate requires the sole `currentWindow`
+authority lookup to remain in `ui/sidepanel.ts`. Full security, E2 assistant,
+manifest, typecheck, production-build, and complete-suite results are recorded
+in the E3A stage report.
+
+E3B prerequisites are: E3A review and checkpoint commit; a worker-authoritative
+`boundJobTabId` context adapter; assistant-owned lifecycle subscription without
+active-window discovery; reuse of the typed action/view contracts; and parity
+qualification before any toolbar cutover. E3A does not wire the assistant UI,
+change toolbar behavior, add auto-open, or alter permissions, authentication,
+submission, version, packaging, or Store state.
