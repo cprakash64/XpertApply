@@ -53,6 +53,8 @@ const EXT_SOURCE = "jobpilot-extension";
 const MSG_STAGE_LAUNCH = "JOBPILOT_STAGE_LAUNCH";
 const MSG_START_ASSISTED_APPLY = "JOBPILOT_START_ASSISTED_APPLY";
 const MSG_START_ASSISTED_APPLY_RESULT = "JOBPILOT_START_ASSISTED_APPLY_RESULT";
+const MSG_EXTENSION_PRESENCE_PING = "XPERTAPPLY_EXTENSION_PRESENCE_PING";
+const MSG_EXTENSION_PRESENCE_READY = "XPERTAPPLY_EXTENSION_PRESENCE_READY";
 
 /** Lowest extension protocol version this web build can talk to. Bump alongside
  * the extension's PROTOCOL_VERSION when the message contract changes. */
@@ -66,23 +68,66 @@ export type ExtensionInfo = BrowserExtensionInfo;
 /** Resolved extension state for the UI. `null` = not detected. `outdated` is
  * true when the extension is present but speaks an older protocol. */
 export type ExtensionState =
-  | { present: false }
-  | { present: true; outdated: boolean; info: ExtensionInfo };
+  | { status: "not_installed" | "error"; present: false }
+  | { status: "connected" | "incompatible"; present: true; outdated: boolean; info: ExtensionInfo };
+
+function presenceRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `presence-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Replayable presence check over the declarative first-party content script.
+ * This channel carries capability metadata only; it grants no launch, auth,
+ * tab, document, frame, permission, or fill authority. */
+export function detectFirstPartyBridge(timeoutMs = 800): Promise<ExtensionInfo | null> {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  const requestId = presenceRequestId();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (info: ExtensionInfo | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+      resolve(info);
+    };
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as ExtMessage | undefined;
+      if (event.source !== window || data?.source !== EXT_SOURCE
+        || data.type !== MSG_EXTENSION_PRESENCE_READY || data.requestId !== requestId) return;
+      const info = data.info as unknown;
+      if (!info || typeof info !== "object") return;
+      const candidate = info as Partial<ExtensionInfo>;
+      if (candidate.installed !== true || typeof candidate.version !== "string"
+        || !Number.isInteger(candidate.protocolVersion) || !Array.isArray(candidate.capabilities)
+        || !candidate.capabilities.every((item) => typeof item === "string")) return;
+      finish(candidate as ExtensionInfo);
+    };
+    window.addEventListener("message", onMessage);
+    const timer = window.setTimeout(() => finish(null), Math.max(1, timeoutMs));
+    window.postMessage({ source: WEB_SOURCE, type: MSG_EXTENSION_PRESENCE_PING, requestId }, window.location.origin);
+  });
+}
 
 /** Ask Chrome's externally-connectable runtime for extension metadata. A
  * page-visible postMessage PONG is never accepted as presence evidence. */
 export async function detectExtensionInfo(timeoutMs = 800): Promise<ExtensionInfo | null> {
+  const bridged = await detectFirstPartyBridge(timeoutMs);
+  if (bridged) return bridged;
   const result = await connectExternalExtension(timeoutMs);
   return result.kind === "present" ? result.info : null;
 }
 
 /** Resolve the extension state (present / outdated) for the modal. */
 export async function detectExtensionState(timeoutMs = 800): Promise<ExtensionState> {
-  const info = await detectExtensionInfo(timeoutMs);
-  if (!info) {
-    return { present: false };
-  }
-  return { present: true, outdated: info.protocolVersion < MIN_EXTENSION_PROTOCOL, info };
+  const bridged = await detectFirstPartyBridge(timeoutMs);
+  const external = bridged ? null : await connectExternalExtension(timeoutMs);
+  const info = bridged ?? (external?.kind === "present" ? external.info : null);
+  if (!info) return {
+    status: external?.kind === "failed" ? "error" : "not_installed",
+    present: false
+  };
+  const outdated = info.protocolVersion < MIN_EXTENSION_PROTOCOL;
+  return { status: outdated ? "incompatible" : "connected", present: true, outdated, info };
 }
 
 /** Back-compat boolean check. */

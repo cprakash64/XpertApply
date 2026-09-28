@@ -24,6 +24,7 @@ const SRC = path.resolve(__dirname, "..");
 const ENTRY_POINTS = new Set([
   "background.ts",
   "content/bootstrap.ts",
+  "content/overlayBootstrap.ts",
   "ui/sidepanel.ts",
   "ui/assistant.ts",
   "e2e-harness.ts"

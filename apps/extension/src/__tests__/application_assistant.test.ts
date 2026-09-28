@@ -185,6 +185,50 @@ describe("shared application assistant", () => {
     expect((document.getElementById("fill") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("ignores a stale refresh response after a newer generation renders", async () => {
+    controller.dispose();
+    let resolveOld!: (value: ApplicationAssistantContext) => void;
+    let calls = 0;
+    controller = createApplicationAssistant({
+      root: document,
+      confirmAction: vi.fn(async () => true),
+      context: {
+        get: vi.fn(() => ++calls === 1
+          ? new Promise<ApplicationAssistantContext>((resolve) => { resolveOld = resolve; })
+          : Promise.resolve({ available: true, tabId: 42 })),
+        subscribe: () => () => undefined
+      },
+      views: { get: async () => makeView({ filled: 8 }), subscribe: () => () => undefined },
+      actions
+    });
+    const old = controller.refresh();
+    await controller.refresh();
+    expect(document.getElementById("filled")?.textContent).toBe("8");
+    resolveOld({ available: false });
+    await old;
+    expect(document.getElementById("filled")?.textContent).toBe("8");
+  });
+
+  it("does not mutate presentation when an in-flight refresh resolves after dispose", async () => {
+    controller.dispose();
+    let resolveContext!: (value: ApplicationAssistantContext) => void;
+    controller = createApplicationAssistant({
+      root: document,
+      confirmAction: vi.fn(async () => true),
+      context: {
+        get: () => new Promise<ApplicationAssistantContext>((resolve) => { resolveContext = resolve; }),
+        subscribe: () => () => undefined
+      },
+      views: { get: async () => makeView({ filled: 9 }), subscribe: () => () => undefined },
+      actions
+    });
+    const pending = controller.refresh();
+    controller.dispose();
+    resolveContext({ available: true, tabId: 42 });
+    await pending;
+    expect(document.getElementById("filled")?.textContent).not.toBe("9");
+  });
+
   it("does not reuse a stale tab after context loss", async () => {
     await controller.refresh();
     context = { available: false };

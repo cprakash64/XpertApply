@@ -24,6 +24,9 @@ describe("message validation", () => {
     expect(parsePageMessage({ source: "jobpilot-web", type: MSG.STAGE_LAUNCH, payload: {} })).toBeTruthy();
     expect(parsePageMessage({ source: "evil", type: MSG.STAGE_LAUNCH, payload: {} })).toBeNull();
     expect(parsePageMessage({ source: "jobpilot-web", type: "HELLO" })).toBeNull();
+    expect(parsePageMessage({ source: "jobpilot-web", type: MSG.EXTENSION_PRESENCE_PING, requestId: "presence-1" })).toBeTruthy();
+    expect(parsePageMessage({ source: "evil", type: MSG.EXTENSION_PRESENCE_PING, requestId: "presence-1" })).toBeNull();
+    expect(parsePageMessage({ source: "jobpilot-web", type: MSG.EXTENSION_PRESENCE_PING })).toBeNull();
   });
 
   it("accepts only the closed browser-routed external teardown contract", () => {

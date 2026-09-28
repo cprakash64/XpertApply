@@ -156,9 +156,10 @@ describe("application overlay isolation and accessibility", () => {
   it("uses responsive bounds without a backdrop or page-wide interactive surface", () => {
     const overlay = showOverlay(document);
     const css = overlay.root.querySelector("style")?.textContent ?? "";
-    expect(css).toContain("width: min(400px, calc(100vw - 24px))");
+    expect(css).toContain("width: min(410px, calc(100vw - 28px))");
     expect(css).toContain("max-width: 420px");
-    expect(css).toContain("max-height: calc(100dvh - 32px)");
+    expect(css).toContain("max-height: min(760px, calc(100dvh - 36px))");
+    expect(css).toContain("right: 18px; bottom: 18px");
     expect(overlay.root.querySelector("[data-backdrop]")).toBeNull();
     expect(overlay.host.style.pointerEvents).toBe("");
   });

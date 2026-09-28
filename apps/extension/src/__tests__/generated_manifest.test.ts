@@ -64,6 +64,16 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
     expect(manifest.version_name, "build.mjs must stamp version_name").toMatch(/\(.+\)/);
   });
 
+  it("packages the exact E4O-C permissions and on-demand overlay bootstrap", () => {
+    expect(manifest.version).toBe("0.2.0");
+    expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+    expect(manifest.host_permissions).toEqual([
+      "https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"
+    ]);
+    expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
+    expect(existsSync(path.join(here, "..", "..", "dist", "overlayBootstrap.js"))).toBe(true);
+  });
+
   // XA-06 (Stage 3C). These four assertions used to require that the SHIPPED
   // manifest already reached the live Greenhouse frame — a static content
   // script matching every https page in every frame, plus a wildcard host
@@ -141,5 +151,17 @@ describe.skipIf(!distExists)("built content bundle", () => {
 
   it("contains the document-level root fallback", () => {
     expect(bundle).toContain("document_fallback");
+  });
+});
+
+describe.skipIf(!distExists)("built toolbar overlay bootstrap", () => {
+  const bundlePath = path.join(here, "..", "..", "dist", "overlayBootstrap.js");
+  const bundle = existsSync(bundlePath) ? readFileSync(bundlePath, "utf-8") : "";
+
+  it("is packaged on demand without remote-code primitives or workflow bootstrap", () => {
+    expect(bundle).toContain("XPERTAPPLY_SHOW_APPLICATION_OVERLAY");
+    expect(bundle).not.toContain("eval(");
+    expect(bundle).not.toContain("new Function");
+    expect(bundle).not.toContain("discoverAndFill");
   });
 });

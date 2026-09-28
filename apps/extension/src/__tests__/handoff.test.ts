@@ -451,10 +451,10 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
       { tab: { id: 11, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     );
 
-    // setPanelBehavior is only ever wired to onInstalled (never invoked by our
-    // fake onInstalled listener), and nothing else in the handoff path calls
-    // chrome.sidePanel — the side panel is a purely optional viewer.
-    expect(fakeChrome.sidePanel.setPanelBehavior).not.toHaveBeenCalled();
+    // Worker startup disables historical action-click ownership once; the
+    // handoff itself never opens or otherwise operates the Side Panel.
+    expect(fakeChrome.sidePanel.setPanelBehavior).toHaveBeenCalledTimes(1);
+    expect(fakeChrome.sidePanel.setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: false });
   });
 });
 

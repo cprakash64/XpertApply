@@ -236,3 +236,126 @@ reachability, TypeScript, the extension suite, production build, manifest
 inspection, and repository release checks. Rollback is a code revert to the
 E4O-A dormant shell plus the former widget host; no migration, stored state, or
 permission rollback is required.
+
+## E4O-C exact-tab toolbar cutover
+
+The normal toolbar action now belongs to a service-worker `action.onClicked`
+listener. Chrome's clicked `Tab` is validated as an HTTP(S) document and used
+directly; there is no active-tab query, current-window reconstruction, popup
+binding, or cross-tab fallback. The action uses the gesture-scoped `activeTab`
+grant plus the existing `scripting` permission to inject
+`overlayBootstrap.js` and the qualified `content.js` workflow engine into frame
+0 of that exact tab, then sends the payload-free
+`SHOW_APPLICATION_OVERLAY` command to frame 0.
+
+The dedicated bootstrap registers one listener in the document's extension
+isolated world and marks the subsequent workflow activation as toolbar-initiated.
+Repeated injection is idempotent. SHOW registers Chrome's sender-supplied tab/document/URL as a
+transient in-memory toolbar document, then explicitly reopens, restores, and
+focuses the canonical overlay. Full navigation destroys the document and its
+listener; the next document is not opened until another toolbar click. Same-
+document navigation retains the document fence and revalidates Chrome's URL.
+
+Toolbar documents receive a synthetic, non-persistent view only when no real
+workflow view exists. It deliberately treats `activeTab` as distinct from a
+persistent exact-origin grant, so the existing access-required disclosure and
+button remain authoritative. Toolbar open never calls `permissions.request`;
+the worker still verifies `permissions.contains` before recording a grant.
+Once an authorized workflow begins, its `LaunchViewState` replaces the
+transient presentation and both paths reuse the same host and controller.
+
+Side Panel action ownership is explicitly disabled on every worker start, while
+its permission, declaration, source, and build asset remain as rollback code.
+The popup assistant likewise remains packaged but is not opened by the toolbar.
+There is no auto-open on activation, navigation, update, startup, or content
+bundle load. Each document owns its own overlay lifecycle, so tab dismissal and
+minimization are independent; an explicit toolbar click restores or reopens.
+
+Automated acceptance covers exact-tab targeting, internal-page refusal,
+idempotency, close/reopen, minimize/restore, per-document isolation, workflow
+convergence, no permission request, no scan/mutation/submission call graph,
+fallback regression, generated-manifest permissions, and bundle reachability.
+Owner acceptance in real Chrome remains required for toolbar, visual, and
+keyboard behavior before checkpointing. E4O-D must not begin until that manual
+gate and the E4O-C checkpoint are complete.
+
+## E4O-C-R1 owner-reported functional and visual repair
+
+Owner acceptance rejected the first toolbar cutover because it mounted only
+the presentation shell. The worker consequently returned a synthetic
+`HANDOFF_NOT_FOUND` view with zero fields: the toolbar path never loaded the
+qualified engine that registers the document, attaches the prepared workflow,
+selects the ATS adapter, discovers fields, and performs user-requested fill.
+
+The repaired call graph is action click → exact top-frame overlay bootstrap →
+exact top-frame canonical workflow engine → existing `CONTENT_READY`/reconnect
+attachment → read-only ATS/root/field discovery → canonical overlay view. The
+isolated-world toolbar marker selects this mode. Toolbar open may identify the
+ATS and enumerate application structure, but it does not invoke fill, upload,
+change controls, advance the form, or submit. The explicit Fill action enters
+the same qualified fill engine and retains sender tab, frame, and document
+fencing.
+
+The consumer overlay no longer mounts diagnostics, and technical failure codes
+are translated to consumer guidance. The panel is bottom-right anchored at
+18px (12px at narrow widths), grows upward, and uses a responsive 410px frosted
+surface with 24px radius, layered neutral shadow, and 22px/145% backdrop
+filtering. The minimized pill remains bottom-right. Side Panel and popup assets
+remain dormant fallbacks. Manual owner acceptance must confirm real prepared
+workflow attachment, nonzero discovery, fill parity, visual quality, and
+keyboard behavior before checkpointing.
+
+## E4O-C-R2 first-party presence bridge repair
+
+Owner retesting found that the installed unpacked extension worked on employer
+pages while xpertapply.com still advertised installation. The root cause was ID
+coupling: Web presence detection used only browser-routed external messaging to
+the configured Store ID. An unpacked build has a different Chrome ID, so Chrome
+reported no receiving extension even though the declarative first-party content
+script was active. Handoff itself already used that content script and remained
+intact.
+
+Presence now begins with a replayable, request-correlated
+`XPERTAPPLY_EXTENSION_PRESENCE_PING` over the existing content-script bridge.
+Only exact build-profile-approved first-party origins load and activate that
+bridge. It answers `XPERTAPPLY_EXTENSION_PRESENCE_READY` with installed=true,
+extension version, protocol version, and capability names—no tokens, session
+identifiers, answers, documents, profile data, or employer values. The Web page
+registers its listener before every ping, validates the matching request ID and
+payload shape, and can repeat the check after focus, extension reload, or page
+reload. Browser-routed Store-ID detection remains a compatibility fallback and
+continues to own privileged auth-session teardown; presence is not authority.
+
+The modal keeps its initial null state as CHECKING, maps a compatible response
+to CONNECTED, a low protocol to INCOMPATIBLE, a clean timeout/unavailable result
+to NOT_INSTALLED, and malformed/channel failures to ERROR. Install guidance is
+rendered only for NOT_INSTALLED, never while checking, connected, incompatible,
+or errored. The existing staged launch token and acknowledged handoff path are
+unchanged. Manual acceptance must cover connected site UX followed by prepared
+launch, employer attachment, discovery, and fill before checkpointing.
+
+## E4O-C-R3 autonomous real-browser acceptance
+
+Persistent Chromium acceptance now covers replayable Web PING/READY,
+exact-tab toolbar-equivalent activation, overlay discovery, before-fill DOM
+immutability, explicit DOM fill, review and submit safety, lifecycle isolation,
+responsive layout, and keyboard escape. The test-only scenario lives in
+`apps/extension/e2e/e4oc-r3-overlay.spec.ts` and uses an isolated profile plus
+the existing nonshipping granted build.
+
+The browser run exposed a stale-overlay race: the worker reached
+`discovering_fields` with ten controls while the visible assistant retained its
+initial snapshot. Chrome does not reliably deliver `storage.session` change
+events to this isolated content-script surface under the default access policy.
+The mounted overlay therefore performs a read-only worker refresh every 1,000 ms
+and clears the timer on disposal; worker authority and form-mutation gates are
+unchanged.
+
+Deterministic results: ten eligible/discovered controls, no mutation before
+Fill, verified text/email/phone/city/LinkedIn/select/radio population, privacy
+and motivation left manual, zero submit clicks, and passing minimize/restore,
+close/reopen, reload, two-tab isolation, 340/375/400/420 px, and keyboard gates.
+A read-only live AECOM SmartRecruiters attempt reached OneClick, where Datadome
+served a captcha before application controls hydrated. No data was entered and
+no submission was attempted. Sanitized evidence remains outside the repository
+under `/tmp/xpertapply-e4oc-r3-evidence`.

@@ -25,11 +25,12 @@ import {
   type TikTokAdapterTrace
 } from "../ats/tiktokApplication";
 import { clearJobPilotFields, fillField } from "../fields/fill";
-import { getApiBase, isApprovedJobPilotOrigin } from "../config";
+import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin } from "../config";
 import { log } from "../logger";
 import {
   MSG,
   PAGE_SOURCE_EXT,
+  PROTOCOL_VERSION,
   parsePageMessage,
   parseRuntimeMessage,
   type AutofillReason,
@@ -146,6 +147,11 @@ const isCurrentInstance = claimContentInstance(
   window as unknown as Record<string, unknown>,
   makeContentInstanceId(BUILD_INFO.buildId)
 );
+const toolbarInitiated = Boolean(
+  (globalThis as typeof globalThis & { __xpertapplyOverlayBootstrapV1__?: true })
+    .__xpertapplyOverlayBootstrapV1__
+);
+let toolbarFillAuthorized = !toolbarInitiated;
 
 if (isApprovedJobPilotOrigin(location.origin)) {
   // Never let ATS-only code (DOM scanning, adapters) reach the web-origin role
@@ -173,7 +179,19 @@ function initWebOrigin(): void {
     if (!isApprovedJobPilotOrigin(event.origin)) return;
     const data = parsePageMessage(event.data);
     if (!data) return;
-    if (data.type === MSG.STAGE_LAUNCH) {
+    if (data.type === MSG.EXTENSION_PRESENCE_PING) {
+      window.postMessage({
+        source: PAGE_SOURCE_EXT,
+        type: MSG.EXTENSION_PRESENCE_READY,
+        requestId: data.requestId,
+        info: {
+          installed: true,
+          version: BUILD_INFO.version,
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: EXTENSION_CAPABILITIES
+        }
+      } satisfies PageMessage, location.origin);
+    } else if (data.type === MSG.STAGE_LAUNCH) {
       if (validLaunch(data.payload)) void sendRuntime({ type: MSG.STAGE_LAUNCH, payload: data.payload });
     } else if (data.type === MSG.START_ASSISTED_APPLY) {
       log.debug("start assisted apply forwarded");
@@ -287,7 +305,8 @@ async function requestReconnect(): Promise<boolean> {
       outcome = detectAdapter({ url: location.href, document });
       started = true;
       if (await startSubmissionObservation()) return true;
-      void discoverAndFill("continue_after_navigation");
+      if (toolbarInitiated) void discoverForToolbar();
+      else void discoverAndFill("continue_after_navigation");
       observeMutations();
       return true;
     }
@@ -400,6 +419,7 @@ async function initAtsPage(): Promise<void> {
       return false;
     }
     if (message.type === MSG.AUTOFILL_START) {
+      toolbarFillAuthorized = true;
       if (message.reason === "manual_retry") { automaticRunSettled = false; rootRecoveryAttempted = false; }
       // Retry is a new discovery attempt, not another adapter call against the
       // frame that happened to answer first (normally the employer top frame).
@@ -519,7 +539,8 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
     // matching requires an exact hostname, so it cannot approve that on its
     // own. Ask the worker instead, which applies the explicit workflow origin
     // graph (same registrable domain, or an allow-listed ATS host).
-    if (isTopFrame && resp?.error === "HANDOFF_URL_MISMATCH" && !reconnectAttempted) {
+    if (isTopFrame && (resp?.error === "HANDOFF_URL_MISMATCH"
+      || (toolbarInitiated && resp?.error === "HANDOFF_NOT_FOUND")) && !reconnectAttempted) {
       reconnectAttempted = true;
       log.info("destination session resolution", { stage: "workflow_lookup", reason: "handoff_url_mismatch_retry" });
       await requestReconnect();
@@ -578,7 +599,8 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
     submissionGestureAt = resp.submissionGestureAt;
     successSignalPresentBeforeSubmit = false;
   }
-  outcome = detectAdapter({ url: location.href, document });
+  const detected = detectAdapter({ url: location.href, document });
+  outcome = detected;
   if (isTopFrame) {
     widget = ensureWidget();
     widget.update({ stage: "detecting", message: "Waiting for the application form…" });
@@ -588,8 +610,48 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   }
   started = true;
   if (await startSubmissionObservation()) return;
-  void discoverAndFill(reason);
+  if (toolbarInitiated && reason === "automatic_launch") {
+    await discoverForToolbar();
+  } else {
+    void discoverAndFill(reason);
+  }
   observeMutations();
+}
+
+/** Read-only application recognition for an explicit toolbar open. This uses
+ * the canonical adapter/root/field discovery stack, but deliberately never
+ * calls fillField, uploads a file, changes a control, or advances the form. */
+async function discoverForToolbar(): Promise<void> {
+  if (!session || !isCurrentInstance()) return;
+  const detected = detectAdapter({ url: location.href, document });
+  outcome = detected;
+  const resolved = resolveApplicationForm(document);
+  const root = resolved.root ?? document;
+  const fields = discoverQuestionFields(root);
+  const submit = detected?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+  const progress: ProgressPayload = {
+    state: fields.length > 0 ? "discovering_fields" : "failed",
+    atsId: detected?.result.atsId ?? "generic",
+    atsDisplayName: detected?.adapter.displayName ?? "Generic application",
+    limited: detected?.limited ?? true,
+    fieldsDiscovered: fields.length,
+    filled: 0,
+    skipped: 0,
+    reviewRequired: fields.length,
+    reachedFinalStep: submit !== null,
+    documentsUploaded: [],
+    reviewDocuments: []
+  };
+  await sendRuntime({ type: MSG.AUTOFILL_PROGRESS, payload: progress });
+  widget = ensureWidget();
+  widget.update({
+    stage: fields.length > 0 ? "review" : "failed",
+    total: fields.length,
+    filled: 0,
+    message: fields.length > 0
+      ? `${fields.length} field${fields.length === 1 ? "" : "s"} found. Choose Fill application when you're ready.`
+      : "We couldn't recognize fillable fields on this application. Refresh the page and try again."
+  });
 }
 
 /**
@@ -3904,7 +3966,7 @@ function observeMutations(): void {
         if (confirmed) return;
         // Continue filling any newly rendered fields. The fill engine skips
         // fields already filled or edited by the user.
-        if (session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
+        if (toolbarFillAuthorized && session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
           void discoverAndFill("continue_after_navigation");
         }
         else emitProgressOnly();

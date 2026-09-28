@@ -21,12 +21,14 @@ import { AutoApplyModal } from "../components/AutoApplyModal";
 import * as autoApply from "@/lib/autoApply";
 
 const EXT_CONNECTED = {
+  status: "connected" as const,
   present: true as const,
   outdated: false,
   info: { installed: true as const, version: "0.2.0", protocolVersion: 3, capabilities: ["fill", "upload"] }
 };
-const EXT_ABSENT = { present: false as const };
+const EXT_ABSENT = { status: "not_installed" as const, present: false as const };
 const EXT_OUTDATED = {
+  status: "incompatible" as const,
   present: true as const,
   outdated: true,
   info: { installed: true as const, version: "0.0.1", protocolVersion: 0, capabilities: [] }
@@ -136,6 +138,15 @@ describe("AutoApplyModal", () => {
     renderModal();
     expect(await screen.findByText(/XpertApply extension connected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open and autofill application/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Install extension/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Install the XpertApply browser extension/i)).not.toBeInTheDocument();
+  });
+
+  it("does not advertise installation when presence checking fails", async () => {
+    vi.mocked(autoApply.detectExtensionState).mockResolvedValue({ status: "error", present: false });
+    renderModal();
+    expect(await screen.findByText(/couldn't check the browser extension/i)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Install extension/i })).not.toBeInTheDocument();
   });
 
   it("shows an update prompt when the extension protocol is too old", async () => {

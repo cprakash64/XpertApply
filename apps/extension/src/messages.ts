@@ -257,6 +257,8 @@ export const MSG = {
   STAGE_LAUNCH: "JOBPILOT_STAGE_LAUNCH",
   START_ASSISTED_APPLY: "JOBPILOT_START_ASSISTED_APPLY",
   START_ASSISTED_APPLY_RESULT: "JOBPILOT_START_ASSISTED_APPLY_RESULT",
+  EXTENSION_PRESENCE_PING: "XPERTAPPLY_EXTENSION_PRESENCE_PING",
+  EXTENSION_PRESENCE_READY: "XPERTAPPLY_EXTENSION_PRESENCE_READY",
   // XpertApply-origin content script → background (runtime)
   LAUNCH_REQUEST: "JOBPILOT_LAUNCH_REQUEST",
   LAUNCH_ACCEPTED: "JOBPILOT_LAUNCH_ACCEPTED",
@@ -349,6 +351,8 @@ export const MSG = {
   OVERLAY_CLEAR_SESSION: "XPERTAPPLY_OVERLAY_CLEAR_SESSION",
   OVERLAY_COMPLETE_SESSION: "XPERTAPPLY_OVERLAY_COMPLETE_SESSION",
   OVERLAY_SITE_ACCESS_RESULT: "XPERTAPPLY_OVERLAY_SITE_ACCESS_RESULT",
+  SHOW_APPLICATION_OVERLAY: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY",
+  TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -530,6 +534,8 @@ export type RuntimeMessage =
   | { type: typeof MSG.OVERLAY_CLEAR_SESSION }
   | { type: typeof MSG.OVERLAY_COMPLETE_SESSION; sessionId: number }
   | { type: typeof MSG.OVERLAY_SITE_ACCESS_RESULT; pattern: string; granted: boolean }
+  | { type: typeof MSG.SHOW_APPLICATION_OVERLAY }
+  | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -563,7 +569,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT,
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
-  MSG.OVERLAY_SITE_ACCESS_RESULT
+  MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -673,6 +679,8 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     pattern: { kind: "string", max: LIMIT.url, required: true },
     granted: { kind: "boolean", required: true }
   },
+  [MSG.SHOW_APPLICATION_OVERLAY]: {},
+  [MSG.TOOLBAR_OVERLAY_READY]: {},
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
   [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },
@@ -834,6 +842,8 @@ export const PAGE_SOURCE_EXT = "jobpilot-extension";
 export type Capability = "fill" | "upload" | "results" | "ashby" | "greenhouse" | "lever" | "workday" | "generic";
 
 export type PageMessage =
+  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.EXTENSION_PRESENCE_PING; requestId: string }
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.EXTENSION_PRESENCE_READY; requestId: string; info: { installed: true; version: string; protocolVersion: number; capabilities: Capability[] } }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.START_ASSISTED_APPLY; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } };
@@ -842,6 +852,14 @@ export function parsePageMessage(raw: unknown): PageMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as { source?: unknown; type?: unknown };
   if (data.source !== PAGE_SOURCE_WEB && data.source !== PAGE_SOURCE_EXT) return null;
+  if (data.type === MSG.EXTENSION_PRESENCE_PING) {
+    return typeof (data as { requestId?: unknown }).requestId === "string" ? raw as PageMessage : null;
+  }
+  if (data.type === MSG.EXTENSION_PRESENCE_READY) {
+    const ready = data as { requestId?: unknown; info?: unknown };
+    return typeof ready.requestId === "string" && ready.info != null && typeof ready.info === "object"
+      ? raw as PageMessage : null;
+  }
   if (data.type !== MSG.STAGE_LAUNCH && data.type !== MSG.START_ASSISTED_APPLY && data.type !== MSG.START_ASSISTED_APPLY_RESULT) return null;
   return raw as PageMessage;
 }

@@ -23,6 +23,7 @@ interface OverlayViewResponse {
 
 export interface MountedApplicationOverlay {
   overlay: ApplicationOverlayController;
+  refresh(): Promise<void>;
   dispose(): void;
 }
 
@@ -103,18 +104,31 @@ export function mountApplicationAssistantOverlay(options: {
         granted
       })
     },
-    diagnostics: {
-      enabled: typeof chrome !== "undefined" && !chrome.runtime.getManifest().update_url,
-      surface: "overlay"
-    }
+    // Consumer overlays never render build/protocol/tab diagnostics. Tests and
+    // internal tooling can still supply the controller's diagnostics adapter
+    // directly without exposing a production control.
   });
 
   let disposed = false;
-  const mounted: MountedApplicationOverlay = {
+  // storage.session change delivery is not guaranteed to extension content
+  // scripts under Chrome's default trusted-context access level. Keep the
+  // visible in-page surface synchronized with the authoritative worker while
+  // it is mounted; refresh is read-only and generation-protected.
+  let mounted!: MountedApplicationOverlay;
+  const refreshTimer = window.setInterval(() => {
+    if (!overlay.host.isConnected || overlay.getState() === "ABSENT") {
+      mounted.dispose();
+      return;
+    }
+    void controller.refresh().catch(() => undefined);
+  }, 1_000);
+  mounted = {
     overlay,
+    refresh: () => controller.refresh(),
     dispose() {
       if (disposed) return;
       disposed = true;
+      window.clearInterval(refreshTimer);
       controller.dispose();
       if (mounts.get(ownerDocument) === mounted) mounts.delete(ownerDocument);
     }
@@ -127,5 +141,9 @@ export function mountApplicationAssistantOverlay(options: {
 
 /** Reserved for the future explicit toolbar path; passive widget updates never call this. */
 export function reopenApplicationAssistantOverlay(ownerDocument: Document = document): MountedApplicationOverlay {
-  return mountApplicationAssistantOverlay({ document: ownerDocument });
+  const mounted = mountApplicationAssistantOverlay({ document: ownerDocument });
+  mounted.overlay.show();
+  mounted.overlay.focus();
+  void mounted.refresh();
+  return mounted;
 }

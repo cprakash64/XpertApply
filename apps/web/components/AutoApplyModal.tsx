@@ -339,7 +339,7 @@ export function AutoApplyModal({
                 </div>
               )}
 
-              {extState?.present === false && (
+              {extState?.status === "not_installed" && (
                 <div className="rounded-2xl border border-line bg-[var(--glass-surface)] p-4 text-xs text-[var(--text-muted)]">
                   <p className="font-medium text-[var(--text-secondary)]">
                     Install the XpertApply browser extension to automatically fill employer applications.
@@ -350,6 +350,12 @@ export function AutoApplyModal({
                        target="_blank" rel="noopener noreferrer">Install extension</a>. Already installed? Reload
                     this page — the extension may have been updated after this tab was opened.
                   </p>
+                </div>
+              )}
+
+              {extState?.status === "error" && (
+                <div className="rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-surface)] p-4 text-xs text-[var(--warning)]">
+                  XpertApply couldn&apos;t check the browser extension. Refresh this page and try again.
                 </div>
               )}
 
@@ -427,7 +433,7 @@ export function AutoApplyModal({
               {buttonLabel}
             </Button>
           )}
-          {extState?.present === false && phase !== "error" && (
+          {extState?.status === "not_installed" && phase !== "error" && (
             <a
               className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-sm font-medium text-[var(--text-secondary)]"
               href={EXTENSION_INSTALL_URL} target="_blank" rel="noopener noreferrer"

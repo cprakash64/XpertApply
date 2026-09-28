@@ -108,6 +108,7 @@ await build({
   format: "iife",
   entryPoints: {
     content: "src/content/bootstrap.ts",
+    overlayBootstrap: "src/content/overlayBootstrap.ts",
     sidepanel: "src/ui/sidepanel.ts",
     assistant: "src/ui/assistant.ts"
   },

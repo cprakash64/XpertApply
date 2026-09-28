@@ -154,30 +154,30 @@ function overlayMarkup(): string {
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
       .panel {
-        position: fixed; top: 16px; right: 16px;
-        width: min(400px, calc(100vw - 24px)); max-width: 420px;
-        max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px);
+        position: fixed; right: 18px; bottom: 18px;
+        width: min(410px, calc(100vw - 28px)); max-width: 420px;
+        max-height: min(760px, calc(100vh - 36px)); max-height: min(760px, calc(100dvh - 36px));
         overflow: hidden; pointer-events: auto; color: #10243a;
-        background: #f9fbfc; background: rgba(249, 251, 252, 0.96);
-        border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 20px;
-        box-shadow: 0 18px 48px rgba(15, 35, 50, 0.14), 0 2px 8px rgba(15, 35, 50, 0.07);
-        -webkit-backdrop-filter: blur(18px) saturate(120%);
-        backdrop-filter: blur(18px) saturate(120%);
+        background: #f9fbfc; background: rgba(250, 252, 253, 0.84);
+        border: 1px solid rgba(255,255,255,.72); border-radius: 24px;
+        box-shadow: 0 18px 50px rgba(15,23,42,.14), 0 4px 14px rgba(15,23,42,.07), inset 0 0 0 1px rgba(15,35,50,.06);
+        -webkit-backdrop-filter: blur(22px) saturate(145%);
+        backdrop-filter: blur(22px) saturate(145%);
       }
-      .header { min-height: 54px; display: flex; align-items: center; gap: 12px; padding: 8px 12px 8px 16px; border-bottom: 1px solid rgba(15, 35, 50, 0.08); }
+      .header { min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 18px; border-bottom: 1px solid rgba(15, 35, 50, 0.07); }
       .identity { min-width: 0; flex: 1; }
       .brand { margin: 0; font-size: 15px; line-height: 20px; font-weight: 680; letter-spacing: -0.01em; }
       .context { margin: 1px 0 0; color: #667687; font-size: 12px; line-height: 16px; }
       .controls { display: flex; align-items: center; gap: 4px; }
       button { appearance: none; border: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
-      .icon-button { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: transparent; }
+      .icon-button { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 999px; background: rgba(255,255,255,.38); }
       .icon-button:hover { background: rgba(16, 36, 58, 0.06); }
       .icon { position: relative; width: 14px; height: 14px; display: block; }
       .minimize-icon::after { content: ""; position: absolute; left: 2px; right: 2px; bottom: 3px; height: 1.5px; border-radius: 2px; background: currentColor; }
       .close-icon::before, .close-icon::after { content: ""; position: absolute; left: 6px; top: 1px; width: 1.5px; height: 12px; border-radius: 2px; background: currentColor; }
       .close-icon::before { transform: rotate(45deg); }
       .close-icon::after { transform: rotate(-45deg); }
-      .body { max-height: calc(100vh - 86px); max-height: calc(100dvh - 86px); padding: 20px; overflow: auto; overflow-wrap: anywhere; }
+      .body { max-height: calc(100vh - 98px); max-height: calc(100dvh - 98px); padding: 22px; overflow: auto; overflow-wrap: anywhere; }
       .status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #155d78; font-size: 12px; font-weight: 650; }
       .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #1da8c7; }
       .message { margin: 0; color: #44566a; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
@@ -193,23 +193,23 @@ function overlayMarkup(): string {
       .actions button, #grantSiteAccess { min-height: 40px; padding: 9px 12px; border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 10px; background: rgba(255,255,255,.72); }
       .actions .primary, #grantSiteAccess { border-color: #155d78; background: #155d78; color: #fff; }
       button:disabled { cursor: not-allowed; opacity: .55; }
-      .warn { padding: 10px 12px; border-radius: 12px; background: #fff8e8; color: #594711; font-size: 13px; }
+      .warn { padding: 14px; border: 1px solid rgba(155,110,15,.14); border-radius: 16px; background: rgba(255,248,232,.82); color: #594711; font-size: 13px; }
       .note { margin: 0; padding: 12px; border-radius: 12px; background: rgba(16,36,58,.04); color: #526276; font-size: 13px; }
       .workflow-extensions:empty { display: none; }
       .restore-pill {
         position: fixed; right: 16px; bottom: 16px; min-width: 126px; height: 44px;
         display: inline-flex; align-items: center; justify-content: center; gap: 8px;
         padding: 0 16px; pointer-events: auto; color: #10243a;
-        background: #f9fbfc; background: rgba(249, 251, 252, 0.96);
+        background: #f9fbfc; background: rgba(250, 252, 253, 0.86);
         border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 999px;
         box-shadow: 0 10px 30px rgba(15, 35, 50, 0.13), 0 2px 7px rgba(15, 35, 50, 0.07);
-        -webkit-backdrop-filter: blur(18px) saturate(120%); backdrop-filter: blur(18px) saturate(120%);
+        -webkit-backdrop-filter: blur(22px) saturate(145%); backdrop-filter: blur(22px) saturate(145%);
         font-weight: 680;
       }
       .restore-pill:hover { background: #ffffff; }
       button:focus-visible, h2:focus-visible { outline: 3px solid #1598bd; outline-offset: 2px; }
       @media (max-width: 363px) {
-        .panel { top: 12px; right: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
+        .panel { right: 12px; bottom: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
         .header { padding-left: 12px; } .body { padding: 20px 16px; } .restore-pill { right: 12px; bottom: 12px; }
       }
       @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
@@ -252,7 +252,6 @@ function overlayMarkup(): string {
               <button id="complete" type="button">Mark application complete</button>
             </div>
             <p class="note">Review the information, then submit directly on the employer’s website.</p>
-            <details id="diag" hidden><summary class="muted">Diagnostics</summary><pre id="diagBody"></pre></details>
             <div class="workflow-extensions" data-overlay-workflow-extensions></div>
           </main>
         </div>

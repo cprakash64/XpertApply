@@ -48,6 +48,7 @@ import {
   type AutofillReason,
   type AutofillResult,
   type LaunchPayload,
+  type LaunchViewState,
   type PendingLaunch,
   type ObservedFramePayload,
   type ProgressPayload,
@@ -86,6 +87,7 @@ import {
   authorizeFrameForSubmission,
   authorizeFrameForLaunch,
   authorizeOverlayDocument,
+  describeOverlaySender,
   describeSender,
   originJoinsLaunchWorkflow,
   originJoinsWorkflow,
@@ -122,6 +124,7 @@ import {
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
+import { disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -136,11 +139,15 @@ const RUNTIME_REVIVAL_KEY = "jobpilotRuntimeRevivedV1";
 // not every time the service worker merely wakes up.
 void reviveAfterRuntimeReset();
 void restoreAssistantAfterServiceWorkerWake().catch(() => undefined);
+// This setting persists independently of the listener. Reassert ownership on
+// every worker start so an older installed build cannot keep opening the panel.
+disableSidePanelToolbarOpen();
 
 chrome.runtime.onInstalled.addListener(() => {
-  void chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined);
   void reviveOpenJobPilotTabs();
 });
+
+installToolbarOverlayAction();
 
 chrome.runtime.onStartup?.addListener(() => {
   void purgeSessionState("startup");
@@ -717,15 +724,24 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   }
 
   switch (message.type) {
+    case MSG.TOOLBAR_OVERLAY_READY:
+      try {
+        const authority = registerToolbarOverlayDocument(sender);
+        sendResponse({ ok: true, tabId: authority.tabId });
+      } catch (error) {
+        sendResponse({ ok: false, error: safeMessage(error) });
+      }
+      return false;
+
     case MSG.OVERLAY_GET_CONTEXT:
-      void requireAuthorizedOverlaySender(sender)
+      void requireAuthorizedOverlayContextSender(sender)
         .then(({ tabId }) => sendResponse({ ok: true, context: { tabId, available: true, status: "bound" } }))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
 
     case MSG.OVERLAY_GET_VIEW:
-      void requireAuthorizedOverlaySender(sender)
-        .then(({ tabId }) => getView(tabId))
+      void requireAuthorizedOverlayContextSender(sender)
+        .then(async (authority) => (await getView(authority.tabId)) ?? toolbarOverlayView(authority))
         .then((view) => sendResponse({ ok: true, view }))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
@@ -2610,8 +2626,73 @@ type RegisteredFrame = {
 };
 
 const frameRegistry = new Map<string, RegisteredFrame>();
+const toolbarOverlayDocuments = new Map<number, { documentId: string; url: string }>();
 
 const frameKey = (tabId: number, frameId: number): string => `${tabId}:${frameId}`;
+
+function registerToolbarOverlayDocument(
+  sender: chrome.runtime.MessageSender
+): { tabId: number; documentId: string; url: URL } {
+  const authority = describeOverlaySender(sender, chrome.runtime.id);
+  if (!authority.ok) throw new Error(authority.reason);
+  toolbarOverlayDocuments.set(authority.tabId, { documentId: authority.documentId, url: authority.url.href });
+  return authority;
+}
+
+async function requireAuthorizedOverlayContextSender(
+  sender: chrome.runtime.MessageSender
+): Promise<{ tabId: number; documentId: string; url: URL }> {
+  const authority = describeOverlaySender(sender, chrome.runtime.id);
+  if (!authority.ok) throw new Error(authority.reason);
+  const toolbar = toolbarOverlayDocuments.get(authority.tabId);
+  if (toolbar?.documentId === authority.documentId) {
+    // Same-document SPA navigation keeps document authority but revalidates and
+    // refreshes the safe URL context supplied by Chrome.
+    toolbarOverlayDocuments.set(authority.tabId, { documentId: authority.documentId, url: authority.url.href });
+    return authority;
+  }
+  await requireAuthorizedOverlaySender(sender);
+  return authority;
+}
+
+function toolbarOverlayView(authority: { tabId: number; url: URL }): LaunchViewState {
+  // activeTab is intentionally NOT consulted as persistent site access. Until
+  // a workflow view exists, the exact origin remains explicitly requestable.
+  const access = siteAccessNeedFor(authority.url.href, false, "page");
+  return {
+    tabId: authority.tabId,
+    requestId: "toolbar",
+    sessionId: null,
+    state: "idle",
+    company: null,
+    jobTitle: null,
+    atsId: null,
+    atsDisplayName: null,
+    limited: false,
+    fieldsDiscovered: 0,
+    filled: 0,
+    skipped: 0,
+    reviewRequired: 0,
+    resumeStatus: "—",
+    coverStatus: "—",
+    reachedFinalStep: false,
+    contentReady: true,
+    packageLoaded: false,
+    running: false,
+    failureCode: "HANDOFF_NOT_FOUND",
+    failureMessage: null,
+    confirmationRequired: false,
+    confirmationDismissed: false,
+    submissionGestureAt: null,
+    submissionAttempt: 0,
+    failureRecoverable: false,
+    siteAccess: access.state,
+    siteAccessPattern: access.pattern,
+    siteAccessOrigin: access.origin,
+    siteAccessScope: access.scope,
+    updatedAt: Date.now()
+  };
+}
 
 /**
  * Bind overlay controls to Chrome's sender metadata and the exact live top

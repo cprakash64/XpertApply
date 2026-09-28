@@ -222,6 +222,7 @@ export function createWidget(actions: {
   // without creating a second user-facing assistant.
   document.getElementById("jobpilot-assisted-apply")?.remove();
   const mountedOverlay = mountApplicationAssistantOverlay();
+  void mountedOverlay.refresh();
   const host = mountedOverlay.overlay.host;
   const extensionSlot = mountedOverlay.overlay.root.querySelector<HTMLElement>("[data-overlay-workflow-extensions]")!;
   extensionSlot.replaceChildren();

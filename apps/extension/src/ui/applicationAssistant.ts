@@ -82,7 +82,7 @@ const FAILURE_LABEL: Record<string, string> = {
   WRONG_TAB: "This panel is bound to a different tab.",
   DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
   HOST_PERMISSION_MISSING: "XpertApply needs permission to access this site. Check the extension's site access settings.",
-  HANDOFF_NOT_FOUND: "No prepared application is waiting for this tab. Start from XpertApply.",
+  HANDOFF_NOT_FOUND: "We couldn't connect to this application yet. Refresh the application page and try again.",
   HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
   FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
   NO_FIELDS_DISCOVERED: "No fillable fields were found on this page."
@@ -147,9 +147,12 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
 
   function renderDiagnostics(current: LaunchViewState): void {
     const diagnostics = options.diagnostics;
-    element("diag").hidden = !diagnostics?.enabled;
+    const diag = options.root.getElementById("diag");
+    const diagBody = options.root.getElementById("diagBody");
+    if (!diag || !diagBody) return;
+    diag.hidden = !diagnostics?.enabled;
     if (!diagnostics?.enabled) return;
-    element("diagBody").textContent = [
+    diagBody.textContent = [
       `version: ${BUILD_INFO.version}`,
       `${diagnostics.surface}Build: ${BUILD_INFO.buildId}`,
       `builtAt: ${BUILD_INFO.builtAt}`,
@@ -187,10 +190,11 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     } else {
       errorBox.hidden = true;
     }
+    const workflowAvailable = current.sessionId != null;
     const terminal = current.failureCode != null && current.failureRecoverable === false;
-    button("fill").disabled = current.running || terminal;
-    setText("fill", current.running ? "Filling…" : terminal ? "Reopen from XpertApply" : "Fill application");
-    for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = false;
+    button("fill").disabled = !workflowAvailable || current.running || terminal;
+    setText("fill", current.running ? "Filling…" : terminal ? "Connect application" : "Fill application");
+    for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = !workflowAvailable;
     renderSiteAccess(current);
     renderDiagnostics(current);
   }
