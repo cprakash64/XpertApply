@@ -258,6 +258,22 @@ describe("marketing homepage", () => {
       expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
     });
 
+    it("keeps a known draft ID unavailable without a listing URL", () => {
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", "");
+      renderLanding();
+      expect(screen.queryByRole("link", { name: /Add to Chrome/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Add to Chrome.*not available yet/i })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("does not link to a Store item different from runtime routing", () => {
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", STORE_URL);
+      renderLanding();
+      expect(screen.queryByRole("link", { name: /Add to Chrome/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Add to Chrome.*not available yet/i })).toHaveAttribute("aria-disabled", "true");
+    });
+
     it("falls back to an announced unavailable state instead of a dead link", () => {
       renderLanding();
 

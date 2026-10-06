@@ -46,10 +46,10 @@ const DEFAULT_SITE_URL = `https://${BRAND.domain}`;
  * The install CTA is a link we hand to every visitor, so it is not enough for
  * the value to merely parse: a typo'd or hostile `NEXT_PUBLIC_CHROME_EXTENSION_URL`
  * would turn the landing page into a redirect to somewhere else entirely. Only
- * the official Chrome Web Store origins are accepted; anything else is treated
+ * the current official Chrome Web Store detail routes are accepted; anything else is treated
  * as "not configured yet" and the CTA falls back to its unavailable state.
  */
-const CHROME_WEB_STORE_HOSTS = new Set(["chromewebstore.google.com", "chrome.google.com"]);
+const CHROME_WEB_STORE_HOST = "chromewebstore.google.com";
 const CHROME_EXTENSION_ID = /^[a-p]{32}$/;
 
 /** Strip a trailing slash so callers can concatenate paths safely. */
@@ -89,9 +89,17 @@ export function chromeExtensionUrl(): string | null {
   try {
     const url = new URL(configured);
     if (url.protocol !== "https:") return null;
-    if (!CHROME_WEB_STORE_HOSTS.has(url.hostname.toLowerCase())) return null;
-    // A bare store origin is not a listing.
-    if (url.pathname === "/" || url.pathname === "") return null;
+    if (url.hostname !== CHROME_WEB_STORE_HOST || url.port || url.username || url.password) return null;
+    // Check the original path too: URL parsing normalizes dot segments and
+    // backslashes, which must not turn an ambiguous input into a valid listing.
+    const rawPath = configured.match(/^https:\/\/[^/?#]+([^?#]*)/)?.[1];
+    if (rawPath !== url.pathname) return null;
+    const item = url.pathname.match(/^\/detail\/(?:[A-Za-z0-9_-]+\/)?([a-p]{32})$/)?.[1];
+    if (!item) return null;
+    // A draft may have a known routing ID and no URL. When a URL is supplied,
+    // it must identify that same item; a slug/query/fragment is not identity.
+    const configuredId = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID?.trim();
+    if (configuredId && item !== chromeExtensionId()) return null;
     return url.toString();
   } catch {
     return null;

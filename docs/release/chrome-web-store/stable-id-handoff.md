@@ -1,12 +1,13 @@
 # Permanent Store ID handoff and dependency map
 
-Official known Store item ID: **`gnibjomjfdobadlockphjiibbpmiehcj`**. Canonical Dashboard-provided Store detail URL: **PENDING OWNER VERIFICATION**. Do not invent a URL slug or create another item. Synthetic test IDs and unpacked development IDs are not production routing identities.
+Official known Store item ID: **`gnibjomjfdobadlockphjiibbpmiehcj`**. Owner-proven Dashboard lifecycle: **Draft / unpublished**. Public canonical Store detail URL: **NOT YET AVAILABLE / NOT PROVEN; pending Store delivery/publication lifecycle**. Do not invent a URL slug or create another item. Synthetic test IDs and unpacked development IDs are not production routing identities.
 
 Required future Web build-time values:
 
 ```text
 NEXT_PUBLIC_CHROME_EXTENSION_ID=gnibjomjfdobadlockphjiibbpmiehcj
-NEXT_PUBLIC_CHROME_EXTENSION_URL=<OWNER-VERIFIED CANONICAL STORE DETAIL URL>
+NEXT_PUBLIC_CHROME_EXTENSION_URL=
+# Keep unset until an authoritative usable official Store URL exists.
 ```
 
 Current production observation from CWS-PREP-04: running container ID variable absent; positive ID wiring **NOT PROVEN**. URL **EMPTY** in observed running Web configuration/browser configuration. **WEB DEPLOY REQUIRED** under separate authorization; runtime-only environment edits cannot update compiled browser bundles. No deployment is performed here.
@@ -31,3 +32,16 @@ No extension manifest `key` or `update_url` is needed. No API hardcoded ID or AP
 | Release docs | Known official ID; canonical URL still pending | Known ID / verified URL when obtained | Record public ID and URL in release record without credentials. |
 
 The Store item ID is **public routing metadata**, not a secret. Publisher account credentials, OAuth tokens, and signing private keys are secrets and must not be committed. No private signing key was created in this stage.
+
+
+## CWS-PREP-06R — owner-proven draft lifecycle and generic routing preparation
+
+Authoritative owner Dashboard evidence: **XpertApply — Assisted Apply**, item `gnibjomjfdobadlockphjiibbpmiehcj`, **Draft**, uploaded package **0.2.0** (`ac64ea9 2026-09-19T20:51:04.476Z; production`), **not published**. Public canonical Store URL: **NOT YET AVAILABLE / NOT PROVEN; pending Store delivery/publication lifecycle**. Source preparation does not require that public URL now. The `empty-title` probe is not a listing URL and must not be configured.
+
+Observed draft fields: category Workflow & Planning; English; 128×128 icon present; no screenshots, small promo or marquee uploaded (marquee remains optional/deferred); Official URL field None; homepage https://xpertapply.com/; support URL empty; mature content OFF; payment Free of charge; visibility selection Public; All regions selected. Public selection is not publication. Submit for review is disabled; reason **UNKNOWN**, because “Why can't I submit?” was not inspected. These are observed draft settings, not owner confirmation of final distribution choices or completed release gates.
+
+Future build-time routing: `NEXT_PUBLIC_CHROME_EXTENSION_ID=gnibjomjfdobadlockphjiibbpmiehcj`; `NEXT_PUBLIC_CHROME_EXTENSION_URL` **MUST REMAIN UNSET** until an authoritative usable official Store URL exists. Production deployment remains PENDING. ID_ONLY_WEB_DEPLOYMENT: **REQUIRED_BEFORE_PRIVATE_STORE_HANDOFF** for actual production handshake qualification: browser-routed ping and account teardown require the explicit ID, while install CTA can safely stay unavailable and AutoApply falls back to documentation. This is not a prerequisite for merely drafting/reviewing the Store item. Next.js public values require a Web image rebuild; future deployment is Web-only, no API restart or extension rebuild for ID routing alone. No deployment here.
+
+Current-source mismatch evidence: prior `chromeExtensionUrl()` accepted an official-host non-root URL independently of `chromeExtensionId()`. ID A / URL B was accepted. Generic preparation now requires an HTTPS current Store detail route ending in an exact 32-character a–p identifier; when ID is also configured, the URL identifier must equal it. Harmless slug/query/fragment do not define identity. Malformed/ambiguous paths, encoded identifiers/traversal, wrong host, root and mismatched pairs produce no install URL. Runtime routing still uses only the independently validated explicit ID; no URL-derived routing, network validation or hardcoded product ID. ID-only remains valid during draft lifecycle. Targeted qualification results are recorded in the external stage report.
+
+SIGNED_N_BASELINE: **NOT ESTABLISHED**. Neither the local historical ZIP nor the Dashboard upload is Store-delivered signed N. Later separately authorized same-item Private/trusted-tester review/delivery must establish whether signed 0.2.0 N is feasible before 0.3.0 replaces it. Final 0.3.0 ZIP remains NOT BUILT; NEW-04 OPEN/P1, PROXY-01 OPEN, assets/manual acceptance/final Dashboard reconciliation remain pending. No push, production action, Store mutation, upload, review submission or publication in this stage.

@@ -65,12 +65,9 @@ describe("chromeExtensionUrl", () => {
     expect(chromeExtensionUrl()).toBe(url);
   });
 
-  it("accepts the legacy store host", () => {
-    vi.stubEnv(
-      "NEXT_PUBLIC_CHROME_EXTENSION_URL",
-      "https://chrome.google.com/webstore/detail/xpertapply/abcdefghijklmnop"
-    );
-    expect(chromeExtensionUrl()).toContain("chrome.google.com");
+  it("rejects the legacy store host", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", "https://chrome.google.com/webstore/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(chromeExtensionUrl()).toBeNull();
   });
 
   it("rejects anything that is not a Chrome Web Store listing", () => {
@@ -106,5 +103,67 @@ describe("chromeExtensionId", () => {
       vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", value);
       expect(chromeExtensionId(), value).toBeNull();
     }
+  });
+});
+
+
+describe("draft Store routing configuration", () => {
+  const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const url = `https://chromewebstore.google.com/detail/example-slug/${id}`;
+
+  it("keeps a known ID usable with no public URL and never infers it from a URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", "");
+    expect(chromeExtensionId()).toBe(id);
+    expect(chromeExtensionUrl()).toBeNull();
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", "");
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url);
+    expect(chromeExtensionId()).toBeNull();
+    expect(chromeExtensionUrl()).toBe(url);
+  });
+
+  it("accepts matching identity independently of slug, query or fragment", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    for (const value of [url, url.replace("example-slug", "another-slug"), `${url}?id=${other}#${other}`, `https://chromewebstore.google.com/detail/${id}`]) {
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", value);
+      expect(chromeExtensionUrl()).toBe(value);
+    }
+  });
+
+  it("rejects a different item while retaining the explicit runtime routing ID", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url.replace(id, other));
+    expect(chromeExtensionUrl()).toBeNull();
+    expect(chromeExtensionId()).toBe(id);
+  });
+
+  it("rejects a configured malformed ID even with a valid listing URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", "not-an-id");
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url);
+    expect(chromeExtensionId()).toBeNull();
+    expect(chromeExtensionUrl()).toBeNull();
+  });
+
+  it.each([
+    "not a url", "http://chromewebstore.google.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://example.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/", "https://chromewebstore.google.com/detail/example",
+    "https://chromewebstore.google.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaq",
+    "https://chromewebstore.google.com/detail/example/xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/example/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "https://chromewebstore.google.com/detail/example/%61aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/../detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/%2e%2e/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/example?item=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/example#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extra",
+    "https://user@chromewebstore.google.com/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "https://chromewebstore.google.com:444/detail/example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ])("fails closed for ambiguous or invalid listing %s", (value) => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", value);
+    expect(chromeExtensionUrl()).toBeNull();
   });
 });

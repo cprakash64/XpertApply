@@ -4,7 +4,7 @@
 
 Current target: **0.3.0** on `release/chrome-web-store`. Qualified engineering baseline: `a11c3839d8c02d9b90dd7501c74513c29af4e98c`. Extension architecture remains user-controlled MV3, with a toolbar-opened nonmodal in-page assistant and Popup / Side Panel fallback. Permissions and hosts are unchanged by this metadata checkpoint. Build version derives from `sourceManifest.version`; final packaging remains a later clean-commit operation.
 
-Official known Store item ID: `gnibjomjfdobadlockphjiibbpmiehcj`. Canonical Store URL: **OWNER/DASHBOARD VERIFICATION PENDING**; do not invent a slug. Current historical Store draft: **0.2.0**. Historical ZIP `apps/extension/xpertapply-extension.zip`, 203500 bytes, SHA-256 `30c8784dd755b982cb18fe6cd99c6474b96ed4a82585f9e731db0d27f0f545a4`, is preserved historical evidence and is not the final 0.3.0 artifact.
+Official known Store item ID: `gnibjomjfdobadlockphjiibbpmiehcj`. Canonical Store URL: **NOT YET AVAILABLE / NOT PROVEN; owner confirms Draft/unpublished**; do not invent a slug. Current historical Store draft: **0.2.0**. Historical ZIP `apps/extension/xpertapply-extension.zip`, 203500 bytes, SHA-256 `30c8784dd755b982cb18fe6cd99c6474b96ed4a82585f9e731db0d27f0f545a4`, is preserved historical evidence and is not the final 0.3.0 artifact.
 
 ## Decisions and scope
 
@@ -19,7 +19,7 @@ Engineering qualification at the baseline is carried forward; it is not a claim 
 | Gate | Current status |
 | --- | --- |
 | Final 0.3.0 ZIP / SHA / package-entry and remote-code audit | NOT BUILT / PENDING CWS-PREP-13 |
-| Canonical Store detail URL | OWNER/DASHBOARD VERIFICATION PENDING |
+| Canonical Store detail URL | NOT YET AVAILABLE / NOT PROVEN; Draft/unpublished owner evidence |
 | Production Web Store ID/URL deployment and positive handoff proof | PENDING |
 | NEW-04 HTTP security headers | OPEN / P1 |
 | PROXY-01 production proxy/body-limit qualification | OPEN / manual production qualification required |
@@ -39,7 +39,7 @@ Engineering qualification at the baseline is carried forward; it is not a claim 
 | CWS-PREP-06 | Prepare Store-ID Web configuration and any explicitly scoped consistency guard; no deployment. |
 | CWS-PREP-07 | Prepare NEW-04 Web CSP / powered-by source changes and local qualification; no deployment. |
 | CWS-PREP-08 | Inspect effective privileged edge configuration and back up scoped vhosts; separately authorized HSTS/nosniff rollout only to relevant hosts. |
-| CWS-PREP-09 | Separately authorized production Web-only deployment with verified ID/URL and qualified Report-Only CSP. |
+| CWS-PREP-09 | Separately authorized production Web-only deployment with known ID and qualified Report-Only CSP; keep URL unset while unavailable. |
 | CWS-PREP-10 | Read-only CSP observation and closure decision; no enforcement. |
 | CWS-PREP-11 | Separately authorized qualified enforcing CSP rollout, validation and rollback readiness; NEW-04 closure proof. |
 | CWS-PREP-12 | PROXY-01 effective proxy inspection and bounded synthetic upload qualification; failure requires separate repair scope. |
@@ -60,3 +60,16 @@ Manual ATS scope: dedicated Greenhouse, Lever and Ashby flows; limited Workday s
 ## Rollback
 
 Before commit, restore only authorized metadata/docs from recorded baseline if a separately directed rollback is needed; never reset unrelated work. Restore generated `dist` from the external entry backup even if qualification fails. After commit, use a separately authorized revert of the checkpoint rather than history rewriting. Each future production rollout must have its own scoped backup/rollback plan. The historical ZIP stays frozen until the explicitly authorized final packaging stage.
+
+
+## CWS-PREP-06R — owner-proven draft lifecycle and generic routing preparation
+
+Authoritative owner Dashboard evidence: **XpertApply — Assisted Apply**, item `gnibjomjfdobadlockphjiibbpmiehcj`, **Draft**, uploaded package **0.2.0** (`ac64ea9 2026-09-19T20:51:04.476Z; production`), **not published**. Public canonical Store URL: **NOT YET AVAILABLE / NOT PROVEN; pending Store delivery/publication lifecycle**. Source preparation does not require that public URL now. The `empty-title` probe is not a listing URL and must not be configured.
+
+Observed draft fields: category Workflow & Planning; English; 128×128 icon present; no screenshots, small promo or marquee uploaded (marquee remains optional/deferred); Official URL field None; homepage https://xpertapply.com/; support URL empty; mature content OFF; payment Free of charge; visibility selection Public; All regions selected. Public selection is not publication. Submit for review is disabled; reason **UNKNOWN**, because “Why can't I submit?” was not inspected. These are observed draft settings, not owner confirmation of final distribution choices or completed release gates.
+
+Future build-time routing: `NEXT_PUBLIC_CHROME_EXTENSION_ID=gnibjomjfdobadlockphjiibbpmiehcj`; `NEXT_PUBLIC_CHROME_EXTENSION_URL` **MUST REMAIN UNSET** until an authoritative usable official Store URL exists. Production deployment remains PENDING. ID_ONLY_WEB_DEPLOYMENT: **REQUIRED_BEFORE_PRIVATE_STORE_HANDOFF** for actual production handshake qualification: browser-routed ping and account teardown require the explicit ID, while install CTA can safely stay unavailable and AutoApply falls back to documentation. This is not a prerequisite for merely drafting/reviewing the Store item. Next.js public values require a Web image rebuild; future deployment is Web-only, no API restart or extension rebuild for ID routing alone. No deployment here.
+
+Current-source mismatch evidence: prior `chromeExtensionUrl()` accepted an official-host non-root URL independently of `chromeExtensionId()`. ID A / URL B was accepted. Generic preparation now requires an HTTPS current Store detail route ending in an exact 32-character a–p identifier; when ID is also configured, the URL identifier must equal it. Harmless slug/query/fragment do not define identity. Malformed/ambiguous paths, encoded identifiers/traversal, wrong host, root and mismatched pairs produce no install URL. Runtime routing still uses only the independently validated explicit ID; no URL-derived routing, network validation or hardcoded product ID. ID-only remains valid during draft lifecycle. Targeted qualification: PASS, four directly affected Web unit files / 84 tests; no production build. Detailed evidence is outside Git in `/private/tmp/xpertapply-cws-prep-06r/`.
+
+SIGNED_N_BASELINE: **NOT ESTABLISHED**. Neither the local historical ZIP nor the Dashboard upload is Store-delivered signed N. Later separately authorized same-item Private/trusted-tester review/delivery must establish whether signed 0.2.0 N is feasible before 0.3.0 replaces it. Final 0.3.0 ZIP remains NOT BUILT; NEW-04 OPEN/P1, PROXY-01 OPEN, assets/manual acceptance/final Dashboard reconciliation remain pending. No push, production action, Store mutation, upload, review submission or publication in this stage.
