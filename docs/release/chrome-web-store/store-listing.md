@@ -1,4 +1,4 @@
-# Store listing copy
+# Store listing copy — current 0.3.0 draft
 
 The packaged manifest controls the displayed extension name and short summary. Those fields cannot be edited independently in the Dashboard after upload; any change would require a new package/version review.
 
@@ -12,15 +12,15 @@ The packaged manifest controls the displayed extension name and short summary. T
 
 **Detailed description — copy/paste:**
 
-> XpertApply helps you prepare, fill, and track job applications using your saved information and application pages you choose to use with the extension. You stay in control of each application.
+> XpertApply helps you complete job applications using your saved XpertApply profile and information you choose to use. An XpertApply account is required for prepared application information and account features.
 >
-> - Review your saved XpertApply profile and prepared application information while applying.
-> - Fill supported fields on an employer or application site after you choose that site and grant access.
-> - Prepare and review application answers for the selected workflow.
-> - Keep application context and progress organized as you work.
-> - Review the completed form on the employer site and submit it yourself. XpertApply never presses the final submission button for you.
+> Open the assistant from the Chrome toolbar on an application page. The nonmodal in-page assistant keeps the employer form visible and usable while you work. You can minimize and restore it, or close it; progress updates do not reopen a closed assistant. Popup and Side Panel interfaces remain available as fallback surfaces.
 >
-> Site support varies by employer and application provider. The extension asks for employer-site access when you start a selected application workflow; you may decline or revoke that access. The privacy policy explains page information, service providers, retention, and your controls: https://xpertapply.com/privacy.
+> Choose Fill to enter supported fields using your prepared or confirmed information. Review questions and answers that need attention. Required unresolved review items must be addressed before you can mark the application complete. You review the employer form and submit it yourself. XpertApply never presses the employer's final Submit button, accepts consent or legal attestations for you, or guarantees every field will be supported.
+>
+> The extension uses temporary access after a toolbar action and asks for access to the selected employer or ATS origin when needed for the application workflow. You may decline or revoke access. Site and widget support vary; Workday support is limited, and multi-step or unusual controls may require manual entry.
+>
+> Relevant selected-page information may be sent to XpertApply for requested assistance. See https://xpertapply.com/privacy for page information, processors, retention and your controls.
 
 **Language:** English. No packaged `_locales` directory or translated listing is established.
 
@@ -35,3 +35,5 @@ The packaged manifest controls the displayed extension name and short summary. T
 **Official URL / verified publisher URL:** desired domain https://xpertapply.com only if it appears among sites verified to the publisher in the Dashboard. Verification has not been established here; leave unset otherwise.
 
 **Mature content:** no mature-content feature is established; verify the Dashboard's default during final listing review.
+
+Final package and live Dashboard reconciliation are PENDING; this copy has not been entered or submitted by this stage.

@@ -1,6 +1,6 @@
 # Chrome Web Store privacy declarations — operator draft
 
-**NOT YET SUBMITTED TO CHROME WEB STORE.** Reviewed September 19, 2026. This is a draft for the operator to enter and verify against the live Dashboard; it is not a record of submission.
+**NOT YET SUBMITTED TO CHROME WEB STORE.** Current 0.3.0 source-based draft; historical review September 19, 2026. Final ZIP NOT BUILT; SHA/package scan PENDING CWS-PREP-13. FINAL LIVE DASHBOARD LABEL VERIFICATION PENDING. This is a draft for the operator to enter and verify against the live Dashboard; it is not a record of submission.
 
 ## Official basis
 
@@ -17,19 +17,20 @@ XpertApply helps users prepare, fill, and track job applications using informati
 
 | Manifest item | Justification |
 | --- | --- |
+| `activeTab` | Temporary authorization after an explicit Chrome toolbar action to bootstrap the packaged assistant on the selected application tab. It does not create blanket access to all employer origins. |
 | `sidePanel` | Shows progress, review items, manual controls, and site-access disclosure for the selected application tab. |
 | `storage` | Keeps temporary handoffs, tab authority, application package, progress, and limited runtime metadata across service-worker suspension. |
 | `scripting` | Injects the bundled application assistant into the specifically authorized application tab/frame after host access is established. |
 | `tabs` | Opens and tracks the user-selected employer application tab and necessary redirects/new tabs; binds authority to exact tab IDs. |
 | `https://api.xpertapply.com/*` | Communicates with the first-party API for prepared sessions and application assistance. |
 | `https://xpertapply.com/*`, `https://www.xpertapply.com/*` | Connects the first-party web app with the extension launch flow. |
-| Optional `https://*/*` | Requested for one employer/ATS origin at a time by an explicit side-panel click. Employer destinations, embedded forms, redirects, and new tabs cannot all be enumerated in advance. Access serves only the selected application workflow. This is optional runtime access, not an install-time blanket grant. |
+| Optional `https://*/*` | Requested for one employer/ATS origin at a time by an explicit site-access action in the selected assistant workflow. Employer destinations, embedded forms, redirects, and new tabs cannot all be enumerated in advance. Access serves only the selected application workflow. This is optional runtime access, not an install-time blanket grant. |
 
 `webNavigation` is absent. No broader permission is proposed.
 
 ## Remote code
 
-**No, I am not using remote code.** The extension manifest runs packaged `background.js`, `content.js`, and `sidepanel.js`. The side panel has a local script. API and AI responses are data used by packaged code, not remotely executed JavaScript. The local qualification ZIP was inspected: it contains only those bundled scripts and local assets, and a targeted scan found no `eval`, `new Function`, remote module import or remote script tag. Recheck the artifact uploaded at submission if it is rebuilt.
+**Expected final remote-code answer: No remote executable code.** Current runtime entrypoints are locally bundled, including `background.js`, `content.js`, `assistant.js`, `overlayBootstrap.js` and `sidepanel.js`, with local page assets. API/AI responses are data, not executable extension code. Final answer requires a fresh CWS-PREP-13 package-entry inventory and scan before any Dashboard entry; the historical package scan does not qualify current bytes.
 
 ## User-data categories
 
@@ -55,7 +56,9 @@ The official Dashboard image shows three certification boxes. Draft answers: cer
 
 ## Prominent disclosure and affirmative action
 
-Location: `apps/extension/src/ui/sidepanel.ts`, site-access warning rendered before the `grantSiteAccess` button. Copy: “To help fill this application, XpertApply needs access to this site. It will read relevant application-page and form information. Relevant information may be sent to XpertApply's service for the features you request.” The button identifies the origin. A click invokes `chrome.permissions.request`; a denial does not grant access. The extension continues only after grant and authority checks. Employer submission remains manual.
+Current access-flow disclosure must distinguish toolbar-selected temporary activeTab bootstrap and local field/page discovery from optional origin grants and relevant context transmission to XpertApply for requested assistance. Primary UI is the in-page assistant, with Popup and Side Panel fallback. The origin-specific permission action remains explicit; denial grants nothing. Fill is user-triggered; values entered into employer/ATS forms are visible to those sites under their own practices before final Submit. Sensitive questions, legal consent/attestations and final employer Submit remain manual. Final manual disclosure qualification is PENDING; moving the UI in-page establishes no new data category.
+
+Historical side-panel disclosure review remains in the [privacy audit](chrome-web-store-privacy-audit.md). No claim is made that all DOM is uploaded or that data stays local until final Submit.
 
 ## Policy, contact and processors
 
@@ -66,3 +69,5 @@ Location: `apps/extension/src/ui/sidepanel.ts`, site-access warning rendered bef
 - Provider contract follow-up: verify any desired OpenAI/other provider training, access or retention guarantees before making stronger claims. None are asserted here.
 
 **Remaining publication gate:** match final Dashboard choices to its live labels, complete the Store listing and other release gates, and submit declarations under later authorization. This draft does not perform those actions.
+
+Category set remains PII, authentication, user-entered/profile/job-search location, selected-workflow Web history, user activity and website/application content. No new category is established solely by the UI surface change. No provider zero-retention or non-training guarantees are asserted. Final Dashboard declarations remain PENDING and upload/review/publication are NOT AUTHORIZED.

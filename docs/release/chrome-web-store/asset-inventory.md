@@ -1,15 +1,19 @@
-# Store graphic asset inventory
+# Store graphic asset inventory — current 0.3.0 preparation
 
-Official [image specifications](https://developer.chrome.com/docs/webstore/images) checked September 19, 2026: 128×128 PNG icon; 1–5 full-bleed screenshots at 1280×800 or 640×400; 440×280 PNG/JPEG small promo required; 1400×560 marquee optional; video optional.
+Historical image specifications reference: [Chrome images](https://developer.chrome.com/docs/webstore/images), checked September 19, 2026. Live reconciliation remains pending.
 
-| Asset | Current state |
+| Asset | Current state / capture plan |
 | --- | --- |
-| Packaged Store icon | `apps/extension/icons/xpertapply-128.png`, 128×128 RGB PNG, 16,332 bytes. Existing qualified XpertApply X mark; visually inspected, centered and unclipped. White background is permitted by Chrome, which applies a frame to icons without alpha. Same file is present in the ZIP. |
-| Other runtime icons | `apps/extension/icons/xpertapply-16.png`, `xpertapply-32.png`, `xpertapply-48.png`; all included in ZIP. |
-| Existing Web brand source | `apps/web/public/brand/xpertapply-logo.png`, 1448×1086 RGB PNG, 812,993 bytes. A brand reference only; not a Store graphic. |
-| Actual product screenshots | None committed or qualified for Store listing yet. **OWNER CAPTURE ACTION REQUIRED** before review submission. Use 1280×800 where the UI remains legible at 640×400. Capture the current packaged side panel and a synthetic selected application; show access disclosure, user review, and manual final submission only where actually visible. No real personal data, tokens, employer data, debug UI, or localhost URL. Do not substitute fabricated mockups. |
-| Small promo tile | No qualified 440×280 asset exists. **OWNER DESIGN ACTION REQUIRED** before review submission. Safely adapt the existing XpertApply mark with current brand colors, a clean background, and minimal/no text; visually review at half size. |
-| Marquee | Optional 1400×560; no asset prepared. |
-| Promo video | Optional; no video prepared. |
+| 128×128 Store icon | READY: `apps/extension/icons/xpertapply-128.png`, RGB PNG, 16,332 bytes; existing qualified mark. Final package inclusion audit pending. |
+| Runtime icons 16/32/48 | READY: existing `apps/extension/icons/xpertapply-16.png`, `xpertapply-32.png`, `xpertapply-48.png`; final package audit pending. |
+| S1 | PENDING: toolbar-opened in-page assistant beside a synthetic application. |
+| S2 | PENDING: explicit Fill/review workflow with employer page visible. |
+| S3 | PENDING: required-review state blocks completion, with actual manual consent/final-submit messaging. |
+| S4 | PENDING: minimized/restored assistant or a useful actual fallback surface. |
+| Small promo | REQUIRED 440×280; NOT READY / PENDING design and approval. |
+| Marquee | OPTIONAL 1400×560; DEFERRED. |
+| Promo video | Optional; not prepared. |
 
-The initial draft package upload for permanent ID can proceed before these listing graphics are entered. Their absence blocks final listing/review submission, not the stable-ID handoff.
+Plan four actual final-product screenshots, each **1280×800 RGB PNG**, full bleed with square corners. Chrome's referenced specification permits 1–5 screenshots at 1280×800 or 640×400. Use synthetic/demo data only: no PII, tokens, diagnostics, fabricated/mock UI or test-only/localhost labeling in final Store images. Capture only behavior actually visible in the final product; do not invent review or consent controls for the screenshot.
+
+The existing Web brand logo is a reference, not a qualified Store graphic. No image is created in this stage. Missing graphics block final listing/review submission; they do not establish upload authorization or prevent preparation of the stable-ID map.

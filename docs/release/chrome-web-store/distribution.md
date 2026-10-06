@@ -1,12 +1,15 @@
-# Distribution worksheet
+# Distribution worksheet — current 0.3.0 preparation
 
-Reviewed against [Chrome's Distribution guidance](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution) September 19, 2026. Do not apply choices during the stable-ID handoff.
+Eventual intended visibility: **Public**. Current distribution actions are **NOT AUTHORIZED**. Historical guidance reference: [Chrome distribution](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution), reviewed September 19, 2026; final live labels remain pending.
 
-| Field | Planned handling |
+| State | Meaning and boundary |
 | --- | --- |
-| Visibility | Eventual production goal: **Public**. Private and Unlisted are available alternatives but still receive policy review. The draft must remain unsubmitted while the stable ID and remaining gates are resolved. |
-| Geographic distribution | Dashboard offers **All regions** or selected countries. OWNER CHOICE before submission; do not presume worldwide availability from the code. |
-| Paid item / in-app purchases | No paid-extension behavior is established by this package. Inspect the live Distribution tab's current declaration wording and the product's actual purchase flow before selecting an answer. Do not invent a purchase model. |
-| Test release | A separate BETA/TESTING item is not part of this first production item; Chrome's guidance requires explicit labeling if a separate testing item is later created. |
+| DRAFT | Editable item/package/metadata state; uploading or saving still needs separately scoped authorization. It does not itself deliver an install or establish a signed baseline. |
+| PRIVATE / RESTRICTED DELIVERY | Same official item restricted to approved testers where supported; still requires policy review and publication/delivery authorization. It is not a harmless draft action. |
+| PUBLIC | Eventual owner goal; separate final readiness, review submission and publication authorization required. |
 
-Draft upload alone does not submit an item for review. Leave **Submit for Review** untouched in this stage. Final Public submission is a later owner-authorized action.
+Owner decisions PENDING: regions (all or selected), pricing/IAP and account offering confirmation, trusted tester / Private baseline strategy and Store-delivered signed N. Do not infer a paid-extension model from account features or silently create a separate testing item.
+
+Same-item signed N must be established before replacing draft N with 0.3.0. An existing Store-delivered install can qualify after proof; otherwise any historical 0.2.0 restricted review and delivery need separate authorization with accurate N-specific listing/privacy/package evidence. Unsigned local ZIPs do not qualify. Later restricted N+1 review/delivery, final Public review submission and publication remain separate actions. NEW-04, PROXY-01 and production handoff readiness remain open gates; see the [living plan](../../plans/chrome-web-store-0.3.0-release.md).
+
+No Dashboard save, upload, review submission or publication/delivery at any level is authorized here.

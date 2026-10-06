@@ -65,7 +65,7 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
   });
 
   it("packages the exact E4O-C permissions and on-demand overlay bootstrap", () => {
-    expect(manifest.version).toBe("0.2.0");
+    expect(manifest.version).toBe("0.3.0");
     expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.host_permissions).toEqual([
       "https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"

@@ -1,5 +1,7 @@
 # Chrome Web Store privacy implementation audit
 
+## Historical 0.2.0 audit — preserved evidence
+
 Source review: September 19, 2026, release branch at `7e525894c03ed4c10897b5fccf47e0dc4c1ba9b5` before disclosure edits. Production recipient and generated-file facts below are from the qualified owner-provided audit; production was not accessed for this review.
 
 ## Data-flow matrix
@@ -52,3 +54,16 @@ Single purpose: **help users prepare, fill, and track job applications using inf
 ## Remote code and consistency
 
 The manifest points to bundled service worker/content script/side-panel code. The side panel loads local `sidepanel.js`; the extension build packages local JavaScript. Review of `apps/extension/src` found no intended remote executable module, hosted WASM or eval-based code path. API/AI responses are data, not remote extension code. Final package inspection remains part of qualification. The public policy, side-panel disclosure and Store draft all describe selected page/form reading, possible service transmission, five current recipients, manual submission, and optional origin access. Neither blanket local-only claims nor provider retention/training guarantees are made.
+
+
+## CURRENT 0.3.0 PRE-BUILD audit
+
+Source version: **0.3.0 metadata**. Qualified engineering baseline: `a11c3839d8c02d9b90dd7501c74513c29af4e98c`. Final 0.3.0 package: **NOT BUILT**. Package SHA: **PENDING**. Final entry inventory and remote-code package audit: **PENDING CWS-PREP-13**. The CWS-PREP-05R temporary dirty-tree qualification build is not final package evidence and is restored to entry bytes. Historical ZIP SHA `30c8784dd755b982cb18fe6cd99c6474b96ed4a82585f9e731db0d27f0f545a4` identifies only the preserved 0.2.0 artifact.
+
+Updated source/data-flow review: `src/toolbarOverlay.ts` uses explicit toolbar action / activeTab to bootstrap packaged `overlayBootstrap.js` and content assistant on the selected tab. Primary UI is nonmodal in-page; `src/assistantWindow.ts` retains Popup and `sidepanel.html` retains Side Panel fallback. Optional employer/ATS origin capability still requires an explicit grant for selected workflow needs. Local discovery (`src/fields/discovery.ts`) reads relevant fields/context; selected derived questions/context can reach XpertApply for requested assistance (`src/content/questionBatch.ts`), rather than uploading all DOM. Explicit Fill places prepared/confirmed values in the employer/ATS form, making them visible to that site under its practices before Submit. Required unresolved review blocks completion; sensitive/legal/consent actions and employer final Submit remain manual.
+
+Current expected local bundles include `background.js`, `content.js`, `assistant.js`, `overlayBootstrap.js` and `sidepanel.js`. Expected answer remains **NO REMOTE EXECUTABLE CODE**, subject to fresh final package inventory/scan before Dashboard entry. The historical byte scan is not current-byte qualification.
+
+New data category due to in-page UI: **NONE established**. Source-supported category set remains personally identifiable information, authentication information, user-entered/profile/job-search location, selected-workflow navigation/Web history, user activity and website/application content. Processor scope remains OpenAI, People Data Labs, Apollo, Hunter and Hostinger; no additional provider or zero-retention/non-training guarantee is introduced. Historical retention distinctions remain; do not apply the seven-day rejected/withdrawn tracker policy to all data or providers.
+
+Final live Dashboard labels/declaration: **PENDING / NOT ENTERED by this stage**. Manual privacy/accessibility/ATS qualification, final installed audit, signed update and production Store-ID wiring remain PENDING. NEW-04 remains OPEN / P1; PROXY-01 remains OPEN. Upload, review submission and publication remain NOT AUTHORIZED.

@@ -1,6 +1,6 @@
 {
   "name": "@xpertapply/extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "XpertApply assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
