@@ -6,7 +6,8 @@
 import type { LedgerCounts } from "../fields/ledger";
 import type { AuthoritativeReviewItem } from "./reviewItems";
 import { answerNotesFor, overrideFailureMessage, type OverrideRequest } from "./reviewActions";
-import { mountApplicationAssistantOverlay } from "./applicationOverlayAssistant";
+import { registerApplicationOverlayWorkflowSurface } from "./applicationOverlayAssistant";
+import { APPLICATION_OVERLAY_HOST_ID } from "./applicationOverlay";
 
 export type WidgetStage = "preparing" | "opening" | "detecting" | "filling" | "uploading" | "review" | "ready" | "failed";
 
@@ -214,6 +215,18 @@ export function createWidget(actions: {
   hideSubmissionConfirmation: () => void;
   destroy: () => void;
 } {
+  // Child ATS contexts report progress through the worker; they never own
+  // the canonical overlay or its action/subscription lifecycle.
+  if (window.top !== window) {
+    const ignore = () => undefined;
+    return {
+      update: ignore, showReview: ignore, showActions: ignore,
+      refreshCounts: ignore, showTransactions: ignore,
+      setInteractionMode: ignore, askToRemember: ignore,
+      showSubmissionConfirmation: ignore, hideSubmissionConfirmation: ignore,
+      destroy: ignore
+    };
+  }
   // A prior content script can leave a frozen widget behind after the
   // extension is reloaded. The newly connected instance owns the UI and
   // replaces that inert host rather than creating a duplicate panel.
@@ -221,14 +234,12 @@ export function createWidget(actions: {
   // E4O overlay; this compatibility surface keeps the established workflow API
   // without creating a second user-facing assistant.
   document.getElementById("jobpilot-assisted-apply")?.remove();
-  const mountedOverlay = mountApplicationAssistantOverlay();
-  void mountedOverlay.refresh();
-  const host = mountedOverlay.overlay.host;
-  const extensionSlot = mountedOverlay.overlay.root.querySelector<HTMLElement>("[data-overlay-workflow-extensions]")!;
-  extensionSlot.replaceChildren();
+  // Workflow registration and passive startup never open the assistant. Keep
+  // this facade detached until an explicit toolbar SHOW mounts the overlay.
   const legacyHost = document.createElement("div");
   legacyHost.dataset.overlayWorkflowFacade = "";
-  extensionSlot.appendChild(legacyHost);
+  const host = legacyHost;
+  const disposeSurface = registerApplicationOverlayWorkflowSurface(legacyHost);
   const root = legacyHost.attachShadow({ mode: "open" });
   root.innerHTML = `
     <style>
@@ -1129,9 +1140,10 @@ export function createWidget(actions: {
       // bottom-right, exactly where a dropdown menu often opens; leaving it
       // interactive would let it swallow the option click.
       box.classList.toggle("interacting", active);
-      host.style.pointerEvents = active ? "none" : "";
+      const overlayHost = document.getElementById(APPLICATION_OVERLAY_HOST_ID);
+      if (overlayHost) overlayHost.style.pointerEvents = active ? "none" : "";
     },
-    destroy: () => mountedOverlay.overlay.destroy()
+    destroy: disposeSurface
   };
 }
 

@@ -30,6 +30,8 @@ afterEach(() => {
 });
 
 function mountWidget() {
+  // These tests exercise visible UI after an explicit user open.
+  reopenApplicationAssistantOverlay(document);
   return createWidget({ retry: () => {}, clear: () => {}, complete: () => {} });
 }
 

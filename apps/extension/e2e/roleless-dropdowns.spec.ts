@@ -23,6 +23,15 @@ import { expect, test, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+test.afterEach(async ({ page, context, browser }, info) => {
+  if (info.status !== "passed") return;
+  expect(browser.isConnected()).toBe(true);
+  expect(page.isClosed()).toBe(false);
+  expect(context.pages()).toEqual([page]);
+  expect(page.url()).toBe("about:blank");
+  expect(await page.evaluate(() => (window as unknown as { __events: { submitted: boolean } }).__events.submitted)).toBe(false);
+});
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HARNESS = path.join(here, "bundle", "harness.js");
 const LIVE_URL = "https://lifeattiktok.com/resume/7412998877665544/apply";
@@ -125,6 +134,8 @@ test("the adapter locates a role-less div trigger as the control", async ({ page
 test("both answers commit through a mousedown-toggled trigger and a role-less portaled menu", async ({ page }) => {
   await renderApplication(page);
 
+  const discovered = await page.evaluate(url => (window as unknown as { JobPilotHarness: any }).JobPilotHarness.tiktokDiscover(url, "#application-form"), LIVE_URL);
+  expect(discovered.slots.every((slot: { failureCode: string | null }) => slot.failureCode === null)).toBe(true);
   for (const [identity, label, typed] of [
     [AUTHORIZATION, "Yes", true],
     [SPONSORSHIP, "No", false]

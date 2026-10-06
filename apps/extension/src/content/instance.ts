@@ -22,3 +22,29 @@ export function claimContentInstance(
   return () => target[CONTENT_INSTANCE_KEY] === instanceId;
 }
 
+
+const WORKFLOW_INSTANCE_KEY = "__xpertapplyLiveWorkflowInstanceV1__";
+
+/** Same-runtime reinjection must retain the workflow ledger and action owner.
+ * The captured runtime liveness check permits a new bundle after extension
+ * reload, even when the isolated world's old globals survived. */
+export function claimWorkflowContentInstance(
+  target: Record<string, unknown>,
+  instanceId: string,
+  buildId: string,
+  runtimeIsLive: () => boolean
+): () => boolean {
+  const previous = target[WORKFLOW_INSTANCE_KEY] as
+    | { buildId: string; isLive: () => boolean }
+    | undefined;
+  if (previous?.buildId === buildId) {
+    try {
+      if (previous.isLive()) return () => false;
+    } catch {
+      // An orphaned runtime cannot retain ownership.
+    }
+  }
+  const isCurrent = claimContentInstance(target, instanceId);
+  target[WORKFLOW_INSTANCE_KEY] = { buildId, isLive: () => isCurrent() && runtimeIsLive() };
+  return isCurrent;
+}

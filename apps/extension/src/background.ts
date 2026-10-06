@@ -1,3 +1,6 @@
+import { requireCompletionReady } from "./completionAuthority";
+import { contentReadyViewPatch } from "./content/workflowProgress";
+import { createContentRegistrationRecovery } from "./contentRegistrationRecovery";
 /**
  * MV3 service worker: the canonical launch state machine.
  *
@@ -76,6 +79,7 @@ import {
   putActive,
   putPending,
   putView,
+  STORAGE_KEYS,
   updatePending,
   workflowTabIds,
   withAuthorityMutation,
@@ -148,6 +152,26 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 installToolbarOverlayAction();
+
+// Every user-visible workflow transition is committed through VIEW_KEY. The
+// storage mutation remains authoritative; this payload-free event merely tells
+// the affected tab's canonical top-frame overlay to fetch again. Delivery is
+// untargeted; child contexts do not own an overlay. This also covers producers
+// added later without creating a parallel state bus.
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  const expectedArea = chrome.storage.session ? "session" : "local";
+  if (areaName !== expectedArea || !changes[STORAGE_KEYS.VIEW_KEY]) return;
+  const change = changes[STORAGE_KEYS.VIEW_KEY];
+  const before = (change.oldValue as Record<string, LaunchViewState> | undefined) ?? {};
+  const after = (change.newValue as Record<string, LaunchViewState> | undefined) ?? {};
+  const tabIds = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const rawTabId of tabIds) {
+    const tabId = Number(rawTabId);
+    if (!Number.isInteger(tabId) || tabId < 0) continue;
+    if (JSON.stringify(before[rawTabId]) === JSON.stringify(after[rawTabId])) continue;
+    void sendToTab(tabId, { type: MSG.OVERLAY_VIEW_CHANGED });
+  }
+});
 
 chrome.runtime.onStartup?.addListener(() => {
   void purgeSessionState("startup");
@@ -879,11 +903,18 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.AUTOFILL_PROGRESS:
-      void applyProgress(sender.tab?.id, message.payload, generation).then(() => sendResponse({ ok: true }));
+      void (async () => {
+        const view = sender.tab?.id != null ? await getView(sender.tab.id) : null;
+        if (message.payload.requiredReviewRemaining !== undefined) await authorizedSubmissionPackage(view?.sessionId ?? -1, sender);
+        await applyProgress(sender.tab?.id, message.payload, generation);
+      })().then(() => sendResponse({ ok: true })).catch(error => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
 
     case MSG.AUTOFILL_RESULT:
-      void recordResult(sender.tab?.id, message.sessionId, message.result, message.progress, generation)
+      void (async () => {
+        if (message.progress.requiredReviewRemaining !== undefined) await authorizedSubmissionPackage(message.sessionId, sender);
+        await recordResult(sender.tab?.id, message.sessionId, message.result, message.progress, generation);
+      })()
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
@@ -1416,7 +1447,7 @@ async function handleContentReady(
       state: applicationRootDetected ? "APPLICATION_DISCOVERED" : "CONTENT_SCRIPT_READY"
     }, generation);
   }
-  await patchView(tabId, { contentReady: true, state: "fetching_package" }, generation);
+  await patchView(tabId, contentReadyViewPatch, generation);
   // Low-cardinality trace of HOW this tab resolved its binding. No identifiers,
   // no tokens, no URLs — just the shape of the path taken, so a live failure
   // names one specific cause instead of collapsing into "unauthorized".
@@ -2331,6 +2362,12 @@ async function completeActive(sessionId: number, generation: AuthorityGeneration
   // Find the package holding this session across tabs.
   const entry = await findPackageBySession(sessionId);
   if (!entry) throw new Error("No active session token");
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(sessionId)) throw new Error("STALE_AUTHORITY_GENERATION");
+  const views = await Promise.all((await workflowTabIds()).map(getView));
+  const current = views.filter((view): view is LaunchViewState => view?.sessionId === sessionId);
+  if (!current.length) requireCompletionReady(null);
+  for (const view of current) requireCompletionReady(view);
+  if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(sessionId)) throw new Error("STALE_AUTHORITY_GENERATION");
   await completeSession(entry.sessionToken, sessionId);
   await purgeCompletedSession(sessionId, generation);
 }
@@ -2582,6 +2619,7 @@ async function applyProgress(
     filled: p.filled,
     skipped: p.skipped,
     reviewRequired: p.reviewRequired,
+    requiredReviewRemaining: p.requiredReviewRemaining,
     reachedFinalStep: p.reachedFinalStep,
     resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : "pending",
     coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : "pending"
@@ -2704,7 +2742,8 @@ export async function requireAuthorizedOverlaySender(
 ): Promise<{ tabId: number; documentId: string }> {
   const senderTabId = sender.tab?.id;
   const registered = typeof senderTabId === "number" ? frameRegistry.get(frameKey(senderTabId, 0)) : undefined;
-  const structural = authorizeOverlayDocument(sender, chrome.runtime.id, registered?.documentId);
+  const toolbar = typeof senderTabId === "number" ? toolbarOverlayDocuments.get(senderTabId) : undefined;
+  const structural = authorizeOverlayDocument(sender, chrome.runtime.id, registered?.documentId ?? toolbar?.documentId);
   if (!structural.ok) throw new Error(structural.reason);
   const pending = await getPending(structural.tabId);
   if (!pending) throw new Error("OVERLAY_WORKFLOW_NOT_BOUND");
@@ -3174,6 +3213,7 @@ function sendToTab(tabId: number, message: object): Promise<void> {
   });
 }
 
+
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -3196,3 +3236,12 @@ function toBase64(buffer: ArrayBuffer): string {
   for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
+
+// All event listeners above are installed synchronously before surviving
+// content contexts can reply. One pass per worker lifetime; no periodic timer,
+// reinjection, or authority inferred from a broadcast response.
+const recoverContentRegistrations = createContentRegistrationRecovery({
+  candidateTabs: () => chrome.tabs.query({}),
+  signal: (tabId) => sendToTab(tabId, { type: MSG.CONTENT_RECONNECT })
+});
+queueMicrotask(() => { void recoverContentRegistrations(); });

@@ -9,6 +9,7 @@ import { detectAdapter } from "../ats/registry";
 import { runAutofill } from "../content/autofill";
 import { buildReviewModel } from "../content/review";
 import { createWidget } from "../content/widget";
+import { reopenApplicationAssistantOverlay } from "../content/applicationOverlayAssistant";
 import { discoverAll } from "../fields/discovery";
 import { ledgerInvariantHolds, mergeLedger, type LedgerEntry } from "../fields/ledger";
 import { fillField } from "../fields/fill";
@@ -248,8 +249,9 @@ describe("Samsara/Greenhouse field ledger (section M)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("M20: the widget renders in-page (no side panel required)", () => {
+  it("M20: the widget renders in-page after explicit open (no side panel required)", () => {
     mountFixture(SAMSARA_GREENHOUSE_FIXTURE);
+    reopenApplicationAssistantOverlay(document);
     const widget = mountWidget();
     expect(document.getElementById("xpertapply-assistant-overlay-v1")).toBeTruthy();
     expect(document.getElementById("jobpilot-assisted-apply")).toBeNull();

@@ -1,3 +1,4 @@
+import "./e2e/release-network-boundary";
 import { defineConfig, devices } from "@playwright/test";
 
 /**
@@ -15,6 +16,10 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
+    // The unbundled macOS headless shell inherits the desktop host's
+    // LaunchServices identity and receives a Quit AppleEvent after check-in.
+    // Use the same Playwright Chromium revision in its own application bundle.
+    ...(process.platform === "darwin" ? { channel: "chromium" } : {}),
     trace: "retain-on-failure"
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]

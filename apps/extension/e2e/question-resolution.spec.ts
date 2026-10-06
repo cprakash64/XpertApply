@@ -1,3 +1,5 @@
+import { OwnedPackageFixture, syntheticSessionPdf } from "./owned-package-fixture";
+import { containSyntheticNetwork } from "./network-containment";
 import { expect, test as base, chromium, type BrowserContext, type Worker } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import { createServer, type Server } from "node:http";
@@ -61,6 +63,14 @@ const test = base.extend<Fixtures>({
       args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
       serviceWorkers: "allow"
     });
+    const network = await containSyntheticNetwork(context);
+    await context.addInitScript(() => {
+      const safety = {submitClicks:0, submitEvents:0};
+      (window as any).__questionSafety=safety;
+      document.addEventListener("click",event=>{if(event.target instanceof Element && event.target.closest("#final-submit"))safety.submitClicks++;},true);
+      document.addEventListener("submit",()=>safety.submitEvents++,true);
+    });
+    const apiFixture = await new OwnedPackageFixture("<main>Owned API</main>").start();
     const applicationUrl = `${origin}/apply`;
     const sessionBody = {
       session_id: 55, ats_type: null, official_application_url: applicationUrl,
@@ -69,15 +79,15 @@ const test = base.extend<Fixtures>({
       cover_letter: { status: "ready", document_id: 2, download_url: null },
       profile: {}
     };
-    await context.route("**/application-sessions/token", (r) =>
+    await apiFixture.route("**/application-sessions/token", (r) =>
       r.fulfill({ status: 200, contentType: "application/json",
-        body: JSON.stringify({ session_token: "tok", session: sessionBody }) }));
-    await context.route("**/application-sessions/*/answers", (r) =>
+        body: JSON.stringify({ session_token: apiFixture.sessionToken, session: sessionBody }) }));
+    await apiFixture.route("**/application-sessions/*/answers", (r) =>
       r.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ answers: [], unresolved_questions: [], refreshed: false, profile_revision: "r" }) }));
 
     // Stand in for the resolver endpoint already proven by the backend suite.
-    await context.route("**/application-sessions/*/resolve-questions", async (route) => {
+    await apiFixture.route("**/application-sessions/*/resolve-questions", async (route) => {
       calls.count += 1;
       const body = JSON.parse(route.request().postData() ?? "{}");
       const results = (body.questions ?? []).map((q: any) => {
@@ -131,11 +141,22 @@ const test = base.extend<Fixtures>({
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ request_schema_version: 3, registry_version: "1.0.0", answer_contract_version: 3, results }) });
     });
-    await context.route("**/application-sessions/*", (r) =>
+    await apiFixture.route("**/application-sessions/55", (r) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sessionBody) }));
 
-    await use(context);
-    await context.close();
+    for (const endpoint of ["answers/override", "events", "autofill-results"]) await apiFixture.route("**/application-sessions/55/"+endpoint, route=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(endpoint==="answers/override"?{overrides:[]}: {})}));
+    await apiFixture.document(55,"resume",syntheticSessionPdf());
+    await apiFixture.document(55,"cover-letter",syntheticSessionPdf());
+    const worker=context.serviceWorkers()[0]??await context.waitForEvent("serviceworker");
+    await worker.evaluate(async base=>chrome.storage.local.set({apiBase:base}),apiFixture.origin);
+    try {
+      await use(context);
+      network.assertContained();
+      expect(apiFixture.requests.every(row=>row.responded && row.status===200)).toBe(true);
+      expect(apiFixture.requests.some(row=>row.path==="/application-sessions/55/resume" && row.method==="GET" && row.status===200)).toBe(true);
+
+    }
+    finally { await context.close(); await apiFixture.close(); }
   },
   worker: async ({ context }, use) => {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 15_000 }));
@@ -168,7 +189,16 @@ async function run(context: BrowserContext, worker: Worker, origin: string, quer
   page.on("console", (m) => { if (m.text().includes("[XpertApply]")) states.push(m.text().slice(0, 200)); });
   await page.goto(url);
   await page.waitForSelector("#application-form");
-  await page.waitForTimeout(4500);
+  await expect.poll(async () => worker.evaluate(async url => {
+    const tab=(await chrome.tabs.query({})).find(tab=>tab.url===url);
+    const state=await chrome.storage.session.get(["viewStates","sessionPackages"]);
+    const view=state.viewStates?.[String(tab?.id)];
+    return !!view && view.sessionId===55 && view.contentReady && view.packageLoaded
+      && ["completed","completed_with_review"].includes(view.state)
+      && state.sessionPackages?.[String(tab?.id)]?.session?.sessionId===55;
+  },url),{timeout:test.info().timeout}).toBe(true);
+  const safety=await page.evaluate(()=>({privacy:(document.querySelector("#privacy") as HTMLInputElement).checked,...(window as any).__questionSafety}));
+  expect(safety).toEqual({privacy:false,submitClicks:0,submitEvents:0});
   return { page, states };
 }
 
@@ -271,9 +301,11 @@ test("re-running is idempotent and does not toggle a verified value", async ({ c
   resolution.sponsorship = "No";
   const { page } = await run(context, worker, origin);
   const before = await displayed(page);
-  // Force a rescan the way a SPA mutation would.
+  // Observe the accepted progress update caused by the real SPA mutation.
+  const updatedAt=await worker.evaluate(async url=>{const tab=(await chrome.tabs.query({})).find(tab=>tab.url===url);return (await chrome.storage.session.get("viewStates")).viewStates?.[String(tab?.id)]?.updatedAt;},page.url());
+  expect(typeof updatedAt).toBe("number");
   await page.evaluate(() => document.body.appendChild(document.createElement("div")));
-  await page.waitForTimeout(2500);
+  await expect.poll(async()=>worker.evaluate(async url=>{const tab=(await chrome.tabs.query({})).find(tab=>tab.url===url);return (await chrome.storage.session.get("viewStates")).viewStates?.[String(tab?.id)]?.updatedAt;},page.url())).toBeGreaterThan(updatedAt);
   const after = await displayed(page);
   expect(after.auth).toBe(before.auth);
   expect(after.sponsor).toBe(before.sponsor);
@@ -325,11 +357,32 @@ test("a menu that appears only after a delay is still enumerated", async ({
 test("a resolved answer whose actuator cannot open becomes a technical issue", async ({
   context, worker, origin, resolution
 }) => {
+  // Observe the real employer controls/events before navigation starts the
+  // content workflow. DOMContentLoaded precedes the asynchronous actuator.
+  await context.addInitScript(() => {
+    const safety = { initialPrivacy: null as boolean | null, submitEvents: 0, submitClicks: 0 };
+    (window as unknown as { __actuatorSafety: typeof safety }).__actuatorSafety = safety;
+    document.addEventListener("DOMContentLoaded", () => {
+      safety.initialPrivacy = (document.getElementById("privacy") as HTMLInputElement).checked;
+    }, { once: true });
+    document.addEventListener("submit", (event) => {
+      if ((event.target as Element)?.id === "application-form") safety.submitEvents += 1;
+    }, true);
+    document.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("#final-submit")) safety.submitClicks += 1;
+    }, true);
+  });
   resolution.authorization = "Yes";
   const { page, states } = await run(context, worker, origin, "?closed=1&gesture=1");
-  // Preflight enumeration and the actual actuator each have their own bounded
-  // open timeout. Wait for the latter so we assert the terminal ledger state.
-  await page.waitForTimeout(3_500);
+  // Enumeration and resolution can finish at different times. Wait for the
+  // resolved attempt and its exact terminal failure within the existing test
+  // deadline before sampling the employer control.
+  await expect.poll(() =>
+    states.some((s) => s.includes("apply.stage.option_ref_returned"))
+      && states.some((s) => s.includes("apply.stage.interaction_failed")
+        && s.includes("menu_not_opened")),
+    { timeout: test.info().timeout }
+  ).toBe(true);
   const state = await displayed(page);
 
   // Nothing was selected, and the run did not spin on synthetic retries.
@@ -339,6 +392,15 @@ test("a resolved answer whose actuator cannot open becomes a technical issue", a
   expect(states.join("\n")).toContain("menu_not_opened");
   const attempts = states.filter((s) => s.includes("option enumeration")).length;
   expect(attempts).toBe(1);
+
+  const safety = await page.evaluate(() => (window as unknown as {
+    __actuatorSafety: { initialPrivacy: boolean | null; submitEvents: number; submitClicks: number };
+  }).__actuatorSafety);
+  expect(safety.initialPrivacy).toBe(false);
+  expect(state.privacy).toBe(safety.initialPrivacy);
+  expect(safety.submitEvents).toBe(0);
+  expect(safety.submitClicks).toBe(0);
+  expect(state.submitted).toBe(false);
   await page.close();
 });
 

@@ -14,7 +14,7 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
     <label for="last_name">Last name</label><input id="last_name" name="last_name" required>
     <label for="email">Email</label><input id="email" name="email" type="email" required>
     <button type="submit" id="submit">Submit application</button>
-  </form></main>
+  </form><label><input id="privacy" type="checkbox" disabled>I agree to privacy policy</label></main>
   <script>
     window.__xa11Submit = 0;
       window.__xa11SubmitClicks = 0;
@@ -48,7 +48,8 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
     });
   </script>`;
 
-test("XA-11: widget confirmation total matches controls marked for review", async () => {
+for (const resolveReview of [false, true]) {
+test(`required-review guard: ${resolveReview ? "explicit review resolution and manual completion" : "unresolved review preserves employer form"}`, async () => {
   test.setTimeout(60_000);
   const fixture = await new OwnedPackageFixture(FIXTURE).start();
   const origin = fixture.origin;
@@ -132,92 +133,58 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
     await expect(page.locator("#email")).toHaveValue("candidate@example.test", { timeout: 20_000 });
     await expect.poll(() => widget.status()).toBe("Filled — some items need your review");
 
-    const pageState = await page.evaluate(() => ({
-      review: document.querySelectorAll('[data-jobpilot-status="review"]').length,
-      verified: document.querySelectorAll('[data-jobpilot-status="verified"]').length,
-      privateMarkers: Array.from(document.querySelectorAll("*")).flatMap((element) =>
-        Array.from(element.attributes)
-          .filter((attribute) => attribute.name.startsWith("data-jobpilot-"))
-          .map((attribute) => attribute.name)
-      ),
-      styles: ["first_name", "last_name", "email"].map((id) => {
-        const element = document.getElementById(id)!;
-        const computed = getComputedStyle(element);
-        return {
-          id,
-          inlineOutline: (element as HTMLElement).style.outline,
-          inlineOutlineOffset: (element as HTMLElement).style.outlineOffset,
-          computedOutline: computed.outline,
-          computedOutlineColor: computed.outlineColor,
-          computedOutlineStyle: computed.outlineStyle,
-          computedOutlineWidth: computed.outlineWidth
-        };
-      }),
-      observer: (window as any).__xa14ReviewMutations,
-      widgetHostReadable: document.getElementById("xpertapply-assistant-overlay-v1")?.id ?? null,
-      pageWindowInstanceVisible: Object.prototype.hasOwnProperty.call(window, "__jobpilotContentInstance"),
-      fieldExpandos: ["first_name", "last_name", "email"].flatMap((id) =>
-        Object.keys(document.getElementById(id)!).filter((key) => /jobpilot|xpertapply/i.test(key))
-      ),
-      submitClicks: (window as any).__xa11SubmitClicks,
-      submitted: (window as any).__xa11Submit
-    }));
-    const summary = await widget.summary();
-    const cdp = await context.newCDPSession(page);
-    const accessibility = await cdp.send("Accessibility.getFullAXTree");
-    const accessibleNames = accessibility.nodes
-      .map((node) => node.name?.value)
-      .filter((value): value is string => typeof value === "string");
-    const authoritative = await worker.evaluate(async url => {
-      const tab = (await chrome.tabs.query({})).find(t => t.url === url)!;
-      const {viewStates} = await chrome.storage.session.get("viewStates");
-      return viewStates[String(tab.id)];
-    }, page.url());
-    expect([summary.discovered,summary.filled,summary.review]).toEqual([authoritative.fieldsDiscovered,authoritative.filled,authoritative.reviewRequired]);
-    const confirmation = summary.review;
-
-
-    expect(pageState.submitted).toBe(0);
-    expect(pageState.submitClicks).toBe(0);
-    expect(pageState).toMatchObject({
-      review: 0,
-      verified: 0,
-      privateMarkers: [],
-      pageWindowInstanceVisible: false,
-      fieldExpandos: []
-    });
-    expect(pageState.styles.map((style) => style.inlineOutline)).toEqual(["", "", ""]);
-    expect(pageState.styles.map((style) => style.inlineOutlineOffset)).toEqual(["", "", ""]);
-    expect(pageState.observer.style).toBe(0);
-    expect(accessibleNames.filter((name) => name === "XpertApply field status: Needs review")).toHaveLength(2);
-    expect(accessibleNames.filter((name) => name === "XpertApply field status: Verified")).toHaveLength(1);
-    expect(summary.filled).toBe(1);
-    expect(summary.discovered).toBe(3);
-    expect(confirmation).toBe(authoritative.reviewRequired);
-    expect(confirmation).toBe(accessibleNames.filter(name => name === "XpertApply field status: Needs review").length);
-    expect(confirmation).toBe(2);
-    let completions=0;
-    await fixture.route("**/application-sessions/911/complete",route=>{completions++;return route.fulfill({status:200,contentType:"application/json",body:"{}"})});
-    const complete=page.locator("#xpertapply-assistant-overlay-v1 #complete");await expect(complete).toBeDisabled();
-    const tabId=authoritative.tabId;
-    const stores=()=>worker.evaluate(async id=>{const s=await chrome.storage.session.get(["viewStates","sessionPackages","pendingLaunches"]);return {view:s.viewStates?.[String(id)]??null,packagePresent:!!s.sessionPackages?.[String(id)],pendingPresent:!!s.pendingLaunches?.[String(id)]};},tabId);
-    const before=await stores();
-    const response=await worker.evaluate(async id=>(await chrome.scripting.executeScript({target:{tabId:id,frameIds:[0]},func:async()=>chrome.runtime.sendMessage({type:"XPERTAPPLY_OVERLAY_COMPLETE_SESSION",sessionId:911,requiredReviewRemaining:0})}))[0].result,tabId);
-    expect(response).toMatchObject({ok:false,error:"REQUIRED_REVIEW_REMAINING"});expect(completions).toBe(0);expect(await stores()).toEqual(before);
-    await widget.openReview();
-    const cards=await widget.probe<{id:string,title:string}[]>(`function(){return Array.from(this.querySelectorAll('[data-item]')).map(el=>({id:el.getAttribute('data-item'),title:el.querySelector('.q')?.textContent||''}))}`);
-    for(const [label,value] of [["First name","Test"],["Last name","Candidate"]]){
-      const card=cards.find(c=>c.title.includes(label));expect(card).toBeTruthy();
-      expect(await widget.probe<boolean>(`function(id,value){const c=this.querySelector('[data-item="'+id+'"]');const i=c?.querySelector('input[type=text]');if(!i)return false;i.value=value;const save=c.querySelector('input[type=checkbox]');if(save)save.checked=false;const b=Array.from(c.querySelectorAll('button')).find(b=>/Save and fill|Use this answer/.test(b.textContent));if(!b)return false;b.click();return true}`,card!.id,value)).toBe(true);
-    }
-    await expect.poll(async()=> (await stores()).view?.requiredReviewRemaining).toBe(0);await expect(complete).toBeEnabled();expect(completions).toBe(0);
-    expect(await page.evaluate(()=>(window as any).__xa11Submit)).toBe(0);expect(await page.evaluate(()=>(window as any).__xa11SubmitClicks)).toBe(0);
+    const tabId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(t=>t.url===url)!.id!, page.url());
+    const stored = () => worker.evaluate(async id => { const state=await chrome.storage.session.get(["viewStates","sessionPackages","pendingLaunches"]); const v=state.viewStates?.[String(id)]; return {view:v ? {state:v.state,discovered:v.fieldsDiscovered,filled:v.filled,review:v.reviewRequired,required:v.requiredReviewRemaining}:null, packagePresent:!!state.sessionPackages?.[String(id)],pendingPresent:!!state.pendingLaunches?.[String(id)]};},tabId);
+    await expect.poll(async()=> (await stored()).view?.required).toBe(2);
+    const before=await stored();
+    expect(before).toMatchObject({view:{state:"completed_with_review",discovered:3,filled:1,review:2,required:2},packagePresent:true,pendingPresent:true});
+    expect(await widget.summary()).toMatchObject({discovered:3,filled:1,review:2});
+    const complete=page.locator("#xpertapply-assistant-overlay-v1 #complete");
+    await expect(complete).toBeDisabled();
+    let completionRequests=0;
+    await fixture.route("**/application-sessions/911/complete", route=>{completionRequests++;return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({ok:true})})});
+    const send = (sessionId: number) => worker.evaluate(async ({id,sessionId}) => (await chrome.scripting.executeScript({target:{tabId:id,frameIds:[0]},func:async sessionId => chrome.runtime.sendMessage({type:"XPERTAPPLY_OVERLAY_COMPLETE_SESSION",sessionId,requiredReviewRemaining:0,reviewRequired:0}),args:[sessionId]}))[0].result, {id:tabId,sessionId});
+    expect(await send(912)).toMatchObject({ok:false,error:"OVERLAY_SESSION_AUTHORITY_MISMATCH"});
+    expect(await send(911)).toMatchObject({ok:false,error:"REQUIRED_REVIEW_REMAINING"});
+    expect(completionRequests).toBe(0);expect(await stored()).toEqual(before);
+    const registered = await worker.evaluate(async id => (await chrome.scripting.executeScript({ target:{tabId:id,frameIds:[0]},func:async()=>chrome.runtime.sendMessage({type:"XPERTAPPLY_OVERLAY_GET_VIEW"}) }))[0].result,tabId);
+    expect(registered).toMatchObject({ok:true,view:{requiredReviewRemaining:2}});
+    await expect(page.locator("#privacy")).not.toBeChecked();
+    const formBefore = await page.locator("#application").evaluate(form => ({ values:Array.from(form.querySelectorAll("input")).map(el=>({id:el.id,value:el.value,checked:el.checked})),html:form.innerHTML }));
+    const safety = () => page.evaluate(()=>({clicks:(window as any).__xa11SubmitClicks,submits:(window as any).__xa11Submit}));
+    expect(await safety()).toEqual({clicks:0,submits:0});
     network.assertContained();
-    expect(authoritative.state).toBe("completed_with_review");
-    expect(authoritative.requiredReviewRemaining).toBe(2);
+
+    if (resolveReview) {
+      // Existing explicit review answer UI drives and verifies the actual field.
+      await widget.openReview();
+      const cards = await widget.probe<{id:string,title:string}[]>(`function(){return Array.from(this.querySelectorAll('[data-item]')).map(el=>({id:el.getAttribute('data-item'),title:el.querySelector('.q')?.textContent||''}))}`);
+
+      for (const [label,value] of [["First name","Test"],["Last name","Candidate"]]) {
+        const card=cards.find(card=>card.title.toLowerCase().includes(label.toLowerCase()));expect(card).toBeTruthy();
+        expect(await widget.probe<boolean>(`function(id,value){const card=this.querySelector('[data-item="'+id+'"]');const input=card?.querySelector('input[type=text]');const save=card?.querySelector('input[type=checkbox]');if(!input)return false;input.value=value;if(save)save.checked=false;const button=Array.from(card.querySelectorAll('button')).find(b=>/Save and fill|Use this answer/.test(b.textContent));if(!button)return false;button.click();return true}`,card!.id,value)).toBe(true);
+        await expect(page.locator(label === "First name" ? "#first_name" : "#last_name")).toHaveValue(value);
+      }
+      await expect.poll(async()=> (await stored()).view?.required).toBe(0);
+      const resolved=await stored();
+      const summary=await widget.summary();expect([summary.discovered,summary.filled,summary.review]).toEqual([resolved.view!.discovered,resolved.view!.filled,resolved.view!.review]);
+      await expect(complete).toBeEnabled();
+      let dialogs=0;page.once("dialog",dialog=>{dialogs++;expect(dialog.message()).toContain("Confirm you submitted");return dialog.dismiss()});await complete.click();
+      expect(dialogs).toBe(1);expect(completionRequests).toBe(0);expect((await stored()).packagePresent).toBe(true);
+      page.once("dialog",dialog=>{dialogs++;return dialog.accept()});await complete.click();
+      await expect.poll(async()=> (await stored()).packagePresent).toBe(false);
+      expect(completionRequests).toBe(1);expect(dialogs).toBe(2);
+      expect(await stored()).toEqual({view:null,packagePresent:false,pendingPresent:false});
+      expect(await safety()).toEqual({clicks:0,submits:0});await expect(page.locator("#privacy")).not.toBeChecked();network.assertContained();
+
+    } else {
+      expect(await page.locator("#application").evaluate(form => ({ values:Array.from(form.querySelectorAll("input")).map(el=>({id:el.id,value:el.value,checked:el.checked})),html:form.innerHTML }))).toEqual(formBefore);
+    }
+
     await page.close();
   } finally {
     await context.close();
     await fixture.close();
   }
 });
+}

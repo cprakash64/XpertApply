@@ -1,6 +1,5 @@
 import { lastError } from "../logger";
 import { MSG, type LaunchViewState } from "../messages";
-import { STORAGE_KEYS } from "../state";
 import {
   createApplicationAssistant,
   type ActionResponse,
@@ -27,7 +26,31 @@ export interface MountedApplicationOverlay {
   dispose(): void;
 }
 
-const mounts = new WeakMap<Document, MountedApplicationOverlay>();
+// Toolbar and workflow scripts are separately bundled into the same extension
+// isolated world. Their module-local registries must not create two controllers
+// for the same document. This registry is never exposed to the page world.
+const overlayWorld = globalThis as typeof globalThis & {
+  __xpertapplyAssistantMountsV1__?: WeakMap<Document, MountedApplicationOverlay>;
+  __xpertapplyOverlayWorkflowSurfacesV1__?: WeakMap<Document, HTMLElement>;
+};
+const mounts = overlayWorld.__xpertapplyAssistantMountsV1__ ??= new WeakMap<Document, MountedApplicationOverlay>();
+const workflowSurfaces = overlayWorld.__xpertapplyOverlayWorkflowSurfacesV1__ ??= new WeakMap<Document, HTMLElement>();
+
+/** Retain workflow presentation without granting passive UI opening authority. */
+export function registerApplicationOverlayWorkflowSurface(surface: HTMLElement, ownerDocument: Document = document): () => void {
+  workflowSurfaces.get(ownerDocument)?.remove();
+  workflowSurfaces.set(ownerDocument, surface);
+  const existing = mounts.get(ownerDocument);
+  if (existing?.overlay.host.isConnected) {
+    existing.overlay.root.querySelector("[data-overlay-workflow-extensions]")?.replaceChildren(surface);
+  }
+  return () => {
+    if (workflowSurfaces.get(ownerDocument) !== surface) return;
+    workflowSurfaces.delete(ownerDocument);
+    surface.remove();
+    mounts.get(ownerDocument)?.overlay.destroy();
+  };
+}
 
 function sendWorker<T>(message: object): Promise<T | undefined> {
   return new Promise((resolve) => {
@@ -52,6 +75,8 @@ export function mountApplicationAssistantOverlay(options: {
   existing?.dispose();
 
   const overlay = showOverlay(ownerDocument);
+  const surface = workflowSurfaces.get(ownerDocument);
+  if (surface) overlay.root.querySelector("[data-overlay-workflow-extensions]")?.replaceChildren(surface);
   const controller = createApplicationAssistant({
     root: overlay.root,
     confirmAction: options.confirmAction ?? ((message) => window.confirm(message)),
@@ -74,16 +99,16 @@ export function mountApplicationAssistantOverlay(options: {
         return response?.ok ? response.view ?? null : null;
       },
       subscribe(listener) {
-        if (typeof chrome === "undefined" || !chrome.storage?.onChanged) return () => undefined;
-        const onChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-          if (areaName !== "session" && chrome.storage.session) return;
-          const change = changes[STORAGE_KEYS.VIEW_KEY];
-          if (!change) return;
-          const next = (change.newValue as Record<string, LaunchViewState>) || {};
-          for (const [tabId, view] of Object.entries(next)) listener(Number(tabId), view);
+        if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) return () => undefined;
+        const onMessage = (raw: unknown, sender: chrome.runtime.MessageSender): boolean => {
+          if (sender.id !== chrome.runtime.id || (raw as { type?: unknown })?.type !== MSG.OVERLAY_VIEW_CHANGED) return false;
+          // The event is deliberately not authoritative. The controller's
+          // refresh generation rejects late/out-of-order responses.
+          listener(0, undefined);
+          return false;
         };
-        chrome.storage.onChanged.addListener(onChanged);
-        return () => chrome.storage.onChanged.removeListener(onChanged);
+        chrome.runtime.onMessage.addListener(onMessage);
+        return () => chrome.runtime.onMessage.removeListener(onMessage);
       }
     },
     actions: {
@@ -109,33 +134,56 @@ export function mountApplicationAssistantOverlay(options: {
     // directly without exposing a production control.
   });
 
+  const stopKeyboardPropagation = (event: Event): void => event.stopPropagation();
+  const keyboardEvents = ["keydown", "keyup", "keypress"] as const;
+  for (const type of keyboardEvents) overlay.host.addEventListener(type, stopKeyboardPropagation);
+
   let disposed = false;
-  // storage.session change delivery is not guaranteed to extension content
-  // scripts under Chrome's default trusted-context access level. Keep the
-  // visible in-page surface synchronized with the authoritative worker while
-  // it is mounted; refresh is read-only and generation-protected.
   let mounted!: MountedApplicationOverlay;
-  const refreshTimer = window.setInterval(() => {
+  let refreshQueued = false;
+  let recoveryInFlight: Promise<void> | null = null;
+  const requestRefresh = (): void => {
+    if (disposed || refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => {
+      refreshQueued = false;
+      if (!disposed) void controller.refresh().catch(() => undefined);
+    });
+  };
+  const recover = (): void => {
     if (!overlay.host.isConnected || overlay.getState() === "ABSENT") {
       mounted.dispose();
       return;
     }
-    void controller.refresh().catch(() => undefined);
-  }, 1_000);
+    if (recoveryInFlight) return;
+    recoveryInFlight = sendWorker({ type: MSG.TOOLBAR_OVERLAY_READY })
+      .then(() => requestRefresh())
+      .finally(() => { recoveryInFlight = null; });
+  };
+  const onVisibilityChange = (): void => {
+    if (ownerDocument.visibilityState === "visible") recover();
+  };
+  const ownerWindow = ownerDocument.defaultView;
+  ownerDocument.addEventListener("visibilitychange", onVisibilityChange);
+  ownerWindow?.addEventListener("focus", recover);
+  ownerWindow?.addEventListener("pageshow", recover);
   mounted = {
     overlay,
     refresh: () => controller.refresh(),
     dispose() {
       if (disposed) return;
       disposed = true;
-      window.clearInterval(refreshTimer);
+      ownerDocument.removeEventListener("visibilitychange", onVisibilityChange);
+      ownerWindow?.removeEventListener("focus", recover);
+      ownerWindow?.removeEventListener("pageshow", recover);
+      for (const type of keyboardEvents) overlay.host.removeEventListener(type, stopKeyboardPropagation);
       controller.dispose();
       if (mounts.get(ownerDocument) === mounted) mounts.delete(ownerDocument);
     }
   };
   overlay.onDestroy(() => mounted.dispose());
   mounts.set(ownerDocument, mounted);
-  void controller.refresh();
+  requestRefresh();
   return mounted;
 }
 

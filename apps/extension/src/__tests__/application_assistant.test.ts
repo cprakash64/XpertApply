@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { contentReadyViewPatch, projectWorkflowProgress } from "../content/workflowProgress";
+import type { ProgressPayload } from "../messages";
 import type { LaunchViewState } from "../messages";
 import {
   createApplicationAssistant,
@@ -32,6 +34,7 @@ function makeView(overrides: Partial<LaunchViewState> = {}): LaunchViewState {
     filled: 4,
     skipped: 1,
     reviewRequired: 1,
+    requiredReviewRemaining: 0,
     resumeStatus: "uploaded",
     coverStatus: "review",
     reachedFinalStep: true,
@@ -62,12 +65,14 @@ describe("shared application assistant", () => {
   let context: ApplicationAssistantContext;
   let view: LaunchViewState | null;
   let contextListener: (() => void) | undefined;
-  let viewListener: ((tabId: number, view: LaunchViewState | null) => void) | undefined;
+  let viewListener: ((tabId: number, view: LaunchViewState | null | undefined) => void) | undefined;
   let actions: ApplicationAssistantActions;
   let controller: ApplicationAssistantController;
   let createController: () => ApplicationAssistantController;
   let removeContext: () => void;
   let removeView: () => void;
+  let getContext: () => Promise<ApplicationAssistantContext>;
+  let getView: (tabId: number) => Promise<LaunchViewState | null>;
 
   beforeEach(() => {
     mount();
@@ -75,6 +80,8 @@ describe("shared application assistant", () => {
     view = makeView();
     removeContext = vi.fn();
     removeView = vi.fn();
+    getContext = vi.fn(async (): Promise<ApplicationAssistantContext> => context);
+    getView = vi.fn(async (_tabId: number): Promise<LaunchViewState | null> => view);
     actions = {
       startAutofill: vi.fn().mockResolvedValue({ ok: true }),
       clearSession: vi.fn().mockResolvedValue({ ok: true }),
@@ -86,11 +93,11 @@ describe("shared application assistant", () => {
         root: document,
         confirmAction: (message) => window.confirm(message),
         context: {
-          get: vi.fn(async () => context),
+          get: getContext,
           subscribe(listener) { contextListener = listener; return removeContext; }
         },
         views: {
-          get: vi.fn(async () => view),
+          get: getView,
           subscribe(listener) { viewListener = listener; return removeView; }
         },
         actions,
@@ -113,6 +120,28 @@ describe("shared application assistant", () => {
     await controller.refresh();
     expect(document.getElementById("errors")?.textContent).toContain("session is no longer valid");
     expect((document.getElementById("fill") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders the safe-limit explanation when the authoritative failure arrives after terminal status", async () => {
+    view = makeView({ state: "failed", failureCode: null });
+    await controller.refresh();
+    expect((document.getElementById("errors") as HTMLElement).hidden).toBe(true);
+    view = makeView({ state: "failed", failureCode: "APPLICATION_FORM_TOO_LARGE", filled: 0 });
+    viewListener?.(42, view);
+    await vi.waitFor(() => {
+      const errors = document.getElementById("errors")!;
+      expect(errors.hidden).toBe(false);
+      expect(errors.textContent).toContain("safe limit of 1,000");
+      expect(errors.textContent).toContain("Nothing was filled");
+      expect(errors.textContent).not.toContain("Something went wrong while preparing");
+    });
+  });
+
+  it("preserves generic preparation copy for an unknown failure and renders no raw failure text", async () => {
+    view = makeView({ state: "failed", failureCode: "UNKNOWN_PREPARATION_FAILURE", failureMessage: "<img src=x onerror=alert(1)>" });
+    await controller.refresh();
+    expect(document.getElementById("errors")?.textContent).toBe("Something went wrong while preparing this application. Try again or reopen it from XpertApply.");
+    expect(document.getElementById("errors")?.querySelector("img")).toBeNull();
   });
 
   it("renders unsupported/no-view state and disables actions", async () => {
@@ -185,6 +214,83 @@ describe("shared application assistant", () => {
     expect((document.getElementById("fill") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it.each(["detecting_ats", "discovering_fields", "package_ready", "filling", "completed_with_review", "failed"] as const)(
+    "preserves legitimate %s state and zero ledger counts", state => {
+      const projected = projectWorkflowProgress({
+        state, atsId: null, atsDisplayName: null, limited: false,
+        fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0,
+        reachedFinalStep: false, documentsUploaded: [], reviewDocuments: []
+      }, { discovered: 0, filled_and_verified: 0, needs_information: 0,
+        needs_confirmation: 0, needs_user_gesture: 0, technical_issues: 0,
+        legal_manual_actions: 0, optional_skipped: 0, unsupported: 0 });
+      expect(projected).toMatchObject({ state, fieldsDiscovered: 0, filled: 0, reviewRequired: 0 });
+      expect(contentReadyViewPatch(makeView({ state, packageLoaded: true }))).toMatchObject({ state, contentReady: true });
+    }
+  );
+
+  it("renders ledger progress after a committed view invalidation without polling", async () => {
+    view = makeView({ state: "detecting_ats", packageLoaded: false, fieldsDiscovered: 0, filled: 0, reviewRequired: 0 });
+    const state = await import("../state");
+    const stored: Record<string, unknown> = {};
+    const invalidate = vi.fn(() => viewListener?.(0, undefined));
+    let emit = false;
+    const oldChrome = globalThis.chrome;
+    vi.stubGlobal("chrome", { storage: { session: {
+      get: async (key: string) => structuredClone({ [key]: stored[key] }),
+      set: async (values: Record<string, unknown>) => {
+        Object.assign(stored, structuredClone(values));
+        if (emit) invalidate(); // storage.onChanged -> payload-free event
+      }
+    } } });
+    try {
+      await state.putView(42, view!);
+      vi.mocked(getView).mockImplementation(tabId => state.getView(tabId));
+      await controller.refresh();
+      emit = true;
+      expect(document.getElementById("discovered")?.textContent).toBe("0");
+      expect(document.getElementById("filled")?.textContent).toBe("0");
+      const progress = projectWorkflowProgress({
+        state: "completed_with_review", atsId: "greenhouse", atsDisplayName: "Greenhouse",
+        limited: false, fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0,
+        reachedFinalStep: true, documentsUploaded: ["resume"], reviewDocuments: []
+      } satisfies ProgressPayload, {
+        discovered: 9, filled_and_verified: 2, needs_information: 1,
+        needs_confirmation: 0, needs_user_gesture: 0, technical_issues: 5,
+        legal_manual_actions: 1, optional_skipped: 0, unsupported: 0
+      });
+      await state.patchView(42, contentReadyViewPatch);
+      expect((await state.getView(42))?.state).toBe("fetching_package");
+      // Use the production serialized worker store. Its storage event triggers
+      // the canonical fresh-view adapter; there is no manual renderer update.
+      await state.patchView(42, { ...progress, packageLoaded: true });
+      await vi.waitFor(() => expect(document.getElementById("filled")?.textContent).toBe("2"));
+      expect(document.getElementById("discovered")?.textContent).toBe("9");
+      expect(document.getElementById("review")?.textContent).toBe("7");
+      expect(document.getElementById("stage")?.textContent).toContain("review");
+      expect(progress.documentsUploaded).toEqual(["resume"]);
+      const accepted = await state.getView(42);
+      await state.patchView(42, contentReadyViewPatch);
+      expect(await state.getView(42)).toMatchObject({
+        state: "completed_with_review", fieldsDiscovered: 9, filled: 2, reviewRequired: 7
+      });
+      expect((await state.getView(42))?.sessionId).toBe(accepted?.sessionId);
+      expect(invalidate).toHaveBeenCalledTimes(3);
+      await vi.waitFor(() => expect(document.getElementById("stage")?.textContent).toContain("review"));
+    } finally { vi.stubGlobal("chrome", oldChrome); }
+  });
+
+  it("coalesces duplicate payload-free invalidations and fetches authoritative state", async () => {
+    await controller.refresh();
+    vi.mocked(getContext).mockClear();
+    vi.mocked(getView).mockClear();
+    view = makeView({ filled: 9 });
+    viewListener?.(0, undefined);
+    viewListener?.(0, undefined);
+    await vi.waitFor(() => expect(document.getElementById("filled")?.textContent).toBe("9"));
+    expect(getContext).toHaveBeenCalledTimes(1);
+    expect(getView).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a stale refresh response after a newer generation renders", async () => {
     controller.dispose();
     let resolveOld!: (value: ApplicationAssistantContext) => void;
@@ -236,6 +342,22 @@ describe("shared application assistant", () => {
     await deferred();
     document.getElementById("clear")?.click();
     expect(actions.clearSession).not.toHaveBeenCalled();
+  });
+
+  it("disables Complete with required review and preserves review guidance", async () => {
+    view = makeView({ requiredReviewRemaining: 2 });
+    await controller.refresh();
+    const complete = document.getElementById("complete") as HTMLButtonElement;
+    expect(complete.disabled).toBe(true);
+    expect(complete.getAttribute("aria-describedby")).toBe("stage review");
+    complete.click();
+    expect(actions.completeSession).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the required-review projection is absent", async () => {
+    view = makeView({ requiredReviewRemaining: undefined });
+    await controller.refresh();
+    expect((document.getElementById("complete") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("keeps completion manual and reports only the session after confirmation", async () => {

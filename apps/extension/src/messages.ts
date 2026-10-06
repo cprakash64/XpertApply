@@ -210,6 +210,8 @@ export interface LaunchViewState {
   filled: number;
   skipped: number;
   reviewRequired: number;
+  /** Trusted ledger projection; absent until requiredness has been verified. */
+  requiredReviewRemaining?: number;
   resumeStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
   coverStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
   reachedFinalStep: boolean;
@@ -267,6 +269,7 @@ export const MSG = {
   CONTENT_READY: "JOBPILOT_CONTENT_READY",
   GET_PENDING_LAUNCH: "JOBPILOT_GET_PENDING_LAUNCH",
   PING_CONTENT: "JOBPILOT_PING_CONTENT",
+  CONTENT_RECONNECT: "JOBPILOT_CONTENT_RECONNECT",
   PONG_CONTENT: "JOBPILOT_PONG_CONTENT",
   AUTOFILL_START: "JOBPILOT_AUTOFILL_START",
   AUTOFILL_PROGRESS: "JOBPILOT_AUTOFILL_PROGRESS",
@@ -351,6 +354,10 @@ export const MSG = {
   OVERLAY_CLEAR_SESSION: "XPERTAPPLY_OVERLAY_CLEAR_SESSION",
   OVERLAY_COMPLETE_SESSION: "XPERTAPPLY_OVERLAY_COMPLETE_SESSION",
   OVERLAY_SITE_ACCESS_RESULT: "XPERTAPPLY_OVERLAY_SITE_ACCESS_RESULT",
+  /** Worker -> affected-tab invalidation, consumed by its top-frame overlay.
+   * Carries no business
+   * state; the receiver must fetch the current authoritative context/view. */
+  OVERLAY_VIEW_CHANGED: "XPERTAPPLY_OVERLAY_VIEW_CHANGED",
   SHOW_APPLICATION_OVERLAY: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY",
   TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
@@ -373,6 +380,8 @@ export type ProgressPayload = {
   filled: number;
   skipped: number;
   reviewRequired: number;
+  /** Trusted ledger projection; absent until requiredness has been verified. */
+  requiredReviewRemaining?: number;
   reachedFinalStep: boolean;
   documentsUploaded: ("resume" | "cover_letter")[];
   reviewDocuments: ("resume" | "cover_letter")[];
@@ -384,6 +393,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.CONTENT_READY }
   | { type: typeof MSG.GET_PENDING_LAUNCH; url: string }
   | { type: typeof MSG.PING_CONTENT }
+  | { type: typeof MSG.CONTENT_RECONNECT }
   | { type: typeof MSG.PONG_CONTENT; url: string }
   | { type: typeof MSG.AUTOFILL_START; reason: AutofillReason }
   | { type: typeof MSG.AUTOFILL_PROGRESS; payload: ProgressPayload }
@@ -534,6 +544,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.OVERLAY_CLEAR_SESSION }
   | { type: typeof MSG.OVERLAY_COMPLETE_SESSION; sessionId: number }
   | { type: typeof MSG.OVERLAY_SITE_ACCESS_RESULT; pattern: string; granted: boolean }
+  | { type: typeof MSG.OVERLAY_VIEW_CHANGED }
   | { type: typeof MSG.SHOW_APPLICATION_OVERLAY }
   | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
@@ -554,7 +565,7 @@ export type ObservedFramePayload = {
 };
 
 const RUNTIME_TYPES = new Set<string>([
-  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
+  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
@@ -569,7 +580,8 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT,
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
-  MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY
+  MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -679,10 +691,12 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     pattern: { kind: "string", max: LIMIT.url, required: true },
     granted: { kind: "boolean", required: true }
   },
+  [MSG.OVERLAY_VIEW_CHANGED]: {},
   [MSG.SHOW_APPLICATION_OVERLAY]: {},
   [MSG.TOOLBAR_OVERLAY_READY]: {},
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
+  [MSG.CONTENT_RECONNECT]: {},
   [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.AUTOFILL_START]: {
     reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }

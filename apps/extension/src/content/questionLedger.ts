@@ -499,3 +499,9 @@ export function absorbScalarLedger(
     );
   }
 }
+
+/** Required fields remain blocking until verified, including in-flight states.
+ * Optional unresolved review remains visible but never gains requiredness. */
+export function requiredReviewRemaining(entries: readonly QuestionEntry[]): number {
+  return entries.filter(entry => entry.required && entry.state !== "filled_verified").length;
+}

@@ -21,8 +21,14 @@ interface OverlayInstance {
   disposeListeners: () => void;
 }
 
-const instances = new WeakMap<Document, OverlayInstance>();
-const dismissedDocuments = new WeakSet<Document>();
+// Separate toolbar/workflow bundles share this document-local ownership in
+// their extension isolated world, including explicit dismissal state.
+const overlayWorld = globalThis as typeof globalThis & {
+  __xpertapplyOverlayInstancesV1__?: WeakMap<Document, OverlayInstance>;
+  __xpertapplyOverlayDismissedV1__?: WeakSet<Document>;
+};
+const instances = overlayWorld.__xpertapplyOverlayInstancesV1__ ??= new WeakMap<Document, OverlayInstance>();
+const dismissedDocuments = overlayWorld.__xpertapplyOverlayDismissedV1__ ??= new WeakSet<Document>();
 const OVERLAY_MARKER = "xpertapply-application-overlay";
 
 export function ensureOverlay(ownerDocument: Document = document): ApplicationOverlayController {
@@ -155,7 +161,7 @@ function overlayMarkup(): string {
       [hidden] { display: none !important; }
       .panel {
         position: fixed; right: 18px; bottom: 18px;
-        width: min(410px, calc(100vw - 28px)); max-width: 420px;
+        width: min(410px, calc(100% - 28px)); max-width: 420px;
         max-height: min(760px, calc(100vh - 36px)); max-height: min(760px, calc(100dvh - 36px));
         overflow: hidden; pointer-events: auto; color: #10243a;
         background: #f9fbfc; background: rgba(250, 252, 253, 0.84);
@@ -192,6 +198,7 @@ function overlayMarkup(): string {
       .actions { display: grid; gap: 8px; }
       .actions button, #grantSiteAccess { min-height: 40px; padding: 9px 12px; border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 10px; background: rgba(255,255,255,.72); }
       .actions .primary, #grantSiteAccess { border-color: #155d78; background: #155d78; color: #fff; }
+      .actions .danger { color: #8a3528; border-color: rgba(138,53,40,.28); background: transparent; }
       button:disabled { cursor: not-allowed; opacity: .55; }
       .warn { padding: 14px; border: 1px solid rgba(155,110,15,.14); border-radius: 16px; background: rgba(255,248,232,.82); color: #594711; font-size: 13px; }
       .note { margin: 0; padding: 12px; border-radius: 12px; background: rgba(16,36,58,.04); color: #526276; font-size: 13px; }
@@ -209,13 +216,14 @@ function overlayMarkup(): string {
       .restore-pill:hover { background: #ffffff; }
       button:focus-visible, h2:focus-visible { outline: 3px solid #1598bd; outline-offset: 2px; }
       @media (max-width: 363px) {
-        .panel { right: 12px; bottom: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
+        .panel { right: 12px; bottom: 12px; width: calc(100% - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
         .header { padding-left: 12px; } .body { padding: 20px 16px; } .restore-pill { right: 12px; bottom: 12px; }
       }
       @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
       @media (forced-colors: active) {
         .panel, .restore-pill { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
-        .header { border-color: CanvasText; } .context, .message, .status { color: CanvasText; }
+        .header, .warn, .actions button, #grantSiteAccess { border-color: CanvasText; }
+        .context, .message, .status, .warn { color: CanvasText; }
         .status-dot { background: Highlight; } button:focus-visible, h2:focus-visible { outline-color: Highlight; }
       }
     </style>
@@ -248,7 +256,7 @@ function overlayMarkup(): string {
               <button class="primary" id="fill" type="button">Fill application</button>
               <button id="rescan" type="button">Continue filling</button>
               <button id="next" type="button">Refresh application status</button>
-              <button id="clear" type="button">Clear XpertApply-filled fields</button>
+              <button class="danger" id="clear" type="button">Clear XpertApply-filled fields</button>
               <button id="complete" type="button">Mark application complete</button>
             </div>
             <p class="note">Review the information, then submit directly on the employer’s website.</p>

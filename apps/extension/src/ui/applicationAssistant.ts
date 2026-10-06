@@ -1,3 +1,4 @@
+import { completionFailure } from "../completionAuthority";
 import { BUILD_INFO } from "../buildInfo";
 import { PROTOCOL_VERSION, type AutofillReason, type LaunchViewState } from "../messages";
 
@@ -27,7 +28,8 @@ export interface ApplicationAssistantContextAdapter {
 
 export interface ApplicationAssistantViewAdapter {
   get(tabId: number): Promise<LaunchViewState | null>;
-  subscribe(listener: (tabId: number, view: LaunchViewState | null) => void): () => void;
+  /** `view === undefined` is a payload-free invalidation; fetch authority. */
+  subscribe(listener: (tabId: number, view: LaunchViewState | null | undefined) => void): () => void;
 }
 
 export interface ApplicationAssistantOptions {
@@ -69,6 +71,7 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 const FAILURE_LABEL: Record<string, string> = {
+  APPLICATION_FORM_TOO_LARGE: "This application exceeds XpertApply’s safe limit of 1,000 form fields. Nothing was filled. Please fill it manually.",
   CONTENT_SCRIPT_NOT_INJECTED: "Couldn’t reach the application page. Reload it and click “Fill application”.",
   FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION: "Site access is granted, but Chrome hasn’t confirmed the embedded application yet. Click “Fill application” to retry.",
   SESSION_PACKAGE_FAILED: "Your prepared application couldn’t be loaded. Reopen from XpertApply.",
@@ -94,13 +97,17 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   let refreshGeneration = 0;
   let context: ApplicationAssistantContext = { available: false };
   let view: LaunchViewState | null = null;
+  let refreshQueued = false;
 
   const element = (id: string): HTMLElement => {
     const found = options.root.getElementById(id);
     if (!found) throw new Error(`Missing application assistant element: ${id}`);
     return found;
   };
-  const setText = (id: string, text: string): void => { element(id).textContent = text; };
+  const setText = (id: string, text: string): void => {
+    const target = element(id);
+    if (target.textContent !== text) target.textContent = text;
+  };
   const button = (id: string): HTMLButtonElement => element(id) as HTMLButtonElement;
   const listen = (id: string, event: string, listener: EventListener): void => {
     const target = element(id);
@@ -126,7 +133,10 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
             ? "Open an application from XpertApply to begin."
             : "No active application tab is available.";
     setText("stage", message);
-    for (const id of ["fill", "rescan", "next", "clear", "complete", "grantSiteAccess"]) button(id).disabled = true;
+    for (const id of ["fill", "rescan", "next", "clear", "complete", "grantSiteAccess"]) {
+      button(id).disabled = true;
+      button(id).hidden = id !== "fill";
+    }
   }
 
   function renderSiteAccess(current: LaunchViewState): void {
@@ -139,8 +149,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       ? `The application is embedded from ${site}.`
       : `The application is on ${site}.`;
     setText("siteAccessText", current.siteAccess === "site_access_denied"
-      ? `${where} Access was declined. If you choose to allow this site, XpertApply will read relevant application-page and form information to help fill this application. Relevant information may be sent to XpertApply's service for the features you request.`
-      : `${where} To help fill this application, XpertApply needs access to this site. It will read relevant application-page and form information. Relevant information may be sent to XpertApply's service for the features you request.`);
+      ? `${where} Access was declined. XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields.`
+      : `${where} XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields. Relevant information may be sent to XpertApply's service only for features you request.`);
     setText("grantSiteAccess", `Allow XpertApply on ${site}`);
     button("grantSiteAccess").disabled = false;
   }
@@ -186,7 +196,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const errorBox = element("errors");
     if (current.failureCode) {
       errorBox.hidden = false;
-      errorBox.textContent = FAILURE_LABEL[current.failureCode] ?? current.failureMessage ?? `Issue: ${current.failureCode}`;
+      errorBox.textContent = FAILURE_LABEL[current.failureCode]
+        ?? "Something went wrong while preparing this application. Try again or reopen it from XpertApply.";
     } else {
       errorBox.hidden = true;
     }
@@ -195,6 +206,13 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     button("fill").disabled = !workflowAvailable || current.running || terminal;
     setText("fill", current.running ? "Filling…" : terminal ? "Connect application" : "Fill application");
     for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = !workflowAvailable;
+    button("complete").disabled = !workflowAvailable || completionFailure(current) !== null;
+    button("complete").setAttribute("aria-describedby", "stage review");
+    button("fill").hidden = false;
+    button("rescan").hidden = !workflowAvailable || current.running;
+    button("next").hidden = !workflowAvailable;
+    button("clear").hidden = !workflowAvailable || current.filled === 0;
+    button("complete").hidden = !workflowAvailable || !current.reachedFinalStep;
     renderSiteAccess(current);
     renderDiagnostics(current);
   }
@@ -220,6 +238,15 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     render();
   }
 
+  function scheduleRefresh(): void {
+    if (disposed || refreshQueued) return;
+    refreshQueued = true;
+    queueMicrotask(() => {
+      refreshQueued = false;
+      if (!disposed) void refresh();
+    });
+  }
+
   async function withTab(operation: (tabId: number) => Promise<ActionResponse | undefined>, label: string): Promise<void> {
     const id = context.tabId;
     if (!context.available || id == null) {
@@ -228,7 +255,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     }
     const response = await operation(id);
     if (response?.ok === false) {
-      showButtonError(`${label}: ${FAILURE_LABEL[response.error ?? ""] ?? response.error ?? "unknown error"}`);
+      showButtonError(`${label}: ${FAILURE_LABEL[response.error ?? ""] ?? "Something went wrong. Try again."}`);
     }
   }
 
@@ -255,14 +282,18 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   listen("complete", "click", async () => {
     const tabId = context.tabId;
     const sessionId = view?.sessionId;
-    if (!context.available || tabId == null || !sessionId
+    if (!context.available || tabId == null || !sessionId || completionFailure(view) !== null
       || !(await options.confirmAction("Confirm you submitted this application on the employer's website?"))) return;
     const response = await options.actions.completeSession(tabId, sessionId);
-    if (response?.ok === false) showButtonError(`Couldn’t mark complete: ${response.error ?? "unknown error"}`);
+    if (response?.ok === false) showButtonError(response.error === "REQUIRED_REVIEW_REMAINING" ? "Review the remaining required fields before marking complete." : "Couldn’t mark complete. Try again.");
   });
 
-  ownedListeners.push(options.context.subscribe(() => void refresh()));
+  ownedListeners.push(options.context.subscribe(scheduleRefresh));
   ownedListeners.push(options.views.subscribe((tabId, nextView) => {
+    if (nextView === undefined) {
+      scheduleRefresh();
+      return;
+    }
     if (disposed || tabId !== context.tabId) return;
     view = nextView;
     if (!nextView && context.status === "bound") context = { ...context, status: "unsupported" };

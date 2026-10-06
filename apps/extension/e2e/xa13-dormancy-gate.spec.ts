@@ -1,7 +1,6 @@
-import { expect, test, chromium } from "@playwright/test";
+import { createXa13InstrumentedBuild } from "./extension-build-authority";
+import { expect, test, chromium, type BrowserContext } from "@playwright/test";
 import { createServer } from "node:http";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -10,9 +9,7 @@ const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 
 test("XA-13: an injected no-handoff frame performs zero DOM probes", async () => {
   test.setTimeout(60_000);
-  const requests: string[] = [];
-  const server = createServer((request, response) => {
-    requests.push(`${request.method} ${request.url}`);
+  const server = createServer((_request, response) => {
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(`<!doctype html><title>Unrelated employer page</title>
       <main><h1>Careers</h1><form>
@@ -37,40 +34,21 @@ test("XA-13: an injected no-handoff frame performs zero DOM probes", async () =>
   // Instrument only a disposable copy of the shipped bundle. This counter is
   // inside probeFrame itself, so the assertion cannot be satisfied by merely
   // suppressing a message or hiding a result after the DOM scan occurred.
-  const instrumentedDist = mkdtempSync(path.join(tmpdir(), "xa13-dist-"));
-  cpSync(DIST, instrumentedDist, { recursive: true });
-  const manifestPath = path.join(instrumentedDist, "manifest.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), `${origin}/*`])];
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-
-  const contentPath = path.join(instrumentedDist, "content.js");
-  let content = readFileSync(contentPath, "utf8");
-  const needle = "function probeFrame(doc = document) {";
-  expect(content.split(needle)).toHaveLength(2);
-  content = content.replace(
-    needle,
-    `${needle}\n    globalThis.__xa13ProbeCount = (globalThis.__xa13ProbeCount || 0) + 1;`
-  );
-  if (process.env.XA13_NEGATIVE_CONTROL === "eager-probe") {
-    const ready = "sendRuntime({ type: MSG.CONTENT_READY })";
-    expect(content.split(ready)).toHaveLength(2);
-    content = content.replace(
-      ready,
-      "sendRuntime({ type: MSG.CONTENT_READY, probe: buildFrameProbe() })"
-    );
-  }
-  writeFileSync(contentPath, content);
-
-  const context = await chromium.launchPersistentContext("", {
-    channel: "chromium",
-    args: [
-      `--disable-extensions-except=${instrumentedDist}`,
-      `--load-extension=${instrumentedDist}`
-    ],
-    serviceWorkers: "allow"
-  });
+  let derivative: ReturnType<typeof createXa13InstrumentedBuild> | undefined;
+  let ownedContext: BrowserContext | undefined;
   try {
+    derivative = createXa13InstrumentedBuild(DIST, origin);
+    const instrumentedDist = derivative.path;
+
+    const context = await chromium.launchPersistentContext("", {
+      channel: "chromium",
+      args: [
+        `--disable-extensions-except=${instrumentedDist}`,
+        `--load-extension=${instrumentedDist}`
+      ],
+      serviceWorkers: "allow"
+    });
+    ownedContext = context;
     const worker = context.serviceWorkers()[0]
       ?? await context.waitForEvent("serviceworker", { timeout: 15_000 });
     await worker.evaluate(async () => {
@@ -143,7 +121,6 @@ test("XA-13: an injected no-handoff frame performs zero DOM probes", async () =>
     // Positive control: the same entrypoint must probe after an exact live
     // handoff is bound to the browser-supplied tab and origin.
     await page.reload();
-    const authorizedProbeStartedAt = Date.now();
     await worker.evaluate(async ({ id, applicationUrl }) => {
       const now = Date.now();
       const launch = {
@@ -192,23 +169,13 @@ test("XA-13: an injected no-handoff frame performs zero DOM probes", async () =>
       });
       return Number(result?.result ?? 0);
     }, tabId!)).toBeGreaterThan(0);
-    const authorizedProbePathMs = Date.now() - authorizedProbeStartedAt;
 
-    console.log(`XA13_MV3 ${JSON.stringify({
-      noHandoffProbeCount,
-      noHandoffMutationObservers,
-      authorizedProbeCount: await worker.evaluate(async (id) => {
-        const [result] = await chrome.scripting.executeScript({
-          target: { tabId: id },
-          func: () => Number((globalThis as typeof globalThis & { __xa13ProbeCount?: number }).__xa13ProbeCount ?? 0)
-        });
-        return Number(result?.result ?? 0);
-      }, tabId!),
-      authorizedProbePathMs,
-      requests: requests.filter((request) => !request.endsWith("/favicon.ico"))
-    })}`);
+
   } finally {
-    await context.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    try { await ownedContext?.close(); } finally {
+      derivative?.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   }
 });

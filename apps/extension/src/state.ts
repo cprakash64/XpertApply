@@ -262,13 +262,14 @@ export async function getView(tabId: number): Promise<LaunchViewState | null> {
   return map[String(tabId)] ?? null;
 }
 
-export async function patchView(tabId: number, patch: Partial<LaunchViewState>, generation = captureAuthorityGeneration()): Promise<LaunchViewState | null> {
+export async function patchView(tabId: number, patch: Partial<LaunchViewState> | ((current: LaunchViewState) => Partial<LaunchViewState>), generation = captureAuthorityGeneration()): Promise<LaunchViewState | null> {
   return withAuthorityMutation(generation, async () => {
     const map = await getMap<LaunchViewState>(VIEW_KEY);
     const existing = map[String(tabId)];
     if (!existing) return null;
     assertSessionAuthority(existing.sessionId);
-    const next = { ...existing, ...patch, tabId, updatedAt: Date.now() };
+    const currentPatch = typeof patch === "function" ? patch(existing) : patch;
+    const next = { ...existing, ...currentPatch, tabId, updatedAt: Date.now() };
     map[String(tabId)] = next;
     await workflowStorage().set({ [VIEW_KEY]: map });
     return next;

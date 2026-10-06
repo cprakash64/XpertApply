@@ -1,8 +1,9 @@
 import { expect, test, chromium } from "@playwright/test";
-import { createServer } from "node:http";
+import { OwnedPackageFixture } from "./owned-package-fixture";
+import { containSyntheticNetwork } from "./network-containment";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { WidgetDriver } from "./widget-driver";
+import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
@@ -25,10 +26,16 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
       <input id="source-referral" type="radio" name="source" value="referral"><label for="source-referral">Referral</label>
       <input id="source-board" type="radio" name="source" value="board"><label for="source-board">Job board</label>
     </fieldset>
+    <label><input id="privacy" type="checkbox" checked> I agree to the candidate privacy policy</label>
     <button type="submit" id="submit">Submit application</button>
   </form></main>
   <script>
     window.__xa10Submit = 0;
+    window.__xa10SubmitClicks = 0;
+    window.__xa10Events = {input:0,change:0};
+    document.querySelector("#submit").addEventListener("click",()=>window.__xa10SubmitClicks++);
+    document.querySelector("#application").addEventListener("input",()=>window.__xa10Events.input++);
+    document.querySelector("#application").addEventListener("change",()=>window.__xa10Events.change++);
     window.__xa10EmployerStyle = document.querySelector('#first').getAttribute('style');
     window.__xa14Mutations = [];
     new MutationObserver(records => {
@@ -58,18 +65,15 @@ const FIXTURE = `<!doctype html><title>Apply</title><main><h1>Apply for this job
 
 test("XA-10: production MV3 Clear restores every choice control", async () => {
   test.setTimeout(60_000);
-  const server = createServer((_request, response) => {
-    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    response.end(FIXTURE);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const origin = `http://localhost:${(server.address() as { port: number }).port}`;
+  const fixture = await new OwnedPackageFixture(FIXTURE).start();
+  const origin = fixture.origin;
   const applicationUrl = `${origin}/apply`;
   const context = await chromium.launchPersistentContext("", {
     channel: "chromium",
     args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
     serviceWorkers: "allow"
   });
+  const network = await containSyntheticNetwork(context);
   try {
     const answers = [
       { canonical_key: "country", value: "United States", display_value: "United States", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true },
@@ -83,12 +87,29 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
       profile: { first_name: "Test", last_name: "Candidate", email: "candidate@example.test", country: "United States" },
       answers, unresolved_questions: []
     };
-    await context.route("**/application-sessions/token", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ session_token: "xa10-token", session }) }));
-    await context.route("**/application-sessions/*/answers", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ answers, unresolved_questions: [], refreshed: false, profile_revision: "r" }) }));
-    await context.route("**/application-sessions/*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) }));
+    await fixture.route("**/application-sessions/token", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ session_token: fixture.sessionToken, session }) }));
+    await fixture.route("**/application-sessions/*/answers", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ answers, unresolved_questions: [], refreshed: false, profile_revision: "r" }) }));
+    await fixture.route("**/application-sessions/910", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) }));
 
+    for (const endpoint of ["answers/override", "resolve-questions", "events", "autofill-results"]) await fixture.route(`**/application-sessions/910/${endpoint}`, route=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(endpoint==="answers/override"?{overrides:[]}:endpoint==="resolve-questions"?{request_schema_version:3,answer_contract_version:3,registry_version:"fixture",results:[]}:{})}));
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 15_000 });
+    const page = await context.newPage();
+    await page.goto(applicationUrl);
+    const choices = () => page.evaluate(() => ({
+      native: (document.querySelector("#country-native") as HTMLSelectElement).value,
+      radios: ["source-referral", "source-board"].map(id => (document.getElementById(id) as HTMLInputElement).checked),
+      checkbox: (document.querySelector("#privacy") as HTMLInputElement).checked,
+      custom: document.querySelector("#country-custom .select__value")!.textContent,
+      customInput: (document.querySelector("#country-custom input") as HTMLInputElement).value
+    }));
+    const snapshot = () => page.locator("#application").evaluate(form => ({
+      controls: Array.from(form.querySelectorAll("input,select,textarea")).map(el=>({id:el.id,value:(el as HTMLInputElement).value,checked:el instanceof HTMLInputElement?el.checked:null,style:el.getAttribute("style"),classes:el.className})),
+      custom: { text:form.querySelector("#country-custom .select__value")!.textContent,classes:form.querySelector("#country-custom .select__value")!.className,expanded:form.querySelector("#country-custom")!.getAttribute("aria-expanded"),placeholderHidden:(form.querySelector(".select__placeholder") as HTMLElement).hidden }
+    }));
+    const originalState = await snapshot();
+    const originalChoices = await choices();
     await worker.evaluate(async (url) => {
+      await chrome.storage.local.set({apiBase:new URL(url).origin,r13bSyntheticAccountMarker:"preserve-this-account"});
       const now = Date.now();
       await chrome.storage.session.set({ activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "xa10-e2e", jobId: "910", applicationUrl: url, status: "prepared",
@@ -98,12 +119,16 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
       }});
     }, applicationUrl);
 
-    const page = await context.newPage();
-    await page.goto(applicationUrl);
+    const overlay = await CanonicalOverlayDriver.openFromToolbar(page, worker);
+    await expect.poll(() => overlay.status()).toBe("Reading the form…");
+    expect(await choices()).toEqual(originalChoices);
+    expect(await snapshot()).toEqual(originalState);
+    expect(await page.evaluate(()=>(window as any).__xa10Events)).toEqual({input:0,change:0});
+    await overlay.fill();
     await expect(page.locator("#country-native")).toHaveValue("United States", { timeout: 20_000 });
     await expect(page.locator("#source-board")).toBeChecked();
     await expect(page.locator("#country-custom .select__value")).toHaveText("United States");
-    await page.waitForSelector("#jobpilot-assisted-apply", { state: "attached" });
+    await expect(page.locator("#privacy")).toBeChecked();
     expect(await page.evaluate(() => Array.from(document.querySelectorAll("*")).flatMap((element) =>
       Array.from(element.attributes)
         .filter((attribute) => attribute.name.startsWith("data-jobpilot-") || attribute.name.startsWith("data-xpertapply-"))
@@ -112,9 +137,15 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
     expect(await page.evaluate(() => (window as any).__xa14Mutations)).toEqual([]);
     await expect(page.locator("#prior")).toHaveValue("KEEP-ME");
     expect(await page.locator("#first").getAttribute("style")).toBe(await page.evaluate(() => (window as any).__xa10EmployerStyle));
-    const widget = await WidgetDriver.attach(page);
-    await widget.clearFilledFields();
-    await expect.poll(() => widget.message()).toContain("Cleared");
+    await expect.poll(() => overlay.status()).toMatch(/^Filled/);
+    expect(await page.evaluate(() => (window as any).__xa10Events.change)).toBeGreaterThan(0);
+    await overlay.clear();
+    await expect.poll(choices).toEqual(originalChoices);
+    await expect.poll(snapshot).toEqual(originalState);
+    const workerView=await worker.evaluate(async url=>{const tab=(await chrome.tabs.query({})).find(t=>t.url===url)!;return (await chrome.storage.session.get("viewStates")).viewStates[String(tab.id)];},page.url());
+    await expect.poll(async()=>{const v=await overlay.summary();return [v.discovered,v.filled,v.review,v.skipped];}).toEqual([workerView.fieldsDiscovered,workerView.filled,workerView.reviewRequired,workerView.skipped]);
+    expect(await worker.evaluate(async()=> (await chrome.storage.local.get("r13bSyntheticAccountMarker")).r13bSyntheticAccountMarker)).toBe("preserve-this-account");
+    network.assertContained();
 
     const result = await page.evaluate(() => ({
       native: (document.querySelector("#country-native") as HTMLSelectElement).value,
@@ -128,13 +159,14 @@ test("XA-10: production MV3 Clear restores every choice control", async () => {
           attribute.name.startsWith("data-jobpilot-") || attribute.name.startsWith("data-xpertapply-")
         )).length,
       observedPrivateMarkers: (window as any).__xa14Mutations.length,
+      submitClicks: (window as any).__xa10SubmitClicks,
       submitted: (window as any).__xa10Submit
     }));
-    console.log(`XA10_MV3 ${JSON.stringify(result)}`);
-    expect(result).toEqual({ native: "", radio: false, custom: "", prior: "KEEP-ME", employerStylePreserved: true, marked: 0, privateMarkers: 0, observedPrivateMarkers: 0, submitted: 0 });
+
+    expect(result).toEqual({ native: "", radio: false, custom: "", prior: "KEEP-ME", employerStylePreserved: true, marked: 0, privateMarkers: 0, observedPrivateMarkers: 0, submitClicks: 0, submitted: 0 });
     await page.close();
   } finally {
     await context.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await fixture.close();
   }
 });

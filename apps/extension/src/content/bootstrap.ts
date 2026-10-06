@@ -1,3 +1,4 @@
+import { questionLedger } from "./workflowLedger";
 /**
  * Content script with two roles depending on where it runs:
  *
@@ -15,6 +16,7 @@
  *    to warn; it never clicks it.
  */
 
+import { projectWorkflowProgress } from "./workflowProgress";
 import { detectAdapter, type DetectionOutcome } from "../ats/registry";
 import {
   actuateTikTokLegalField,
@@ -90,7 +92,7 @@ import {
   type TransactionPanelItem,
   type WidgetStage
 } from "./widget";
-import { claimContentInstance, makeContentInstanceId } from "./instance";
+import { claimWorkflowContentInstance, makeContentInstanceId } from "./instance";
 import { ResolutionRunCoordinator, type EligibilityRun } from "./resolutionRun";
 import { fillStructuredRepeaters } from "../fields/repeaters";
 import { discoverFields } from "../fields/discovery";
@@ -132,7 +134,6 @@ import {
 } from "./questionBatch";
 import { enumerateOptions, selectApprovedOption, type TransactionResult } from "./dropdownTransaction";
 import {
-  QuestionLedger,
   STAGE_LABEL,
   absorbScalarLedger,
   type QuestionState,
@@ -140,20 +141,39 @@ import {
 } from "./questionLedger";
 
 // Declarative injection and the background's readiness fallback can both run.
-// The newest instance owns the frame; older current-build instances check this
-// predicate and become inert. Crucially, we DO NOT skip when an old boolean
-// guard is present: that is the frozen state left by an extension reload.
-const isCurrentInstance = claimContentInstance(
-  window as unknown as Record<string, unknown>,
-  makeContentInstanceId(BUILD_INFO.buildId)
-);
+// A live same-build owner survives same-document toolbar reinjection. A new
+// build or orphaned runtime supersedes it; old instances then become inert.
+// A stale boolean alone never prevents recovery after an extension reload.
+/** Required extension operations remain unavailable in ordinary pages. Chrome
+ * supplies this capability in the manifest's isolated content-script world;
+ * the pure injectable harness never imports or starts this entrypoint. */
+export function requireWorkflowRuntime(): typeof chrome.runtime {
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.id || typeof runtime.getManifest !== "function" || typeof runtime.sendMessage !== "function") {
+    throw new Error("EXTENSION_RUNTIME_UNAVAILABLE");
+  }
+  return runtime;
+}
+let isCurrentInstance: () => boolean = () => false;
+if (globalThis.chrome?.runtime?.id) {
+  const workflowRuntime = requireWorkflowRuntime();
+  isCurrentInstance = claimWorkflowContentInstance(
+    window as unknown as Record<string, unknown>,
+    makeContentInstanceId(BUILD_INFO.buildId),
+    BUILD_INFO.buildId,
+    () => Boolean(workflowRuntime.id && workflowRuntime.getManifest())
+  );
+}
 const toolbarInitiated = Boolean(
   (globalThis as typeof globalThis & { __xpertapplyOverlayBootstrapV1__?: true })
     .__xpertapplyOverlayBootstrapV1__
 );
 let toolbarFillAuthorized = !toolbarInitiated;
 
-if (isApprovedJobPilotOrigin(location.origin)) {
+if (!isCurrentInstance()) {
+  // A live same-build workflow already owns this document. Toolbar SHOW will
+  // mount a fresh presentation controller and fetch its authoritative view.
+} else if (isApprovedJobPilotOrigin(location.origin)) {
   // Never let ATS-only code (DOM scanning, adapters) reach the web-origin role
   // even indirectly.
   try {
@@ -241,6 +261,8 @@ function buildFrameProbe() {
 let session: ApplicationSessionData | null = null;
 let outcome: DetectionOutcome | null = null;
 let running = false;
+let completedWorkflowProgress: ProgressPayload | null = null;
+let completedWorkflowSessionId: number | null = null;
 let started = false;
 let matched = false;
 // Once a launch reaches a terminal ready/review/failure state, DOM changes
@@ -393,6 +415,7 @@ async function initAtsPage(): Promise<void> {
   // unmatched frame a second chance if the tab becomes bound to a handoff
   // shortly after this frame's own (negative) initial check — e.g. an
   // employer-embedded iframe whose content script races the top frame's.
+  let registrationRecovery: Promise<void> | null = null;
   chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     if (!isCurrentInstance()) return false;
     const message = parseRuntimeMessage(raw);
@@ -403,6 +426,19 @@ async function initAtsPage(): Promise<void> {
     if (message.type === MSG.PING_CONTENT) {
       sendResponse({ ok: true, url: location.href });
       return false;
+    }
+    if (message.type === MSG.CONTENT_RECONNECT) {
+      if (_sender.id !== chrome.runtime.id) return false;
+      // Every surviving frame independently uses the normal sender-qualified
+      // handshake. Recovery never discovers/fills or opens UI locally.
+      registrationRecovery ??= sendRuntime({ type: MSG.CONTENT_READY }).then((response) => {
+        if (!isCurrentInstance()) return;
+        const ready = response as { matched?: boolean; session?: ApplicationSessionData | null } | undefined;
+        matched = Boolean(ready?.matched);
+        session = ready?.session ?? null;
+      }).finally(() => { registrationRecovery = null; });
+      void registrationRecovery.then(() => sendResponse({ ok: true }));
+      return true;
     }
     if (message.type === MSG.PROBE_FRAME_APPLICATION) {
       // Only the worker sends this frame-targeted request, after it has matched
@@ -643,6 +679,12 @@ async function discoverForToolbar(): Promise<void> {
     reviewDocuments: []
   };
   await sendRuntime({ type: MSG.AUTOFILL_PROGRESS, payload: progress });
+  // Failed progress alone has no refusal code for the canonical renderer.
+  // Preserve the existing discovery decision through the trusted failure path,
+  // even when toolbar reinjection superseded an earlier content instance.
+  if (resolved.reason === "APPLICATION_FORM_TOO_LARGE") {
+    await sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: resolved.reason });
+  }
   widget = ensureWidget();
   widget.update({
     stage: fields.length > 0 ? "review" : "failed",
@@ -1999,23 +2041,22 @@ async function fill(reason: AutofillReason): Promise<void> {
     });
     publishTransactionPanel();
 
+    completedWorkflowSessionId = session.sessionId;
+    completedWorkflowProgress = projectWorkflowProgress({
+      ...res.progress,
+      state: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review"
+    }, questionLedger.counts(), questionLedger.all());
     void sendRuntime({
       type: MSG.AUTOFILL_RESULT,
       sessionId: session.sessionId,
       result: {
         ...res.result,
-        status: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review",
-        fields_discovered: ledgerCounts.discovered,
-        fields_filled: ledgerCounts.filled,
-        review_items: ledgerCounts.pending + lastFinalVerification.technicalIssues
+        status: completedWorkflowProgress.state === "completed" ? "completed" : "completed_with_review",
+        fields_discovered: completedWorkflowProgress.fieldsDiscovered,
+        fields_filled: completedWorkflowProgress.filled,
+        review_items: completedWorkflowProgress.reviewRequired
       },
-      progress: {
-        ...res.progress,
-        state: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review",
-        fieldsDiscovered: ledgerCounts.discovered,
-        filled: ledgerCounts.filled,
-        reviewRequired: ledgerCounts.pending + lastFinalVerification.technicalIssues
-      }
+      progress: completedWorkflowProgress
     });
     if (
       lastFinalVerification.canEnterReviewReady
@@ -2121,7 +2162,7 @@ async function fill(reason: AutofillReason): Promise<void> {
  */
 /** The one authoritative record of what happened to each question. Every
  * widget count is derived from it, so no two summaries can disagree. */
-export const questionLedger = new QuestionLedger();
+export { questionLedger } from "./workflowLedger";
 const questionExecutionTraces = new Map<string, QuestionExecutionTrace>();
 const resolutionRuns = new ResolutionRunCoordinator();
 let activeResolutionRun: EligibilityRun | null = null;
@@ -2147,6 +2188,8 @@ function beginResolutionRun(): { id: string; createdAt: string } {
   // Retry is a new observation of the page. Old unresolved items and option
   // probes must not survive and overwrite the new resolver result.
   questionLedger.clear();
+  completedWorkflowProgress = null;
+  completedWorkflowSessionId = null;
   questionExecutionTraces.clear();
   lastFinalVerification = null;
   lastTikTokAdapterTrace = null;
@@ -2910,6 +2953,7 @@ function uidOfFieldKey(fieldKey: string): string {
 /** Push the authoritative list and its counts into the widget. Called after
  * every action so what the user sees is never one step behind the ledger. */
 function refreshAuthoritativeReview(): void {
+  emitProgressOnly();
   if (!isTopFrame) return;
   const partition = partitionReview(session ? buildReviewItems(ledger, session) : []);
   widget?.showActions(
@@ -3455,19 +3499,18 @@ const reviewHandlers: ReviewHandlers = {
       // Apply immediately to whichever discovered fields the field mapper already
       // classified — the same classification used for automatic fill, no separate
       // DOM-guessing heuristic here.
-      const nameFills: Promise<unknown>[] = [];
-      const resolved = new Set<string>();
+      const nameFills: Promise<{ uid: string; verified: boolean }>[] = [];
       for (const [uid, canonicalKey] of lastCanonicalKeyByUid) {
         const field = lastFields.get(uid);
         const v = valueForKey[canonicalKey];
         if (!field || v === undefined) continue;
-        nameFills.push(fillField(field, v, { status: "verified", force: true }));
-        resolved.add(uid);
+        nameFills.push(fillField(field, v, { status: "verified", force: true })
+          .then(outcome => ({ uid, verified: outcome.status === "filled" })));
       }
-      await Promise.all(nameFills);
-      for (const uid of resolved) markLedgerResolved(uid, "user");
+      const results = await Promise.all(nameFills);
+      for (const result of results) if (result.verified) markLedgerResolved(result.uid, "user");
       refreshLedgerCounts();
-      return true;
+      return results.length > 0 && results.every(result => result.verified);
     }
     const field = lastFields.get(id);
     if (!field) return false;
@@ -3561,11 +3604,17 @@ function markLedgerResolved(uid: string, fillSource: string): void {
   entry.verified = true;
   entry.currentValuePresent = true;
   entry.fillSource = fillSource;
+  // Only the explicit review handler reaches here after its verified fill.
+  // Scalar scan absorption intentionally cannot resolve terminal questions.
+  const question = questionLedger.get(`f_${entry.frameId}_${uid}`);
+  if (question && question.sensitivity !== "consent") {
+    questionLedger.recordFinalVerification({ fieldKey: question.fieldKey, state: "filled_verified", reasonCode: "USER_CONFIRMED_REVIEW_FILL", required: question.required, canonicalCategory: question.canonicalCategory });
+  }
 }
 
 function refreshLedgerCounts(): void {
   ledgerCounts = computeCounts(ledger);
-  widget?.refreshCounts(ledgerCounts);
+  refreshAuthoritativeReview();
 }
 
 /**
@@ -3979,20 +4028,11 @@ function observeMutations(): void {
 
 function emitProgressOnly(): void {
   if (!isCurrentInstance() || !outcome) return;
-  const submit = outcome.adapter.findSubmitControl({ url: location.href, document });
-  const progress: ProgressPayload = {
-    state: session ? "detecting_ats" : "waiting_for_content_script",
-    atsId: outcome.result.atsId,
-    atsDisplayName: outcome.adapter.displayName,
-    limited: outcome.limited,
-    fieldsDiscovered: 0,
-    filled: 0,
-    skipped: 0,
-    reviewRequired: 0,
-    reachedFinalStep: submit !== null,
-    documentsUploaded: [],
-    reviewDocuments: []
-  };
+  // Initial discovery already publishes its own state. A DOM mutation is not
+  // a new workflow: it must never reset an active or completed Fill to zero.
+  if (running || !completedWorkflowProgress || !session || session.sessionId !== completedWorkflowSessionId) return;
+  completedWorkflowProgress = projectWorkflowProgress(completedWorkflowProgress, questionLedger.counts(), questionLedger.all());
+  const progress = completedWorkflowProgress;
   void sendRuntime({ type: MSG.AUTOFILL_PROGRESS, payload: progress });
 }
 

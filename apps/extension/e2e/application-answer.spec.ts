@@ -1,9 +1,10 @@
 import { expect, test as base, chromium, type BrowserContext, type Worker } from "@playwright/test";
 import { fileURLToPath } from "node:url";
-import { createServer, type Server } from "node:http";
+import { OwnedPackageFixture, syntheticSessionPdf } from "./owned-package-fixture";
+import { containSyntheticNetwork } from "./network-containment";
 import path from "node:path";
 import fs from "node:fs";
-import { WidgetDriver } from "./widget-driver";
+import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
 
 /**
  * "Answer for this application", through the REAL built dist.
@@ -93,6 +94,7 @@ class OverrideStore {
 
 type Fixtures = {
   context: BrowserContext;
+  packageFixture: OwnedPackageFixture;
   worker: Worker;
   origin: string;
   store: OverrideStore;
@@ -102,21 +104,21 @@ type Fixtures = {
 const test = base.extend<Fixtures>({
   store: async ({}, use) => use(new OverrideStore()),
   resolveCalls: async ({}, use) => use({ batches: [] }),
-  origin: async ({}, use) => {
-    const server: Server = createServer((req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(FIXTURE);
-    });
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    const port = (server.address() as { port: number }).port;
-    await use(`http://localhost:${port}`);
-    await new Promise<void>((r) => server.close(() => r()));
+  packageFixture: async ({}, use) => {
+    const fixture = await new OwnedPackageFixture(FIXTURE).start();
+    try { await use(fixture); } finally { await fixture.close(); }
   },
-  context: async ({ origin, store, resolveCalls }, use) => {
+  origin: async ({ packageFixture }, use) => use(packageFixture.origin),
+  context: async ({ origin, store, resolveCalls, packageFixture }, use) => {
     const context = await chromium.launchPersistentContext("", {
       channel: "chromium",
       args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
       serviceWorkers: "allow"
+    });
+    await context.addInitScript(() => {
+      const audit = (window as any).__r15SubmitSafety = { clicks: 0, submits: 0 };
+      document.addEventListener("click", event => { if ((event.target as Element | null)?.closest?.("#final-submit")) audit.clicks++; }, true);
+      document.addEventListener("submit", () => { audit.submits++; }, true);
     });
     const applicationUrl = `${origin}/apply`;
     const sessionBody = {
@@ -126,13 +128,16 @@ const test = base.extend<Fixtures>({
       cover_letter: { status: "ready", document_id: 2, download_url: null },
       profile: {}
     };
-    await context.route("**/application-sessions/token", (r) =>
+    const network = await containSyntheticNetwork(context);
+    await packageFixture.document(55,"resume",syntheticSessionPdf());
+    await packageFixture.document(55,"cover-letter",syntheticSessionPdf());
+    await packageFixture.route("**/application-sessions/token", (r) =>
       r.fulfill({ status: 200, contentType: "application/json",
-        body: JSON.stringify({ session_token: "tok", session: sessionBody }) }));
+        body: JSON.stringify({ session_token: packageFixture.sessionToken, session: sessionBody }) }));
 
     // PUT one application-only answer. Matched before the generic
     // /answers route so the two cannot be confused.
-    await context.route("**/application-sessions/*/answers/override/*", async (route) => {
+    await packageFixture.route("**/application-sessions/*/answers/override/*", async (route) => {
       const request = route.request();
       const key = decodeURIComponent(new URL(request.url()).pathname.split("/").pop() ?? "");
       if (request.method() === "GET") {
@@ -149,7 +154,7 @@ const test = base.extend<Fixtures>({
       store.calls.push({
         key,
         body,
-        authorized: (request.headers().authorization ?? "").startsWith("Bearer ")
+        authorized: request.headers().authorization === `Bearer ${packageFixture.sessionToken}`
       });
       if (store.status !== 200) {
         await route.fulfill({ status: store.status, contentType: "application/json",
@@ -172,7 +177,7 @@ const test = base.extend<Fixtures>({
     });
 
     // The override LIST endpoint, used to recover state after a reinjection.
-    await context.route("**/application-sessions/*/answers/override", (r) =>
+    await packageFixture.route("**/application-sessions/*/answers/override", (r) =>
       r.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({
           overrides: Array.from(store.values.keys()).map((canonical_key) => ({
@@ -181,13 +186,13 @@ const test = base.extend<Fixtures>({
           }))
         }) }));
 
-    await context.route("**/application-sessions/*/answers", (r) =>
+    await packageFixture.route("**/application-sessions/*/answers", (r) =>
       r.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ answers: [], unresolved_questions: [], refreshed: false, profile_revision: "r" }) }));
 
     // The resolver, applying the same precedence the backend does: this
     // application's answer first, then the reusable vault.
-    await context.route("**/application-sessions/*/resolve-questions", async (route) => {
+    await packageFixture.route("**/application-sessions/*/resolve-questions", async (route) => {
       const body = JSON.parse(route.request().postData() ?? "{}");
       const asked: string[] = [];
       const results = (body.questions ?? []).map((q: any) => {
@@ -228,14 +233,21 @@ const test = base.extend<Fixtures>({
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ request_schema_version: 3, registry_version: "1.0.0", answer_contract_version: 3, results }) });
     });
-    await context.route("**/application-sessions/*", (r) =>
+    await packageFixture.route("**/application-sessions/55", (r) =>
       r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sessionBody) }));
 
-    await use(context);
-    await context.close();
+    for (const endpoint of ["events", "autofill-results", "complete"]) {
+      await packageFixture.route(`**/application-sessions/55/${endpoint}`, route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+    }
+    try { await use(context); } finally {
+      await context.close();
+      network.assertContained();
+
+    }
   },
-  worker: async ({ context }, use) => {
+  worker: async ({ context, origin }, use) => {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 15_000 }));
+    await worker.evaluate(async apiBase => chrome.storage.local.set({ apiBase }), origin);
     await use(worker);
   }
 });
@@ -257,15 +269,47 @@ async function seed(worker: Worker, url: string) {
   }, url);
 }
 
+// Observe semantic readiness in the browser throughout the existing five-second
+// budget. Node expect.poll can stop early when its next backoff exceeds the deadline.
+async function waitForPreparedApplication(page: import("@playwright/test").Page, worker: Worker) {
+  await page.waitForFunction(() => {
+    const root = document.querySelector("#xpertapply-assistant-overlay-v1")?.shadowRoot;
+    const fill = root?.getElementById("fill") as HTMLButtonElement | null;
+    if (!root) return false;
+    return ["Reading the form…", "Filled — review and submit", "Filled — some items need your review"].includes(root.getElementById("stage")?.textContent ?? "")
+      && Number(root.getElementById("discovered")?.textContent) > 0
+      && Boolean(fill && !fill.disabled);
+  }, undefined, { timeout: 5_000 });
+  // One authoritative snapshot, without a second readiness wait or credential output.
+  const accepted = await worker.evaluate(async url => {
+    const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
+    if (tab?.id == null) return false;
+    const state = await chrome.storage.session.get(["viewStates", "sessionPackages", "pendingLaunches"]);
+    const view = state.viewStates?.[tab.id];
+    const pkg = state.sessionPackages?.[tab.id];
+    const pending = state.pendingLaunches?.[tab.id];
+    return view?.sessionId === 55 && view.requestId === "m2"
+      && view.contentReady === true && view.packageLoaded === true
+      && ["discovering_fields", "completed", "completed_with_review"].includes(view.state) && view.fieldsDiscovered > 0
+      && !view.running && !view.failureCode
+      && pkg?.session?.sessionId === 55 && typeof pkg.sessionToken === "string" && pkg.sessionToken.length > 0
+      && pending?.sessionId === 55 && pending.applicationId === "m2" && pending.requestId === "m2";
+  }, page.url());
+  expect(accepted, "current tab must own an accepted prepared package before Fill").toBe(true);
+}
+
 async function run(context: BrowserContext, worker: Worker, origin: string, query = "") {
   const url = `${origin}/apply${query}`;
-  await seed(worker, url);
   const page = await context.newPage();
   const states: string[] = [];
   page.on("console", (m) => { if (m.text().includes("[XpertApply]")) states.push(m.text().slice(0, 200)); });
   await page.goto(url);
   await page.waitForSelector("#application-form");
-  await page.waitForTimeout(4500);
+  await seed(worker, url);
+  const overlay = await CanonicalOverlayDriver.openFromToolbar(page, worker);
+  await waitForPreparedApplication(page, worker);
+  await overlay.fill();
+  await expect.poll(() => overlay.status()).toBe("Filled — some items need your review");
   return { page, states };
 }
 
@@ -304,7 +348,7 @@ function componentState(page: import("@playwright/test").Page) {
 }
 
 /** The card for the work-authorization question, whatever field key it got. */
-async function authCard(widget: WidgetDriver) {
+async function authCard(widget: CanonicalOverlayDriver) {
   return cardMatching(widget, (title) => title.includes("Work authorization"));
 }
 
@@ -315,8 +359,8 @@ async function authCard(widget: WidgetDriver) {
  * resolver a beat after the native selects do. Reading the panel at a fixed
  * moment makes that ordering a coin flip.
  */
-async function cardMatching(widget: WidgetDriver, match: (title: string) => boolean) {
-  let items: Awaited<ReturnType<WidgetDriver["actionItems"]>> = [];
+async function cardMatching(widget: CanonicalOverlayDriver, match: (title: string) => boolean) {
+  let items: Awaited<ReturnType<CanonicalOverlayDriver["actionItems"]>> = [];
   let previous = "";
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await widget.openReview();
@@ -346,7 +390,7 @@ test("an unanswered work-authorization question is answerable, applied and verif
 
   // 1. It appears in review, and the control was left alone.
   expect((await displayed(page)).auth).toBe("Select…");
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
 
@@ -424,7 +468,7 @@ test("Cancel sends nothing and leaves the question answerable", async ({
   context, worker, origin, store, resolveCalls
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
 
@@ -445,7 +489,7 @@ test("answering No selects No, not a qualified variant", async ({
   context, worker, origin, store
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
   expect(await widget.clickAction(card.fieldKey, "answer")).toBe(true);
@@ -473,7 +517,7 @@ test("answering the current-sponsorship component refreshes the combined questio
   expect(state.combined).toBe("Select…");
   expect(state.future).toBe("No");
 
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const nowCard = await cardMatching(widget, (t) => t.includes("Current sponsorship"));
 
@@ -512,7 +556,7 @@ test("a direct combined answer does not answer either component", async ({
   context, worker, origin, store, resolveCalls
 }) => {
   const { page } = await run(context, worker, origin, "?components=1");
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const combined = await cardMatching(widget, (t) => /^Sponsorship answer/.test(t));
 
@@ -549,20 +593,44 @@ test("a reinjected content script still applies the answer", async ({
   context, worker, origin, store
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
   expect(await widget.clickAction(card.fieldKey, "answer")).toBe(true);
   expect(await widget.chooseAnswer(card.fieldKey, "yes")).toBe(true);
-  await page.waitForTimeout(3500);
-  expect((await displayed(page)).auth).toBe("Yes");
+  await expect.poll(async()=>(await displayed(page)).auth).toBe("Yes");
 
   // A full reload discards every scrap of content-script memory: the ledger, the
   // widget, the local override mirror. Only the session holds the answer.
+  const identity = async () => worker.evaluate(async url => {
+    const tab=(await chrome.tabs.query({url}))[0];
+    const result=(await chrome.scripting.executeScript({target:{tabId:tab.id!,frameIds:[0]},func:()=>({owner:(globalThis as any).__jobpilotContentInstance})}))[0];
+    if (!result.result || !result.documentId) throw new Error("Trusted document identity unavailable");
+    return {documentId:result.documentId,owner:result.result.owner};
+  },page.url());
+  const prior = await identity();
   await seed(worker, `${origin}/apply`);
   await page.reload();
   await page.waitForSelector("#application-form");
-  await page.waitForTimeout(4500);
+  const reopened = await CanonicalOverlayDriver.openFromToolbar(page, worker);
+  const current = await identity();
+  expect(current.documentId).not.toBe(prior.documentId);
+  expect(current.owner).not.toBe(prior.owner);
+  // A full new-document prepared launch has always resumed through the normal
+  // automatic workflow. Toolbar SHOW preserves that live owner, rather than
+  // resetting its freshly completed state to read-only discovery.
+  await expect.poll(() => reopened.status()).toBe("Filled — some items need your review");
+  await expect.poll(async()=>(await displayed(page)).auth).toBe("Yes");
+  const authority = await worker.evaluate(async url => {
+    const tab=(await chrome.tabs.query({url}))[0];const stored=await chrome.storage.session.get(["viewStates","sessionPackages"]);
+    const view=stored.viewStates?.[String(tab.id)];return {view:{discovered:view.fieldsDiscovered,filled:view.filled,review:view.reviewRequired,state:view.state,sessionId:view.sessionId,contentReady:view.contentReady,packageLoaded:view.packageLoaded},packageSession:stored.sessionPackages?.[String(tab.id)]?.session?.sessionId};
+  },page.url());
+  expect(authority.view).toMatchObject({state:"completed_with_review",sessionId:55,contentReady:true,packageLoaded:true});
+  expect(authority.packageSession).toBe(55);
+  const visible=await reopened.summary();expect([visible.discovered,visible.filled,visible.review]).toEqual([authority.view.discovered,authority.view.filled,authority.view.review]);
+  expect((await identity()).owner).toBe(current.owner);
+  await expect(page.locator("#privacy")).not.toBeChecked();
+  expect(await page.evaluate(()=>(window as any).__r15SubmitSafety)).toEqual({clicks:0,submits:0});
 
   const after = await displayed(page);
   expect(after.auth).toBe("Yes");
@@ -617,12 +685,12 @@ test("an expired session fails safely and keeps the question reviewable", async 
 }) => {
   store.status = 410;
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
   expect(await widget.clickAction(card.fieldKey, "answer")).toBe(true);
   expect(await widget.chooseAnswer(card.fieldKey, "yes")).toBe(true);
-  await page.waitForTimeout(2000);
+  await expect.poll(async () => (await authCard(widget)).status).toMatch(/expired/i);
 
   const after = await authCard(widget);
   // Told plainly, still reachable, and nothing was claimed about the field.
@@ -640,7 +708,7 @@ test("a rejected answer never claims the field was filled", async ({
 }) => {
   store.status = 422;
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
   expect(await widget.clickAction(card.fieldKey, "answer")).toBe(true);
@@ -668,7 +736,7 @@ test("leaving an optional question unresolved records it without filling it", as
   context, worker, origin, store, resolveCalls
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   const card = await cardMatching(
     widget,
     (title) => title.includes("This question needs your review")
@@ -676,7 +744,7 @@ test("leaving an optional question unresolved records it without filling it", as
   expect(card.buttons).toContain("defer");
 
   const batches = resolveCalls.batches.length;
-  const before = counts(await widget.summary());
+  const before = counts(await widget.ledgerCounts());
   const employerBefore = await displayed(page);
   expect(await widget.clickAction(card.fieldKey, "defer")).toBe(true);
   await page.waitForTimeout(1000);
@@ -685,7 +753,7 @@ test("leaving an optional question unresolved records it without filling it", as
   // things needing attention, and it moves into SKIPPED — never into filled.
   const items = await widget.actionItems();
   expect(items.find((item) => item.fieldKey === card.fieldKey)).toBeUndefined();
-  const after = counts(await widget.summary());
+  const after = counts(await widget.ledgerCounts());
   expect(after.optionalSkipped).toBe(before.optionalSkipped + 1);
   expect(after.filled).toBe(before.filled);
   expect(after.needsInformation).toBe(before.needsInformation);
@@ -720,29 +788,44 @@ test("the production widget never contradicts its own totals", async ({
   store.vault.set("sponsorship_required_now", "No");
   store.vault.set("sponsorship_required_future", "No");
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
 
+  await expect.poll(async () => (await widget.summary()).discovered).toBeGreaterThan(0);
   const summary = await widget.summary();
-  const grid = counts(summary);
-  const headline = /Filled\s+(\d+)\s+of\s+(\d+)/.exec(summary.count);
+  const view = await worker.evaluate(async url => {
+    const tab = (await chrome.tabs.query({})).find(t => t.url === url)!;
+    const {viewStates} = await chrome.storage.session.get("viewStates");
+    return viewStates[String(tab.id)];
+  }, page.url());
+  // Capture only numeric ledger buckets via the existing diagnostic action.
+  const ledger = await worker.evaluate(async url => {
+    const tab = (await chrome.tabs.query({})).find(t => t.url === url)!;
+    const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id!, frameIds: [0] }, func: () => {
+      let counts: Record<string, number> | null = null;
+      const original = navigator.clipboard.writeText;
+      navigator.clipboard.writeText = async text => { counts = JSON.parse(text).authoritative.counts; };
+      try {
+        const root = document.getElementById("xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector<HTMLElement>("[data-overlay-workflow-facade]")!.shadowRoot!;
+        root.querySelector<HTMLButtonElement>('[data-a="diagnostics"]')!.click();
+      } finally { navigator.clipboard.writeText = original; }
+      return counts;
+    }});
+    const c = result.result! as Record<string, number>;
+    return { discovered: c.discovered, filled: c.filled_and_verified,
+      review: c.needs_information + c.needs_confirmation + c.needs_user_gesture + c.technical_issues + c.legal_manual_actions + c.unsupported };
+  }, page.url());
+  expect(summary.discovered).toBe(ledger.discovered);
+  expect(summary.filled).toBe(ledger.filled);
+  expect(summary.review).toBe(ledger.review);
+  expect(ledger.discovered).toBe(9);
+  expect(ledger.filled).toBe(2);
 
-  // The headline count exists and agrees with the grid, digit for digit.
-  expect(headline, `count line was ${JSON.stringify(summary.count)}`).not.toBeNull();
-  expect(Number(headline![1])).toBe(grid.filled);
-  expect(Number(headline![2])).toBe(grid.discovered);
-
-  // The exact reported contradiction.
-  expect(summary.count).not.toBe("Filled 0 of 0");
-  expect(grid.discovered).toBeGreaterThan(0);
-
-  // Discovery has finished, so the header must not still claim to be detecting.
-  const LEDGER_STAGES = [
-    "Understanding questions", "Reading available options", "Matching your saved answers",
-    "Filling verified answers", "Waiting for your input", "Ready for final review"
-  ];
-  expect([...LEDGER_STAGES, "Needs review", "Autofill incomplete", "Ready for review"]).toContain(summary.title);
-  expect(summary.title).not.toBe("Detecting fields");
+  expect(summary.filled).toBe(view.filled);
+  expect(summary.discovered).toBe(view.fieldsDiscovered);
+  expect(summary.review).toBe(view.reviewRequired);
+  expect(summary.discovered).toBeGreaterThan(0);
+  expect(summary.title).toMatch(/^Filled/);
 
   // And the answers the user saved actually landed.
   const state = await displayed(page);
@@ -750,6 +833,9 @@ test("the production widget never contradicts its own totals", async ({
   expect(state.sponsor).toBe("No");
   expect(state.privacy).toBe(false);
   expect(state.submitted).toBe(false);
+  const submitAudit = await page.evaluate(() => (window as any).__r15SubmitSafety);
+  expect(submitAudit).toEqual({ clicks: 0, submits: 0 });
+
   await page.close();
 });
 
@@ -780,7 +866,7 @@ test("the consent question offers no answer action and stays unchecked", async (
   context, worker, origin
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const consent = await cardMatching(widget, (t) => /privacy terms/i.test(t));
   // Revealing the control is the only thing offered.
@@ -793,7 +879,7 @@ test("keyboard input inside the widget cannot submit the application", async ({
   context, worker, origin
 }) => {
   const { page } = await run(context, worker, origin);
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
 
@@ -819,7 +905,7 @@ test("the targeted refresh never focuses or clicks Submit", async ({
     submit?.addEventListener("click", () => { (window as any).__submitTouched = true; });
   });
 
-  const widget = await WidgetDriver.attach(page);
+  const widget = await CanonicalOverlayDriver.attach(page);
   await widget.openReview();
   const card = await authCard(widget);
   expect(await widget.clickAction(card.fieldKey, "answer")).toBe(true);

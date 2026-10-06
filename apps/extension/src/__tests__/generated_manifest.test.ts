@@ -165,3 +165,10 @@ describe.skipIf(!distExists)("built toolbar overlay bootstrap", () => {
     expect(bundle).not.toContain("discoverAndFill");
   });
 });
+
+// R3 recovery must use existing tabs messaging, never permission expansion.
+it("keeps recovery independent of the webNavigation permission", () => {
+  const production = JSON.parse(readFileSync(DIST_MANIFEST, "utf8"));
+  expect(production.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+  expect(production.optional_permissions ?? []).not.toContain("webNavigation");
+});

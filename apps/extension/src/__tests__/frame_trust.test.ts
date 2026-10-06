@@ -407,6 +407,65 @@ describe("the shipped message listener", () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  it.each([1, 2])("rejects completion with %i authoritative required reviews without API or purge", async count => {
+    const { messageListeners, store } = await bindTab();
+    const state = await import("../state");
+    await state.patchView(7, { state: "completed_with_review", running: false, packageLoaded: true, contentReady: true, requiredReviewRemaining: count });
+    const before = structuredClone(store);
+    const end = vi.spyOn(state, "endSessionAuthority");
+    const purge = vi.spyOn(state, "clearWorkflowSession");
+    vi.mocked(fetch).mockClear();
+    const response = await dispatch(messageListeners, { type: "JOBPILOT_COMPLETE_SESSION", sessionId: 55, requiredReviewRemaining: 0, reviewRequired: 0 }, sender({ frameId: 0, url: APPLICATION_URL }));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(response).toMatchObject({ ok: false });
+    expect(end).not.toHaveBeenCalled(); expect(purge).not.toHaveBeenCalled();
+    expect(store).toEqual(before);
+    expect(state.isSessionAuthorityActive(55)).toBe(true);
+  });
+
+  it("fails closed for missing required-review projection and stale session", async () => {
+    const { messageListeners } = await bindTab();
+    vi.mocked(fetch).mockClear();
+    expect(await dispatch(messageListeners, { type: "JOBPILOT_COMPLETE_SESSION", sessionId: 55 }, sender({ frameId: 0, url: APPLICATION_URL }))).toMatchObject({ ok: false });
+    expect(await dispatch(messageListeners, { type: "JOBPILOT_COMPLETE_SESSION", sessionId: 99 }, sender({ frameId: 0, url: APPLICATION_URL }))).toMatchObject({ ok: false });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("allows resolved required review with optional skips and purges exactly once", async () => {
+    const { messageListeners } = await bindTab();
+    const state = await import("../state");
+    await state.patchView(7, { state: "completed_with_review", running: false, packageLoaded: true, contentReady: true, requiredReviewRemaining: 0, reviewRequired: 1, skipped: 1 });
+    const purge = vi.spyOn(state, "clearWorkflowSession");
+    vi.mocked(fetch).mockClear();
+    expect(await dispatch(messageListeners, { type: "JOBPILOT_COMPLETE_SESSION", sessionId: 55 }, sender({ frameId: 0, url: APPLICATION_URL }))).toEqual({ ok: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toMatch(/\/55\/complete$/);
+    expect(purge).toHaveBeenCalledTimes(1);
+    expect(await state.getView(7)).toBeNull(); expect(await state.getPackage(7)).toBeNull(); expect(await state.getPending(7)).toBeNull();
+    expect(state.isSessionAuthorityActive(55)).toBe(false);
+    expect(await dispatch(messageListeners, { type: "JOBPILOT_COMPLETE_SESSION", sessionId: 55 }, sender({ frameId: 0, url: APPLICATION_URL }))).toMatchObject({ ok: false });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers with webNavigation absent after installing the actual message listener", async () => {
+    const { messageListeners } = installFakeChrome();
+    const runtime = globalThis.chrome;
+    expect((runtime as unknown as { webNavigation?: unknown }).webNavigation).toBeUndefined();
+    vi.mocked(runtime.tabs.query).mockImplementation(async (query) => query.url ? [] : [{ id: 7, url: APPLICATION_URL } as chrome.tabs.Tab]);
+    const send = vi.mocked(runtime.tabs.sendMessage);
+    send.mockImplementation(async (...args: unknown[]) => {
+      expect(messageListeners.length).toBeGreaterThan(0);
+      expect(args[1]).toEqual({ type: "JOBPILOT_CONTENT_RECONNECT" });
+      expect(args).toHaveLength(3); expect(typeof args[2]).toBe("function");
+      (args[2] as (response: unknown) => void)({ tabId: 999, documentId: "forged-response" });
+    });
+    await import("../background");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(runtime.scripting.executeScript).not.toHaveBeenCalled();
+    expect(runtime.permissions.request).not.toHaveBeenCalled();
+    expect(send.mock.calls[0][0]).toBe(7);
+  });
+
   it("gives a third-party iframe in a bound tab no launch and no session", async () => {
     const { messageListeners } = await bindTab();
 
