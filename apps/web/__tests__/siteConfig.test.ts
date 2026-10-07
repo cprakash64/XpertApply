@@ -167,3 +167,39 @@ describe("draft Store routing configuration", () => {
     expect(chromeExtensionUrl()).toBeNull();
   });
 });
+
+
+describe("exact configured Store ID contract", () => {
+  const id = "abcdefghijklmnopabcdefghijklmnop";
+  const url = `https://chromewebstore.google.com/detail/example/${id}`;
+
+  it("accepts the original canonical ID with URL truly unset or matching", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", undefined);
+    expect(chromeExtensionId()).toBe(id);
+    expect(chromeExtensionUrl()).toBeNull();
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url);
+    expect(chromeExtensionUrl()).toBe(url);
+  });
+
+  it.each([
+    id.toUpperCase(), ` ${id}`, `${id} `, `${id}\n`, `\t${id}`, "   ",
+    id.slice(1), `${id}a`, `q${id.slice(1)}`, `%61${id.slice(1)}`,
+    `ａ${id.slice(1)}`
+  ])("rejects non-canonical original ID %j without repairing it", (value) => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", value);
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", undefined);
+    expect(chromeExtensionId()).toBeNull();
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url);
+    expect(chromeExtensionUrl()).toBeNull();
+  });
+
+  it("rejects uppercase and different lowercase URL item IDs", () => {
+    vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_ID", id);
+    for (const item of [id.toUpperCase(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]) {
+      vi.stubEnv("NEXT_PUBLIC_CHROME_EXTENSION_URL", url.replace(id, item));
+      expect(chromeExtensionUrl()).toBeNull();
+      expect(chromeExtensionId()).toBe(id);
+    }
+  });
+});

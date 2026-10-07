@@ -98,7 +98,7 @@ export function chromeExtensionUrl(): string | null {
     if (!item) return null;
     // A draft may have a known routing ID and no URL. When a URL is supplied,
     // it must identify that same item; a slug/query/fragment is not identity.
-    const configuredId = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID?.trim();
+    const configuredId = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID;
     if (configuredId && item !== chromeExtensionId()) return null;
     return url.toString();
   } catch {
@@ -111,6 +111,6 @@ export function chromeExtensionUrl(): string | null {
  * URL is deliberately not parsed as a second configuration channel. The ID is
  * public routing metadata, never an authentication secret. */
 export function chromeExtensionId(): string | null {
-  const configured = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID?.trim().toLowerCase();
-  return configured && CHROME_EXTENSION_ID.test(configured) ? configured : null;
+  const configured = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID;
+  return configured?.length === 32 && CHROME_EXTENSION_ID.test(configured) ? configured : null;
 }

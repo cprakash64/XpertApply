@@ -31,12 +31,21 @@ script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # Compose gives invoking-shell variables precedence over --env-file. Run it in
 # a minimal environment so host-global values (especially DATABASE_URL from
 # /etc/environment) cannot override XpertApply's private production .env.
+# Only an explicitly supplied canonical public Store ID may override .env.
+# Every other caller value remains outside the sanitized Compose environment.
+public_build_environment=()
+if [[ "${NEXT_PUBLIC_CHROME_EXTENSION_ID+x}" == x ]]; then
+  [[ "${NEXT_PUBLIC_CHROME_EXTENSION_ID}" =~ ^[a-p]{32}$ ]] || fail "invalid public Chrome extension ID"
+  public_build_environment+=("NEXT_PUBLIC_CHROME_EXTENSION_ID=${NEXT_PUBLIC_CHROME_EXTENSION_ID}")
+fi
+
 compose_command=(
   env -i
   "HOME=/home/${EXPECTED_USER}"
   "USER=${EXPECTED_USER}"
   "LOGNAME=${EXPECTED_USER}"
   "PATH=${SAFE_PATH}"
+  ${public_build_environment[@]+"${public_build_environment[@]}"}
   docker compose
   --env-file "${ENV_FILE}"
   -f "${BASE_COMPOSE}"
