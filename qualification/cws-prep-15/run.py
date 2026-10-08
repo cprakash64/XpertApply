@@ -16,18 +16,20 @@ from pathlib import Path
 
 BASE = 'a63945ea5f84f63d45d30ff81b67c043fad57ba9'
 R1 = 'f7735c469fc147d40c49a414dc763aca057565c6'
+R4 = 'efa1fe38b7c164b1c6d6e10191799e0dadf76a68'
 R3 = 'c81e1f62ed6434ac7bcab551a4b1a96a485c7d5b'
 DIGEST = 'cbe49db9c79b7ff5dfcb964f777f8948add521429ba732bc18e4f40bf9cfe1b0'
 BRANCH = 'refs/heads/qualification/cws-prep-15-nonce-container'
 STYLE_SHA = '5b0b9cabc797dabd181729a44210d79b984dd3e15f4af237b3825249aa9ae22c'
 STYLE_SOURCE = "'sha256-Wwucq8eX2r0YFymkQhDXm5hN0+FfSvI3s4JSSaqa4iw='"
-REPAIR_PATHS = frozenset({'.github/workflows/cws-prep-15-qualification.yml', 'qualification/cws-prep-15/run.py'})
-R4_PATHS = REPAIR_PATHS | frozenset('qualification/cws-prep-15/' + n for n in ('browser.cjs','smoke.cjs','load.cjs','fatal.cjs'))
+R3_PATHS = frozenset({'.github/workflows/cws-prep-15-qualification.yml', 'qualification/cws-prep-15/run.py'})
+R4_PATHS = R3_PATHS | frozenset('qualification/cws-prep-15/' + n for n in ('browser.cjs','smoke.cjs','load.cjs','fatal.cjs'))
 R1_PATHS = R4_PATHS | frozenset({
  'qualification/cws-prep-15/frozen-manifest.json', 'apps/web/app/csp-qualification-error/page.tsx',
  'apps/web/app/error.tsx', 'apps/web/app/global-error.tsx', 'apps/web/app/layout.tsx',
  'apps/web/app/not-found.tsx', 'apps/web/lib/securityPolicy.d.mts', 'apps/web/next.config.mjs',
  'apps/web/proxy.ts', 'apps/web/public/csp-error.css'})
+REPAIR_PATHS = R3_PATHS | frozenset('qualification/cws-prep-15/' + n for n in ('browser.cjs','smoke.cjs'))
 PHASES = ('AUTHORITY','RUNNER','BASELINE_BUILD','NONCE_BUILD','FRAMEWORK_HASH','FUNCTIONAL_SMOKE',
  'DESKTOP','MOBILE','CONCURRENT_BROWSER','HTTP_NONCE','HEADERS_CACHE','STATIC_ASSETS',
  'BASELINE_PERFORMANCE','NONCE_PERFORMANCE','RELATIVE_DELTAS','STEADY_STATE','COOLDOWN',
@@ -48,16 +50,35 @@ def utc():
 def diagnostic(error):
     return {'type': type(error).__name__, 'messageFingerprint': fingerprint(str(error).encode())}
 
+def helper_diagnostic(out, helper, phase, started, ended, duration, rc, artifact):
+    report={'schema':1,'helper':helper if helper in ('smoke.cjs','browser.cjs','fatal.cjs','load.cjs') else 'UNKNOWN',
+            'phase':phase if phase in PHASES else 'UNKNOWN','started':started,'ended':ended,
+            'durationSeconds':duration,'returnCode':rc,'expectedArtifact':artifact,
+            'artifactExists':False,'artifactStatus':'DIAGNOSTIC_ARTIFACT_MISSING',
+            'stdoutHandling':'DISCARDED_NOT_PERSISTED','stderrHandling':'DISCARDED_NOT_PERSISTED','pass':False,'complete':False}
+    if artifact and (out/artifact).is_file():
+        report['artifactExists']=True
+        try:
+            data=json.loads((out/artifact).read_text())
+            valid=(isinstance(data,dict) and data.get('schema')==1 and data.get('pass') is False and
+                   data.get('complete') is False and data.get('phase') in ('smoke','concurrent-browser') and
+                   data.get('sha')==os.environ.get('GITHUB_SHA') and isinstance(data.get('error'),dict) and
+                   isinstance(data.get('operation'),dict) and isinstance(data.get('snapshot'),dict))
+            report['artifactStatus']='STRUCTURED_FAILURE_VALID' if valid else 'DIAGNOSTIC_ARTIFACT_INVALID'
+        except (ValueError,OSError):report['artifactStatus']='DIAGNOSTIC_ARTIFACT_INVALID'
+    return report
+
 def edge_paths(entries, expected, allowed_statuses=('M',)):
     return (len(entries) == len(expected) and {p for status,p in entries} == set(expected)
             and all(status in allowed_statuses for status,p in entries))
 
-def qualification_authority(expected_sha, head, parents, r3_parents, r1_parents, edges,
+def qualification_authority(expected_sha, head, parents, r4_parents, r3_parents, r1_parents, edges,
                             event='push', ref=BRANCH, manifest=DIGEST):
     sha = isinstance(expected_sha,str) and re.fullmatch('[0-9a-f]{40}',expected_sha) is not None
-    topology = sha and head == expected_sha and parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
+    topology = sha and head == expected_sha and parents == [R4] and r4_parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
     paths = (edge_paths(edges.get('r1',[]),R1_PATHS,('A','M')) and
-             edge_paths(edges.get('r3',[]),REPAIR_PATHS) and edge_paths(edges.get('r4',[]),R4_PATHS))
+             edge_paths(edges.get('r3',[]),R3_PATHS) and edge_paths(edges.get('r4',[]),R4_PATHS) and
+             edge_paths(edges.get('repair',[]),REPAIR_PATHS))
     return {'shaValid':sha,'topologyPass':topology,'pathsPass':paths,
             'pass':bool(topology and paths and event=='push' and ref==BRANCH and manifest==DIGEST)}
 
@@ -251,7 +272,17 @@ class Harness:
         if not result['pass']:raise Block('BLOCK — CROSS-PHASE NONCE REUSE' if result['crossPhaseReuse'] else 'BLOCK — CONCURRENT NONCE AUTHORITY FAILURE')
         return result
     def node(self,name,*args,check=True,timeout=600):
-        rc=self.logged(['node',str(self.help/name),*args],name+'-'+('-'.join(args) or 'run'),check=check,timeout=timeout)
+        started=utc();begin=time.monotonic()
+        artifact={'smoke.cjs':'smoke-error.json','browser.cjs':'concurrent-browser-error.json'}.get(name)
+        try:
+            rc=self.logged(['node',str(self.help/name),*args],name+'-'+('-'.join(args) or 'run'),check=False,timeout=timeout)
+        except BaseException:
+            self.write('helper-diagnostic',helper_diagnostic(self.out,name,self.phase,started,utc(),time.monotonic()-begin,None,artifact))
+            raise
+        if rc:
+            report=helper_diagnostic(self.out,name,self.phase,started,utc(),time.monotonic()-begin,rc,artifact)
+            self.write('helper-diagnostic',report)
+            if check:raise Block('BLOCK — HELPER FAILURE: '+report['artifactStatus'])
         phase={'smoke.cjs':'smoke','fatal.cjs':'fatal','browser.cjs':'concurrent-browser'}.get(name)
         if name=='load.cjs' and args and args[0]=='nonce':phase='steady-state' if len(args)>1 and args[1]=='steady' else 'http-nonce' if len(args)>1 and args[1]=='http' else 'nonce-performance'
         if rc==0 and phase:self.nonce_boundary(phase)
@@ -413,16 +444,17 @@ def main():
     try:
         with h.stage('AUTHORITY'):
             head=h.command('git','rev-parse','HEAD');parents=h.command('git','show','-s','--format=%P',head).split()
+            r4_parents=h.command('git','show','-s','--format=%P',R4).split()
             r3_parents=h.command('git','show','-s','--format=%P',R3).split();r1_parents=h.command('git','show','-s','--format=%P',R1).split()
             def edge(a,b):
                 lines=h.command('git','diff','--name-status','--no-renames',a,b,'--').splitlines()
                 return [tuple(line.split('\t')) for line in lines]
-            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,head)};digest=frozen(h.root)
-            check=qualification_authority(h.sha,head,parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest)
-            authority={'schema':1,'head':head,'parents':parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
+            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,R4),'repair':edge(R4,head)};digest=frozen(h.root)
+            check=qualification_authority(h.sha,head,parents,r4_parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest)
+            authority={'schema':1,'head':head,'parents':parents,'r4Parents':r4_parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
             h.write('source-authority',authority)
             if not check['pass'] or h.command('git','cat-file','-t',BASE)!='commit' or h.command('git','status','--porcelain'):raise Block('BLOCK — QUALIFICATION AUTHORITY FAILED')
-            h.seal('AUTHORITY',['source-authority.json'],{'edges':3,'frozenFiles':9})
+            h.seal('AUTHORITY',['source-authority.json'],{'edges':4,'frozenFiles':9})
         with h.stage('RUNNER'):
             info=json.loads(h.command('docker','info','--format','{{json .}}'));h.docker_root=info['DockerRootDir']
             h.swap_origin={line.split()[0]:int(line.split()[1]) for line in Path('/proc/vmstat').read_text().splitlines()}

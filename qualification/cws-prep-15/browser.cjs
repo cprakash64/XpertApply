@@ -17,6 +17,36 @@ function sanitize(text) {
   // Arbitrary diagnostic text is fingerprinted, not retained: tokens need not resemble URLs.
   return { textFingerprint: hash(String(text)), knownError: /CSP_QUAL_FATAL_ROUTER_URL/.test(String(text)) ? 'CSP_QUAL_FATAL_ROUTER_URL' : /An error occurred in the Server Components render/.test(String(text)) ? 'INJECTED_SERVER_RENDER_ERROR' : null };
 }
+// Diagnostics are projections only: unknown strings are never copied into artifacts.
+const diagnosticSelectors=new Set(['a[href="/"]:visible','a[href="/login"]:visible','form','form input[type="email"]','form input[type="password"]','Show password','Hide password','Return home','Try again','Reload','#google-link-error']);
+const diagnosticOperations=new Set(['scenario','navigate','reload','checkpoint','home-back','auth-form','landing-login','404-home','recovery','cleanup']);
+function safeField(value, allowed) { return allowed.has(value) ? value : {fingerprint:hash(String(value))}; }
+function operationMetadata(meta={}) {
+ return {label:safeField(meta.label,diagnosticOperations),selector:meta.selector==null?null:safeField(meta.selector,diagnosticSelectors),
+  route:known.has(meta.route)?meta.route:null,routeFingerprint:known.has(meta.route)?null:hash(String(meta.route)),
+  step:safeField(meta.step,diagnosticOperations)};
+}
+function structuredError(error) {
+ const message=String(error?.message||''), timeout=message.match(/\bTimeout (\d{1,7})ms exceeded\b/);
+ const knownMessages=new Set(['password identity absent','password initial type','password toggle inert','password restore','auth route mismatch','required request did not settle','settled checkpoint failed','client home performed full navigation','smoke classification failed','incomplete smoke']);
+ const selectors=[...diagnosticSelectors].filter(x=>message.includes(x));
+ const frames=[...String(error?.stack||'').matchAll(/(?:^|[\s(])(?:[^\s()]*\/)?(qualification\/cws-prep-15\/(?:smoke|browser|run)\.(?:cjs|py)):(\d+):(\d+)/gm)].map(m=>({path:m[1],line:Number(m[2]),column:Number(m[3])}));
+ return {name:['TimeoutError','Error','TypeError','AssertionError'].includes(error?.name)?error.name:'UNKNOWN_ERROR',
+  message:{...sanitize(message),knownMessage:knownMessages.has(message)?message:null},timeoutMs:timeout?Number(timeout[1]):null,
+  callLog:message.split('\n').filter(line=>selectors.some(selector=>line.includes(selector))).map(line=>({
+   lineFingerprint:hash(line),selectors:selectors.filter(selector=>line.includes(selector)),action:/waiting for/.test(line)?'WAIT':'OPERATION_ERROR'})),stack:frames};
+}
+function failureArtifact(error, meta={}, observer=null) {
+ const sha=process.env.GITHUB_SHA;let activeRoute=meta.route;
+ try{if(observer?.page?.url)activeRoute=new URL(observer.page.url()).pathname;}catch{activeRoute=null;}
+ return {schema:1,version:1,sha:/^[0-9a-f]{40}$/.test(sha||'')?sha:null,
+  phase:meta.phase==='concurrent-browser'?'concurrent-browser':'smoke',
+  scenarioId:/^(smoke-(desktop|mobile)-(public-regression|auth-fixture|guard|segment-error|root-error)|concurrent-[_a-z]+-[01])$/.test(meta.scenarioId||'')?meta.scenarioId:'UNAVAILABLE',
+  viewport:['desktop','mobile'].includes(meta.viewport)?meta.viewport:null,
+  activeRoute:known.has(activeRoute)?activeRoute:null,activeStep:operationMetadata(meta).step,
+  operation:operationMetadata(meta),error:structuredError(error),
+  snapshot:observer?observer.diagnosticSnapshot():{available:false},pass:false,complete:false};
+}
 function atomic(dir, name, value) { const p = path.join(dir, name + '.json'); fs.writeFileSync(p + '.tmp', JSON.stringify(value, null, 2)); fs.renameSync(p + '.tmp', p); }
 function canonicalNonce(n) { return typeof n === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(n) && Buffer.from(n, 'base64').length === 16 && Buffer.from(n, 'base64').toString('base64') === n; }
 function policyEvidence(headers, html) {
@@ -157,6 +187,24 @@ class Observer {
     for (const r of this.requests) if (r.supersedingNavigationId===c.navigationId && r.navigationGeneration < this.generation || r.navigationGeneration===this.generation && !r.checkpointId) r.checkpointId = c.checkpointId;
     if (!c.pass) throw Error('settled checkpoint failed'); return c;
   }
+  diagnosticSnapshot() {
+    const totals={},statuses={},failed=this.requests.filter(r=>r.failure);
+    for(const r of this.responses){const status=Number.isInteger(r.status)&&r.status>=100&&r.status<=599?r.status:'UNAVAILABLE';statuses[status]=(statuses[status]||0)+1;}
+    for(const r of this.requests){const c=r.failure?classify(r,this.checkpoints):'PENDING_OR_COMPLETED';totals[c]=(totals[c]||0)+1;}
+    const docs=this.documents;
+    return {available:true,completedCheckpointIds:this.checkpoints.filter(c=>c.pass===true).map(c=>c.checkpointId),
+      currentCheckpoint:this.checkpoints.length?{checkpointId:this.checkpoints.at(-1).checkpointId,pass:this.checkpoints.at(-1).pass===true}:null,
+      pendingRequests:this.outstanding.size,requestTotals:totals,responseTotalsByStatus:statuses,failedRequests:failed.length,
+      unclassifiedFailures:failed.filter(r=>!r.classification).length,
+      responseStatusFailures:this.responses.filter(r=>['script','stylesheet','image','font'].includes(r.type)&&!assetStatus(r)||r.url.origin==='https://api.xpertapply.com'&&r.status!==200).length,
+      cspEvents:this.csp.length,pageErrors:this.errors.length,
+      requiredJSFailures:failed.filter(r=>requiredKind(r)==='REQUIRED_JS_FAILURE').length,
+      requiredCSSFailures:failed.filter(r=>requiredKind(r)==='REQUIRED_CSS_FAILURE').length,
+      documentCount:docs.length,nonceLedgerCount:this.ledger.records.size,
+      nonceAuthority:{valid:docs.filter(d=>d.nonceValid&&d.scriptAuthority&&d.policyPass).length,
+       missingMalformed:docs.filter(d=>!d.nonceValid).length,headerBodyMismatches:docs.reduce((n,d)=>n+(d.headerBodyMismatches||0),0)},
+      navigationGeneration:this.generation,teardownState:this.requests.some(r=>r.teardownKnownOutstanding)?'OBSERVED_STARTED':'NOT_STARTED',pass:false,complete:false};
+  }
   async close(context) {
     const checkpoint = this.checkpoints.at(-1), t = performance.now();
     for (const x of this.outstanding.values()) {x.teardownKnownOutstanding=true;x.teardownState='INTENTIONAL_TEARDOWN_STARTED'; x.teardownTimestampMs=t; x.checkpointId=checkpoint?.checkpointId || null;}
@@ -177,8 +225,11 @@ async function landing(page, mobile) {
 async function password(page) {const id=await page.locator('input[type="password"]').first().getAttribute('id'); if(!id)throw Error('password identity absent');const input=page.locator('[id='+JSON.stringify(id)+']'); if (await input.getAttribute('type') !== 'password') throw Error('password initial type'); await page.getByRole('button',{name:'Show password',exact:true}).click(); if (await input.getAttribute('type') !== 'text') throw Error('password toggle inert'); await page.getByRole('button',{name:'Hide password',exact:true}).click(); if (await input.getAttribute('type') !== 'password') throw Error('password restore'); return true;}
 async function concurrent() {
   const {chromium}=require(process.env.PLAYWRIGHT_MODULE), dir=process.env.EVIDENCE_DIR, ledger=new Ledger(dir,'concurrent-browser'), browser=await chromium.launch({headless:true}), results=[];
+  let diagnosticWritten=false;
   try {await Promise.all(['/', '/login','/pricing','/unknown-csp-qualification'].flatMap(route=>[0,1].map(async ordinal=>{
-    const c=await browser.newContext({viewport:{width:1440,height:1000}}), p=await c.newPage(), o=new Observer(p,ledger,'public-'+route,'concurrent-'+route.replace(/\W/g,'_')+'-'+ordinal); await o.install(c);
+    let observer=null;
+    try {
+    const c=await browser.newContext({viewport:{width:1440,height:1000}}), p=await c.newPage(), o=new Observer(p,ledger,'public-'+route,'concurrent-'+route.replace(/\W/g,'_')+'-'+ordinal);observer=o; await o.install(c);
     await c.route('**/*',r=>{if (allowLocal(r.request(),'http://127.0.0.1:3551')) return r.continue(); const f=fixture(r.request(),false,o.scenario); if(f)return r.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'http://127.0.0.1:3551'},body:JSON.stringify(f.body)}); return r.abort('blockedbyclient');});
     o.navigate('public-'+route); await p.goto('http://127.0.0.1:3551'+route);
     let proof;
@@ -187,8 +238,9 @@ async function concurrent() {
     else if(route==='/pricing'){await p.getByRole('heading',{name:'Pricing',exact:true}).waitFor(); const marker=await p.evaluate(()=>window.__qualDocument);o.navigate('pricing-home');await p.locator('a[href="/"]').first().click();await p.waitForURL(u=>u.pathname==='/');proof=marker===await p.evaluate(()=>window.__qualDocument)&&await landing(p,false);await o.checkpoint('/',200,true,proof);o.navigate('pricing-back');await p.goBack();await p.waitForURL(u=>u.pathname==='/pricing');proof=await p.getByRole('heading',{name:'Pricing',exact:true}).isVisible();}
     else {await p.getByRole('heading',{name:'Page not found',exact:true}).waitFor();await o.checkpoint(route,404,true,true);o.navigate('404-home');await p.getByRole('link',{name:'Return home',exact:true}).click();await p.waitForURL(u=>u.pathname==='/');proof=await landing(p,false);await o.checkpoint('/',200,true,proof);results.push(await o.close(c));return;}
     await o.checkpoint(route,200,true,proof);results.push(await o.close(c));
+    }catch(error){if(!diagnosticWritten){diagnosticWritten=true;atomic(dir,'concurrent-browser-error',failureArtifact(error,{phase:'concurrent-browser',scenarioId:observer?.pageId,viewport:'desktop',route,label:'scenario',step:'scenario'},observer));}throw error;}
   })));} finally {await browser.close();atomic(dir,'concurrent-browser',{schema:1,pass:results.length===8&&results.every(r=>r.pass),results});}
   if(results.length!==8||results.some(r=>!r.pass)) throw Error('concurrent classification failure');
 }
-module.exports={hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
-if(require.main===module) concurrent().catch(e=>{atomic(process.env.EVIDENCE_DIR,'concurrent-browser-error',sanitize(e.message));process.exitCode=1;});
+module.exports={structuredError,operationMetadata,failureArtifact,hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
+if(require.main===module) concurrent().catch(()=>{process.exitCode=1;});
