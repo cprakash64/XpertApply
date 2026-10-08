@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - name: Inventory, authority, sequential containers and qualification
         run: python3 qualification/cws-prep-15/run.py
@@ -25,6 +25,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cws-prep-15-${{ github.sha }}
-          path: ${{ env.EVIDENCE_DIR }}/*.json
+          path: |
+            ${{ env.EVIDENCE_DIR }}/*.json
+            ${{ env.EVIDENCE_DIR }}/*.jsonl
           if-no-files-found: error
           retention-days: 14
