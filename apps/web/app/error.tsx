@@ -20,10 +20,10 @@ import { AlertTriangle } from "lucide-react";
 
 export default function ErrorBoundary({
   error,
-  reset
+  retry
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     // Console only — never surfaced to the user.
@@ -47,7 +47,7 @@ export default function ErrorBoundary({
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={reset}
+            onClick={retry}
             className="ds-focus-ring inline-flex h-10 items-center rounded-control bg-action-primary px-4 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover"
           >
             Try again

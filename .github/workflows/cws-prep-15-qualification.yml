@@ -1,0 +1,30 @@
+name: CWS PREP 15 ephemeral nonce qualification
+on:
+  push:
+    branches:
+      - qualification/cws-prep-15-nonce-container
+permissions:
+  contents: read
+jobs:
+  qualification:
+    if: github.ref == 'refs/heads/qualification/cws-prep-15-nonce-container' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      EVIDENCE_DIR: ${{ runner.temp }}/cws-prep-15-evidence
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Inventory, authority, sequential containers and qualification
+        run: python3 qualification/cws-prep-15/run.py
+      - name: Upload non-secret qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cws-prep-15-${{ github.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/*.json
+          if-no-files-found: error
+          retention-days: 14

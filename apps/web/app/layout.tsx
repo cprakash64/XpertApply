@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
@@ -61,7 +62,12 @@ export const viewport: Viewport = {
   ]
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const requestHeaders = await headers();
+  // Local harness hook for testing root-layout/global-error nonce coverage.
+  if (requestHeaders.get("x-csp-qual-root-error") === "1") {
+    throw new Error("CSP_QUAL_ROOT_ERROR");
+  }
   return (
     <html lang="en">
       <body>{children}</body>

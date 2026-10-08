@@ -1,0 +1,59 @@
+{
+  "baseSHA": "a63945ea5f84f63d45d30ff81b67c043fad57ba9",
+  "files": [
+    {
+      "bytes": 255,
+      "path": "apps/web/app/csp-qualification-error/page.tsx",
+      "sha256": "8e699eec8bb5ae9e2a94cd10eafeac12beb2b596d980df8a74b615823d30fccf",
+      "status": "untracked"
+    },
+    {
+      "bytes": 2556,
+      "path": "apps/web/app/error.tsx",
+      "sha256": "52bf7c2f1ad86fe452e8a80e8a385102636e16f64dc4e64e62277caba8b8b84e",
+      "status": "tracked"
+    },
+    {
+      "bytes": 977,
+      "path": "apps/web/app/global-error.tsx",
+      "sha256": "1866f6ae547816d498fd7d66836bcc8e6d6e407ef6eff3a0070900a42effb257",
+      "status": "tracked"
+    },
+    {
+      "bytes": 2605,
+      "path": "apps/web/app/layout.tsx",
+      "sha256": "9604672b02ffcdadabb9f8cd9fe14f56bc4421a7f9b796e38587410472e354fe",
+      "status": "tracked"
+    },
+    {
+      "bytes": 801,
+      "path": "apps/web/app/not-found.tsx",
+      "sha256": "9281cb6fd3ef6d7df3c00f108ec5b04ed72fd6293f92c0c630a089271abb9032",
+      "status": "untracked"
+    },
+    {
+      "bytes": 44,
+      "path": "apps/web/lib/securityPolicy.d.mts",
+      "sha256": "c4e5cf5b1ebbf510e5cf2bc87402a220ae573e2248f0da142d3985659c94f083",
+      "status": "untracked"
+    },
+    {
+      "bytes": 332,
+      "path": "apps/web/next.config.mjs",
+      "sha256": "e5787003e87043f59e64bde2a888d519392214dce2c980b7a97b16d8076df6ce",
+      "status": "tracked"
+    },
+    {
+      "bytes": 1534,
+      "path": "apps/web/proxy.ts",
+      "sha256": "39b988747d67ed1a02ac16721db382069858fadd8ddc9f866ce7412aeda5c445",
+      "status": "untracked"
+    },
+    {
+      "bytes": 1714,
+      "path": "apps/web/public/csp-error.css",
+      "sha256": "9f2f4f0be0d04f366364077427fe582e67f55e19f4700880b53209de11b1c6f1",
+      "status": "untracked"
+    }
+  ]
+}
