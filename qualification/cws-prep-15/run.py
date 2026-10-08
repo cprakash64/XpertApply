@@ -1,5 +1,5 @@
 """Ephemeral-only qualification; no deployment commands or production connections."""
-import hashlib,json,os,platform,shutil,subprocess,threading,time,urllib.request
+import hashlib,json,os,platform,re,shutil,subprocess,threading,time,urllib.request
 from pathlib import Path
 ROOT=Path.cwd();HELP=ROOT/'qualification/cws-prep-15';OUT=Path(os.environ['EVIDENCE_DIR']);OUT.mkdir(parents=True,exist_ok=True)
 BASE='a63945ea5f84f63d45d30ff81b67c043fad57ba9';DIGEST='cbe49db9c79b7ff5dfcb964f777f8948add521429ba732bc18e4f40bf9cfe1b0'
@@ -14,6 +14,27 @@ def mem():return {line.split(':')[0]:int(line.split()[1])*1024 for line in Path(
 def vm():return {line.split()[0]:int(line.split()[1]) for line in Path('/proc/vmstat').read_text().splitlines()}
 stop=threading.Event();samples=[];phase='inventory';container=None;baseline_swap=vm();fatal=None
 class Block(Exception):pass
+
+# Reviewed immutable R1 authority and exact split between R1 content and R3 repair.
+R1='f7735c469fc147d40c49a414dc763aca057565c6'
+REPAIR_PATHS=frozenset({'.github/workflows/cws-prep-15-qualification.yml','qualification/cws-prep-15/run.py'})
+R1_PATHS=frozenset({
+ '.github/workflows/cws-prep-15-qualification.yml',
+ 'apps/web/app/csp-qualification-error/page.tsx','apps/web/app/error.tsx',
+ 'apps/web/app/global-error.tsx','apps/web/app/layout.tsx','apps/web/app/not-found.tsx',
+ 'apps/web/lib/securityPolicy.d.mts','apps/web/next.config.mjs','apps/web/proxy.ts',
+ 'apps/web/public/csp-error.css','qualification/cws-prep-15/browser.cjs',
+ 'qualification/cws-prep-15/fatal.cjs','qualification/cws-prep-15/frozen-manifest.json',
+ 'qualification/cws-prep-15/load.cjs','qualification/cws-prep-15/run.py',
+ 'qualification/cws-prep-15/smoke.cjs'
+})
+def qualification_authority(expected_sha,head,head_parents,r1_parents,r1_paths,repair_paths):
+ sha_valid=isinstance(expected_sha,str) and re.fullmatch(r'[0-9a-f]{40}',expected_sha) is not None
+ topology_pass=sha_valid and head==expected_sha and head_parents==[R1] and r1_parents==[BASE]
+ paths_pass=(len(r1_paths)==len(R1_PATHS) and frozenset(r1_paths)==R1_PATHS and
+             len(repair_paths)==len(REPAIR_PATHS) and frozenset(repair_paths)==REPAIR_PATHS)
+ return {'shaValid':sha_valid,'topologyPass':topology_pass,'pathsPass':paths_pass,
+         'pass':topology_pass and paths_pass}
 
 def observe():
  m=mem();v=vm();dockerroot=cmd('docker','info','--format','{{.DockerRootDir}}');disk=shutil.disk_usage(dockerroot).free;load=os.getloadavg()
@@ -79,18 +100,32 @@ try:
  inventory['floorPass']=os.cpu_count()>=2 and m['MemTotal']>=6*1024**3 and m['MemAvailable']>=4*1024**3 and min(inventory['rootFreeDiskBytes'],inventory['dockerFreeDiskBytes'])>=20*1024**3
  write('runner-inventory',inventory)
  if not inventory['floorPass']:raise Block('BLOCK — RUNNER RESOURCE FLOOR NOT MET')
- # Fail closed on ref, SHA, direct parent, allowlisted paths and frozen manifest.
- head=cmd('git','rev-parse','HEAD');parents=cmd('git','show','-s','--format=%P',head)
+ # Fail closed on exact R3 -> R1 -> candidate chain and separately reviewed path sets.
+ expected_sha=os.environ.get('GITHUB_SHA')
+ head=cmd('git','rev-parse','HEAD')
+ parents=cmd('git','show','-s','--format=%P',head).split()
+ r1_parents=cmd('git','show','-s','--format=%P',R1).split()
+ candidate_is_commit=cmd('git','cat-file','-t',BASE)=='commit'
  raw=(HELP/'frozen-manifest.json').read_bytes();manifest=json.loads(raw)
  actual={'baseSHA':BASE,'files':[]}
  for f in manifest['files']:
   b=(ROOT/f['path']).read_bytes();actual['files'].append({**f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
  recomputed=json.dumps(actual,sort_keys=True,indent=2).encode();digest=hashlib.sha256(recomputed).hexdigest()
- paths=cmd('git','diff-tree','--no-commit-id','--name-only','-r',head).splitlines();allowed={f['path'] for f in manifest['files']}|{'.github/workflows/cws-prep-15-qualification.yml'}
- pathpass=all(p in allowed or p.startswith('qualification/cws-prep-15/') for p in paths)
- authority={'head':head,'parent':parents,'ref':os.environ['GITHUB_REF'],'expectedHead':os.environ['GITHUB_SHA'],'event':os.environ['GITHUB_EVENT_NAME'],'frozenManifestDigest':digest,'manifestPass':digest==DIGEST,'changedPaths':paths,'pathsPass':pathpass,'files':actual['files']}
- authority['pass']=head==os.environ['GITHUB_SHA'] and parents==BASE and os.environ['GITHUB_REF']=='refs/heads/qualification/cws-prep-15-nonce-container' and os.environ['GITHUB_EVENT_NAME']=='push' and pathpass and digest==DIGEST
+ r1_paths=cmd('git','diff','--name-only',BASE,R1,'--').splitlines()
+ paths=cmd('git','diff','--name-only',R1,head,'--').splitlines()
+ checks=qualification_authority(expected_sha,head,parents,r1_parents,r1_paths,paths)
+ authority={'head':head,'parents':parents,'grandparents':r1_parents,'reviewedR1':R1,
+            'reviewedCandidate':BASE,'candidateIsCommit':candidate_is_commit,
+            'ref':os.environ.get('GITHUB_REF'),'expectedHead':expected_sha,
+            'event':os.environ.get('GITHUB_EVENT_NAME'),'frozenManifestDigest':digest,
+            'manifestPass':digest==DIGEST,'r1ChangedPaths':r1_paths,'repairChangedPaths':paths,
+            'checks':checks,'files':actual['files']}
+ authority['pass']=(checks['pass'] and candidate_is_commit and digest==DIGEST and
+                    authority['ref']=='refs/heads/qualification/cws-prep-15-nonce-container' and
+                    authority['event']=='push')
  write('source-authority',authority)
+ if not checks['shaValid'] or not checks['topologyPass'] or not candidate_is_commit:
+  raise Block('BLOCK — QUALIFICATION ANCESTRY AUTHORITY FAILED')
  if not authority['pass']:raise Block('BLOCK — QUALIFICATION PUSH/RUN AUTHORITY INVALID')
  mon=threading.Thread(target=monitor,daemon=True);mon.start();time.sleep(1)
  # Install an isolated browser harness using the lockfile's exact Playwright version.
@@ -192,6 +227,6 @@ finally:
  if mon:mon.join(timeout=20)
  try:stop_container()
  except Exception:pass
- write('final-verification',{'verdict':verdict,'runID':os.environ['GITHUB_RUN_ID'],'headSHA':os.environ['GITHUB_SHA'],'phaseReached':phase,'productionMutation':'NONE','productionDockerMutation':'NONE','nginxMutation':'NONE','DBMutation':'NONE','storeMutation':'NONE','merged':False,'candidateCommitPush':'NONE','sourceUnchanged':all(hashlib.sha256((ROOT/f['path']).read_bytes()).hexdigest()==f['sha256'] for f in json.loads((HELP/'frozen-manifest.json').read_text())['files'])})
+ write('final-verification',{'verdict':verdict,'runID':os.environ['GITHUB_RUN_ID'],'headSHA':os.environ.get('GITHUB_SHA'),'phaseReached':phase,'productionMutation':'NONE','productionDockerMutation':'NONE','nginxMutation':'NONE','DBMutation':'NONE','storeMutation':'NONE','merged':False,'candidateCommitPush':'NONE','sourceUnchanged':all(hashlib.sha256((ROOT/f['path']).read_bytes()).hexdigest()==f['sha256'] for f in json.loads((HELP/'frozen-manifest.json').read_text())['files'])})
  print(verdict,flush=True)
 if not verdict.startswith('PASS'):raise SystemExit(1)
