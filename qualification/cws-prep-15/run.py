@@ -17,6 +17,9 @@ from pathlib import Path
 BASE = 'a63945ea5f84f63d45d30ff81b67c043fad57ba9'
 R1 = 'f7735c469fc147d40c49a414dc763aca057565c6'
 R4 = 'efa1fe38b7c164b1c6d6e10191799e0dadf76a68'
+CURRENT_CDP_PARENT = 'ccde9ff0e591bae16e83e58f95ba76dd1188c80c'
+CDP_PATHS = frozenset({'.github/workflows/cws-prep-15-qualification.yml','qualification/cws-prep-15/run.py','qualification/cws-prep-15/browser.cjs'})
+CDP_ARTIFACTS = ('cdp-request-ledger.json','cdp-initiator-summary.json','cdp-loading-failures.json','cdp-correlation.json','cdp-causality-analysis.json')
 CURRENT03 = '03e7856c279cb43c62472c9c28cf7a8f235a67e4'
 R3 = 'c81e1f62ed6434ac7bcab551a4b1a96a485c7d5b'
 DIGEST = 'cbe49db9c79b7ff5dfcb964f777f8948add521429ba732bc18e4f40bf9cfe1b0'
@@ -74,13 +77,13 @@ def edge_paths(entries, expected, allowed_statuses=('M',)):
             and all(status in allowed_statuses for status,p in entries))
 
 def qualification_authority(expected_sha, head, parents, r4_parents, r3_parents, r1_parents, edges,
-                            event='push', ref=BRANCH, manifest=DIGEST, current03_parents=None):
+                            event='push', ref=BRANCH, manifest=DIGEST, current03_parents=None, cdp_parent_parents=None):
     sha = isinstance(expected_sha,str) and re.fullmatch('[0-9a-f]{40}',expected_sha) is not None
-    topology = sha and head == expected_sha and parents == [CURRENT03] and current03_parents == [R4] and r4_parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
+    topology = sha and head == expected_sha and parents == [CURRENT_CDP_PARENT] and cdp_parent_parents == [CURRENT03] and current03_parents == [R4] and r4_parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
     paths = (edge_paths(edges.get('r1',[]),R1_PATHS,('A','M')) and
              edge_paths(edges.get('r3',[]),R3_PATHS) and edge_paths(edges.get('r4',[]),R4_PATHS) and
              edge_paths(edges.get('repair',[]),REPAIR_PATHS) and
-             edge_paths(edges.get('diagnostic',[]),REPAIR_PATHS))
+             edge_paths(edges.get('diagnostic',[]),REPAIR_PATHS) and edge_paths(edges.get('cdpDiagnostic',[]),CDP_PATHS))
     return {'shaValid':sha,'topologyPass':topology,'pathsPass':paths,
             'pass':bool(topology and paths and event=='push' and ref==BRANCH and manifest==DIGEST)}
 
@@ -249,9 +252,9 @@ class Harness:
         try:yield
         except BaseException as e:
             self.phases[p].update(status='BLOCK',completed=utc(),reason=diagnostic(e));raise
-    def logged(self,args,name,cwd=None,check=True,timeout=1200):
+    def logged(self,args,name,cwd=None,check=True,timeout=1200,env=None):
         # Process output is not persisted; structured test reporters provide sanitized summaries.
-        p=subprocess.Popen(args,cwd=cwd or self.root,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        p=subprocess.Popen(args,cwd=cwd or self.root,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,env=env)
         begin=time.monotonic();reason=None
         while p.poll() is None:
             if time.monotonic()-begin>timeout:reason='timeout'
@@ -273,14 +276,37 @@ class Harness:
         self.write('nonce-aggregation-'+phase,result)
         if not result['pass']:raise Block('BLOCK — CROSS-PHASE NONCE REUSE' if result['crossPhaseReuse'] else 'BLOCK — CONCURRENT NONCE AUTHORITY FAILURE')
         return result
+    def cdp_inventory(self):
+        # Diagnostic persistence failures never replace the smoke helper's outcome.
+        records=[];generations=set();status=None
+        try:
+            for name in CDP_ARTIFACTS:
+                p=self.out/name;record={'path':name,'exists':p.is_file(),'sha256':None}
+                if p.is_file():
+                    data=p.read_bytes();record['sha256']=fingerprint(data);parsed=json.loads(data)
+                    generation=parsed.get('persistenceGeneration')
+                    if isinstance(generation,int) and not isinstance(generation,bool):generations.add(generation)
+                    else:generations.add(None)
+                    if name=='cdp-causality-analysis.json':status=parsed.get('persistenceSucceeded') is True
+                records.append(record)
+            coherent=all(r['exists'] for r in records) and len(generations)==1 and None not in generations and status is True
+            self.write('cdp-artifact-inventory',{'schema':1,'mode':'NETWORK_ONLY','artifacts':records,'persistenceCoherent':coherent,'qualificationAcceptanceChanged':False})
+            return coherent
+        except Exception as error:
+            try:self.write('cdp-artifact-inventory',{'schema':1,'mode':'NETWORK_ONLY','status':'CDP_PARTIAL','error':diagnostic(error),'qualificationAcceptanceChanged':False})
+            except Exception:pass
+            return False
     def node(self,name,*args,check=True,timeout=600):
         started=utc();begin=time.monotonic()
         artifact={'smoke.cjs':'smoke-error.json','browser.cjs':'concurrent-browser-error.json'}.get(name)
+        child_env=dict(os.environ);child_env['QUAL_CDP_MODE']='NETWORK_ONLY' if name=='smoke.cjs' else 'OFF'
         try:
-            rc=self.logged(['node',str(self.help/name),*args],name+'-'+('-'.join(args) or 'run'),check=False,timeout=timeout)
+            rc=self.logged(['node',str(self.help/name),*args],name+'-'+('-'.join(args) or 'run'),check=False,timeout=timeout,env=child_env)
         except BaseException:
+            if name=='smoke.cjs':self.cdp_inventory()
             self.write('helper-diagnostic',helper_diagnostic(self.out,name,self.phase,started,utc(),time.monotonic()-begin,None,artifact))
             raise
+        if name=='smoke.cjs':self.cdp_inventory()
         if rc:
             report=helper_diagnostic(self.out,name,self.phase,started,utc(),time.monotonic()-begin,rc,artifact)
             self.write('helper-diagnostic',report)
@@ -446,18 +472,19 @@ def main():
     try:
         with h.stage('AUTHORITY'):
             head=h.command('git','rev-parse','HEAD');parents=h.command('git','show','-s','--format=%P',head).split()
+            cdp_parent_parents=h.command('git','show','-s','--format=%P',CURRENT_CDP_PARENT).split()
             current03_parents=h.command('git','show','-s','--format=%P',CURRENT03).split()
             r4_parents=h.command('git','show','-s','--format=%P',R4).split()
             r3_parents=h.command('git','show','-s','--format=%P',R3).split();r1_parents=h.command('git','show','-s','--format=%P',R1).split()
             def edge(a,b):
                 lines=h.command('git','diff','--name-status','--no-renames',a,b,'--').splitlines()
                 return [tuple(line.split('\t')) for line in lines]
-            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,R4),'repair':edge(R4,CURRENT03),'diagnostic':edge(CURRENT03,head)};digest=frozen(h.root)
-            check=qualification_authority(h.sha,head,parents,r4_parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest,current03_parents=current03_parents)
-            authority={'schema':1,'head':head,'parents':parents,'current03Parents':current03_parents,'r4Parents':r4_parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
+            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,R4),'repair':edge(R4,CURRENT03),'diagnostic':edge(CURRENT03,CURRENT_CDP_PARENT),'cdpDiagnostic':edge(CURRENT_CDP_PARENT,head)};digest=frozen(h.root)
+            check=qualification_authority(h.sha,head,parents,r4_parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest,current03_parents=current03_parents,cdp_parent_parents=cdp_parent_parents)
+            authority={'schema':1,'head':head,'parents':parents,'cdpParentParents':cdp_parent_parents,'current03Parents':current03_parents,'r4Parents':r4_parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
             h.write('source-authority',authority)
             if not check['pass'] or h.command('git','cat-file','-t',BASE)!='commit' or h.command('git','status','--porcelain'):raise Block('BLOCK — QUALIFICATION AUTHORITY FAILED')
-            h.seal('AUTHORITY',['source-authority.json'],{'edges':5,'frozenFiles':9})
+            h.seal('AUTHORITY',['source-authority.json'],{'edges':6,'frozenFiles':9})
         with h.stage('RUNNER'):
             info=json.loads(h.command('docker','info','--format','{{json .}}'));h.docker_root=info['DockerRootDir']
             h.swap_origin={line.split()[0]:int(line.split()[1]) for line in Path('/proc/vmstat').read_text().splitlines()}
@@ -504,7 +531,8 @@ def main():
         with h.stage('FUNCTIONAL_SMOKE'):
             h.node('smoke.cjs');h.node('fatal.cjs');smoke=h.read('functional-smoke');fatal_browser=h.read('fatal-browser')
             if not smoke['pass'] or not fatal_browser['pass']:raise Block('BLOCK — CLIENT-EXECUTION PROOF FAILURE')
-            h.seal('FUNCTIONAL_SMOKE',['functional-smoke.json','fatal-browser.json','smoke-nonces.jsonl','fatal-nonces.jsonl'],{'smokeScenarios':10,'fatalScenarios':6})
+            cdp_files=[name for name in (*CDP_ARTIFACTS,'cdp-artifact-inventory.json') if (h.out/name).is_file()]
+            h.seal('FUNCTIONAL_SMOKE',['functional-smoke.json','fatal-browser.json','smoke-nonces.jsonl','fatal-nonces.jsonl',*cdp_files],{'smokeScenarios':10,'fatalScenarios':6})
             for viewport in ('desktop','mobile'):
                 p=viewport.upper();h.phases[p]['started']=h.phases['FUNCTIONAL_SMOKE']['started']
                 selected=[x for x in smoke['results'] if x['viewport']==viewport]

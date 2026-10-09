@@ -145,6 +145,147 @@ function fixture(request, auth, scenario) {
 function allowLocal(request,origin) {
  const h=request.headers();return new URL(request.url()).origin===origin && (request.isNavigationRequest()||['script','stylesheet','image','font'].includes(request.resourceType())||h.rsc==='1'||h['next-router-prefetch']==='1'||!!h['next-router-segment-prefetch']);
 }
+// NETWORK_ONLY forensic sidecar. No result below feeds classify() or its inputs.
+const cdpArtifacts=['cdp-request-ledger','cdp-initiator-summary','cdp-loading-failures','cdp-correlation','cdp-causality-analysis'];
+const cdpTypes=new Set(['Document','Stylesheet','Image','Media','Font','Script','TextTrack','XHR','Fetch','Prefetch','EventSource','WebSocket','Manifest','SignedExchange','Ping','CSPViolationReport','Preflight','FedCM','Other']);
+const cdpInitiators=new Set(['parser','script','preload','SignedExchange','preflight','FedCM','other']);
+const cdpErrors=new Set(['net::ERR_ABORTED','net::ERR_FAILED','net::ERR_BLOCKED_BY_CLIENT','net::ERR_BLOCKED_BY_RESPONSE','net::ERR_CONNECTION_CLOSED','net::ERR_CONNECTION_RESET','net::ERR_CONNECTION_REFUSED','net::ERR_TIMED_OUT','net::ERR_NAME_NOT_RESOLVED','net::ERR_INTERNET_DISCONNECTED','net::ERR_NETWORK_CHANGED']);
+const cdpBlocked=new Set(['other','csp','mixed-content','origin','inspector','integrity','subresource-filter','content-type','coep-frame-resource-needs-coep-header','coop-sandboxed-iframe-cannot-navigate-to-coop-page','corp-not-same-origin','corp-not-same-origin-after-defaulted-to-same-origin-by-coep','corp-not-same-origin-after-defaulted-to-same-origin-by-dip','corp-not-same-origin-after-defaulted-to-same-origin-by-coep-and-dip','corp-not-same-site','sri-message-signature-mismatch']);
+const cdpCors=new Set(['DisallowedByMode', 'InvalidResponse', 'WildcardOriginNotAllowed', 'MissingAllowOriginHeader', 'MultipleAllowOriginValues', 'InvalidAllowOriginValue', 'AllowOriginMismatch', 'InvalidAllowCredentials', 'CorsDisabledScheme', 'PreflightInvalidStatus', 'PreflightDisallowedRedirect', 'PreflightWildcardOriginNotAllowed', 'PreflightMissingAllowOriginHeader', 'PreflightMultipleAllowOriginValues', 'PreflightInvalidAllowOriginValue', 'PreflightAllowOriginMismatch', 'PreflightInvalidAllowCredentials', 'PreflightMissingAllowExternal', 'PreflightInvalidAllowExternal', 'InvalidAllowMethodsPreflightResponse', 'InvalidAllowHeadersPreflightResponse', 'MethodDisallowedByPreflightResponse', 'HeaderDisallowedByPreflightResponse', 'RedirectContainsCredentials', 'InsecureLocalNetwork', 'InvalidLocalNetworkAccess', 'NoCorsRedirectModeNotFollow', 'LocalNetworkAccessPermissionDenied']);
+const cdpMimes=new Set(['text/html','text/x-component','text/css','text/javascript','application/javascript','application/json','image/png','image/jpeg','image/svg+xml','image/webp','image/x-icon','font/woff','font/woff2']);
+const cdpEvents=['Network.requestWillBeSent','Network.responseReceived','Network.loadingFinished','Network.loadingFailed','Network.requestServedFromCache','Page.frameNavigated','Page.lifecycleEvent','Page.navigatedWithinDocument','Page.frameStartedNavigating'];
+const cdpFinite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0?n:null;
+function cdpId(value,prefix) {return typeof value==='string'&&value.length>0&&value.length<=256?prefix+'-'+hash(value):null;}
+function cdpRef(value) {return typeof value==='string'&&/^smoke-(desktop|mobile)-(public-regression|auth-fixture|guard|segment-error|root-error)(?:-r\d+|-action\d+|-nav\d+|-js-[a-f0-9]{64})?$/.test(value)?value:null;}
+function cdpURL(value) {
+ try {const u=new URL(value), local=['http://127.0.0.1:3550','http://127.0.0.1:3551','http://127.0.0.1:3552'].includes(u.origin), api=u.origin==='https://api.xpertapply.com';
+  const approved=(local||api)&&!u.username&&!u.password&&known.has(u.pathname);
+  return {originClass:local?'LOCAL_QUALIFICATION':api?'FIXTURE_API':'UNKNOWN',path:approved?u.pathname:null,redactionLoss:!approved||!!u.search||!!u.hash};
+ }catch{return {originClass:'UNKNOWN',path:null,redactionLoss:true};}
+}
+function cdpPWURL(value) {return {originClass:['http://127.0.0.1:3550','http://127.0.0.1:3551','http://127.0.0.1:3552'].includes(value?.origin)?'LOCAL_QUALIFICATION':value?.origin==='https://api.xpertapply.com'?'FIXTURE_API':'UNKNOWN',path:known.has(value?.path)?value.path:null,redactionLoss:true};}
+function cdpCorrelate(hops,requests,complete=false) {
+ // Public PW evidence lacks a lossless URL/ID bridge. Never emit EXACT, even for a singleton.
+ const rows=requests.map(p=>{const u=cdpPWURL(p.url),type=String(p.resourceType||'').toLowerCase();
+  const candidates=hops.filter(h=>u.path&&h.url.path===u.path&&h.url.originClass===u.originClass&&h.method===p.method&&h.type?.toLowerCase()===type);
+  const frameKnown=p.cdpMainFrameKnown===true&&candidates.every(h=>h.mainFrame===true);
+  const contrary=candidates.filter(h=>h.response&&p.responseStatus!=null&&h.response.status!==p.responseStatus||h.state==='CONTRADICTORY_TERMINAL'||h.state==='LOADING_COMPLETED'&&!!p.failure||!!h.failure&&!!p.finished);
+  return {playwrightRequestId:cdpRef(p.requestId),candidateKeys:candidates.map(h=>h.key),correlationClass:!candidates.length?'UNMATCHED':candidates.length>1?'AMBIGUOUS':contrary.length||!complete||!frameKnown?'UNKNOWN':'HIGH_CONFIDENCE_FORENSIC',reason:!candidates.length?'NO_COMPATIBLE_OBSERVATION':candidates.length>1?'COMPETING_CANDIDATES':contrary.length?'LIFECYCLE_DISAGREEMENT':!complete?'CAPTURE_PARTIAL':!frameKnown?'FRAME_ASSOCIATION_UNVERIFIED':'NO_PUBLIC_EXACT_ID_BRIDGE',exactEligible:false};
+ });
+ // A CDP singleton shared by multiple PW records is also a collision; never consume greedily.
+ const count=new Map();for(const r of rows)for(const k of r.candidateKeys)count.set(k,(count.get(k)||0)+1);
+ for(const r of rows)if(r.candidateKeys.some(k=>count.get(k)>1)){r.correlationClass='AMBIGUOUS';r.reason='COMPETING_PLAYWRIGHT_RECORDS';}
+ return {rows,unmatchedCDP:hops.filter(h=>!count.has(h.key)).map(h=>h.key)};
+}
+class CDPGroup {
+ constructor(dir) {this.dir=dir;this.pages=[];this.bytes=0;this.limitBytes=16777216;this.persistenceSucceeded=false;this.persistenceFailures=0;this.persistenceGeneration=0;}
+ add(owner) {const s=new CDPSidecar(owner,this,this.pages.length+1);this.pages.push(s);return s;}
+ artifacts() {
+  const pages=this.pages.map(s=>s.projection()), hops=pages.flatMap(p=>p.hops),correlations=this.pages.map(s=>s.correlations());
+  const envelope={schema:1,persistenceGeneration:this.persistenceGeneration,mode:'NETWORK_ONLY',runId:/^\d+$/.test(process.env.GITHUB_RUN_ID||'')?process.env.GITHUB_RUN_ID:null,sha:/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA||'')?process.env.GITHUB_SHA:null};
+  return [
+   {...envelope,pages},
+   {...envelope,pages:pages.map(p=>({sessionId:p.sessionId,initiators:p.hops.map(h=>({key:h.key,initiator:h.initiator})),completeness:p.completeness}))},
+   {...envelope,failures:hops.filter(h=>h.failure).map(h=>({key:h.key,loaderId:h.loaderId,frameId:h.frameId,response:h.response,failure:h.failure,state:h.state}))},
+   {...envelope,pages:correlations},
+   {...envelope,classifierUnchanged:true,persistenceSucceeded:this.persistenceSucceeded,persistenceFailures:this.persistenceFailures,pages:pages.map(p=>({sessionId:p.sessionId,completeness:p.completeness,transitions:p.transitions,unknownCausalOrigin:true})),causalAcceptance:'NOT_EVALUATED_FORENSIC_ONLY'}
+  ];
+ }
+ persist() {
+  // The final status artifact is written last, after the other four writes succeed.
+  this.persistenceSucceeded=false;this.persistenceGeneration++;
+  try {const artifacts=this.artifacts();atomic(this.dir,cdpArtifacts[4],artifacts[4]);for(let i=0;i<4;i++)atomic(this.dir,cdpArtifacts[i],artifacts[i]);
+   this.persistenceSucceeded=true;atomic(this.dir,cdpArtifacts[4],this.artifacts()[4]);return true;
+  }catch{this.persistenceSucceeded=false;this.persistenceFailures++;for(const s of this.pages)s.gap('PERSISTENCE_FAILURE');return false;}
+ }
+}
+class CDPSidecar {
+ constructor(owner,group,ordinal) {
+  this.owner=owner;this.group=group;this.sessionId='cdp-session-'+ordinal;this.session=null;this.handlers=[];this.hops=[];this.active=new Map();this.transitions=[];this.receiptSequence=0;this.closed=false;this.frame=null;this.maxEvents=20000;
+  this.meta={status:'CDP_UNAVAILABLE',coverage:'ATTACHED_PAGE_TARGET_ONLY',workerAndOopifCoverage:'UNKNOWN',attachedBeforeNavigation:false,networkEnabled:false,pageEnabled:false,listenersAttached:false,cleanupExecuted:false,detachSucceeded:false,persistenceAttempted:false,internalExceptions:0,observationGaps:[],targetClosed:false,sessionClosed:false,limitsExceeded:false,protocolCompatibility:'UNKNOWN',runtime:null};
+ }
+ gap(reason) {if(!this.meta.observationGaps.includes(reason))this.meta.observationGaps.push(reason);if(this.meta.status!=='CDP_UNAVAILABLE')this.meta.status='CDP_PARTIAL';}
+ receipt() {return {nodeClockDomainId:causalDomain,nodeReceiptSequence:++this.receiptSequence,nodeReceiptPerformanceNow:performance.now(),browserClockDomainId:this.sessionId+'-browser-monotonic',actionIdAtReceipt:cdpRef(this.owner.activeAction?.actionId),documentIdAtReceipt:cdpRef(this.owner.activeDocumentId),generationAtReceipt:cdpFinite(this.owner.observedGeneration)};}
+ async attach(context) {
+  try {
+   this.session=await context.newCDPSession(this.owner.page);this.meta.attachedBeforeNavigation=this.owner.page.url()==='about:blank';if(!this.meta.attachedBeforeNavigation)this.gap('ATTACH_AFTER_NAVIGATION');
+   for(const name of cdpEvents){const handler=e=>this.receive(name,e);this.session.on(name,handler);this.handlers.push([name,handler]);}this.session.on('close',this.onSessionClose=()=>{this.meta.sessionClosed=true;if(!this.closed)this.gap('SESSION_CLOSED_BEFORE_CAPTURE_CUTOFF');});this.meta.listenersAttached=true;
+   this.owner.page.on('close',this.onPageClose=()=>{this.meta.targetClosed=true;if(this.hops.some(h=>['STARTED','HEADERS_RECEIVED'].includes(h.state)))this.gap('TARGET_CLOSED_WITH_UNSETTLED_REQUEST');});
+   await this.session.send('Network.enable');this.meta.networkEnabled=true;this.meta.status='CDP_PARTIAL';
+   await this.session.send('Page.enable');this.meta.pageEnabled=true;
+   await this.session.send('Page.setLifecycleEventsEnabled',{enabled:true});
+   const v=await this.session.send('Browser.getVersion');
+   const browserVersion=typeof v.product==='string'?v.product.match(/^(?:Chrome|HeadlessChrome)\/(\d+\.\d+\.\d+\.\d+)$/)?.[1]:null;
+   let playwrightVersion=null;try{const pv=require(path.join(process.env.PLAYWRIGHT_MODULE,'package.json')).version;if(/^\d+\.\d+\.\d+$/.test(pv))playwrightVersion=pv;}catch{}
+   this.meta.runtime={playwrightVersion,nodeVersion:/^v\d+\.\d+\.\d+$/.test(process.version)?process.version:null,browserVersion:browserVersion||null,protocolVersion:/^\d+\.\d+$/.test(v.protocolVersion||'')?v.protocolVersion:null};
+   this.meta.protocolCompatibility=browserVersion==='149.0.7827.55'&&playwrightVersion==='1.61.1'?'EXPECTED_PIN_MATCH':'UNKNOWN';if(this.meta.protocolCompatibility==='UNKNOWN')this.gap('RUNTIME_PIN_UNVERIFIED');
+   const tree=await this.session.send('Page.getFrameTree');this.frame=cdpId(tree.frameTree?.frame?.id,'frame');if(!this.frame)this.gap('MAIN_FRAME_BASELINE_UNAVAILABLE');
+   this.transition('BASELINE_FRAME',tree.frameTree?.frame||{});
+   this.meta.status=this.meta.observationGaps.length?'CDP_PARTIAL':'CDP_READY';
+  }catch{this.meta.internalExceptions++;this.gap('ATTACH_OR_ENABLE_FAILURE');if(!this.meta.networkEnabled)this.meta.status='CDP_UNAVAILABLE';}
+ }
+ receive(name,event) {
+  // Do not retain event objects, header/body payloads, query values or arbitrary text.
+  const receipt=this.receipt();
+  try {
+   if(this.closed||this.meta.limitsExceeded)return;
+   if(this.group.bytes>=this.group.limitBytes){this.meta.limitsExceeded=true;this.gap('BUFFER_LIMIT');return;}
+   if(this.receiptSequence>this.maxEvents){this.meta.limitsExceeded=true;this.gap('EVENT_LIMIT');return;}
+   if(name.startsWith('Page.'))this.transition(name,event,receipt);
+   else this.network(name,event,receipt);
+   const bytes=Buffer.byteLength(JSON.stringify({hop:this.hops.at(-1)||null,transition:this.transitions.at(-1)||null}));
+   this.group.bytes+=bytes;
+   if(bytes>4096||this.group.bytes>this.group.limitBytes){this.meta.limitsExceeded=true;this.gap('BUFFER_LIMIT');return;}
+  }catch{this.meta.internalExceptions++;this.gap('EVENT_PROJECTION_FAILURE');}
+ }
+ transition(name,e,receipt=this.receipt()) {
+  const f=e.frame||e,id=cdpId(f.id||e.frameId,'frame'),loader=cdpId(f.loaderId||e.loaderId,'loader');
+  const names=new Set(['BASELINE_FRAME','Page.frameNavigated','Page.lifecycleEvent','Page.navigatedWithinDocument','Page.frameStartedNavigating']);
+  if(!names.has(name))return;
+  const lifecycle=new Set(['init','DOMContentLoaded','load','networkAlmostIdle','networkIdle','firstPaint','firstContentfulPaint']);
+  const nav=new Set(['Navigation','BackForwardCacheRestore','fragment','historyApi','other','reload','reloadBypassingCache','restore','restoreWithPost','historySameDocument','historyDifferentDocument','sameDocument','differentDocument']);
+  this.transitions.push({kind:name,frameId:id,loaderId:loader,url:cdpURL(f.url),lifecycleName:lifecycle.has(e.name)?e.name:null,navigationType:nav.has(e.type||e.navigationType)?e.type||e.navigationType:null,cdpMonotonicSeconds:cdpFinite(e.timestamp),receipt});
+ }
+ network(name,e,receipt) {
+  const id=cdpId(e.requestId,'request');if(!id){this.gap('MISSING_REQUEST_ID');return;}
+  let h=this.active.get(id);
+  if(name==='Network.requestWillBeSent') {
+   const redirect=!!e.redirectResponse;
+   if(cdpFinite(e.timestamp)===null||typeof e.loaderId!=='string'||typeof e.documentURL!=='string'||!e.request||!cdpInitiators.has(e.initiator?.type))this.gap('INVALID_REQUEST_SCHEMA');
+   if(h){if(redirect&&!['LOADING_COMPLETED','LOADING_FAILED','CONTRADICTORY_TERMINAL','REDIRECTED'].includes(h.state)){h.redirectResponse=this.response(e.redirectResponse,null,receipt);if(!h.response)h.response=h.redirectResponse;else if(h.response.status!==h.redirectResponse.status)this.gap('REDIRECT_RESPONSE_DISAGREEMENT');h.state='REDIRECTED';}else{this.gap('UNEXPECTED_REQUEST_ID_REUSE');h.state='CONTRADICTORY_TERMINAL';}}
+   if(redirect&&!h)this.gap('MISSING_REDIRECT_START');
+   const ordinal=h?h.hopOrdinal+1:0;
+   const i=e.initiator||{},u=cdpURL(e.request?.url),method=['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'].includes(e.request?.method)?e.request.method:null;
+   h={key:this.sessionId+'/'+id+'/'+ordinal,cdpRequestId:id,hopOrdinal:ordinal,redirectedFrom:redirect&&h?h.key:null,loaderId:cdpId(e.loaderId,'loader'),emptyLoader:e.loaderId==='',frameId:cdpId(e.frameId,'frame'),mainFrame:!!this.frame&&cdpId(e.frameId,'frame')===this.frame,documentURL:cdpURL(e.documentURL),url:u,method,type:cdpTypes.has(e.type)?e.type:null,initiator:{type:cdpInitiators.has(i.type)?i.type:'UNKNOWN',url:cdpURL(i.url),lineNumber:Number.isInteger(i.lineNumber)&&i.lineNumber>=0?i.lineNumber:null,columnNumber:Number.isInteger(i.columnNumber)&&i.columnNumber>=0?i.columnNumber:null,requestId:cdpId(i.requestId,'request'),stackPresent:!!i.stack,stackCaptured:false},hasUserGesture:typeof e.hasUserGesture==='boolean'?e.hasUserGesture:null,start:{cdpMonotonicSeconds:cdpFinite(e.timestamp),receipt},state:'STARTED',response:null,redirectResponse:null,finished:null,failure:null,servedFromCache:false};
+   this.hops.push(h);this.active.set(id,h);return;
+  }
+  if(!h){this.gap('ORPHAN_NETWORK_EVENT');return;}
+  if(name!=='Network.requestServedFromCache'&&cdpFinite(e.timestamp)===null)this.gap('INVALID_EVENT_TIMESTAMP');
+  if(cdpFinite(e.timestamp)!==null&&h.start.cdpMonotonicSeconds!==null&&e.timestamp<h.start.cdpMonotonicSeconds)this.gap('BROWSER_EVENT_ORDER_CONTRADICTION');
+  const t={cdpMonotonicSeconds:cdpFinite(e.timestamp),receipt};
+  if(name==='Network.responseReceived'){if(h.response||!['STARTED','HEADERS_RECEIVED'].includes(h.state))this.gap('UNEXPECTED_RESPONSE_ORDER');h.response={...this.response(e.response,e.timestamp,receipt),loaderId:cdpId(e.loaderId,'loader'),frameId:cdpId(e.frameId,'frame'),type:cdpTypes.has(e.type)?e.type:null};if(h.loaderId&&h.response.loaderId&&h.loaderId!==h.response.loaderId){this.gap('RESPONSE_LOADER_DISAGREEMENT');h.state='CONTRADICTORY_TERMINAL';}if(h.state==='STARTED')h.state='HEADERS_RECEIVED';}
+  else if(name==='Network.loadingFinished'){if(h.finished||h.failure||h.state==='REDIRECTED'){h.state='CONTRADICTORY_TERMINAL';this.gap('CONTRADICTORY_TERMINAL');}else h.state='LOADING_COMPLETED';h.finished=t;if(cdpFinite(e.encodedDataLength)===null)this.gap('INVALID_FINISH_SCHEMA');}
+  else if(name==='Network.loadingFailed'){if(h.finished||h.failure||h.state==='REDIRECTED'){h.state='CONTRADICTORY_TERMINAL';this.gap('CONTRADICTORY_TERMINAL');}else h.state='LOADING_FAILED';h.failure={...t,errorText:cdpErrors.has(e.errorText)?e.errorText:'UNKNOWN_ERROR',canceled:typeof e.canceled==='boolean'?e.canceled:null,blockedReason:cdpBlocked.has(e.blockedReason)?e.blockedReason:null,corsErrorStatus:e.corsErrorStatus?{present:true,corsError:cdpCors.has(e.corsErrorStatus.corsError)?e.corsErrorStatus.corsError:null}:null,type:cdpTypes.has(e.type)?e.type:null};}
+  else if(name==='Network.requestServedFromCache')h.servedFromCache=true;
+ }
+ response(r,t,receipt) {return {status:Number.isInteger(r?.status)&&r.status>=100&&r.status<=599?r.status:null,mimeType:cdpMimes.has(r?.mimeType)?r.mimeType:'UNAPPROVED_MIME',cdpMonotonicSeconds:cdpFinite(t),receipt};}
+ correlations() {
+  const result=cdpCorrelate(this.hops,this.owner.requests.map(r=>({...r,cdpMainFrameKnown:r.frameId!=null&&r.frameId===this.owner.frameIds.get(this.owner.page.mainFrame())})),this.meta.status==='CDP_COMPLETE');
+  return {sessionId:this.sessionId,...result,playwrightFacts:this.owner.requests.map(r=>{const replay=r.failure?classifierReplay(r,this.owner.checkpoints):null;return {requestId:cdpRef(r.requestId),requestfinished:!!r.finished,requestfailed:!!r.failure,finalCategory:r.classification||replay?.finalCategory||null,booleans:replay?{backgroundIdentity:replay.backgroundIdentity,errorIsExpectedAbort:replay.errorIsExpectedAbort,provenSupersession:replay.provenSupersession,intentionalTeardown:replay.intentionalTeardown,healthyCheckpoint:replay.healthyCheckpoint,requiredResource:replay.requiredResource}:null};})};
+ }
+ projection() {return {sessionId:this.sessionId,pageId:cdpRef(this.owner.pageId),clockDomains:{browser:'CDP_MONOTONIC_SECONDS',node:'NODE_PERFORMANCE_NOW_MS',directlyComparable:false},hops:this.hops,transitions:this.transitions,completeness:{...this.meta,observationGaps:[...this.meta.observationGaps],persistenceAttempted:this.meta.persistenceAttempted,complete:this.meta.status==='CDP_COMPLETE'}};}
+ async finish() {
+  if(this.closed)return;this.closed=true;this.meta.cleanupExecuted=true;
+  if(this.hops.some(h=>['STARTED','HEADERS_RECEIVED'].includes(h.state)))this.gap('UNSETTLED_AT_CAPTURE_CUTOFF');
+  try{if(this.session){await this.session.detach();this.meta.detachSucceeded=true;}}catch{this.gap('DETACH_FAILURE');}
+  for(const [name,handler]of this.handlers)try{this.session.off(name,handler);}catch{this.gap('LISTENER_CLEANUP_FAILURE');}
+  if(this.onSessionClose)try{this.session.off('close',this.onSessionClose);}catch{this.gap('LISTENER_CLEANUP_FAILURE');}
+  if(this.onPageClose)try{this.owner.page.off('close',this.onPageClose);}catch{this.gap('LISTENER_CLEANUP_FAILURE');}
+  if(this.meta.status!=='CDP_UNAVAILABLE')this.meta.status=this.meta.observationGaps.length?'CDP_PARTIAL':'CDP_COMPLETE';
+  this.meta.persistenceAttempted=true;this.group.persist();
+ }
+}
+
 class Observer {
   constructor(page, ledger, scenario, pageId) {
     this.page = page; this.ledger = ledger; this.scenario = scenario; this.pageId = pageId; this.requests = []; this.responses = []; this.checkpoints = []; this.csp = []; this.errors = []; this.expectedErrors = []; this.documents = []; this.tasks = []; this.sequence = 0; this.generation = 0; this.outstanding = new Map(); this.lookup = new WeakMap(); this.frameIds = new WeakMap(); this.frameSequence = 0; this.console = []; this.verifiedCache=new Map();
@@ -220,7 +361,8 @@ class Observer {
       if(a.browserOperationEnd===null)a.browserOperationEnd=performance.now();a.errorState=structuredError(error);this.actionState(a,'FAILED');this.causalEvent('ACTION_RESULT',{action:a});this.activeAction=previous;throw error;
     }
   }
-  async cleanupBrowser(browser) {try{return await this.withAction({kind:'CONTEXT_CLOSE',teardown:true},()=>browser.close());}finally{this.persistReplay();}}
+  async cleanupBrowser(browser) {try{return await this.withAction({kind:'CONTEXT_CLOSE',teardown:true},()=>browser.close());}finally{try{this.persistReplay();}finally{await this.finishCDP();}}}
+  async finishCDP() {if(this.cdp)try{await this.cdp.finish();}catch{this.cdp.gap('CLEANUP_FAILURE');this.cdp.meta.internalExceptions++;this.cdp.group.persist();}}
   persistReplay() {for(const record of this.causalReplay())this.causalEvent('CLASSIFIER_REPLAY',{record});}
   failActiveAction(error) {
     if(this.activeAction&&!['COMPLETED','FAILED'].includes(this.activeAction.completionState)){this.activeAction.errorState=structuredError(error);this.actionState(this.activeAction,'FAILED');this.causalEvent('ACTION_RESULT',{action:this.activeAction});this.activeAction=null;}
@@ -236,6 +378,9 @@ class Observer {
     return this.requests.filter(r=>r.failure).map(r=>{const replay=classifierReplay(r,this.checkpoints);return {requestId:r.requestId,causal:r.causal||null,...replay,supersessionEvidence:(r.causal?.supersessionEdges||[]).map(edge=>{const a=this.actions.find(a=>a.actionId===edge.actionId);return {...edge,proven:replay.provenSupersession&&r.supersedingNavigationId===a?.legacyNavigationId,checkpointId:r.checkpointId,resultingGeneration:a?.resultingNavigationGeneration??null,resultingDocumentId:a?.resultingDocumentId||null,resultingURL:a?.resultingURL||null};})};});
   }
   async install(context) {
+    if(this.ledger.phase==='smoke'&&process.env.QUAL_CDP_MODE==='NETWORK_ONLY'){
+      this.ledger.cdpGroup ||= new CDPGroup(this.ledger.dir);this.cdp=this.ledger.cdpGroup.add(this);await this.cdp.attach(context);
+    }
     await context.exposeBinding('__qualDocumentObserved', (source, token) => {if(source.page===this.page&&source.frame===this.page.mainFrame())this.documentObservation(token);});
     await context.exposeBinding('__qualCSP', (_, e) => this.csp.push(e));
     await context.addInitScript(() => {window.__qualDocument = crypto.randomUUID(); window.__qualDocumentObserved(window.__qualDocument); addEventListener('securitypolicyviolation', e => window.__qualCSP({directive:e.effectiveDirective, disposition:e.disposition, timestamp:Date.now()}));});
@@ -324,6 +469,7 @@ class Observer {
       navigationGeneration:this.generation,teardownState:this.requests.some(r=>r.teardownKnownOutstanding)?'OBSERVED_STARTED':'NOT_STARTED',pass:false,complete:false};
   }
   async close(context) {
+    try {
     const closeAction=this.beginAction({kind:'CONTEXT_CLOSE'});this.actionState(closeAction,'TEARDOWN');
     const checkpoint = this.checkpoints.at(-1), t = performance.now();
     closeAction.teardownSnapshot=[...this.outstanding.keys()];
@@ -338,6 +484,7 @@ class Observer {
     const controlsPass=!this.fatalInjected ? this.csp.length===0 : (['remove','wrong','unrelated'].includes(this.fatalControl)?this.csp.length===1&&this.csp[0].directive==='style-src-elem'&&this.csp[0].disposition==='enforce':this.csp.length===0);
     const result = {causal:{clockDomainId:causalDomain,evidenceComplete:this.causalComplete,actions:this.actions,failedRequests:this.causalReplay()},expectedCSPEvents:this.fatalInjected&&['remove','wrong','unrelated'].includes(this.fatalControl)?this.csp.length:0,scenario:this.scenario,pageId:this.pageId,requests:this.requests,responses:this.responses,checkpoints:this.checkpoints,documents:this.documents,csp:this.csp,errors:this.errors,expectedErrors:this.expectedErrors,console:this.console,hardFailures:hard.length,pass:this.causalComplete && !!checkpoint && this.checkpoints.every(c=>c.pass) && !hard.length && !this.errors.length && controlsPass};
     return result;
+    } finally {await this.finishCDP();}
   }
 }
 async function landingOperation(page, mobile) {
@@ -367,5 +514,5 @@ async function concurrent() {
   })));} finally {await browser.close();atomic(dir,'concurrent-browser',{schema:1,pass:results.length===8&&results.every(r=>r.pass),results});}
   if(results.length!==8||results.some(r=>!r.pass)) throw Error('concurrent classification failure');
 }
-module.exports={classifierReplay,actionKinds,structuredError,operationMetadata,failureArtifact,hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
+module.exports={CDPGroup,CDPSidecar,cdpCorrelate,cdpURL,cdpArtifacts,classifierReplay,actionKinds,structuredError,operationMetadata,failureArtifact,hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
 if(require.main===module) concurrent().catch(()=>{process.exitCode=1;});
