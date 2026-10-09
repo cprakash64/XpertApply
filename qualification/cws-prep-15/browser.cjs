@@ -116,7 +116,7 @@ function classifierReplay(r, checkpoints) {
     provenSupersession:!!(r.failure&&comparisons.samePage&&comparisons.matchingNavigation&&comparisons.checkpointAfterSupersession&&r.supersedingNavigationId&&comparisons.supersessionAfterStart&&comparisons.failureAfterSupersession),
     intentionalTeardown:!!(r.failure&&comparisons.samePage&&comparisons.checkpointBeforeTeardown&&r.teardownKnownOutstanding===true&&comparisons.teardownAfterStart&&comparisons.failureAfterTeardown),
     healthyCheckpoint:healthy(c),requiredResource:!!requiredKind(r),comparisons,finalCategory:classify(r,checkpoints),
-    inputs:{request:JSON.parse(JSON.stringify(r, (key,value)=>key==='causal'?undefined:value)),checkpoint:c||null}};
+    inputs:{request:JSON.parse(JSON.stringify(r, (key,value)=>key==='causal'?undefined:value)),checkpoint:c||null},semantic:requestSemantics(r,checkpoints)};
 }
 
 function assetStatus(r, verifiedCache = new Set()) {
@@ -457,7 +457,7 @@ class Observer {
     const docs=this.documents;
     return {available:true,causal:{clockDomainId:causalDomain,evidenceComplete:this.causalComplete,actions:this.actions,failedRequests:this.causalReplay(),eventCount:this.causalCount},completedCheckpointIds:this.checkpoints.filter(c=>c.pass===true).map(c=>c.checkpointId),
       currentCheckpoint:this.checkpoints.length?{checkpointId:this.checkpoints.at(-1).checkpointId,pass:this.checkpoints.at(-1).pass===true}:null,
-      pendingRequests:this.outstanding.size,requestTotals:totals,responseTotalsByStatus:statuses,failedRequests:failed.length,
+      pendingRequests:this.outstanding.size,requestTotals:totals,semanticSchemaVersion:1,requestSemantics:this.requests.map(r=>({requestId:r.requestId,...requestSemantics(r,this.checkpoints)})),responseTotalsByStatus:statuses,failedRequests:failed.length,
       unclassifiedFailures:failed.filter(r=>!r.classification).length,
       responseStatusFailures:this.responses.filter(r=>['script','stylesheet','image','font'].includes(r.type)&&!assetStatus(r)||r.url.origin==='https://api.xpertapply.com'&&r.status!==200).length,
       cspEvents:this.csp.length,pageErrors:this.errors.length,
@@ -480,9 +480,10 @@ class Observer {
     for (const r of this.requests) if (r.failure) r.classification=classify(r,this.checkpoints);
     this.persistReplay();
     for(const r of this.outstanding.values()){r.incompleteLifecycle=true;r.lifecycleState='INCOMPLETE_AFTER_TEARDOWN';}
+    for (const r of this.requests) r.semantic=requestSemantics(r,this.checkpoints);
     const hard = this.requests.filter(r => r.incompleteLifecycle || r.failure && !['RSC_EXPECTED_CANCELLATION','PREFETCH_EXPECTED_CANCELLATION'].includes(r.classification));
     const controlsPass=!this.fatalInjected ? this.csp.length===0 : (['remove','wrong','unrelated'].includes(this.fatalControl)?this.csp.length===1&&this.csp[0].directive==='style-src-elem'&&this.csp[0].disposition==='enforce':this.csp.length===0);
-    const result = {causal:{clockDomainId:causalDomain,evidenceComplete:this.causalComplete,actions:this.actions,failedRequests:this.causalReplay()},expectedCSPEvents:this.fatalInjected&&['remove','wrong','unrelated'].includes(this.fatalControl)?this.csp.length:0,scenario:this.scenario,pageId:this.pageId,requests:this.requests,responses:this.responses,checkpoints:this.checkpoints,documents:this.documents,csp:this.csp,errors:this.errors,expectedErrors:this.expectedErrors,console:this.console,hardFailures:hard.length,pass:this.causalComplete && !!checkpoint && this.checkpoints.every(c=>c.pass) && !hard.length && !this.errors.length && controlsPass};
+    const result = {semanticSchemaVersion:1,causal:{clockDomainId:causalDomain,evidenceComplete:this.causalComplete,actions:this.actions,failedRequests:this.causalReplay()},expectedCSPEvents:this.fatalInjected&&['remove','wrong','unrelated'].includes(this.fatalControl)?this.csp.length:0,scenario:this.scenario,pageId:this.pageId,requests:this.requests,responses:this.responses,checkpoints:this.checkpoints,documents:this.documents,csp:this.csp,errors:this.errors,expectedErrors:this.expectedErrors,console:this.console,hardFailures:hard.length,pass:this.causalComplete && !!checkpoint && this.checkpoints.every(c=>c.pass) && !hard.length && !this.errors.length && controlsPass};
     return result;
     } finally {await this.finishCDP();}
   }
@@ -514,5 +515,33 @@ async function concurrent() {
   })));} finally {await browser.close();atomic(dir,'concurrent-browser',{schema:1,pass:results.length===8&&results.every(r=>r.pass),results});}
   if(results.length!==8||results.some(r=>!r.pass)) throw Error('concurrent classification failure');
 }
-module.exports={CDPGroup,CDPSidecar,cdpCorrelate,cdpURL,cdpArtifacts,classifierReplay,actionKinds,structuredError,operationMetadata,failureArtifact,hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
+// Additive qualification labels. Legacy classify() and qualification gates remain authoritative.
+const requestLabels=Object.freeze(['SUCCESS','EXPECTED_CANCELLATION','FUNCTIONAL_FAILURE','TRANSPORT_ANOMALY','AMBIGUOUS']);
+function semanticGate(label) {
+  return ['SUCCESS','EXPECTED_CANCELLATION'].includes(label) ? 'ALLOW' : 'BLOCK';
+}
+function requestSemantics(r, checkpoints) {
+  const checkpoint=checkpoints.find(c=>c.checkpointId===r.checkpointId);
+  const samePage=!!checkpoint && checkpoint.pageId===r.pageId;
+  const legacyCategory=r.failure ? classify(r,checkpoints) : null;
+  const required=r.failure ? requiredKind(r) : null;
+  let label, reason;
+  if (required) { label='FUNCTIONAL_FAILURE';reason='REQUIRED_RESOURCE_FAILURE'; }
+  else if (r.incompleteLifecycle) { label='AMBIGUOUS';reason='INCOMPLETE_LIFECYCLE'; }
+  else if (legacyCategory && ['RSC_EXPECTED_CANCELLATION','PREFETCH_EXPECTED_CANCELLATION'].includes(legacyCategory)) {
+    label='EXPECTED_CANCELLATION';reason='LEGACY_POSITIVE_CANCELLATION_EXEMPTION';
+  } else if (samePage && checkpoint.pass===false) { label='FUNCTIONAL_FAILURE';reason='ASSOCIATED_CHECKPOINT_FAILURE'; }
+  else if (r.failure) {
+    label=(r.rscMarker===true || r.prefetchMarker===true) && r.errorText==='net::ERR_ABORTED' ? 'AMBIGUOUS' : 'TRANSPORT_ANOMALY';
+    reason='UNRESOLVED_TRANSPORT_ANOMALY';
+  } else if (!r.incompleteLifecycle && r.finished && samePage && healthy(checkpoint)) {
+    label='SUCCESS';reason='SETTLED_TRANSPORT_AND_ASSOCIATED_HEALTHY_CHECKPOINT';
+  } else { label='AMBIGUOUS';reason='INSUFFICIENT_SETTLED_QUALIFICATION_EVIDENCE'; }
+  return {schemaVersion:1,label,gateEffect:semanticGate(label),reason,legacyCategory,
+    evidence:{transportFailed:!!r.failure,transportFinished:!!r.finished,responseStatus:r.responseStatus??null,
+      background:r.rscMarker===true||r.prefetchMarker===true,requiredResource:!!required,
+      associatedCheckpoint:samePage,healthyCheckpoint:samePage&&healthy(checkpoint),
+      incompleteLifecycle:!!r.incompleteLifecycle,applicationConsumption:'NOT_OBSERVED',cause:'UNKNOWN'}};
+}
+module.exports={requestLabels,semanticGate,requestSemantics,CDPGroup,CDPSidecar,cdpCorrelate,cdpURL,cdpArtifacts,classifierReplay,actionKinds,structuredError,operationMetadata,failureArtifact,hash,now,urlEvidence,sanitize,atomic,canonicalNonce,policyEvidence,Ledger,requiredKind,healthy,classify,assetStatus,clientProof,fixture,allowLocal,Observer,landing,password};
 if(require.main===module) concurrent().catch(()=>{process.exitCode=1;});
