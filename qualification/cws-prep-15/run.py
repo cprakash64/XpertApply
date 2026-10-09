@@ -17,6 +17,7 @@ from pathlib import Path
 BASE = 'a63945ea5f84f63d45d30ff81b67c043fad57ba9'
 R1 = 'f7735c469fc147d40c49a414dc763aca057565c6'
 R4 = 'efa1fe38b7c164b1c6d6e10191799e0dadf76a68'
+CURRENT03 = '03e7856c279cb43c62472c9c28cf7a8f235a67e4'
 R3 = 'c81e1f62ed6434ac7bcab551a4b1a96a485c7d5b'
 DIGEST = 'cbe49db9c79b7ff5dfcb964f777f8948add521429ba732bc18e4f40bf9cfe1b0'
 BRANCH = 'refs/heads/qualification/cws-prep-15-nonce-container'
@@ -73,12 +74,13 @@ def edge_paths(entries, expected, allowed_statuses=('M',)):
             and all(status in allowed_statuses for status,p in entries))
 
 def qualification_authority(expected_sha, head, parents, r4_parents, r3_parents, r1_parents, edges,
-                            event='push', ref=BRANCH, manifest=DIGEST):
+                            event='push', ref=BRANCH, manifest=DIGEST, current03_parents=None):
     sha = isinstance(expected_sha,str) and re.fullmatch('[0-9a-f]{40}',expected_sha) is not None
-    topology = sha and head == expected_sha and parents == [R4] and r4_parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
+    topology = sha and head == expected_sha and parents == [CURRENT03] and current03_parents == [R4] and r4_parents == [R3] and r3_parents == [R1] and r1_parents == [BASE]
     paths = (edge_paths(edges.get('r1',[]),R1_PATHS,('A','M')) and
              edge_paths(edges.get('r3',[]),R3_PATHS) and edge_paths(edges.get('r4',[]),R4_PATHS) and
-             edge_paths(edges.get('repair',[]),REPAIR_PATHS))
+             edge_paths(edges.get('repair',[]),REPAIR_PATHS) and
+             edge_paths(edges.get('diagnostic',[]),REPAIR_PATHS))
     return {'shaValid':sha,'topologyPass':topology,'pathsPass':paths,
             'pass':bool(topology and paths and event=='push' and ref==BRANCH and manifest==DIGEST)}
 
@@ -444,17 +446,18 @@ def main():
     try:
         with h.stage('AUTHORITY'):
             head=h.command('git','rev-parse','HEAD');parents=h.command('git','show','-s','--format=%P',head).split()
+            current03_parents=h.command('git','show','-s','--format=%P',CURRENT03).split()
             r4_parents=h.command('git','show','-s','--format=%P',R4).split()
             r3_parents=h.command('git','show','-s','--format=%P',R3).split();r1_parents=h.command('git','show','-s','--format=%P',R1).split()
             def edge(a,b):
                 lines=h.command('git','diff','--name-status','--no-renames',a,b,'--').splitlines()
                 return [tuple(line.split('\t')) for line in lines]
-            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,R4),'repair':edge(R4,head)};digest=frozen(h.root)
-            check=qualification_authority(h.sha,head,parents,r4_parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest)
-            authority={'schema':1,'head':head,'parents':parents,'r4Parents':r4_parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
+            edges={'r1':edge(BASE,R1),'r3':edge(R1,R3),'r4':edge(R3,R4),'repair':edge(R4,CURRENT03),'diagnostic':edge(CURRENT03,head)};digest=frozen(h.root)
+            check=qualification_authority(h.sha,head,parents,r4_parents,r3_parents,r1_parents,edges,os.environ.get('GITHUB_EVENT_NAME'),os.environ.get('GITHUB_REF'),digest,current03_parents=current03_parents)
+            authority={'schema':1,'head':head,'parents':parents,'current03Parents':current03_parents,'r4Parents':r4_parents,'r3Parents':r3_parents,'r1Parents':r1_parents,'edges':edges,'manifest':digest,'checks':check}
             h.write('source-authority',authority)
             if not check['pass'] or h.command('git','cat-file','-t',BASE)!='commit' or h.command('git','status','--porcelain'):raise Block('BLOCK — QUALIFICATION AUTHORITY FAILED')
-            h.seal('AUTHORITY',['source-authority.json'],{'edges':4,'frozenFiles':9})
+            h.seal('AUTHORITY',['source-authority.json'],{'edges':5,'frozenFiles':9})
         with h.stage('RUNNER'):
             info=json.loads(h.command('docker','info','--format','{{json .}}'));h.docker_root=info['DockerRootDir']
             h.swap_origin={line.split()[0]:int(line.split()[1]) for line in Path('/proc/vmstat').read_text().splitlines()}
