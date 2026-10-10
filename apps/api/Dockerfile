@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12.15-slim-trixie@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -9,6 +9,7 @@ WORKDIR /app
 # removed afterwards, so the runtime image ships no compiler toolchain.
 # curl stays for the container HEALTHCHECK below.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends build-essential curl \
     && rm -rf /var/lib/apt/lists/*
 
