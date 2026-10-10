@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,16 +70,25 @@ describe("production Compose public-build isolation", () => {
   it("resolves real Compose interpolation without changing non-Web services or runtime configuration", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "xpertapply-wrapper-test-"));
     try {
-      const envFile = resolve(directory, "fixture.env");
+      // Keep both interpolation and service env_file resolution isolated from
+      // the developer checkout. Production still requires its private .env.
+      for (const file of ["docker-compose.yml", "compose.production.yml"]) {
+        copyFileSync(resolve(root, file), resolve(directory, file));
+      }
+      const envFile = resolve(directory, ".env");
       // Synthetic local values only; never read or print the production .env.
       writeFileSync(envFile, "NEXT_PUBLIC_API_URL=https://api.xpertapply.com\nNEXT_PUBLIC_SITE_URL=https://xpertapply.com\nPOSTGRES_PASSWORD=synthetic-test-only\n");
       const docker = execFileSync("which", ["docker"], { encoding: "utf8" }).trim();
       const args = ["compose", "--project-name", "xpertapply", "--env-file", envFile,
-        "-f", resolve(root, "docker-compose.yml"), "-f", resolve(root, "compose.production.yml"), "config", "--format", "json"];
+        "-f", resolve(directory, "docker-compose.yml"), "-f", resolve(directory, "compose.production.yml"), "config", "--format", "json"];
       // Local HOME is used only to discover the locally installed Compose plugin;
       // the wrapper environment and production HOME are asserted separately.
       const config = (env: Record<string, string>) => JSON.parse(execFileSync(docker, args, {env: { ...env, HOME: process.env.HOME } as unknown as NodeJS.ProcessEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}));
       const before = config(sanitized());
+      expect(before.services.postgres.ports ?? []).toEqual([]);
+      expect(before.services.redis.ports ?? []).toEqual([]);
+      expect(before.services.api.ports).toMatchObject([{ host_ip: "127.0.0.1", published: "8020", target: 8000 }]);
+      expect(before.services.web.ports).toMatchObject([{ host_ip: "127.0.0.1", published: "3000", target: 3000 }]);
       const after = config(sanitized({ NEXT_PUBLIC_CHROME_EXTENSION_ID: id, NEXT_PUBLIC_CHROME_EXTENSION_URL: "https://wrong.example" }));
       expect(after.name).toBe("xpertapply");
       expect(after.services.web.build.args.NEXT_PUBLIC_CHROME_EXTENSION_ID).toBe(id);
@@ -95,6 +104,19 @@ describe("production Compose public-build isolation", () => {
       const normalized = structuredClone(after);
       normalized.services.web.build.args.NEXT_PUBLIC_CHROME_EXTENSION_ID = before.services.web.build.args.NEXT_PUBLIC_CHROME_EXTENSION_ID;
       expect(normalized).toEqual(before);
+      // --env-file supplies interpolation, not the required service env_file.
+      // A separate interpolation fixture must not conceal a missing .env.
+      const interpolation = resolve(directory, "interpolation.env");
+      copyFileSync(envFile, interpolation);
+      rmSync(envFile);
+      const missingArgs = [...args];
+      missingArgs[missingArgs.indexOf("--env-file") + 1] = interpolation;
+      const missing = spawnSync(docker, missingArgs, {
+        env: { ...sanitized(), HOME: process.env.HOME } as unknown as NodeJS.ProcessEnv,
+        encoding: "utf8"
+      });
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toMatch(/env file .*\.env.*not found/i);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

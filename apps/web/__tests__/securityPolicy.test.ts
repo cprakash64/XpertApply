@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+import { proxy } from "../proxy";
 // The config/helper execute as native ESM outside the app's TypeScript graph.
 const configPath = "../next.config.mjs";
 const policyPath = "../lib/securityPolicy.mjs";
@@ -13,12 +15,45 @@ const { CSP_HEADER, CSP_PAGE_SOURCE, reportOnlyHeaders, reportOnlyPolicy, serial
 };
 
 describe("static-safe CSP observation", () => {
-  it("uses only Report-Only and suppresses the powered-by header", async () => {
+  it("keeps the proxy as sole CSP authority and suppresses the powered-by header", async () => {
     expect(config.poweredByHeader).toBe(false);
-    expect(await config.headers()).toEqual(reportOnlyHeaders());
+    expect(await config.headers()).toEqual([]);
+    // The static observation helper remains strict, but this qualification
+    // config deliberately does not install a second Report-Only policy.
+    expect(reportOnlyHeaders()).toEqual([{ source: CSP_PAGE_SOURCE,
+      headers: [{ key: CSP_HEADER, value: reportOnlyPolicy() }] }]);
     expect(CSP_HEADER).toBe("Content-Security-Policy-Report-Only");
     expect(config).not.toHaveProperty("experimental");
     expect(config).not.toHaveProperty("cacheComponents");
+  });
+
+  it("enforces one nonce CSP and rejects caller-supplied authority", () => {
+    const request = () => new NextRequest("https://xpertapply.com/login", { headers: {
+      "x-nonce": "caller-supplied", "content-security-policy": "default-src *",
+      "content-security-policy-report-only": "default-src *"
+    } });
+    const response = proxy(request());
+    const policy = response.headers.get("Content-Security-Policy")!;
+    const directives = Object.fromEntries(policy.split("; ").map(d => {
+      const [name, ...values] = d.split(" "); return [name, values];
+    }));
+    const nonce = response.headers.get("x-middleware-request-x-nonce")!;
+    expect(Buffer.from(nonce, "base64").length).toBe(16);
+    expect(Buffer.from(nonce, "base64").toString("base64")).toBe(nonce);
+    expect(nonce).not.toBe("caller-supplied");
+    expect(directives["script-src"]).toEqual(["'self'", `'nonce-${nonce}'`]);
+    expect(directives["style-src"]).toEqual(["'self'", "'sha256-Wwucq8eX2r0YFymkQhDXm5hN0+FfSvI3s4JSSaqa4iw='"]);
+    expect(directives["connect-src"]).toEqual(["'self'", "https://api.xpertapply.com"]);
+    for (const key of ["frame-src", "frame-ancestors", "object-src"]) expect(directives[key]).toEqual(["'none'"]);
+    expect(policy).not.toMatch(/unsafe-eval|strict-dynamic|report-uri|report-to|\*/);
+    expect(directives["script-src"]).not.toContain("'unsafe-inline'");
+    expect(directives["style-src"]).not.toContain("'unsafe-inline'");
+    expect(response.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+    expect(response.headers.get("x-middleware-request-content-security-policy")).toBe(policy);
+    expect(response.headers.get("x-middleware-request-content-security-policy-report-only")).toBeNull();
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(proxy(request()).headers.get("x-middleware-request-x-nonce")).not.toBe(nonce);
+    expect(proxy(new NextRequest("https://xpertapply.com/_next/static/test.js")).headers.get("Cache-Control")).toBeNull();
   });
 
   it("serializes an ordered strict production candidate without broad script/connect sources", () => {
