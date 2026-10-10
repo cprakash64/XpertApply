@@ -5,7 +5,9 @@ from datetime import datetime as DateTimeValue
 from enum import StrEnum
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -18,6 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -136,6 +139,10 @@ class User(Base):
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    scoring_generation: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    scoring_admission_day: Mapped[DateValue | None] = mapped_column(Date)
+    scoring_roots_today: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     profile: Mapped[UserProfile | None] = relationship(back_populates="user")
     demographics: Mapped[SensitiveDemographics | None] = relationship(back_populates="user")
@@ -428,6 +435,7 @@ class JobPosting(Base):
     __tablename__ = "job_postings"
     __table_args__ = (UniqueConstraint("source_id", "external_id", name="uq_job_source_external"),)
 
+    scoring_generation: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[int | None] = mapped_column(ForeignKey("job_sources.id", ondelete="SET NULL"))
     external_id: Mapped[str] = mapped_column(String(255), index=True)
@@ -475,7 +483,11 @@ class JobPosting(Base):
 
 class JobMatch(Base):
     __tablename__ = "job_matches"
-    __table_args__ = (UniqueConstraint("user_id", "job_id", name="uq_job_match_user_job"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_id", name="uq_job_match_user_job"),
+        CheckConstraint("operation_attempt_count BETWEEN 0 AND 6", name="ck_match_operation_attempts"),
+        CheckConstraint("recovery_cycle_used OR operation_attempt_count <= 3", name="ck_match_ordinary_attempts"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -505,6 +517,20 @@ class JobMatch(Base):
     profile_version: Mapped[str | None] = mapped_column(String(64))
     # Hash of score-relevant job content; a change triggers a rescore.
     job_content_hash: Mapped[str | None] = mapped_column(String(64))
+    scoring_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scoring_jobs.id", ondelete="SET NULL", use_alter=True, name="fk_match_scoring_job")
+    )
+    completed_user_generation: Mapped[int | None] = mapped_column(BigInteger)
+    completed_job_generation: Mapped[int | None] = mapped_column(BigInteger)
+    completed_input_digest: Mapped[str | None] = mapped_column(String(64))
+    digest_schema: Mapped[int | None] = mapped_column(Integer)
+    current_operation_digest: Mapped[str | None] = mapped_column(String(64))
+    current_user_generation: Mapped[int | None] = mapped_column(BigInteger)
+    current_job_generation: Mapped[int | None] = mapped_column(BigInteger)
+    current_score_version: Mapped[int | None] = mapped_column(Integer)
+    operation_attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    recovery_cycle_used: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    operation_error_category: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -1024,3 +1050,190 @@ class ApplicationAnswer(Base):
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# Dormant durable scoring metadata. No application producer/worker uses these in R2.
+DURABLE_TERMINAL = ("SUCCEEDED", "TERMINAL_FAILED", "SUPERSEDED", "CANCELED")
+DURABLE_STATES = ("PENDING", "CLAIMED", "RETRY_WAIT", *DURABLE_TERMINAL)
+SCORING_ERRORS = (
+    "DB_UNAVAILABLE",
+    "WORKER_TIMEOUT",
+    "WORKER_LOST",
+    "INPUT_TOO_LARGE",
+    "INPUT_INVALID",
+    "INPUT_MISSING",
+    "OWNERSHIP_INVALID",
+    "ALGORITHM_UNSUPPORTED",
+    "INTERNAL_SCORING_ERROR",
+    "ATTEMPTS_EXHAUSTED",
+    "DEADLINE_EXCEEDED",
+)
+
+
+def _sql_values(values: tuple[str, ...]) -> str:
+    return ",".join(f"'{v}'" for v in values)
+
+
+def _durable_checks(prefix: str, claimed: str, states: tuple[str, ...]) -> tuple:
+    return (
+        CheckConstraint(f"status IN ({_sql_values(states)})", name=f"ck_{prefix}_state"),
+        CheckConstraint(
+            f"(status = '{claimed}' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR "
+            f"(status <> '{claimed}' AND lease_token IS NULL AND lease_expires_at IS NULL)",
+            name=f"ck_{prefix}_lease",
+        ),
+        CheckConstraint(
+            f"(status IN ({_sql_values(DURABLE_TERMINAL)}) AND completed_at IS NOT NULL) OR "
+            f"(status NOT IN ({_sql_values(DURABLE_TERMINAL)}) AND completed_at IS NULL)",
+            name=f"ck_{prefix}_terminal",
+        ),
+        CheckConstraint(
+            f"error_category IS NULL OR error_category IN ({_sql_values(SCORING_ERRORS)})",
+            name=f"ck_{prefix}_error",
+        ),
+    )
+
+
+class ScoringCapacity(Base):
+    __tablename__ = "scoring_capacity"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_capacity_singleton"),
+        CheckConstraint("live_intents BETWEEN 0 AND 1000", name="ck_capacity_intents"),
+        CheckConstraint("live_children BETWEEN 0 AND 10000", name="ck_capacity_children"),
+        CheckConstraint("reserved_units BETWEEN 0 AND 100000", name="ck_capacity_units"),
+        CheckConstraint("running_pairs BETWEEN 0 AND 2", name="ck_capacity_running"),
+        CheckConstraint("admitted_roots_today BETWEEN 0 AND 1000", name="ck_capacity_daily_roots"),
+        CheckConstraint("admitted_units_today BETWEEN 0 AND 100000", name="ck_capacity_daily_units"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    live_intents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    live_children: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reserved_units: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    running_pairs: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    admission_day: Mapped[DateValue | None] = mapped_column(Date)
+    admitted_roots_today: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    admitted_units_today: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    updated_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ScoringIntent(Base):
+    __tablename__ = "scoring_intents"
+    __table_args__ = (
+        *_durable_checks("intent", "EXPANDING", ("PENDING", "EXPANDING", "WAITING", *DURABLE_TERMINAL)),
+        CheckConstraint(
+            "(scope = 'JOB_FANOUT' AND job_id IS NOT NULL AND job_generation IS NOT NULL AND user_id IS NULL) OR "
+            "(scope = 'USER_REFRESH' AND user_id IS NOT NULL AND user_generation IS NOT NULL AND job_id IS NULL) OR "
+            "(scope = 'PAIR_REFRESH' AND user_id IS NOT NULL AND user_generation IS NOT NULL "
+            "AND job_id IS NOT NULL AND job_generation IS NOT NULL)",
+            name="ck_intent_scope",
+        ),
+        CheckConstraint("cursor_id >= 0 AND cursor_id <= target_upper_id", name="ck_intent_cursor"),
+        CheckConstraint(
+            "remaining_units >= 0 AND unfinished_children >= 0 AND failed_children >= 0", name="ck_intent_units"
+        ),
+        CheckConstraint(
+            "expansion_attempts BETWEEN 0 AND 3 AND selection_days BETWEEN 1 AND 60", name="ck_intent_bounds"
+        ),
+        CheckConstraint("score_version >= 0", name="ck_intent_version"),
+        Index("ix_intent_due", "next_attempt_at", "id", postgresql_where=text("status = 'PENDING'")),
+        Index("ix_intent_expiry", "lease_expires_at", "id", postgresql_where=text("status = 'EXPANDING'")),
+        Index("ix_intent_user", "user_id", "user_generation"),
+        Index("ix_intent_job", "job_id", "job_generation"),
+        Index("ix_intent_deadline", "status", "deadline_at"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    operation_key: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("job_postings.id", ondelete="RESTRICT"))
+    user_generation: Mapped[int | None] = mapped_column(BigInteger)
+    job_generation: Mapped[int | None] = mapped_column(BigInteger)
+    score_version: Mapped[int] = mapped_column(Integer)
+    reference_date: Mapped[DateValue] = mapped_column(Date)
+    selection_days: Mapped[int] = mapped_column(Integer, default=7)
+    include_unknown_dates: Mapped[bool] = mapped_column(Boolean, default=False)
+    cutoff_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    target_upper_id: Mapped[int] = mapped_column(BigInteger)
+    cursor_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    remaining_units: Mapped[int] = mapped_column(BigInteger)
+    unfinished_children: Mapped[int] = mapped_column(Integer, default=0)
+    failed_children: Mapped[int] = mapped_column(Integer, default=0)
+    expansion_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    expansion_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING")
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_expires_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deadline_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    error_category: Mapped[str | None] = mapped_column(String(40))
+
+
+class ScoringJob(Base):
+    __tablename__ = "scoring_jobs"
+    __table_args__ = (
+        *_durable_checks("scoring_job", "CLAIMED", DURABLE_STATES),
+        UniqueConstraint("intent_id", "user_id", "job_id", name="uq_scoring_intent_pair"),
+        CheckConstraint("attempt_count BETWEEN 0 AND 6", name="ck_scoring_job_attempts"),
+        CheckConstraint(
+            "user_generation >= 0 AND job_generation >= 0 AND score_version >= 0", name="ck_scoring_job_generations"
+        ),
+        CheckConstraint("digest_schema = 1", name="ck_scoring_digest_schema"),
+        CheckConstraint(
+            "outcome IS NULL OR outcome IN ('SCORE','PROFILE_INCOMPLETE','REUSED_EXISTING')", name="ck_scoring_outcome"
+        ),
+        Index("ix_scoring_due", "next_attempt_at", "id", postgresql_where=text("status IN ('PENDING','RETRY_WAIT')")),
+        Index("ix_scoring_expired", "lease_expires_at", "id", postgresql_where=text("status = 'CLAIMED'")),
+        Index("ix_scoring_user", "user_id", "status"),
+        Index("ix_scoring_parent", "intent_id", "status"),
+        Index("ix_scoring_operation", "operation_digest"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    intent_id: Mapped[int] = mapped_column(ForeignKey("scoring_intents.id", ondelete="RESTRICT"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    job_id: Mapped[int] = mapped_column(ForeignKey("job_postings.id", ondelete="RESTRICT"))
+    user_generation: Mapped[int] = mapped_column(BigInteger)
+    job_generation: Mapped[int] = mapped_column(BigInteger)
+    score_version: Mapped[int] = mapped_column(Integer)
+    input_digest: Mapped[str] = mapped_column(String(64))
+    operation_digest: Mapped[str] = mapped_column(String(64))
+    digest_schema: Mapped[int] = mapped_column(Integer, default=1)
+    reference_date: Mapped[DateValue] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_expires_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deadline_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    error_category: Mapped[str | None] = mapped_column(String(40))
+    outcome: Mapped[str | None] = mapped_column(String(30))
+
+
+User.__table__.append_constraint(CheckConstraint("scoring_generation >= 0", name="ck_user_scoring_generation"))
+User.__table__.append_constraint(CheckConstraint("scoring_roots_today >= 0", name="ck_user_scoring_roots"))
+JobPosting.__table__.append_constraint(CheckConstraint("scoring_generation >= 0", name="ck_posting_scoring_generation"))
+ScoringJob.__table__.append_constraint(
+    CheckConstraint("length(input_digest) = 64 AND length(operation_digest) = 64", name="ck_scoring_hashes")
+)
+ScoringJob.__table__.append_constraint(
+    CheckConstraint("status <> 'SUCCEEDED' OR outcome IS NOT NULL", name="ck_scoring_success_outcome")
+)
+ScoringIntent.__table__.append_constraint(
+    CheckConstraint(
+        "length(operation_key) = 64 AND (user_generation IS NULL OR user_generation >= 0) "
+        "AND (job_generation IS NULL OR job_generation >= 0)",
+        name="ck_intent_identity",
+    )
+)

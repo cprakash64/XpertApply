@@ -22,8 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -138,14 +138,16 @@ def has_scorable_profile(profile: UserProfile | None) -> bool:
     return bool((profile.target_roles or []) or (profile.skills or []))
 
 
-def build_profile_view(db: Session, user_id: int) -> tuple[ProfileView, SearchCriteria] | None:
+def build_profile_view(
+    db: Session, user_id: int, *, reference_date: date | None = None
+) -> tuple[ProfileView, SearchCriteria] | None:
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
     if profile is None:
         return None
     experiences = list(db.scalars(select(Experience).where(Experience.user_id == user_id)).all())
     projects = list(db.scalars(select(Project).where(Project.user_id == user_id)).all())
     education = list(db.scalars(select(Education).where(Education.user_id == user_id)).all())
-    criteria = build_search_criteria(profile, experiences)
+    criteria = build_search_criteria(profile, experiences, reference_date=reference_date)
     view = ProfileView(
         target_roles=profile.target_roles or [],
         skills=profile.skills or [],
@@ -433,3 +435,31 @@ def score_users_for_job(
     if commit:
         db.commit()
     return stats
+
+
+DIGEST_SCHEMA = 1
+
+
+def compute_scoring_input_digest(
+    profile: ProfileView | None,
+    job: JobView,
+    criteria: SearchCriteria | None,
+    *,
+    reference_date: date,
+    score_version: int = SCORE_VERSION,
+) -> str:
+    """Dormant v1 identity of exact ordered inputs; never computes a fit score."""
+    payload = {
+        "schema": DIGEST_SCHEMA,
+        "score_version": score_version,
+        "profile": asdict(profile) if profile is not None else None,
+        "job": asdict(job),
+        "criteria": criteria.model_dump(mode="json") if criteria is not None else None,
+    }
+    # reference_date freezes criteria construction; equivalent actual inputs reuse effects.
+    if not isinstance(reference_date, date):
+        raise ValueError("reference_date must be explicit")
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    if len(blob.encode("utf-8")) > 262144:
+        raise ValueError("INPUT_TOO_LARGE")
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()

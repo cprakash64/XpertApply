@@ -9,6 +9,7 @@ but the deterministic expansion always runs so discovery works without AI.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -66,6 +67,8 @@ class SearchCriteria(BaseModel):
 def build_search_criteria(
     profile: UserProfile | None,
     experiences: list[Experience] | None = None,
+    *,
+    reference_date: date | None = None,
 ) -> SearchCriteria:
     if profile is None:
         return SearchCriteria()
@@ -83,7 +86,7 @@ def build_search_criteria(
     if not role_queries:
         role_queries.extend(_skill_role_hints(skills))
 
-    seniority_targets = _seniority_targets(profile.target_levels, experiences)
+    seniority_targets = _seniority_targets(profile.target_levels, experiences, reference_date=reference_date)
 
     return SearchCriteria(
         role_queries=_dedupe(role_queries)[:12],
@@ -110,12 +113,12 @@ def _skill_role_hints(skills: list[str]) -> list[str]:
     return hints or (["Software Engineer"] if skills else [])
 
 
-def _seniority_targets(levels: Any, experiences: list[Experience]) -> list[str]:
+def _seniority_targets(levels: Any, experiences: list[Experience], *, reference_date: date | None = None) -> list[str]:
     targets = _map_levels(_clean_list(levels))
     if targets:
         return targets
     # Infer from years of experience when explicit levels are missing.
-    years = _estimate_years(experiences)
+    years = _estimate_years(experiences, reference_date=reference_date)
     if years is None:
         return []
     if years < 1:
@@ -150,7 +153,7 @@ def _map_levels(levels: list[str]) -> list[str]:
     return _dedupe(mapped)
 
 
-def _estimate_years(experiences: list[Experience]) -> float | None:
+def _estimate_years(experiences: list[Experience], *, reference_date: date | None = None) -> float | None:
     if not experiences:
         return None
     total_days = 0
@@ -159,9 +162,7 @@ def _estimate_years(experiences: list[Experience]) -> float | None:
         if exp.start_date is None:
             continue
         end = exp.end_date
-        from datetime import date
-
-        end_date = end or date.today()
+        end_date = end or reference_date or date.today()
         total_days += max(0, (end_date - exp.start_date).days)
         counted = True
     if not counted:

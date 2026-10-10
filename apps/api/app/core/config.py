@@ -66,6 +66,8 @@ def _tolerate_csv(source):
 
 
 class Settings(BaseSettings):
+    durable_scoring_enabled: bool = False
+
     # How long an explicitly confirmed legal application answer stays
     # trustworthy before the user is asked to reconfirm it. Circumstances
     # change; a confirmation from years ago is not evidence about today.
@@ -425,7 +427,6 @@ class Settings(BaseSettings):
                     return [str(item).strip() for item in parsed if str(item).strip()]
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
-
 
     def docs_are_enabled(self) -> bool:
         """Serve /docs, /redoc and the OpenAPI schema?
