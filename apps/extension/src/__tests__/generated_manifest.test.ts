@@ -7,8 +7,12 @@
  * runs inside iframe#grnhse_iframe, and no amount of coordinator logic could
  * help.
  *
- * Skips (rather than fails) when dist/ has not been built, so `npm test` on a
- * clean checkout is not blocked; CI runs `npm run build` first.
+ * FAILS (never skips) when dist/ has not been built. These assertions are the
+ * executable proof of the host-permission model — nothing is scripted or
+ * reachable on an employer site until the user grants it — so a run that
+ * silently omitted them could report success without checking that model at
+ * all. Build first: `npm run verify` runs typecheck, build and test in the one
+ * order that works, and is what CI and `make test-extension` both call.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -51,10 +55,17 @@ function matchPatternMatches(pattern: string, url: string): boolean {
   return pathRe.test(target.pathname + target.search);
 }
 
-const distExists = existsSync(DIST_MANIFEST);
-const manifest = distExists ? JSON.parse(readFileSync(DIST_MANIFEST, "utf-8")) : null;
+// Thrown at load, not conditionally skipped: a missing build must turn the run
+// red with an instruction, not green with fewer tests.
+if (!existsSync(DIST_MANIFEST)) {
+  throw new Error(
+    "dist/manifest.json is missing, so the generated production manifest cannot be verified. " +
+      "Run `npm run verify` (typecheck, build, test), or `npm run build` before `npm test`."
+  );
+}
+const manifest = JSON.parse(readFileSync(DIST_MANIFEST, "utf-8"));
 
-describe.skipIf(!distExists)("generated dist/manifest.json", () => {
+describe("generated dist/manifest.json", () => {
   it("is Manifest V3", () => {
     expect(manifest.manifest_version).toBe(3);
   });
@@ -138,10 +149,8 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
   });
 });
 
-describe.skipIf(!distExists)("built content bundle", () => {
-  const bundle = distExists
-    ? readFileSync(path.join(here, "..", "..", "dist", "content.js"), "utf-8")
-    : "";
+describe("built content bundle", () => {
+  const bundle = readFileSync(path.join(here, "..", "..", "dist", "content.js"), "utf-8");
 
   it("contains the activation coordinator, not just the source tree", () => {
     // Proves the shipped artifact — not merely the repo — carries the fix.

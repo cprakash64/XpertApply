@@ -69,23 +69,16 @@ jobs:
         # package.json, and CI must not silently resolve a dependency tree
         # different from the one the release package is built from.
         run: npm ci
-      - name: Typecheck extension
+      - name: Verify extension
         working-directory: apps/extension
-        run: npm run typecheck
-      - name: Build extension
-        working-directory: apps/extension
-        # BEFORE the tests, deliberately. dist/ is not committed, and
-        # src/__tests__/generated_manifest.test.ts asserts against the
-        # GENERATED dist/manifest.json — the artifact Chrome actually loads,
-        # including that host_permissions cannot reach an employer frame until
-        # the user grants it. That spec skips itself when dist/ is absent, so
-        # running the tests first would quietly skip the permission-model
-        # assertions instead of enforcing them. Build also uses the production
-        # profile, so a build that cannot produce a shippable artifact fails.
-        run: npm run build
-      - name: Test extension
-        working-directory: apps/extension
-        run: npm test
+        # typecheck -> production build -> tests, as one script so CI, the
+        # Makefile and developers cannot drift apart. The order is load-bearing:
+        # generated_manifest.test.ts asserts against the GENERATED
+        # dist/manifest.json (the artifact Chrome loads, including that no
+        # employer origin is reachable until the user grants it) and fails
+        # outright if the build has not run. Worker count is bounded by
+        # `maxWorkers` in vitest.config.ts, not by flags here.
+        run: npm run verify
 
   docker:
     runs-on: ubuntu-latest

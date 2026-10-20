@@ -44,10 +44,11 @@ test-web:
 	cd apps/web && npm run build
 	cd apps/web && npm test
 
+# `verify` is typecheck -> build -> test, in that order on purpose: the generated
+# manifest test reads dist/manifest.json, so the build must come first. CI runs
+# the same script.
 test-extension:
-	cd apps/extension && npm run typecheck
-	cd apps/extension && npm test
-	cd apps/extension && npm run build
+	cd apps/extension && npm run verify
 
 evaluate-people:
 	$(API_PYTHON) evaluation/people_recommendations/evaluate.py
