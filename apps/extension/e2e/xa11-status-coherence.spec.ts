@@ -4,6 +4,7 @@ import { containSyntheticNetwork } from "./network-containment";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
@@ -198,7 +199,7 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
     expect(confirmation).toBe(2);
     let completions=0;
     await fixture.route("**/application-sessions/911/complete",route=>{completions++;return route.fulfill({status:200,contentType:"application/json",body:"{}"})});
-    const complete=page.locator("#xpertapply-assistant-overlay-v1 #complete");await expect(complete).toBeDisabled();
+    await expect.poll(()=>overlayCdp(page).isDisabled("#complete")).toBe(true);
     const tabId=authoritative.tabId;
     const stores=()=>worker.evaluate(async id=>{const s=await chrome.storage.session.get(["viewStates","sessionPackages","pendingLaunches"]);return {view:s.viewStates?.[String(id)]??null,packagePresent:!!s.sessionPackages?.[String(id)],pendingPresent:!!s.pendingLaunches?.[String(id)]};},tabId);
     const before=await stores();
@@ -210,7 +211,7 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
       const card=cards.find(c=>c.title.includes(label));expect(card).toBeTruthy();
       expect(await widget.probe<boolean>(`function(id,value){const c=this.querySelector('[data-item="'+id+'"]');const i=c?.querySelector('input[type=text]');if(!i)return false;i.value=value;const save=c.querySelector('input[type=checkbox]');if(save)save.checked=false;const b=Array.from(c.querySelectorAll('button')).find(b=>/Save and fill|Use this answer/.test(b.textContent));if(!b)return false;b.click();return true}`,card!.id,value)).toBe(true);
     }
-    await expect.poll(async()=> (await stores()).view?.requiredReviewRemaining).toBe(0);await expect(complete).toBeEnabled();expect(completions).toBe(0);
+    await expect.poll(async()=> (await stores()).view?.requiredReviewRemaining).toBe(0);await expect.poll(()=>overlayCdp(page).isEnabled("#complete")).toBe(true);expect(completions).toBe(0);
     expect(await page.evaluate(()=>(window as any).__xa11Submit)).toBe(0);expect(await page.evaluate(()=>(window as any).__xa11SubmitClicks)).toBe(0);
     network.assertContained();
     expect(authoritative.state).toBe("completed_with_review");

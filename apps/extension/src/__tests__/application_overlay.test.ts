@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_OVERLAY_HOST_ID,
   destroyOverlay,
@@ -10,10 +10,11 @@ import {
   restoreOverlay,
   showOverlay
 } from "../content/applicationOverlay";
+import { installShadowRootCapture, restoreShadowRootCapture, rootOf } from "./shadowRootCapture";
 
 function shell() {
   const host = document.getElementById(APPLICATION_OVERLAY_HOST_ID) as HTMLElement | null;
-  const root = host?.shadowRoot ?? null;
+  const root = rootOf(host);
   return {
     host,
     root,
@@ -22,20 +23,29 @@ function shell() {
   };
 }
 
+beforeEach(() => {
+  installShadowRootCapture();
+});
+
 afterEach(() => {
+  restoreShadowRootCapture();
   destroyOverlay(document);
   document.body.innerHTML = "";
   document.documentElement.removeAttribute("style");
 });
 
 describe("application overlay lifecycle", () => {
-  it("creates exactly one collision-resistant host with an open ShadowRoot", () => {
+  it("creates exactly one collision-resistant host with a CLOSED ShadowRoot", () => {
     const first = ensureOverlay(document);
     const second = ensureOverlay(document);
     expect(first).toBe(second);
     expect(first.host.id).toBe(APPLICATION_OVERLAY_HOST_ID);
-    expect(first.root.mode).toBe("open");
-    expect(first.host.shadowRoot).toBe(first.root);
+    // Closed: the page, and any third-party script on it, gets null from
+    // `host.shadowRoot`. The extension keeps its own reference (controller.root).
+    expect(first.root.mode).toBe("closed");
+    expect(first.host.shadowRoot).toBeNull();
+    expect(document.getElementById(APPLICATION_OVERLAY_HOST_ID)!.shadowRoot).toBeNull();
+    expect(rootOf(first.host)).toBe(first.root);
     expect(document.querySelectorAll(`#${APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
     expect(getOverlayState(document)).toBe("HIDDEN");
   });
@@ -178,5 +188,56 @@ describe("application overlay isolation and accessibility", () => {
     expect(getOverlayState(document)).toBe("ABSENT");
     expect(document.getElementById(APPLICATION_OVERLAY_HOST_ID)).toBeNull();
     expect(document.getElementById("jobpilot-assisted-apply")).toBe(widget);
+  });
+
+  describe("host ownership with a closed root", () => {
+    const worldRoots = () => (globalThis as typeof globalThis & {
+      __xpertapplyOverlayRootsV1__?: WeakMap<Element, ShadowRoot>;
+      __xpertapplyOverlayInstancesV1__?: WeakMap<Document, unknown>;
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      // Hosts live on documentElement, which the file-level cleanup does not clear.
+      document.getElementById(APPLICATION_OVERLAY_HOST_ID)?.remove();
+    });
+
+    it("replaces a stale host left by an earlier extension world, recognised through the extension API", () => {
+      const stale = ensureOverlay(document);
+      const staleHost = stale.host;
+      const staleRoot = stale.root;
+      // Simulate the extension having reloaded: this world no longer knows the host.
+      worldRoots().__xpertapplyOverlayInstancesV1__!.delete(document);
+      worldRoots().__xpertapplyOverlayRootsV1__!.delete(staleHost);
+      vi.stubGlobal("chrome", { dom: { openOrClosedShadowRoot: (el: Element) => (el === staleHost ? staleRoot : null) } });
+
+      const fresh = ensureOverlay(document);
+
+      expect(fresh.host).not.toBe(staleHost);
+      expect(staleHost.isConnected).toBe(false);
+      expect(document.querySelectorAll(`#${APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
+    });
+
+    it("refuses to replace a foreign element that only squats on the host id", () => {
+      const squatter = document.createElement("div");
+      squatter.id = APPLICATION_OVERLAY_HOST_ID;
+      squatter.attachShadow({ mode: "open" }).innerHTML = "<p>not ours</p>";
+      document.documentElement.appendChild(squatter);
+
+      expect(() => ensureOverlay(document)).toThrow("XPERTAPPLY_OVERLAY_HOST_ID_COLLISION");
+      expect(squatter.isConnected).toBe(true);
+    });
+
+    it("fails closed when ownership of a closed host cannot be proven", () => {
+      const stale = ensureOverlay(document);
+      const staleHost = stale.host;
+      worldRoots().__xpertapplyOverlayInstancesV1__!.delete(document);
+      worldRoots().__xpertapplyOverlayRootsV1__!.delete(staleHost);
+      // No chrome.dom, no map entry, closed root: unreadable, so not provably ours.
+      vi.stubGlobal("chrome", undefined);
+
+      expect(() => ensureOverlay(document)).toThrow("XPERTAPPLY_OVERLAY_HOST_ID_COLLISION");
+      expect(staleHost.isConnected).toBe(true);
+    });
   });
 });

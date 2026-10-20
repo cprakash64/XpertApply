@@ -5,6 +5,7 @@ import { containSyntheticNetwork } from "./network-containment";
 import path from "node:path";
 import fs from "node:fs";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 /**
  * "Answer for this application", through the REAL built dist.
@@ -272,14 +273,21 @@ async function seed(worker: Worker, url: string) {
 // Observe semantic readiness in the browser throughout the existing five-second
 // budget. Node expect.poll can stop early when its next backoff exceeds the deadline.
 async function waitForPreparedApplication(page: import("@playwright/test").Page, worker: Worker) {
-  await page.waitForFunction(() => {
-    const root = document.querySelector("#xpertapply-assistant-overlay-v1")?.shadowRoot;
-    const fill = root?.getElementById("fill") as HTMLButtonElement | null;
-    if (!root) return false;
-    return ["Reading the form…", "Filled — review and submit", "Filled — some items need your review"].includes(root.getElementById("stage")?.textContent ?? "")
-      && Number(root.getElementById("discovered")?.textContent) > 0
-      && Boolean(fill && !fill.disabled);
-  }, undefined, { timeout: 5_000 });
+  // The overlay root is closed, so the page cannot be asked about it: read it over CDP. An explicit
+  // deadline loop, for the reason above (and the root is briefly absent while the content script
+  // replaces its host, which a failed read here simply retries).
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const ready = await overlayCdp(page).evaluate((root) => {
+      const fill = root.getElementById("fill") as HTMLButtonElement | null;
+      return ["Reading the form…", "Filled — review and submit", "Filled — some items need your review"].includes(root.getElementById("stage")?.textContent ?? "")
+        && Number(root.getElementById("discovered")?.textContent) > 0
+        && Boolean(fill && !fill.disabled);
+    }).catch(() => false);
+    if (ready) break;
+    if (Date.now() > deadline) throw new Error("the prepared application was not ready within 5000 ms");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   // One authoritative snapshot, without a second readiness wait or credential output.
   const accepted = await worker.evaluate(async url => {
     const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
@@ -806,7 +814,10 @@ test("the production widget never contradicts its own totals", async ({
       const original = navigator.clipboard.writeText;
       navigator.clipboard.writeText = async text => { counts = JSON.parse(text).authoritative.counts; };
       try {
-        const root = document.getElementById("xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector<HTMLElement>("[data-overlay-workflow-facade]")!.shadowRoot!;
+        // Both roots are closed: `shadowRoot` is null even in the extension's isolated world, where
+        // chrome.dom.openOrClosedShadowRoot is the extension-only way in (page scripts do not have it).
+        const overlayRoot = chrome.dom.openOrClosedShadowRoot(document.getElementById("xpertapply-assistant-overlay-v1")!);
+        const root = chrome.dom.openOrClosedShadowRoot(overlayRoot.querySelector<HTMLElement>("[data-overlay-workflow-facade]")!);
         root.querySelector<HTMLButtonElement>('[data-a="diagnostics"]')!.click();
       } finally { navigator.clipboard.writeText = original; }
       return counts;

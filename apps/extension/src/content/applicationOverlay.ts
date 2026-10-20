@@ -26,9 +26,32 @@ interface OverlayInstance {
 const overlayWorld = globalThis as typeof globalThis & {
   __xpertapplyOverlayInstancesV1__?: WeakMap<Document, OverlayInstance>;
   __xpertapplyOverlayDismissedV1__?: WeakSet<Document>;
+  __xpertapplyOverlayRootsV1__?: WeakMap<Element, ShadowRoot>;
 };
 const instances = overlayWorld.__xpertapplyOverlayInstancesV1__ ??= new WeakMap<Document, OverlayInstance>();
 const dismissedDocuments = overlayWorld.__xpertapplyOverlayDismissedV1__ ??= new WeakSet<Document>();
+// The overlay's shadow root is CLOSED, so `host.shadowRoot` is null to everyone,
+// including this file. A page script must not be able to read what the overlay
+// shows or click its buttons (the page, and any third-party tag on it, shares the
+// host's document). So hosts this world created are remembered here, in the
+// extension's isolated world, which page script cannot reach.
+const ownedRoots = overlayWorld.__xpertapplyOverlayRootsV1__ ??= new WeakMap<Element, ShadowRoot>();
+
+/** The shadow root of a host this extension may have created, or null.
+ * `ownedRoots` covers this world; `chrome.dom.openOrClosedShadowRoot` covers a host
+ * left behind by an earlier world (extension reload) whose map entry is gone. It is
+ * only ever used to recognise OUR marker before replacing a stale host. */
+function ownedShadowRoot(host: HTMLElement): ShadowRoot | null {
+  const known = ownedRoots.get(host);
+  if (known) return known;
+  try {
+    const viaExtensionApi = typeof chrome !== "undefined" ? chrome.dom?.openOrClosedShadowRoot?.(host) : null;
+    if (viaExtensionApi) return viaExtensionApi;
+  } catch {
+    // Not available in this context; fall through to the page-visible root.
+  }
+  return host.shadowRoot ?? null;
+}
 const OVERLAY_MARKER = "xpertapply-application-overlay";
 
 export function ensureOverlay(ownerDocument: Document = document): ApplicationOverlayController {
@@ -41,14 +64,19 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
 
   const priorHost = ownerDocument.getElementById(APPLICATION_OVERLAY_HOST_ID);
   if (priorHost) {
-    const ownedRoot = priorHost.shadowRoot?.querySelector(`[data-overlay-root="${OVERLAY_MARKER}"]`);
+    const ownedRoot = ownedShadowRoot(priorHost)?.querySelector(`[data-overlay-root="${OVERLAY_MARKER}"]`);
     if (!ownedRoot) throw new Error("XPERTAPPLY_OVERLAY_HOST_ID_COLLISION");
     priorHost.remove();
   }
 
   const host = ownerDocument.createElement("div");
   host.id = APPLICATION_OVERLAY_HOST_ID;
-  const root = host.attachShadow({ mode: "open" });
+  // CLOSED on purpose, and it must stay closed: with an open root any script on the
+  // employer page could read the overlay (job, company, progress) and synthesise
+  // clicks on Fill / Clear / Mark complete. Tests reach it over the DevTools
+  // Protocol, which can see a closed root from outside the page.
+  const root = host.attachShadow({ mode: "closed" });
+  ownedRoots.set(host, root);
   root.innerHTML = overlayMarkup();
 
   const panel = ownedElement<HTMLElement>(root, "[data-overlay-panel]");

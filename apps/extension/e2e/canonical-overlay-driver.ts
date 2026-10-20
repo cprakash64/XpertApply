@@ -1,6 +1,13 @@
-import { expect, type Page, type Worker, type CDPSession } from "@playwright/test";
+import { expect, type Page, type Worker } from "@playwright/test";
+import { overlayCdp } from "./overlay-cdp";
 
-/** Test-only toolbar-equivalent launch, matching e4oc-r3-overlay's native authority path. */
+/**
+ * Test-only toolbar-equivalent launch, matching e4oc-r3-overlay's native authority path.
+ *
+ * The overlay and widget roots are CLOSED, so everything below goes through
+ * overlay-cdp.ts (DevTools Protocol). Playwright locators and `page.evaluate`
+ * cannot see inside them, by design.
+ */
 export class CanonicalOverlayDriver {
   constructor(private readonly page: Page) {}
   static async openFromToolbar(page: Page, worker: Worker) {
@@ -18,43 +25,31 @@ export class CanonicalOverlayDriver {
     return driver;
   }
   hostCount() { return this.page.locator("#xpertapply-assistant-overlay-v1").count(); }
-  async status() { return this.page.locator("#xpertapply-assistant-overlay-v1 #stage").innerText(); }
-  async error() { return this.page.locator("#xpertapply-assistant-overlay-v1 #errors").innerText(); }
-  async fill() { await this.page.locator("#xpertapply-assistant-overlay-v1 #fill").click(); }
-  async clear() { await this.page.locator("#xpertapply-assistant-overlay-v1 #clear").click(); }
+  async status() { return overlayCdp(this.page).innerText("#stage"); }
+  async error() { return overlayCdp(this.page).innerText("#errors"); }
+  async fill() { await overlayCdp(this.page).click("#fill"); }
+  async clear() { await overlayCdp(this.page).click("#clear"); }
 
   async probe<T>(fn: string, ...args: unknown[]): Promise<T> { return this.call<T>(fn, ...args); }
   async inspectLayout() {
-    return this.page.evaluate(() => {
-      const root = document.querySelector("#xpertapply-assistant-overlay-v1")!.shadowRoot!;
+    return overlayCdp(this.page).evaluate((root) => {
       const box = root.querySelector<HTMLElement>("[data-overlay-panel]")!;
       const body = root.querySelector<HTMLElement>(".body")!;
       const rect = (el: HTMLElement) => { const r=el.getBoundingClientRect(); return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}; };
       return { viewport:{width:innerWidth,height:innerHeight}, box:rect(box), body:{...rect(body),scrollHeight:body.scrollHeight,clientHeight:body.clientHeight}, horizontalOverflow:box.scrollWidth>box.clientWidth||body.scrollWidth>body.clientWidth||box.getBoundingClientRect().left<0||box.getBoundingClientRect().right>innerWidth, name:root.getElementById(box.getAttribute("aria-labelledby")!)!.textContent, panelLive:box.getAttribute("aria-live"), liveRole:root.querySelector(".status")!.getAttribute("role"), live:root.querySelector(".status")!.getAttribute("aria-live") };
     });
   }
-  private cdp?: CDPSession;
   static async attach(page: Page) {
     const driver = new CanonicalOverlayDriver(page);
     await expect(page.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1);
     return driver;
   }
+  /** Runs `fn` with the review widget's own CLOSED root, nested inside the overlay's, as `this`. */
   private async call<T>(fn: string, ...args: unknown[]): Promise<T> {
-    this.cdp ??= await this.page.context().newCDPSession(this.page);
-    const { result: root } = await this.cdp.send("Runtime.evaluate", {
-      expression: "document.querySelector('#xpertapply-assistant-overlay-v1')?.shadowRoot?.querySelector('[data-overlay-workflow-facade]')?.shadowRoot"
-    });
-    if (!root.objectId) throw new Error("Current canonical answer/review surface absent");
-    const { result, exceptionDetails } = await this.cdp.send("Runtime.callFunctionOn", {
-      objectId: root.objectId, functionDeclaration: fn,
-      arguments: args.map(value => ({value})), returnByValue: true, awaitPromise: true
-    });
-    if (exceptionDetails) throw new Error(exceptionDetails.text);
-    return result.value as T;
+    return overlayCdp(this.page).call<T>(fn, args, "widget");
   }
   async summary() {
-    return this.page.evaluate(() => {
-      const root = document.querySelector("#xpertapply-assistant-overlay-v1")!.shadowRoot!;
+    return overlayCdp(this.page).evaluate((root) => {
       const number = (id: string) => Number(root.getElementById(id)!.textContent);
       return { title: root.getElementById("stage")!.textContent!, filled: number("filled"), discovered: number("discovered"), review: number("review"), skipped: number("skipped") };
     });

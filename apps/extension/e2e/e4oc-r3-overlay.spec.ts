@@ -2,6 +2,7 @@ import { expect, test, chromium, type Page } from "@playwright/test";
 import { OwnedPackageFixture } from "./owned-package-fixture";
 import { containSyntheticNetwork } from "./network-containment";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 import { createServer } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -270,10 +271,9 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
 
 
-    await page.waitForFunction(() => {
-      const root = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot;
-      return root && Number(root.getElementById("discovered")?.textContent) > 0 && root.getElementById("ats")?.textContent !== "Detecting…";
-    }, undefined, { timeout: 20_000 });
+    await overlayCdp(page).waitFor((root) =>
+      Number(root.getElementById("discovered")?.textContent) > 0 && root.getElementById("ats")?.textContent !== "Detecting…",
+      { timeout: 20_000 });
 
     const hostCount = await page.locator("#xpertapply-assistant-overlay-v1").count();
     expect(hostCount).toBe(1);
@@ -282,9 +282,8 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     const beforeFillMutationCount = await page.evaluate(() => (window as any).__e4odFormMutations);
     expect(beforeFillMutationCount).toBe(0);
 
-    const overlay = await page.evaluate(() => {
-      const host = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!;
-      const root = host.shadowRoot!;
+    const overlay = await overlayCdp(page).evaluate((root) => {
+      const host = root.host as HTMLElement;
       const panel = root.querySelector<HTMLElement>("[data-overlay-panel]")!;
       const style = getComputedStyle(panel);
       return { text: root.textContent ?? "", discovered: Number(root.getElementById("discovered")?.textContent), ats: root.getElementById("ats")?.textContent, right: style.right, bottom: style.bottom, top: style.top, borderRadius: style.borderRadius, backdropFilter: style.backdropFilter, boxShadow: style.boxShadow, background: style.backgroundColor };
@@ -333,7 +332,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
         await chrome.storage.session.set({ viewStates: views });
         return emittedAt;
       }, tabId);
-      await page.waitForFunction(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent?.includes("Event latency marker"));
+      await overlayCdp(page).waitFor((root) => root.getElementById("job")?.textContent?.includes("Event latency marker") === true);
     }
 
 
@@ -387,13 +386,12 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       });
       await expect.poll(readRecoveryMessages, { timeout: 5_000 }).toEqual({ context: 1, view: 1 });
       // Handler entry counts precede asynchronous responses and rendering.
-      await expect(page.locator("#fill")).toBeEnabled();
-      const postRestart = await page.evaluate(() => {
-        const host = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1");
-        const root = host?.shadowRoot;
+      await expect.poll(() => overlayCdp(page).isEnabled("#fill")).toBe(true);
+      const postRestart = await overlayCdp(page).evaluate((root) => {
+        const host = root.host as HTMLElement;
         return { hostCount: document.querySelectorAll("#xpertapply-assistant-overlay-v1").length,
-          state: host?.dataset.overlayState, discovered: Number(root?.getElementById("discovered")?.textContent),
-          fillDisabled: (root?.getElementById("fill") as HTMLButtonElement | null)?.disabled };
+          state: host.dataset.overlayState, discovered: Number(root.getElementById("discovered")?.textContent),
+          fillDisabled: (root.getElementById("fill") as HTMLButtonElement | null)?.disabled };
       });
       expect(postRestart).toMatchObject({ hostCount: 1, state: "open", discovered: 10, fillDisabled: false });
       const restartMetricsAfter = await metricsFor();
@@ -402,18 +400,18 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
     }
 
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.getElementById("fill") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("#fill");
 
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>("#first")?.value === "Riley");
     const afterFill = await formValues(page);
     expect(afterFill).toMatchObject({ first: "Riley", last: "Candidate", email: "riley@example.test", phone: "+16025550199", city: "Phoenix", linkedin: "https://www.linkedin.com/in/riley-candidate", country: "United States", authorized: true, privacy: false, motivation: "" });
     expect(await page.evaluate(() => (window as any).__acceptance.submits)).toBe(0);
 
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-minimize]") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("[data-overlay-minimize]");
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.dataset.overlayState)).toBe("minimized");
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-restore]") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("[data-overlay-restore]");
     expect(await page.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.dataset.overlayState)).toBe("open");
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-close]") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("[data-overlay-close]");
     expect(await page.locator("#xpertapply-assistant-overlay-v1").count()).toBe(0);
 
     // Explicit action reopens the same document; passive workflow updates do not.
@@ -422,8 +420,8 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
     for (const width of [340, 375, 400, 420]) {
       await page.setViewportSize({ width, height: 720 });
-      const bounds = await page.evaluate(() => {
-        const panel = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector<HTMLElement>("[data-overlay-panel]")!;
+      const bounds = await overlayCdp(page).evaluate((root) => {
+        const panel = root.querySelector<HTMLElement>("[data-overlay-panel]")!;
         const box = panel.getBoundingClientRect();
         return { left: box.left, right: box.right, viewport: innerWidth, bodyOverflow: document.documentElement.scrollWidth > innerWidth };
       });
@@ -432,8 +430,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
     for (const height of [500, 600, 700, 900]) {
       await page.setViewportSize({ width: 1280, height });
-      const result = await page.evaluate(() => {
-        const root = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!;
+      const result = await overlayCdp(page).evaluate((root) => {
         const panel = root.querySelector<HTMLElement>("[data-overlay-panel]")!;
         const body = root.querySelector<HTMLElement>(".body")!;
         const box = panel.getBoundingClientRect();
@@ -446,11 +443,10 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       expect(result.bottomGap).toBeGreaterThanOrEqual(0);
       expect(result.closeVisible).toBe(true); expect(result.minimizeVisible).toBe(true);
       expect(result.bottomGap).toBe(18);
-      const fill = page.locator("#xpertapply-assistant-overlay-v1").locator("#fill");
-      await fill.scrollIntoViewIfNeeded();
-      await expect(fill).toBeInViewport();
-      await expect(page.locator("[data-overlay-close]")).toBeInViewport();
-      await expect(page.locator("[data-overlay-minimize]")).toBeInViewport();
+      await overlayCdp(page).scrollIntoView("#fill");
+      await expect.poll(() => overlayCdp(page).inViewport("#fill")).toBe(true);
+      await expect.poll(() => overlayCdp(page).inViewport("[data-overlay-close]")).toBe(true);
+      await expect.poll(() => overlayCdp(page).inViewport("[data-overlay-minimize]")).toBe(true);
       await page.evaluate(() => window.scrollTo(0, 100));
       expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
       await page.evaluate(() => window.scrollTo(0, 0));
@@ -462,8 +458,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     for (const zoom of [0.8, 1, 1.25, 1.5, 2]) {
       await worker.evaluate(async ([id, factor]) => chrome.tabs.setZoom(id!, factor), [tabId, zoom] as const);
       await page.waitForTimeout(150);
-      const result = await page.evaluate(() => {
-        const root = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!;
+      const result = await overlayCdp(page).evaluate((root) => {
         const panel = root.querySelector<HTMLElement>("[data-overlay-panel]")!;
         const box = panel.getBoundingClientRect();
         return { left: box.left, right: box.right, viewport: innerWidth,
@@ -474,13 +469,12 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       expect(result.left).toBeGreaterThanOrEqual(0); expect(result.right).toBeLessThanOrEqual(result.viewport);
       expect(result.horizontalOverflow).toBe(false); expect(result.closeVisible).toBe(true); expect(result.minimizeVisible).toBe(true);
       expect(await worker.evaluate(async (id) => chrome.tabs.getZoom(id!), tabId)).toBeCloseTo(zoom);
-      const fill = page.locator("#fill");
-      await fill.scrollIntoViewIfNeeded();
-      await expect(fill).toBeInViewport();
-      await page.locator("[data-overlay-minimize]").click();
-      await expect(page.locator("[data-overlay-restore]")).toBeInViewport();
-      await page.locator("[data-overlay-restore]").click();
-      await page.locator("[data-overlay-close]").click();
+      await overlayCdp(page).scrollIntoView("#fill");
+      await expect.poll(() => overlayCdp(page).inViewport("#fill")).toBe(true);
+      await overlayCdp(page).click("[data-overlay-minimize]");
+      await expect.poll(() => overlayCdp(page).inViewport("[data-overlay-restore]")).toBe(true);
+      await overlayCdp(page).click("[data-overlay-restore]");
+      await overlayCdp(page).click("[data-overlay-close]");
       await worker.evaluate(async (id) => chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 }), tabId);
 
     }
@@ -490,11 +484,11 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
     for (const mode of ["forced-colors", "reduced-motion"]) {
       await page.emulateMedia(mode === "forced-colors" ? { forcedColors: "active" } : { forcedColors: "none", reducedMotion: "reduce" });
-      await page.locator("[data-overlay-minimize]").focus();
+      await overlayCdp(page).focus("[data-overlay-minimize]");
       await page.keyboard.press("Enter");
-      await expect(page.locator("[data-overlay-restore]")).toBeInViewport();
+      await expect.poll(() => overlayCdp(page).inViewport("[data-overlay-restore]")).toBe(true);
       await page.keyboard.press("Enter");
-      await expect(page.locator("[data-overlay-close]")).toBeInViewport();
+      await expect.poll(() => overlayCdp(page).inViewport("[data-overlay-close]")).toBe(true);
 
     }
     await page.emulateMedia({ forcedColors: "none", reducedMotion: "no-preference" });
@@ -555,9 +549,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     // settle on its own content first, so the snapshot is a stable baseline.
     const emptyStatePlaceholder = "Waiting for an application\u2026";
     await expect.poll(async () => {
-      const text = await pageB.evaluate(() =>
-        document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent ?? ""
-      );
+      const text = (await overlayCdp(pageB).text("#job")) ?? "";
       return text !== "" && text !== emptyStatePlaceholder;
     }, { message: "window B's overlay must finish its initial render before the cross-window baseline is taken", timeout: 15_000 }).toBe(true);
 
@@ -570,9 +562,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
         state.__e4odWindowMessages[key] = (state.__e4odWindowMessages[key] ?? 0) + 1;
       });
     });
-    const jobsBeforeCrossWindow = await Promise.all([page, pageB].map((target) => target.evaluate(() =>
-      document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent ?? ""
-    )));
+    const jobsBeforeCrossWindow = await Promise.all([page, pageB].map(async (target) => (await overlayCdp(target).text("#job")) ?? ""));
     await pageB.waitForTimeout(300);
     await worker.evaluate(() => {
       const state = globalThis as typeof globalThis & { __e4odWindowMessages?: Record<string, number> };
@@ -585,11 +575,11 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       await chrome.storage.session.set({ viewStates: views });
     }, [tabId, "Window A authority marker"] as const);
     await page.waitForTimeout(500);
-    const windowADiagnostic = await page.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent ?? "");
+    const windowADiagnostic = (await overlayCdp(page).text("#job")) ?? "";
     const afterAInvalidation = await worker.evaluate(() => (globalThis as typeof globalThis & { __e4odWindowMessages?: Record<string, number> }).__e4odWindowMessages ?? {});
 
     expect(windowADiagnostic).toContain("Window A authority marker");
-    expect(await pageB.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent ?? "")).toBe(jobsBeforeCrossWindow[1]);
+    expect((await overlayCdp(pageB).text("#job")) ?? "").toBe(jobsBeforeCrossWindow[1]);
     expect(afterAInvalidation[String(tabB)] ?? 0).toBe(0);
 
     await worker.evaluate(async ([id, marker]) => {
@@ -598,8 +588,8 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       views[String(id)] = { ...views[String(id)], jobTitle: marker, updatedAt: Date.now() };
       await chrome.storage.session.set({ viewStates: views });
     }, [tabB, "Window B authority marker"] as const);
-    await pageB.waitForFunction(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent?.includes("Window B authority marker"));
-    expect(await page.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent)).toContain("Window A authority marker");
+    await overlayCdp(pageB).waitFor((root) => root.getElementById("job")?.textContent?.includes("Window B authority marker") === true);
+    expect(await overlayCdp(page).text("#job")).toContain("Window A authority marker");
     const afterBInvalidation = await worker.evaluate(() => (globalThis as typeof globalThis & { __e4odWindowMessages?: Record<string, number> }).__e4odWindowMessages ?? {});
     expect(afterBInvalidation[String(tabId)] ?? 0).toBe(afterAInvalidation[String(tabId)] ?? 0);
     await worker.evaluate(async ([a, b]) => {
@@ -608,18 +598,18 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       const other = await chrome.tabs.get(b!);
       await chrome.windows.update(other.windowId, { focused: true });
     }, [tabId, tabB] as const);
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-minimize]") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("[data-overlay-minimize]");
     expect(await pageB.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.dataset.overlayState)).toBe("open");
-    await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-close]") as HTMLButtonElement).click());
+    await overlayCdp(page).clickSynthetic("[data-overlay-close]");
     expect(await pageB.evaluate(() => document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.dataset.overlayState)).toBe("open");
     await worker.evaluate(async (id) => { await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 }); }, tabId);
     await pageB.close();
 
     const structuralSamples: unknown[] = [];
     for (let cycle = 0; cycle < 20; cycle += 1) {
-      await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-minimize]") as HTMLButtonElement).click());
-      await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-restore]") as HTMLButtonElement).click());
-      await page.evaluate(() => (document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")!.shadowRoot!.querySelector("[data-overlay-close]") as HTMLButtonElement).click());
+      await overlayCdp(page).clickSynthetic("[data-overlay-minimize]");
+      await overlayCdp(page).clickSynthetic("[data-overlay-restore]");
+      await overlayCdp(page).clickSynthetic("[data-overlay-close]");
       await worker.evaluate(async (id) => { await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 }); }, tabId);
       const sample = await metricsFor();
       structuralSamples.push(sample);
@@ -647,16 +637,12 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     await expect.poll(async () => (await invalidRegistration.innerText()).toLowerCase()).toContain("stopped");
     await invalidInternals.close();
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await page.waitForFunction(() => {
-      const root = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot;
-      return (root?.getElementById("fill") as HTMLButtonElement | null)?.disabled === true;
-    });
-    const invalidSessionRecovery = await page.evaluate(() => {
-      const host = document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1");
-      const root = host?.shadowRoot;
+    await overlayCdp(page).waitFor((root) => (root.getElementById("fill") as HTMLButtonElement | null)?.disabled === true);
+    const invalidSessionRecovery = await overlayCdp(page).evaluate((root) => {
+      const host = root.host as HTMLElement;
       return { hostCount: document.querySelectorAll("#xpertapply-assistant-overlay-v1").length,
-        state: host?.dataset.overlayState, fillDisabled: (root?.getElementById("fill") as HTMLButtonElement | null)?.disabled,
-        stage: root?.getElementById("stage")?.textContent };
+        state: host.dataset.overlayState, fillDisabled: (root.getElementById("fill") as HTMLButtonElement | null)?.disabled,
+        stage: root.getElementById("stage")?.textContent };
     });
     expect(invalidSessionRecovery).toMatchObject({ hostCount: 1, state: "open", fillDisabled: true });
 

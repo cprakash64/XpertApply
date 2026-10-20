@@ -4,6 +4,7 @@ import { containSyntheticNetwork } from "./network-containment";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
@@ -106,9 +107,10 @@ test("XA-09: shipped MV3 content script refuses a 5,000-control form without tou
     expect(elapsedMs).toBeLessThan(10_000);
     expect(pageState).toEqual({ filled: 0, consent: false, events: { input: 0, submit: 0, submitClick: 0, formMutation: 0 } });
     expect(JSON.stringify(storage)).toContain("APPLICATION_FORM_TOO_LARGE");
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #errors")).toBeVisible();
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #errors")).toContainText(/safe limit.*1,000/);
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #errors")).toContainText("Nothing was filled");
+    // The overlay root is closed, so these read it over CDP (overlay-cdp.ts), polling as the locator did.
+    await expect.poll(() => overlayCdp(page).isVisible("#errors")).toBe(true);
+    await expect.poll(() => overlayCdp(page).innerText("#errors")).toMatch(/safe limit.*1,000/);
+    await expect.poll(() => overlayCdp(page).innerText("#errors")).toContain("Nothing was filled");
     network.assertContained();
     await page.close();
   } finally {

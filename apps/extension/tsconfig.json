@@ -30,6 +30,7 @@
     "src/__tests__/module_reachability.test.ts",
     "src/__tests__/site_access.test.ts",
     "src/__tests__/privacy_disclosure.test.ts",
+    "src/__tests__/overlay_page_isolation.test.ts",
     "src/__tests__/assistant_window.test.ts",
     "src/__tests__/application_answer_fixture.test.ts",
     "src/__tests__/bootstrap_capability.test.ts",

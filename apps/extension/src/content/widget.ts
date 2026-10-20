@@ -240,7 +240,8 @@ export function createWidget(actions: {
   legacyHost.dataset.overlayWorkflowFacade = "";
   const host = legacyHost;
   const disposeSurface = registerApplicationOverlayWorkflowSurface(legacyHost);
-  const root = legacyHost.attachShadow({ mode: "open" });
+  // Closed, as in 0.2.0: employer page scripts must not be able to reach the widget.
+  const root = legacyHost.attachShadow({ mode: "closed" });
   root.innerHTML = `
     <style>
       :host{all:initial}

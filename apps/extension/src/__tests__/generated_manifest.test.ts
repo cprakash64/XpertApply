@@ -15,7 +15,7 @@
  * order that works, and is what CI and `make test-extension` both call.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -180,4 +180,29 @@ it("keeps recovery independent of the webNavigation permission", () => {
   const production = JSON.parse(readFileSync(DIST_MANIFEST, "utf8"));
   expect(production.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
   expect(production.optional_permissions ?? []).not.toContain("webNavigation");
+});
+
+// The shipped bytes, not just the source: a page script must never be able to read
+// or operate the overlay, which requires every shadow root the extension attaches
+// to be closed. (0.3.0 shipped two open roots and nothing failed.)
+describe("built bundles", () => {
+  const distDir = path.join(here, "..", "..", "dist");
+  const bundles = readdirSync(distDir).filter((file) => file.endsWith(".js"));
+
+  it("includes the bundles that can attach a shadow root", () => {
+    expect(bundles).toEqual(expect.arrayContaining(["content.js", "overlayBootstrap.js"]));
+  });
+
+  it("opens no shadow root in any shipped bundle", () => {
+    const offenders = bundles.filter((file) => {
+      const text = readFileSync(path.join(distDir, file), "utf-8");
+      return /attachShadow\(\s*\{[^)]*mode\s*:\s*["'`]open["'`]/s.test(text);
+    });
+    expect(offenders, "every attachShadow in a shipped bundle must be { mode: \"closed\" }").toEqual([]);
+  });
+
+  it("does attach closed roots, so the assertion above is not vacuous", () => {
+    const content = readFileSync(path.join(distDir, "content.js"), "utf-8");
+    expect(content).toMatch(/attachShadow\(\s*\{\s*mode\s*:\s*["']closed["']/);
+  });
 });

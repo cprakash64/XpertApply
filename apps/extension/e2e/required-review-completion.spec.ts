@@ -4,6 +4,7 @@ import { containSyntheticNetwork } from "./network-containment";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
@@ -139,8 +140,7 @@ test(`required-review guard: ${resolveReview ? "explicit review resolution and m
     const before=await stored();
     expect(before).toMatchObject({view:{state:"completed_with_review",discovered:3,filled:1,review:2,required:2},packagePresent:true,pendingPresent:true});
     expect(await widget.summary()).toMatchObject({discovered:3,filled:1,review:2});
-    const complete=page.locator("#xpertapply-assistant-overlay-v1 #complete");
-    await expect(complete).toBeDisabled();
+    await expect.poll(()=>overlayCdp(page).isDisabled("#complete")).toBe(true);
     let completionRequests=0;
     await fixture.route("**/application-sessions/911/complete", route=>{completionRequests++;return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({ok:true})})});
     const send = (sessionId: number) => worker.evaluate(async ({id,sessionId}) => (await chrome.scripting.executeScript({target:{tabId:id,frameIds:[0]},func:async sessionId => chrome.runtime.sendMessage({type:"XPERTAPPLY_OVERLAY_COMPLETE_SESSION",sessionId,requiredReviewRemaining:0,reviewRequired:0}),args:[sessionId]}))[0].result, {id:tabId,sessionId});
@@ -168,10 +168,10 @@ test(`required-review guard: ${resolveReview ? "explicit review resolution and m
       await expect.poll(async()=> (await stored()).view?.required).toBe(0);
       const resolved=await stored();
       const summary=await widget.summary();expect([summary.discovered,summary.filled,summary.review]).toEqual([resolved.view!.discovered,resolved.view!.filled,resolved.view!.review]);
-      await expect(complete).toBeEnabled();
-      let dialogs=0;page.once("dialog",dialog=>{dialogs++;expect(dialog.message()).toContain("Confirm you submitted");return dialog.dismiss()});await complete.click();
+      await expect.poll(()=>overlayCdp(page).isEnabled("#complete")).toBe(true);
+      let dialogs=0;page.once("dialog",dialog=>{dialogs++;expect(dialog.message()).toContain("Confirm you submitted");return dialog.dismiss()});await overlayCdp(page).click("#complete");
       expect(dialogs).toBe(1);expect(completionRequests).toBe(0);expect((await stored()).packagePresent).toBe(true);
-      page.once("dialog",dialog=>{dialogs++;return dialog.accept()});await complete.click();
+      page.once("dialog",dialog=>{dialogs++;return dialog.accept()});await overlayCdp(page).click("#complete");
       await expect.poll(async()=> (await stored()).packagePresent).toBe(false);
       expect(completionRequests).toBe(1);expect(dialogs).toBe(2);
       expect(await stored()).toEqual({view:null,packagePresent:false,pendingPresent:false});

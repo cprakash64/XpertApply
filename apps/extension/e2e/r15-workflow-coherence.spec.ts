@@ -4,6 +4,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 const DIST = process.env.XA_E2E_DIST ?? path.resolve("dist-e2e-granted");
 
@@ -106,7 +107,7 @@ test("R15 trusted child progress survives physical worker restart and stays idle
     });
     expect(matchedFrames()).toEqual(expectedFrames);
     testInfo.annotations.push({ type: "r15-readiness", description: JSON.stringify({ top: readyFrames.get(expectedFrames[0])!, child: readyFrames.get(expectedFrames[1])!, matched1, matched2, assertionStarted: readinessStarted - launchedAt, assertionFinished: performance.now() - launchedAt, completed: performance.now() - readinessStarted }) });
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #fill")).toBeEnabled(); await driver.fill();
+    await expect.poll(() => overlayCdp(page).isEnabled("#fill")).toBe(true); await driver.fill();
     const child = page.frames().find(f => f.url() === `${origin}/apply/child`)!;
     await expect(child.locator("#first")).toHaveValue("Riley"); await expect(child.locator("#email")).toHaveValue("riley@example.test");
     await expect(child.locator("#manual")).toHaveValue(""); await expect(child.locator("#privacy")).not.toBeChecked();

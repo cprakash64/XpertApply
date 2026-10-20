@@ -4,6 +4,7 @@ import { containSyntheticNetwork } from "./network-containment";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CanonicalOverlayDriver } from "./canonical-overlay-driver";
+import { overlayCdp } from "./overlay-cdp";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist-e2e-granted");
@@ -132,7 +133,7 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     const tabId = await worker.evaluate(async url => (await chrome.tabs.query({url}))[0].id!,applicationUrl);
     const state = () => worker.evaluate(async id => {const s=await chrome.storage.session.get(["viewStates","sessionPackages","pendingLaunches"]);return {view:s.viewStates?.[String(id)]??null,packagePresent:!!s.sessionPackages?.[String(id)],pendingPresent:!!s.pendingLaunches?.[String(id)]};},tabId);
     await expect.poll(async()=>(await state()).view?.requiredReviewRemaining).toBe(2);
-    const completeBefore=page.locator("#xpertapply-assistant-overlay-v1 #complete");await expect(completeBefore).toBeDisabled();
+    await expect.poll(()=>overlayCdp(page).isDisabled("#complete")).toBe(true);
     let completionRequests=0;
     await fixture.route("**/application-sessions/911/complete",route=>{completionRequests++;return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({detail:"Synthetic completion rejection"})})});
     const before=await state();
@@ -140,7 +141,7 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     expect(bypass).toMatchObject({ok:false,error:"REQUIRED_REVIEW_REMAINING"});expect(completionRequests).toBe(0);expect(await state()).toEqual(before);
     await page.locator("#outside").click();expect(await page.evaluate(()=>(window as any).__outsideClicks)).toBe(1);expect(await widget.hostCount()).toBe(1);
     expect(await page.locator("body").getAttribute("inert")).toBeNull();
-    expect(await page.locator("[data-overlay-panel]").getAttribute("aria-modal")).not.toBe("true");
+    expect(await overlayCdp(page).attr("[data-overlay-panel]","aria-modal")).not.toBe("true");
     await page.mouse.move(50,500);await page.mouse.wheel(0,500);await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(0);await page.evaluate(()=>scrollTo(0,0));
     const results=[];
     for(const [width,height] of [[1280,720],[1366,768],[1440,900],[1280,640],[1280,600],[320,720],[375,720],[768,720]]) {
@@ -152,8 +153,8 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
         expect(m.box.top).toBeGreaterThanOrEqual(0);expect(m.box.bottom).toBeLessThanOrEqual(m.viewport.height);
         expect(m.horizontalOverflow).toBe(false);expect(m.panelLive).toBeNull();
         expect(m.name?.trim()).toBe("XpertApply");expect(m.liveRole).toBe("status");expect(m.live).toBe("polite");
-        await page.locator("#xpertapply-assistant-overlay-v1 #complete").scrollIntoViewIfNeeded();
-        await expect(page.locator("#xpertapply-assistant-overlay-v1 #complete")).toBeInViewport();
+        await overlayCdp(page).scrollIntoView("#complete");
+        await expect.poll(()=>overlayCdp(page).inViewport("#complete")).toBe(true);
       }
     }
     await worker.evaluate(async id=>chrome.tabs.setZoom(id,1),tabId);
@@ -164,8 +165,8 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     for(const height of [900,600,640,720,900]) {
       await page.setViewportSize({width:1280,height});
       const state=await widget.inspectLayout();expect(state.body.scrollHeight).toBeGreaterThan(state.body.clientHeight);expect(state.horizontalOverflow).toBe(false);
-      await page.locator("#xpertapply-assistant-overlay-v1 #complete").scrollIntoViewIfNeeded();
-      await expect(page.locator("#xpertapply-assistant-overlay-v1 #complete")).toBeInViewport();
+      await overlayCdp(page).scrollIntoView("#complete");
+      await expect.poll(()=>overlayCdp(page).inViewport("#complete")).toBe(true);
       const focus=await widget.probe<{focused:boolean,top:number,bottom:number}>(`function(){const button=this.querySelector('.review-panel .item:last-child button');button.blur();button.focus();const r=button.getBoundingClientRect();return {focused:this.activeElement===button,top:r.top,bottom:r.bottom}}`);
       const body=(await widget.inspectLayout()).body;
       expect(focus.focused).toBe(true);expect(focus.top).toBeGreaterThanOrEqual(body.top);expect(focus.bottom).toBeLessThanOrEqual(body.bottom);
@@ -173,10 +174,10 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     await widget.probe(`function(){this.querySelectorAll('.xa-density-stress').forEach(el=>el.remove())}`);
     await page.emulateMedia({forcedColors:"active",reducedMotion:"reduce"});
     await page.keyboard.press("Tab");
-    await page.locator("[data-overlay-minimize]").focus();
-    const colors=await page.locator("[data-overlay-minimize]").evaluate(el=>{const s=getComputedStyle(el);return {outline:s.outlineStyle,width:s.outlineWidth,transition:s.transitionDuration}});
+    await overlayCdp(page).focus("[data-overlay-minimize]");
+    const colors=await overlayCdp(page).evaluate(root=>{const s=getComputedStyle(root.querySelector<HTMLElement>("[data-overlay-minimize]")!);return {outline:s.outlineStyle,width:s.outlineWidth,transition:s.transitionDuration}});
     expect(colors).toEqual({outline:"solid",width:"3px",transition:"0s"});
-    expect(await page.locator("[data-overlay-panel]").evaluate(el=>getComputedStyle(el).borderTopStyle)).toBe("solid");
+    expect(await overlayCdp(page).evaluate(root=>getComputedStyle(root.querySelector<HTMLElement>("[data-overlay-panel]")!).borderTopStyle)).toBe("solid");
     await page.emulateMedia({forcedColors:"none",reducedMotion:"no-preference"});
     // Observe the containing employer form and consumer message traffic during
     // existing idle verification; the nested facade observer remains below.
@@ -192,24 +193,24 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
       await widget.probe(`function(){this.querySelector('.review-panel .item:not(.resolved) .row button').click()}`);
       await expect.poll(async()=>(await state()).view?.requiredReviewRemaining).toBe(value==="Test"?1:0);
     }
-    const complete=page.locator("#xpertapply-assistant-overlay-v1 #complete");
-    const clear=page.locator("#xpertapply-assistant-overlay-v1 #clear");
-    await clear.scrollIntoViewIfNeeded();await clear.focus();
+    const ov=overlayCdp(page);
+    const completeFocused=()=>ov.evaluate(root=>root.activeElement===root.querySelector("#complete"));
+    await ov.scrollIntoView("#clear");await ov.focus("#clear");
     let reached=false;
-    for(let i=0;i<15;i++){await page.keyboard.press("Tab");if(await complete.evaluate(el=>el.getRootNode() instanceof ShadowRoot&&(el.getRootNode() as ShadowRoot).activeElement===el)){reached=true;break}}
-    expect(reached).toBe(true);await expect(complete).toBeInViewport();await expect(complete).toBeEnabled();
+    for(let i=0;i<15;i++){await page.keyboard.press("Tab");if(await completeFocused()){reached=true;break}}
+    expect(reached).toBe(true);await expect.poll(()=>ov.inViewport("#complete")).toBe(true);await expect.poll(()=>ov.isEnabled("#complete")).toBe(true);
     await expect.poll(async()=>(await state()).view?.requiredReviewRemaining).toBe(0);
     page.once("dialog",dialog=>dialog.accept()); // explicit manual-submission acknowledgment only
     await page.keyboard.press("Enter");
     await expect.poll(()=>widget.error()).toBe("Couldn’t mark complete. Try again.");
-    expect(completionRequests).toBe(1);await expect(complete).toBeEnabled();await expect(complete).toBeInViewport();
+    expect(completionRequests).toBe(1);await expect.poll(()=>ov.isEnabled("#complete")).toBe(true);await expect.poll(()=>ov.inViewport("#complete")).toBe(true);
     expect((await state()).packagePresent).toBe(true);expect((await state()).pendingPresent).toBe(true);
     await page.keyboard.press("Tab");
-    expect(await complete.evaluate(el=>(el.getRootNode() as ShadowRoot).activeElement===el)).toBe(false);
+    expect(await completeFocused()).toBe(false);
     const cdp=await context.newCDPSession(page);const tree=await cdp.send("Accessibility.getFullAXTree");
     expect(tree.nodes.filter(n=>n.role?.value==="complementary"&&n.name?.value==="XpertApply")).toHaveLength(1);
     expect(tree.nodes.filter(n=>n.role?.value==="status")).toHaveLength(1);
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #final")).toContainText("XpertApply never submits for you");
+    await expect.poll(()=>ov.text("#final")).toContain("XpertApply never submits for you");
     await expect(page.locator("#privacy")).not.toBeChecked();
     expect(await page.evaluate(()=>(window as any).__xa11Submit)).toBe(0);
     expect(await page.evaluate(()=>(window as any).__xa16SubmitClicks)).toBe(0);
@@ -223,21 +224,21 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
       expect(response).toMatchObject({ok:true});
     };
     await expect.poll(async()=>{const v=(await state()).view;const s=await widget.summary();return [s.discovered,s.filled,s.review].join('/')=== [v.fieldsDiscovered,v.filled,v.reviewRequired].join('/')}).toBe(true);
-    await page.locator("[data-overlay-minimize]").click();await expect(page.locator("[data-overlay-restore]")).toBeVisible();
+    await ov.click("[data-overlay-minimize]");await expect.poll(()=>ov.isVisible("[data-overlay-restore]")).toBe(true);
     await publish({filled:2,reviewRequired:2});
     await expect.poll(async()=>{const s=await widget.summary();return [s.discovered,s.filled,s.review]}).toEqual([4,2,2]);
-    await page.locator("[data-overlay-restore]").click();
+    await ov.click("[data-overlay-restore]");
     await publish({filled:3,reviewRequired:1});
     await expect.poll(async()=>{const s=await widget.summary();return [s.discovered,s.filled,s.review]}).toEqual([4,3,1]);
-    await page.locator("[data-overlay-close]").click();await expect(page.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(0);
+    await ov.click("[data-overlay-close]");await expect(page.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(0);
     await publish({state:"completed"});await expect.poll(async()=>(await state()).view.state).toBe("completed");await expect(page.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(0);
     await publish({state:"completed_with_review"});
     const passive=await worker.evaluate(async id=>(await chrome.scripting.executeScript({target:{tabId:id,frameIds:[0]},func:async()=>chrome.runtime.sendMessage({type:"JOBPILOT_CONTENT_READY",url:location.href,title:document.title,protocolVersion:3,isTopFrame:true,topUrl:location.href,detectedAts:null})}))[0].result,tabId);
     expect(passive).toMatchObject({matched:true});await expect(page.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(0);
     widget=await CanonicalOverlayDriver.openFromToolbar(page,worker);expect(await widget.hostCount()).toBe(1);
     const reopened=await state();expect([reopened.view.fieldsDiscovered,reopened.view.filled,reopened.view.reviewRequired]).toEqual([4,3,1]);expect(reopened.view.requiredReviewRemaining).toBe(0);await expect.poll(async()=>{const s=await widget.summary();return [s.discovered,s.filled,s.review]}).toEqual([reopened.view.fieldsDiscovered,reopened.view.filled,reopened.view.reviewRequired]);
-    await expect(page.locator("#xpertapply-assistant-overlay-v1 #complete")).toBeEnabled();
-    page.once("dialog",d=>d.accept());await page.locator("#xpertapply-assistant-overlay-v1 #complete").click();await expect.poll(()=>completionRequests).toBe(2);expect((await state()).packagePresent).toBe(true);
+    await expect.poll(()=>ov.isEnabled("#complete")).toBe(true);
+    page.once("dialog",d=>d.accept());await ov.click("#complete");await expect.poll(()=>completionRequests).toBe(2);expect((await state()).packagePresent).toBe(true);
     await expect(page.locator("#privacy")).not.toBeChecked();
     expect(await page.evaluate(()=>(window as any).__xa11Submit)).toBe(0);
     expect(await page.evaluate(()=>(window as any).__xa16SubmitClicks)).toBe(0);

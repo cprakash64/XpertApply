@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MSG } from "../messages";
+import { installShadowRootCapture, restoreShadowRootCapture, rootOf } from "./shadowRootCapture";
 
 type Listener = (message: unknown, sender: chrome.runtime.MessageSender, sendResponse: (value: unknown) => void) => boolean;
 
@@ -11,6 +12,8 @@ describe("dedicated toolbar overlay bootstrap", () => {
   let widgetModule: typeof import("../content/widget");
 
   beforeEach(async () => {
+    // Before any module mounts the overlay, so its CLOSED root is recorded.
+    installShadowRootCapture();
     vi.resetModules();
     listeners.length = 0;
     delete (globalThis as typeof globalThis & { __xpertapplyOverlayBootstrapV1__?: true }).__xpertapplyOverlayBootstrapV1__;
@@ -38,6 +41,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
   });
 
   afterEach(() => {
+    restoreShadowRootCapture();
     overlay.destroyOverlay(document);
     document.getElementById("xpertapply-assistant-overlay-v1")?.remove();
     delete (globalThis as typeof globalThis & { __xpertapplyOverlayBootstrapV1__?: true }).__xpertapplyOverlayBootstrapV1__;
@@ -64,12 +68,12 @@ describe("dedicated toolbar overlay bootstrap", () => {
   it("reuses one host, restores minimized state, and explicitly reopens after close", () => {
     show();
     const first = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!;
-    first.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
+    rootOf(first)?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
     expect(overlay.getOverlayState(document)).toBe("MINIMIZED");
     show();
     expect(overlay.getOverlayState(document)).toBe("OPEN");
     expect(document.querySelectorAll(`#${overlay.APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
-    first.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
+    rootOf(first)?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
     expect(overlay.getOverlayState(document)).toBe("ABSENT");
     show();
     expect(overlay.getOverlayState(document)).toBe("OPEN");
@@ -97,9 +101,9 @@ describe("dedicated toolbar overlay bootstrap", () => {
     show();
     const first = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!;
     show();
-    first.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
+    rootOf(first)?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
     show();
-    first.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
+    rootOf(first)?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
     show();
     overlay.destroyOverlay(document);
     expect(interval).not.toHaveBeenCalled();
@@ -126,7 +130,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage).toHaveBeenNthCalledWith(1, { type: MSG.TOOLBAR_OVERLAY_READY }, expect.any(Function));
     expect(sendMessage).toHaveBeenNthCalledWith(2, { type: MSG.OVERLAY_GET_CONTEXT }, expect.any(Function));
-    host.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
+    rootOf(host)?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
     sendMessage.mockClear();
     window.dispatchEvent(new Event("focus"));
     await Promise.resolve();
@@ -138,7 +142,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     const sendMessage = vi.mocked(chrome.runtime.sendMessage);
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ type: MSG.OVERLAY_GET_CONTEXT }, expect.any(Function)));
     const host = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!;
-    host.shadowRoot!.querySelector<HTMLButtonElement>("[data-overlay-minimize]")!.click();
+    rootOf(host)!.querySelector<HTMLButtonElement>("[data-overlay-minimize]")!.click();
     let complete: ((response?: unknown) => void) | undefined;
     sendMessage.mockClear();
     sendMessage.mockImplementation((_message: unknown, callback: unknown) => {
@@ -148,7 +152,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     listeners[1]({ type: MSG.OVERLAY_VIEW_CHANGED }, { id: "extension-id" }, () => undefined);
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
     expect(overlay.getOverlayState()).toBe("MINIMIZED");
-    host.shadowRoot!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
+    rootOf(host)!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
     complete!({ ok: true, context: { available: true, tabId: 41, status: "bound" } });
     await Promise.resolve();
     await Promise.resolve();
@@ -168,7 +172,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     target.dispatchEvent(new Event(eventName));
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage).toHaveBeenNthCalledWith(1, { type: MSG.TOOLBAR_OVERLAY_READY }, expect.any(Function));
-    document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!.shadowRoot!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
+    rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
     sendMessage.mockClear();
     target.dispatchEvent(new Event(eventName));
     await Promise.resolve();
@@ -200,13 +204,13 @@ describe("dedicated toolbar overlay bootstrap", () => {
     expect(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)).toBeNull();
     show();
     const host = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!;
-    const surface = host.shadowRoot!.querySelector("[data-overlay-workflow-facade]");
+    const surface = rootOf(host)!.querySelector("[data-overlay-workflow-facade]");
     expect(surface).toBeTruthy();
-    host.shadowRoot!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
+    rootOf(host)!.querySelector<HTMLButtonElement>("[data-overlay-close]")!.click();
     widget.update({ stage: "ready", total: 3, filled: 3 });
     expect(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)).toBeNull();
     show();
-    expect(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!.shadowRoot!.querySelector("[data-overlay-workflow-facade]")).toBe(surface);
+    expect(rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))!.querySelector("[data-overlay-workflow-facade]")).toBe(surface);
     expect(document.querySelectorAll(`#${overlay.APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
     widget.destroy();
   });
@@ -223,7 +227,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     });
     show();
     const counts = () => {
-      const root = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!.shadowRoot!;
+      const root = rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))!;
       return ["discovered", "filled", "review"].map(id => Number(root.getElementById(id)!.textContent));
     };
     await vi.waitFor(() => expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: MSG.OVERLAY_GET_VIEW }, expect.any(Function)));
@@ -252,7 +256,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
     const facade = widgetModule.createWidget({ retry: vi.fn(), clear: vi.fn(), complete: vi.fn() });
     facade.update({ stage: "review", total: 4, filled: 0 });
     const counts = () => {
-      const root = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)!.shadowRoot!;
+      const root = rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))!;
       return ["discovered", "filled", "review"].map(id => Number(root.getElementById(id)!.textContent));
     };
     const interval = vi.spyOn(window, "setInterval");
@@ -303,7 +307,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
 
   it("keeps production diagnostics out of the consumer overlay", () => {
     show();
-    const text = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)?.shadowRoot?.textContent ?? "";
+    const text = rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))?.textContent ?? "";
     for (const technical of ["Diagnostics", "overlayBuild", "builtAt", "protocol", "tabId", "documentId", "contentReady", "packageLoaded", "lastFailure"]) {
       expect(text).not.toContain(technical);
     }
@@ -311,7 +315,7 @@ describe("dedicated toolbar overlay bootstrap", () => {
 
   it("uses a responsive bottom-right glass surface for panel and restore pill", () => {
     show();
-    const css = document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID)?.shadowRoot?.querySelector("style")?.textContent ?? "";
+    const css = rootOf(document.getElementById(overlay.APPLICATION_OVERLAY_HOST_ID))?.querySelector("style")?.textContent ?? "";
     const panelRule = css.match(/\.panel\s*\{([^}]+)\}/)?.[1] ?? "";
     expect(panelRule).toContain("right: 18px");
     expect(panelRule).toContain("bottom: 18px");
