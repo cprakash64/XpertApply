@@ -48,6 +48,45 @@ jobs:
         working-directory: apps/web
         run: npm run build
 
+  extension:
+    runs-on: ubuntu-latest
+    # The dropdown adapters do bounded real-time waits, so the suite is not
+    # instant. A wedged vitest worker pool has stalled for minutes at a time
+    # locally, so cap the job rather than let a hung pool hold a runner.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # vitest 4 declares ^20 || ^22 || >=24. Pin 22: it is what the suite
+          # is developed and run against, and 20.x is untested here.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/extension/package-lock.json
+      - name: Install extension
+        working-directory: apps/extension
+        # `npm ci`, not `npm install`: the lockfile is in sync with
+        # package.json, and CI must not silently resolve a dependency tree
+        # different from the one the release package is built from.
+        run: npm ci
+      - name: Typecheck extension
+        working-directory: apps/extension
+        run: npm run typecheck
+      - name: Build extension
+        working-directory: apps/extension
+        # BEFORE the tests, deliberately. dist/ is not committed, and
+        # src/__tests__/generated_manifest.test.ts asserts against the
+        # GENERATED dist/manifest.json — the artifact Chrome actually loads,
+        # including that host_permissions cannot reach an employer frame until
+        # the user grants it. That spec skips itself when dist/ is absent, so
+        # running the tests first would quietly skip the permission-model
+        # assertions instead of enforcing them. Build also uses the production
+        # profile, so a build that cannot produce a shippable artifact fails.
+        run: npm run build
+      - name: Test extension
+        working-directory: apps/extension
+        run: npm test
+
   docker:
     runs-on: ubuntu-latest
     steps:
