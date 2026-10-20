@@ -20,7 +20,17 @@ import fs from "node:fs";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIST = path.resolve(here, "..", "dist");
+/**
+ * The extension build these specs load.
+ *
+ * Stage 3C removed install-time authority over employer/application sites, so a
+ * loopback fixture origin is no longer granted at install. These specs exercise
+ * what the extension does ONCE a user has granted the origin, so they run
+ * against a build with the fixture origins pre-granted — the same state Chrome
+ * is in after the grant. `npm run test:e2e` builds it; the shipped `dist/` is
+ * what the Stage 3C site-access spec asserts against.
+ */
+const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 const FIXTURE = fs.readFileSync(path.join(here, "fixtures", "listing-tiktok.html"), "utf8");
 const UNTRUSTED = fs.readFileSync(path.join(here, "fixtures", "listing-untrusted.html"), "utf8");
 

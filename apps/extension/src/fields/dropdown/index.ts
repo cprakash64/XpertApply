@@ -22,8 +22,7 @@ import {
   locationOptionMatches,
   normalizeForMatch,
   phoneCountryOptionMatches,
-  singletonPrivacyAcknowledgementMatches,
-  singletonRequiredAffirmationMatches
+  singletonPrivacyAcknowledgementMatches
 } from "../aliases";
 import type { DiscoveredField } from "../../types";
 import { deepQuery } from "../../dom/deepDom";
@@ -449,8 +448,7 @@ function matchOption(
       : undefined) ??
     substantive.find((o) => companyCareersSourceMatches(o.label, value)) ??
     substantive.find((o) => singletonPrivacyAcknowledgementMatches(o.label, value, substantive.map((item) => item.label))) ??
-    substantive.find((o) => singletonRequiredAffirmationMatches(o.label, value, substantive.map((item) => item.label))) ??
-    usable.find((o) => aliasMatches(o.label, value)) ??
+usable.find((o) => aliasMatches(o.label, value)) ??
     // Explicit binary facts may be rendered as a verbose sentence by the ATS
     // (`authorized_us` -> "Yes, I am currently legally authorized…").
     usable.find((o) => binaryAnswerMatches(o.label, value)) ??

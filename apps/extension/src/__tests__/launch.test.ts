@@ -40,22 +40,48 @@ describe("manifest ↔ build outputs (build test)", () => {
     expect(PROTOCOL_VERSION).toBe(3);
   });
 
-  it("requests broad host_permissions so any employer-hosted ATS domain works (e.g. MongoDB Careers), not just a known-ATS allowlist", () => {
-    expect(manifest.host_permissions).toEqual(
-      expect.arrayContaining(["https://*/*", "http://localhost/*", "http://127.0.0.1/*"])
-    );
-    // No enumerated ATS hostnames left in host_permissions — the allowlist
-    // approach was the root cause of employer-hosted domains being unreachable.
-    expect(manifest.host_permissions.some((h: string) => h.includes("greenhouse"))).toBe(false);
+  it("does not take employer-site authority at install time (XA-06)", () => {
+    // This assertion used to require the opposite: a wildcard https host
+    // permission, on the reasoning that employer ATS domains cannot be
+    // enumerated. They cannot — but that argument justifies discovering the
+    // origin at RUNTIME, not holding authority over every site from the moment
+    // of install. The wildcard now lives in optional_host_permissions and is
+    // requested one origin at a time.
+    const required: string[] = manifest.host_permissions ?? [];
+    expect(required).not.toContain("https://*/*");
+    expect(required).not.toContain("<all_urls>");
+    expect(required.some((pattern) => /^https:\/\/\*/.test(pattern))).toBe(false);
+    // What remains is first-party only: XpertApply's own web app and its API.
+    for (const pattern of required) {
+      expect(pattern).toMatch(/^https:\/\/([a-z0-9-]+\.)*(xpertapply\.com|jobpilot\.ai|ezjobfind\.com)\//);
+    }
   });
 
-  it("registers the ATS content script on every https(s) page, all_frames, document_idle — an arbitrary employer domain like MongoDB Careers is covered", () => {
-    const atsEntry = manifest.content_scripts.find((c: { matches: string[] }) => c.matches.includes("https://*/*"))!;
-    expect(atsEntry).toBeTruthy();
-    expect(atsEntry.all_frames).toBe(true);
-    expect(atsEntry.run_at).toBe("document_idle");
-    // The XpertApply web origin (bridge role) is excluded from the ATS role.
-    expect(atsEntry.exclude_matches).toEqual(expect.arrayContaining(["https://app.jobpilot.ai/*"]));
+  it("keeps the runtime-discoverable wildcard optional, never required", () => {
+    expect(manifest.optional_host_permissions).toEqual(
+      expect.arrayContaining(["https://*/*"])
+    );
+    // Still no enumerated ATS hostnames: the allowlist approach was the root
+    // cause of employer-hosted domains being unreachable, and it is not what
+    // replaced the wildcard.
+    expect((manifest.optional_host_permissions ?? []).some((h: string) => h.includes("greenhouse"))).toBe(false);
+  });
+
+  it("statically injects only into XpertApply's own origins", () => {
+    // The employer/ATS content script is no longer declarative. It is injected
+    // programmatically once an origin has actually been granted, so an
+    // unrelated site the user visits has no XpertApply code in it at all.
+    const entries: { matches: string[]; all_frames?: boolean }[] = manifest.content_scripts;
+    expect(entries).toHaveLength(1);
+    for (const entry of entries) {
+      for (const pattern of entry.matches) {
+        expect(pattern).toMatch(
+          /^https:\/\/([a-z0-9-]+\.)*(xpertapply\.com|jobpilot\.ai|ezjobfind\.com)\/|^http:\/\/(localhost|127\.0\.0\.1):3000\//
+        );
+      }
+      // The bridge role only ever runs in the top frame of a XpertApply page.
+      expect(entry.all_frames).toBe(false);
+    }
   });
 });
 

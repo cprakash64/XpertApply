@@ -94,6 +94,8 @@ import { claimContentInstance, makeContentInstanceId } from "./instance";
 import { ResolutionRunCoordinator, type EligibilityRun } from "./resolutionRun";
 import { fillStructuredRepeaters } from "../fields/repeaters";
 import { discoverFields } from "../fields/discovery";
+import { checkSemanticCompatibility, isConsequentialKey } from "../fields/answerSemantics";
+import type { CanonicalField } from "../fields/taxonomy";
 import { scan } from "../fields/runner";
 import { AtsLifecycleRun, domMetrics, waitForAtsParse } from "./atsLifecycle";
 import {
@@ -105,8 +107,7 @@ import {
 import {
   frameVerdict,
   observeFrames,
-  reopenableFrameUrl,
-  selectApplicationFrame
+  reopenableFrameUrl
 } from "../frames/frameInventory";
 import { reconcileAtsValues, type ReconciledField } from "./reconciliation";
 import {
@@ -340,6 +341,25 @@ async function requestReconnect(): Promise<boolean> {
   } finally {
     reconnectInFlight = false;
   }
+}
+
+/**
+ * Ask the worker whether THIS frame is the one that fills this tab.
+ *
+ * Sends only its own root verdict; the worker takes the tab and the frame from
+ * `sender`, so a frame cannot claim to be another one. A worker that cannot
+ * answer (older build, transient failure) is treated as a grant: this arbitrates
+ * between frames, and must never be the reason a legitimate single-frame
+ * application stops working.
+ */
+async function requestFillLease(rootConfident: boolean): Promise<{ granted: boolean; reason: string }> {
+  const response = (await sendRuntime({ type: MSG.REQUEST_FILL_LEASE, rootConfident })) as
+    | { granted?: boolean; reason?: string }
+    | undefined;
+  if (!response || typeof response.granted !== "boolean") {
+    return { granted: true, reason: "LEASE_UNAVAILABLE" };
+  }
+  return { granted: response.granted, reason: response.reason ?? "unknown" };
 }
 
 /** Last reconnect outcome, for sanitized diagnostics only. */
@@ -812,14 +832,34 @@ async function reportFrameRemedy(): Promise<void> {
       readableFieldCount: frame.readableFieldCount
     }))
   })) as
-    | { ok?: boolean; outcome?: string; reopenOrigin?: string | null; frames?: unknown[]; enumerationSource?: string; enumerationComplete?: boolean }
+    | {
+        ok?: boolean;
+        outcome?: string;
+        /** The ONE origin the worker has established belongs to this workflow. */
+        candidateOrigin?: string | null;
+        candidateSource?: string | null;
+        frames?: unknown[];
+        enumerationSource?: string;
+        enumerationComplete?: boolean;
+      }
     | undefined;
 
-  const candidate = selectApplicationFrame(observed);
+  // The WORKER decides which origin may be acted on; this side only supplies
+  // observation and, once told, the URL to open. Ranking locally would put that
+  // choice back within reach of the page: an ad or consent iframe can be made
+  // as application-shaped as the real ATS frame, and DOM order is page-
+  // controlled. `candidateOrigin` has already passed originJoinsWorkflow.
+  const trustedOrigin = inspection?.candidateOrigin ?? null;
+  const candidate = trustedOrigin
+    ? observed.find((frame) => frame.origin === trustedOrigin) ?? null
+    : null;
   const reopenUrl = reopenableFrameUrl(candidate, document);
   const outcome = inspection?.outcome
+    // No answer from the worker means no trust decision was made, so there is
+    // no candidate to name. Fail closed rather than falling back to a local
+    // verdict about a frame nobody has vouched for.
     ?? frameVerdict({
-      frame: candidate,
+      frame: null,
       contentScriptResponds: false,
       hostPermissionGranted: false,
       reportedFieldCount: null
@@ -841,8 +881,10 @@ async function reportFrameRemedy(): Promise<void> {
 
   // Prefer asking for the exact origin: it keeps the user in one tab and one
   // session. Reopening is the fallback that works even when no grant can help.
+  // Both remedies target `trustedOrigin` and nothing else — an untrusted frame
+  // was removed upstream, so neither path can name it to the user.
   const permissionOrigin = outcome === "APPLICATION_FRAME_PERMISSION_MISSING"
-    ? inspection?.reopenOrigin ?? candidate?.origin ?? null
+    ? trustedOrigin
     : null;
 
   pendingFrameRemedy = permissionOrigin
@@ -896,8 +938,13 @@ async function applyFrameRemedy(): Promise<boolean> {
       await discoverAndFill("manual_retry");
       return true;
     }
-    // Denied, or the origin is not part of this workflow. Reopening still works.
-    const fallback = reopenableFrameUrl(selectApplicationFrame(observeFrames(document)), document);
+    // Denied, or the origin is not part of this workflow. Reopening still works
+    // — but only for the origin the worker vouched for, never for whatever
+    // frame happens to rank highest in this document.
+    const fallback = reopenableFrameUrl(
+      observeFrames(document).find((frame) => frame.origin === remedy.origin) ?? null,
+      document
+    );
     if (!fallback) {
       widget?.update({
         stage: "failed",
@@ -1477,6 +1524,33 @@ async function fill(reason: AutofillReason): Promise<void> {
     if ((activation === "no_candidate" || activation === "already_activated") && !rootRecoveryAttempted) {
       rootRecoveryAttempted = true;
       await discoverAndFill(reason);
+    }
+    return;
+  }
+
+  // This frame believes it holds the application. So might a sibling: a tab can
+  // contain the real application AND a vendor widget that asks for a name, an
+  // e-mail and a résumé. Exactly one frame per tab may fill, and the worker —
+  // the only party with a tab-wide view — decides which. Asked BEFORE the
+  // document upload and before any value is written.
+  const lease = await requestFillLease(formRoot.confident);
+  if (!lease.granted) {
+    running = false;
+    // A refusal because the worker could not yet establish which frame holds
+    // the application is not terminal — a probe arriving later can settle it,
+    // and latching here would strand a slow-loading embedded application. A
+    // refusal because another frame IS the application is final.
+    const retryable = lease.reason === "FRAME_SELECTION_UNRESOLVED";
+    automaticRunSettled = !retryable;
+    log.info("standing down; this frame is not the application", { reason: lease.reason });
+    // Not a failure: the application is being filled somewhere else in this
+    // tab. Saying so in the widget would put an error on a healthy run.
+    if (isTopFrame) {
+      widget?.update({
+        stage: "detecting",
+        stageLabel: "Application in embedded form",
+        message: "The application is inside an embedded form. XpertApply is filling it there…"
+      });
     }
     return;
   }
@@ -2928,12 +3002,63 @@ async function enumerateClosedControls(
   return enumeratedOptions;
 }
 
+/**
+ * May the backend resolver's answer for this control be written?
+ *
+ * Applies the SAME semantic compatibility rules the local fill path uses, to
+ * the SAME rendered question text. A consequential key whose jurisdiction or
+ * polarity cannot be positively established is refused here exactly as it would
+ * be in `decideFill` — so there is one answer to "may this be stated on the
+ * user's behalf", not one per code path.
+ */
+function resolvedAnswerAllowed(
+  entry: PreparedQuestion,
+  canonicalKey: string | null
+): { ok: true } | { ok: false; reason: string } {
+  if (!canonicalKey) return { ok: true };
+  const key = canonicalKey as CanonicalField;
+  if (!isConsequentialKey(key)) return { ok: true };
+  const rendered = [
+    entry.field.label,
+    entry.field.ariaLabel,
+    entry.field.placeholder,
+    entry.field.nearbyText,
+    entry.field.sectionHeading
+  ].filter(Boolean).join(" ");
+  const compatible = checkSemanticCompatibility(key, rendered, { jobLocation: session?.jobLocation });
+  return compatible.ok ? { ok: true } : { ok: false, reason: compatible.reason };
+}
+
 async function applyResolvedAnswer(
   root: ParentNode,
   entry: PreparedQuestion,
   approvedLabel: string,
   answer: { canonicalKey: string | null; typedAnswer: boolean | null }
 ): Promise<{ status: QuestionState; reason: string; displayed?: string; backing?: string; transaction?: TransactionResult }> {
+  // THE CLIENT GATE IS FINAL, INCLUDING FOR THE SERVER'S OWN ANSWER.
+  //
+  // The resolver runs on the backend and answers with an option reference this
+  // page reported seeing, which is what keeps a model from inventing a value.
+  // It does not make the answer semantically appropriate: the backend does not
+  // re-read the rendered wording for jurisdiction or polarity, so a resolved
+  // sponsorship answer could still land on a question asking the opposite, or
+  // on one asking about another country. This path used to write straight to
+  // the DOM, which made it a way around the gate every other fill passes.
+  const gate = resolvedAnswerAllowed(entry, answer.canonicalKey);
+  if (!gate.ok) {
+    log.info("resolver answer refused by the client gate", { reason: gate.reason });
+    return {
+      status: "requires_confirmation" as const,
+      reason: gate.reason,
+      transaction: {
+        ok: false,
+        reason: "semantics_incompatible",
+        states: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED"],
+        adapter: "custom_choice"
+      }
+    };
+  }
+
   // Re-discover: the page may have re-rendered between asking and acting, and
   // an answer computed against a different option set must not be applied.
   const live = discoverQuestionFields(root).find(

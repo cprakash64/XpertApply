@@ -43,6 +43,7 @@ function session(): ApplicationSessionData {
     atsType: null,
     officialUrl: "https://boards.greenhouse.io/affirm/jobs/1",
     jobTitle: "Backend Engineer",
+    jobLocation: "San Francisco, CA",
     company: "Affirm",
     unresolvedQuestions: [],
     answers: [
@@ -140,10 +141,14 @@ describe("manual dropdown fixture (task section L)", () => {
 
     expect((document.getElementById("privacyPolicy") as HTMLSelectElement).value).toBe("");
     expect(res.fieldResults.find((r) => r.fieldKey === "privacy_policy_acknowledgement")?.status).not.toBe("filled");
-    // The AI-use attestation is a separate, single-option required affirmation
-    // and is unaffected by this change.
-    expect((document.getElementById("aiAttestation") as HTMLSelectElement).value).toBe("I agree that all submitted materials are my original work and were completed without AI tools.");
-    expect(res.fieldResults.find((r) => r.fieldKey === "legal_attestation")?.status).toBe("filled");
+    // XA-02 (Stage 3B). This assertion used to require the opposite: the AI-use
+    // attestation was auto-agreed because it was a required control offering a
+    // single substantive option. "I agree that all submitted materials are my
+    // original work and were completed without AI tools" is a statement the
+    // candidate makes, and being the only option on offer does not make it one
+    // XpertApply may make for them. It is now left blank and surfaced.
+    expect((document.getElementById("aiAttestation") as HTMLSelectElement).value).toBe("");
+    expect(res.fieldResults.find((r) => r.fieldKey === "legal_attestation")?.status).not.toBe("filled");
   });
 
   it("never selects a demographic (EEO) dropdown automatically", async () => {

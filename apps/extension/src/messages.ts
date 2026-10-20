@@ -14,6 +14,7 @@
  * `parsePageMessage` validate at runtime and reject unknown messages.
  */
 
+import type { SiteAccessState } from "./security/siteAccess";
 import type { ApplicationSessionData } from "./types";
 
 /** Bumped when the web⇆extension contract changes incompatibly. */
@@ -192,6 +193,16 @@ export interface LaunchViewState {
   /** false for a terminal failure (expired/consumed handoff, URL mismatch) —
    * the UI must not offer a Retry that will just repeat the same failure. */
   failureRecoverable: boolean | null;
+  /** Chrome host access for this workflow. `site_access_required` means the
+   * side panel must ask; the worker cannot (no user gesture in a service
+   * worker). */
+  siteAccess: SiteAccessState;
+  /** Match pattern the side panel should request, when one can be formed. */
+  siteAccessPattern: string | null;
+  /** Host shown in the prompt. Never a full URL. */
+  siteAccessOrigin: string | null;
+  /** Whether the page itself or one embedded frame needs the grant. */
+  siteAccessScope: "page" | "frame";
   updatedAt: number;
 }
 
@@ -277,6 +288,19 @@ export const MSG = {
   /** Ask, inside a user gesture, for host permission covering one exact frame
    * origin. Never `<all_urls>`, never a wildcard the user did not see. */
   REQUEST_FRAME_PERMISSION: "JOBPILOT_REQUEST_FRAME_PERMISSION",
+  /** The side panel asks what host access the current workflow is waiting on.
+   * Answered by the worker, which can CHECK permissions but — being a service
+   * worker with no user gesture — can never request them. */
+  GET_SITE_ACCESS: "JOBPILOT_GET_SITE_ACCESS",
+  /** The side panel obtained (or was refused) a host grant inside a real user
+   * gesture and tells the worker, which resumes or stops the workflow. */
+  SITE_ACCESS_RESULT: "JOBPILOT_SITE_ACCESS_RESULT",
+  /** A frame that has resolved a confident application root asks permission to
+   * be the ONE frame in this tab that fills. A tab can contain the real
+   * application plus any number of other application-shaped forms — a
+   * same-origin vendor widget, a second embedded ATS — and filling all of them
+   * puts the user's profile and résumé somewhere they never applied. */
+  REQUEST_FILL_LEASE: "JOBPILOT_REQUEST_FILL_LEASE",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -447,6 +471,20 @@ export type RuntimeMessage =
        * anything broader than `<origin>/*`. */
       origin: string;
     }
+  | { type: typeof MSG.GET_SITE_ACCESS; tabId?: number }
+  | {
+      type: typeof MSG.SITE_ACCESS_RESULT;
+      tabId?: number;
+      /** The pattern the side panel actually asked Chrome for. */
+      pattern: string;
+      granted: boolean;
+    }
+  | {
+      type: typeof MSG.REQUEST_FILL_LEASE;
+      /** This frame's own root verdict — a ranking input, never an identity
+       * claim: the worker takes tab and frame from the sender. */
+      rootConfident: boolean;
+    }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -471,7 +509,8 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
   MSG.SUBMISSION_CONFIRMED, MSG.MANUAL_CONFIRMATION_REQUIRED, MSG.EMPLOYER_AUTH_REQUIRED,
-  MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION
+  MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
+  MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -479,7 +518,231 @@ export function parseRuntimeMessage(raw: unknown): RuntimeMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const type = (raw as { type?: unknown }).type;
   if (typeof type !== "string" || !RUNTIME_TYPES.has(type)) return null;
+  if (!payloadIsValid(type, raw as Record<string, unknown>)) return null;
   return raw as RuntimeMessage;
+}
+
+// --------------------------------------------------------------------------- //
+// Payload schema
+//
+// `parseRuntimeMessage` used to check only that `type` was a name it knew, and
+// every handler then read whatever fields it wanted straight off the object.
+// TypeScript does not survive the message boundary — the union above describes
+// what a WELL-BEHAVED sender sends, not what actually arrives — so a wrong type,
+// a hostile length, or a value outside a closed vocabulary reached the handler
+// (and, for the API-backed messages, the network) unchecked.
+//
+// Two deliberate limits on how strict this is:
+//
+//   • Unknown extra properties are ALLOWED, not rejected. The content script and
+//     the service worker update on independent schedules (a tab keeps its old
+//     content script across an extension reload), so rejecting a field a newer
+//     build added would break the pair rather than protect it. Every handler
+//     reads named fields, so an unrecognised property reaches nothing.
+//   • Presence is required only where a handler could otherwise act on
+//     `undefined` — the ids, keys and closed vocabularies that ADDRESS a
+//     privileged operation. Descriptive fields are validated when present and
+//     tolerated when absent, for the same version-skew reason.
+//
+// Anything that fails is treated exactly like an unknown type: rejected before
+// any handler runs.
+// --------------------------------------------------------------------------- //
+
+/** Generous bounds. These exist to stop unbounded input reaching storage, the
+ * network or a log line — not to second-guess legitimate content. */
+const LIMIT = {
+  /** Identifier-shaped: canonical keys, reason codes, ATS ids, versions. */
+  key: 256,
+  /** URLs and origins. */
+  url: 2048,
+  /** Human-visible short text: titles, labels, CTA text, names. */
+  text: 4096,
+  /** Free-text answers, which legitimately include a drafted cover letter. */
+  answer: 32_768,
+  /** Batched question array — mirrors MAX_QUESTIONS in content/questionBatch. */
+  questions: 100,
+  /** Observed-frame inventory reported by one document. */
+  frames: 200
+} as const;
+
+type FieldSpec =
+  | { kind: "string"; max: number; required?: true; nullable?: true; oneOf?: readonly string[] }
+  | { kind: "integer"; required?: true }
+  | { kind: "number"; required?: true }
+  | { kind: "boolean"; required?: true }
+  | { kind: "object"; required?: true }
+  | { kind: "array"; maxItems: number; required?: true };
+
+const AUTOFILL_REASONS = ["automatic_launch", "manual_retry", "continue_after_navigation"] as const;
+const ANSWER_SCOPES = ["global", "company", "application", "sensitive"] as const;
+const DOCUMENT_KINDS = ["resume", "cover-letter"] as const;
+const EVIDENCE_TYPES = ["success_page", "success_response", "success_message"] as const;
+
+const SESSION_ID: FieldSpec = { kind: "integer", required: true };
+
+const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
+  [MSG.HANDSHAKE]: {
+    origin: { kind: "string", max: LIMIT.url, required: true },
+    apiBase: { kind: "string", max: LIMIT.url },
+    protocolVersion: { kind: "integer" }
+  },
+  [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
+  [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
+  [MSG.CONTENT_READY]: {
+    url: { kind: "string", max: LIMIT.url },
+    title: { kind: "string", max: LIMIT.text },
+    protocolVersion: { kind: "integer" },
+    isTopFrame: { kind: "boolean" },
+    topUrl: { kind: "string", max: LIMIT.url, nullable: true },
+    detectedAts: { kind: "string", max: LIMIT.key, nullable: true },
+    probe: { kind: "object" }
+  },
+  [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
+  [MSG.PING_CONTENT]: {},
+  [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },
+  [MSG.AUTOFILL_START]: {
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.AUTOFILL_PROGRESS]: { payload: { kind: "object", required: true } },
+  [MSG.AUTOFILL_RESULT]: {
+    sessionId: SESSION_ID,
+    result: { kind: "object", required: true },
+    progress: { kind: "object" }
+  },
+  [MSG.AUTOFILL_FAILED]: {
+    reasonCode: { kind: "string", max: LIMIT.key, required: true },
+    message: { kind: "string", max: LIMIT.text }
+  },
+  [MSG.REQUEST_DOCUMENT]: {
+    sessionId: SESSION_ID,
+    kind: { kind: "string", max: LIMIT.key, required: true, oneOf: DOCUMENT_KINDS }
+  },
+  [MSG.AUDIT_EVENT]: {
+    sessionId: SESSION_ID,
+    action_type: { kind: "string", max: LIMIT.key, required: true },
+    field_key: { kind: "string", max: LIMIT.key },
+    status: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.START_AUTOFILL]: {
+    tabId: { kind: "integer" },
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.CLEAR_SESSION]: { tabId: { kind: "integer" } },
+  [MSG.COMPLETE_SESSION]: { sessionId: SESSION_ID },
+  [MSG.RESOLVE_QUESTIONS]: {
+    sessionId: SESSION_ID,
+    questions: { kind: "array", maxItems: LIMIT.questions, required: true }
+  },
+  [MSG.RECONNECT_APPLICATION_WORKFLOW]: {
+    origin: { kind: "string", max: LIMIT.url, required: true },
+    handoffVersion: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.PREPARE_APPLICATION_LAUNCH]: {
+    sessionId: SESSION_ID,
+    sourceUrl: { kind: "string", max: LIMIT.url },
+    normalizedCtaText: { kind: "string", max: LIMIT.text },
+    confidence: { kind: "number" },
+    href: { kind: "string", max: LIMIT.url, nullable: true },
+    target: { kind: "string", max: LIMIT.key, nullable: true },
+    expectedDestinationOrigin: { kind: "string", max: LIMIT.url, nullable: true },
+    jobFingerprint: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.ACTIVATE_APPLICATION_DESTINATION]: {
+    sessionId: SESSION_ID,
+    url: { kind: "string", max: LIMIT.url, required: true },
+    newTab: { kind: "boolean" },
+    source: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.GET_VIEW_STATE]: { tabId: { kind: "integer" } },
+  [MSG.SAVE_ANSWER]: {
+    sessionId: SESSION_ID,
+    canonicalKey: { kind: "string", max: LIMIT.key, required: true },
+    value: { kind: "string", max: LIMIT.answer, required: true },
+    displayValue: { kind: "string", max: LIMIT.answer },
+    scope: { kind: "string", max: LIMIT.key, oneOf: ANSWER_SCOPES },
+    companyKey: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.SET_APPLICATION_OVERRIDE]: {
+    sessionId: SESSION_ID,
+    canonicalKey: { kind: "string", max: LIMIT.key, required: true },
+    value: { kind: "boolean", required: true }
+  },
+  [MSG.GET_APPLICATION_OVERRIDES]: { sessionId: SESSION_ID },
+  [MSG.RUNTIME_IDENTITY]: {},
+  [MSG.CONFIRM_NAME]: {
+    sessionId: SESSION_ID,
+    firstName: { kind: "string", max: LIMIT.text, required: true },
+    lastName: { kind: "string", max: LIMIT.text, required: true },
+    middleName: { kind: "string", max: LIMIT.text },
+    preferredFirstName: { kind: "string", max: LIMIT.text },
+    preferredLastName: { kind: "string", max: LIMIT.text }
+  },
+  [MSG.SUBMISSION_CONFIRMED]: {
+    sessionId: SESSION_ID,
+    evidenceType: { kind: "string", max: LIMIT.key, required: true, oneOf: EVIDENCE_TYPES },
+    submissionTimestamp: { kind: "string", max: LIMIT.key, required: true },
+    submissionReference: { kind: "string", max: LIMIT.text, nullable: true },
+    ats: { kind: "string", max: LIMIT.key, nullable: true }
+  },
+  [MSG.MANUAL_CONFIRMATION_REQUIRED]: {
+    sessionId: SESSION_ID,
+    reason: { kind: "string", max: LIMIT.key, required: true }
+  },
+  [MSG.EMPLOYER_AUTH_REQUIRED]: {
+    sessionId: SESSION_ID,
+    emailPrefilled: { kind: "boolean" }
+  },
+  [MSG.INSPECT_APPLICATION_FRAMES]: {
+    observed: { kind: "array", maxItems: LIMIT.frames, required: true }
+  },
+  [MSG.REQUEST_FRAME_PERMISSION]: {
+    origin: { kind: "string", max: LIMIT.url, required: true }
+  },
+  [MSG.PROBE_FRAME_APPLICATION]: {},
+  [MSG.REQUEST_FILL_LEASE]: { rootConfident: { kind: "boolean" } },
+  [MSG.GET_SITE_ACCESS]: { tabId: { kind: "integer" } },
+  [MSG.SITE_ACCESS_RESULT]: {
+    tabId: { kind: "integer" },
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  }
+};
+
+function fieldIsValid(spec: FieldSpec, value: unknown): boolean {
+  switch (spec.kind) {
+    case "string":
+      if (value === null) return spec.nullable === true;
+      if (typeof value !== "string" || value.length > spec.max) return false;
+      return !spec.oneOf || spec.oneOf.includes(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    case "array":
+      return Array.isArray(value) && value.length <= spec.maxItems;
+  }
+}
+
+/** True when every known field is well-formed and every addressing field is
+ * present. Unknown properties are ignored by design (see the note above). */
+function payloadIsValid(type: string, raw: Record<string, unknown>): boolean {
+  const schema = RUNTIME_SCHEMA[type];
+  // A type in RUNTIME_TYPES with no schema entry would silently skip validation,
+  // so treat the omission as a failure rather than as permission.
+  if (!schema) return false;
+  for (const [field, spec] of Object.entries(schema)) {
+    const value = raw[field];
+    if (value === undefined) {
+      if (spec.required) return false;
+      continue;
+    }
+    if (!fieldIsValid(spec, value)) return false;
+  }
+  return true;
 }
 
 // --------------------------------------------------------------------------- //

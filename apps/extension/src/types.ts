@@ -1,3 +1,4 @@
+import type { FillDecision } from "./fields/answerAuthority";
 import type { CanonicalField, MappingSource } from "./fields/taxonomy";
 
 export type FieldControl =
@@ -61,6 +62,10 @@ export interface ExcludedControl {
 
 export interface FieldMapping {
   uid: string;
+  /** Why this field may or may not be answered, decided once in
+   * fields/answerAuthority. Downstream reads `status` rather than
+   * reconstructing the policy from the flags below. */
+  decision?: FillDecision;
   canonicalKey: CanonicalField;
   confidence: number;
   mappingSource: MappingSource;
@@ -107,6 +112,11 @@ export interface ApplicationSessionData {
   officialUrl: string;
   jobTitle: string | null;
   company: string | null;
+  /** The posting's location, as XpertApply recorded it when the job was
+   * ingested. First-party metadata about the JOB — never read from the
+   * employer's page — and the only jurisdiction evidence available when a
+   * question does not name a country itself. Free text, often absent. */
+  jobLocation?: string | null;
   profileData?: Record<string, unknown>;
   /** Revision returned by the authenticated answers endpoint. Used only for
    * stale-cache diagnostics; never derived from page data. */

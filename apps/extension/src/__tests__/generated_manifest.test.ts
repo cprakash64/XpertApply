@@ -64,40 +64,52 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
     expect(manifest.version_name, "build.mjs must stamp version_name").toMatch(/\(.+\)/);
   });
 
-  it("injects a content script into the live Greenhouse application frame", () => {
+  // XA-06 (Stage 3C). These four assertions used to require that the SHIPPED
+  // manifest already reached the live Greenhouse frame — a static content
+  // script matching every https page in every frame, plus a wildcard host
+  // permission. That is the finding, not the feature: it gave XpertApply
+  // authority over every site the user visits from the moment of install.
+  //
+  // The product requirement behind them is unchanged and still asserted: the
+  // live Greenhouse application frame, and the carrier page that embeds it,
+  // must remain reachable. They are now reachable by ASKING — an optional host
+  // pattern the user can grant for that one origin, and programmatic injection
+  // once they have.
+
+  it("does not reach the live Greenhouse frame until the user grants it", () => {
     const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[] }) => {
       const included = cs.matches.some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
       const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
       return included && !excluded;
     });
-    expect(matching.length, "no content script matches the Greenhouse iframe URL").toBeGreaterThan(0);
+    expect(matching.length, "no employer frame may be scripted at install time").toBe(0);
+    expect(
+      (manifest.host_permissions ?? []).some((p: string) => matchPatternMatches(p, GREENHOUSE_IFRAME_URL)),
+      "no install-time host authority over an employer/ATS origin"
+    ).toBe(false);
   });
 
-  it("runs that content script in ALL frames, so the iframe is covered", () => {
-    const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[]; all_frames?: boolean }) => {
-      const included = cs.matches.some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
-      const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
-      return included && !excluded;
-    });
-    // An iframe is not the top frame; without all_frames the application frame
-    // never gets the script no matter how the patterns are written.
-    expect(matching.some((cs: { all_frames?: boolean }) => cs.all_frames === true)).toBe(true);
+  it("can still be granted the live Greenhouse frame, and inject into it", () => {
+    // The capability is retained: the origin is coverable by an optional
+    // pattern the side panel can request…
+    expect(
+      (manifest.optional_host_permissions ?? []).some((p: string) => matchPatternMatches(p, GREENHOUSE_IFRAME_URL)),
+      "the Greenhouse frame origin must be grantable"
+    ).toBe(true);
+    // …and `scripting` is what turns that grant into a content script in the
+    // frame, so it is load-bearing rather than vestigial.
+    expect(manifest.permissions ?? []).toContain("scripting");
   });
 
-  it("also injects into the Airbnb carrier page (for surface activation)", () => {
-    const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[] }) => {
-      const included = cs.matches.some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL));
-      const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL));
-      return included && !excluded;
-    });
-    expect(matching.length).toBeGreaterThan(0);
-  });
-
-  it("holds host permission for the Greenhouse origin", () => {
-    const permitted = (manifest.host_permissions ?? []).some((p: string) =>
-      matchPatternMatches(p, GREENHOUSE_IFRAME_URL)
+  it("treats the Airbnb carrier page the same way", () => {
+    const staticMatch = (manifest.content_scripts ?? []).some((cs: { matches: string[] }) =>
+      cs.matches.some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL))
     );
-    expect(permitted).toBe(true);
+    expect(staticMatch, "the carrier page is not scripted at install time").toBe(false);
+    expect(
+      (manifest.optional_host_permissions ?? []).some((p: string) => matchPatternMatches(p, AIRBNB_CAREERS_URL)),
+      "the carrier page must be grantable"
+    ).toBe(true);
   });
 
   it("does not request browsing-history permissions", () => {

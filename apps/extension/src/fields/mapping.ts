@@ -14,8 +14,8 @@
 
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FieldMappingResult } from "../types";
 import { detectSensitive } from "./sensitive";
+import { decideFill, type FillDecision, type RefusalReason } from "./answerAuthority";
 import type { CanonicalField, MappingSource } from "./taxonomy";
-import { CUSTOM_RESPONSE_FIELDS, UPLOAD_FIELDS } from "./taxonomy";
 
 export const AUTO_FILL_THRESHOLD = 0.95;
 export const REVIEW_THRESHOLD = 0.8;
@@ -315,7 +315,17 @@ export function classifyField(field: DiscoveredField): Classification {
     explanation: "No confident match — needs your input." };
 }
 
-/** Map all fields, applying the confidence + session-availability policy. */
+/**
+ * Map all fields, then ask `answerAuthority` whether XpertApply is entitled to
+ * answer each one.
+ *
+ * This function used to assemble `{safeToAutoFill, requiresReview}` itself, in
+ * six branches, three of which contained the same escape hatch: a REQUIRED
+ * choice control was marked fillable even with no verified answer, and the
+ * runner then synthesised an affirmation to put in it. That is how a sworn
+ * certification came to be agreed to on the candidate's behalf (XA-02). The
+ * decision now has one owner, and "we have no answer" has exactly one outcome.
+ */
 export function buildMappings(fields: DiscoveredField[], session: ApplicationSessionData): FieldMappingResult {
   const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
   const mappings: FieldMapping[] = [];
@@ -323,92 +333,97 @@ export function buildMappings(fields: DiscoveredField[], session: ApplicationSes
 
   for (const field of fields) {
     const c = classifyField(field);
+
+    // Structural cases that are not answer-authority questions at all.
     if (c.canonicalKey === "unknown") {
+      // Unclassified. Previously a required choice control could still be
+      // filled here with the affirmation sentinel; an unrecognised question is
+      // precisely the case where XpertApply knows least, so it now asks.
       unmapped.push(field.uid);
-      // A required choice control may still be safely attempted with the
-      // user-approved singleton-affirmation sentinel. The adapter will select
-      // only when the employer exposes exactly one substantive I agree / I
-      // acknowledge / Yes option; otherwise it closes the menu and reviews it.
-      mappings.push(mapping(field, c, {
-        safeToAutoFill: isRequiredChoice(field),
-        requiresReview: true
-      }));
-      continue;
-    }
-    if (c.sensitive) {
-      const answer = answers.get(c.canonicalKey);
-      const explicitlyAllowed = Boolean(
-        answer?.value && answer.sensitive && answer.verified && !answer.requires_review
-      );
-      mappings.push(mapping(field, c, {
-        safeToAutoFill: explicitlyAllowed || isRequiredChoice(field),
-        requiresReview: !explicitlyAllowed
-      }));
-      continue;
-    }
-    if (UPLOAD_FIELDS.has(c.canonicalKey)) {
-      mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: false }));
+      mappings.push(mapping(field, c, decision(review("NO_VERIFIED_ANSWER"))));
       continue;
     }
     if (c.canonicalKey === "undergraduate_transcript_upload" || c.canonicalKey === "graduate_transcript_upload") {
       // Academic records are not generated documents. Keep the upload under
       // the user's control and clearly identify which file the employer wants.
-      mappings.push(mapping(field, c, { safeToAutoFill: false, requiresReview: field.required }));
-      continue;
-    }
-    if (c.canonicalKey === "privacy_policy_acknowledgement") {
-      // The dropdown adapter still verifies that the control exposes exactly
-      // one substantive acknowledgement option before selecting it.
-      mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: false }));
-      continue;
-    }
-    if (CUSTOM_RESPONSE_FIELDS.has(c.canonicalKey)) {
-      // A company/job/profile-grounded draft is prepared by the backend. Put
-      // it into the form so the user can edit it in context, but always keep it
-      // in review and never treat it as a reusable profile fact.
-      const answer = answers.get(c.canonicalKey);
       mappings.push(mapping(field, c, {
-        safeToAutoFill: Boolean(answer?.value),
-        requiresReview: true
+        safeToAutoFill: false,
+        requiresReview: field.required,
+        decision: { status: "DO_NOT_FILL", authority: "none", reason: "UPLOAD_UNDER_USER_CONTROL" }
       }));
       continue;
     }
-    const answer = answers.get(c.canonicalKey);
-    if (!answer || !answer.value) {
-      if (c.canonicalKey === "phone_extension") {
-        // An extension is not the phone number. Leave an unanswered optional
-        // extension blank instead of flagging it or copying the full number.
-        mappings.push(mapping(field, c, { safeToAutoFill: false, requiresReview: field.required }));
-        continue;
-      }
-      if (c.canonicalKey === "referral_source") {
-        // User-approved default. A saved company-scoped answer (including a
-        // referral) always wins above; this sentinel only matches an employer
-        // careers/company-website option and never falls back to another item.
-        mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: false }));
-        continue;
-      }
-      if (isRequiredChoice(field)) {
-        mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: true }));
-        continue;
-      }
-      // Mapped but we have no verified value — user must supply it.
-      mappings.push(mapping(field, c, { safeToAutoFill: false, requiresReview: true }));
+    if (c.canonicalKey === "phone_extension" && !answers.get("phone_extension")?.value) {
+      // An extension is not the phone number. Leave an unanswered optional
+      // extension blank instead of flagging it or copying the full number.
+      mappings.push(mapping(field, c, {
+        safeToAutoFill: false,
+        requiresReview: field.required,
+        decision: review("NO_VERIFIED_ANSWER")
+      }));
       continue;
     }
-    if (c.confidence >= AUTO_FILL_THRESHOLD && !answer.requires_review) {
-      mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: false }));
-    } else if (c.confidence >= REVIEW_THRESHOLD) {
-      mappings.push(mapping(field, c, { safeToAutoFill: true, requiresReview: true }));
-    } else {
-      mappings.push(mapping(field, c, { safeToAutoFill: false, requiresReview: true }));
+    if (c.canonicalKey === "privacy_policy_acknowledgement") {
+      // Accepting an employer's privacy terms is the user's own act. The
+      // runner has long declined to answer it; the mapping now says so too,
+      // instead of advertising it as fillable and relying on that.
+      mappings.push(mapping(field, c, decision(review("CONSENT_IS_THE_USERS_ACT"))));
+      continue;
     }
+
+    const verdict = decideFill({
+      field,
+      canonicalKey: c.canonicalKey,
+      confidence: c.confidence,
+      sensitive: c.sensitive,
+      answer: answers.get(c.canonicalKey),
+      questionText: renderedQuestion(field),
+      autoFillThreshold: AUTO_FILL_THRESHOLD,
+      reviewThreshold: REVIEW_THRESHOLD,
+      productDefaultKeys: PRODUCT_DEFAULT_FIELDS,
+      jurisdiction: { jobLocation: session.jobLocation }
+    });
+    mappings.push(mapping(field, c, decision(verdict)));
   }
   return { mappings, unmapped };
 }
 
-function isRequiredChoice(field: DiscoveredField): boolean {
-  return field.required && ["select", "combobox", "listbox", "radio"].includes(field.control);
+/**
+ * Keys answered from a default the user approved rather than from a fact about
+ * them. `referral_source` only ever matches the employer's own careers-site
+ * option; it can never select a referral, an agency or a job board.
+ */
+const PRODUCT_DEFAULT_FIELDS: ReadonlySet<CanonicalField> = new Set<CanonicalField>(["referral_source"]);
+
+function review(reason: RefusalReason): FillDecision {
+  return { status: "REQUIRES_REVIEW", authority: "none", reason };
+}
+
+/** Translate one decision into the flags the fill runner and ledger read. */
+function decision(verdict: FillDecision): {
+  safeToAutoFill: boolean;
+  requiresReview: boolean;
+  decision: FillDecision;
+} {
+  return {
+    safeToAutoFill: verdict.status === "SAFE_TO_FILL",
+    requiresReview: verdict.status === "SAFE_TO_FILL" ? verdict.requiresReview : true,
+    decision: verdict
+  };
+}
+
+/**
+ * The question as the EMPLOYER rendered it.
+ *
+ * Deliberately excludes `name` and `id`: machine identifiers carry no polarity
+ * and no jurisdiction, and feeding them to the semantic gate would let a field
+ * called `work_auth_status` or `campus_hire` decide which country is being
+ * asked about.
+ */
+function renderedQuestion(field: DiscoveredField): string {
+  return [field.label, field.ariaLabel, field.placeholder, field.nearbyText, field.sectionHeading]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function isPhoneCountryCompanion(field: DiscoveredField): boolean {
@@ -437,9 +452,14 @@ function isPhoneCountryCompanion(field: DiscoveredField): boolean {
   return false;
 }
 
-function mapping(field: DiscoveredField, c: Classification, flags: { safeToAutoFill: boolean; requiresReview: boolean }): FieldMapping {
+function mapping(
+  field: DiscoveredField,
+  c: Classification,
+  flags: { safeToAutoFill: boolean; requiresReview: boolean; decision: FillDecision }
+): FieldMapping {
   return {
     uid: field.uid,
+    decision: flags.decision,
     canonicalKey: c.canonicalKey,
     confidence: c.confidence,
     mappingSource: c.source,
