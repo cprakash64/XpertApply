@@ -589,7 +589,9 @@ Removed as brand/action/selection: the `bg-pine` "Find jobs" and next-action CTA
 
 Kept or newly made semantic: an *Offer* application status is `status-success`, a *rejected* one is `status-danger`, *interview* is `status-info`, and in-flight states are `status-warning`/neutral — the Dashboard previously flattened all of these to one neutral pill and now matches the Tracker. The pipeline's furthest-reached stage is green only when that stage is Offer. Fit scores now use the existing `lib/fitScore.ts` bands, so a 47% match reads orange instead of the flat success green every score used to wear; `lib/fitScore.ts` itself was not modified, because it is shared with the unmigrated Jobs surfaces.
 
-### Known duplication: application status tones
+### Known duplication: application status tones (RESOLVED in Stage 5)
+
+> Superseded by the Stage 5 record below: the shared module this section names as its consolidation target now exists at `lib/applicationStatus.ts`, and both screens consume it. The description below is kept as the record of why the duplication was accepted at the time.
 
 The Dashboard's status→tone map lives in `DashboardClient.tsx` as a local `statusTone()` returning canonical `StatusTone` values. The Tracker's equivalent lives in `TrackerClient.tsx` as a local `StatusBadge` that emits legacy colour classes directly (`--success-*`, `border-sky-300/40`, `--danger-*`, `--warning-*`, `border-line bg-panel`). The two agree on the domain rule — offer is success, interview is info, rejected is danger, applied/applying is warning, everything else neutral — but express it in two different vocabularies.
 
@@ -617,6 +619,85 @@ Measured contrast, light then dark: page heading 17.14 / 15.80, subtitle 4.80 / 
 Real Chromium against a local production build covered 1440×900, 900×900, 390×844, and 390×667 in both schemes, plus loading, empty, and error states. No horizontal overflow at any size. Keyboard traversal of the Dashboard's own controls showed a 3px `focus-ring` outline with `:focus-visible` on every link and button.
 
 The complete web suite passed 44 files / 848 tests, including five new Dashboard tests asserting the semantic contracts rather than markup. The responsive AppShell suite passed 9/9, confirming the shell is unchanged. TypeScript, ESLint, and the production build passed.
+
+## 21C. Stage 5 Tracker migration record
+
+Status: implemented for visual review on 2026-08-17; read and mutation behaviour frozen.
+
+### Strategy
+
+The Tracker is an operational list, not a dashboard: the job is to scan many applications and move one along. So the migration spends its budget on legibility and density rather than decoration — border-first cards, no shadows, muted icons, and colour reserved for the one thing being scanned, which is the stage an application is in.
+
+What the Tracker actually is, confirmed by reading the implementation rather than assuming: a single `GET /jobs/tracker/submitted` read into local state, a stage filter, a text search, four summary counts, and a per-card `<select>` that issues `PUT /jobs/{job_id}/tracker`. **There is no kanban board, no drag and drop, no detail drawer, no sorting, no pagination, and no delete/archive.** None of those were invented for this stage.
+
+### Canonical application status semantics
+
+Stage 4 recorded the Dashboard/Tracker status mapping as knowingly duplicated and named this stage as the place to fix it. It is now fixed.
+
+`lib/applicationStatus.ts` is the single source of truth. It follows the `lib/fitScore.ts` precedent exactly — a pure domain module with no React, no API client and no component imports, so either screen can consume it without dragging the other's module graph along.
+
+| Status | Tone | Meaning |
+| --- | --- | --- |
+| `saved` | neutral | parked, no judgement |
+| `ready_to_apply` | neutral | parked, no judgement |
+| `applying` | warning | in flight, may need attention |
+| `applied` | warning | in flight, may need attention |
+| `interview` | info | progress worth noticing, not yet an outcome |
+| `offer` | success | the one genuine positive outcome |
+| `rejected` | danger | the one genuine negative outcome |
+| `withdrawn` | neutral | closed without judgement |
+| *anything else* | neutral | unknown degrades safely |
+
+`getApplicationStatusTone()` accepts a bare string because the Dashboard payload types `status` as `string` and because the backend may add a status this build has never seen. Unknown values return `neutral` rather than throwing — neutral reads as "no judgement", which is the only honest thing to show for a status the frontend cannot interpret.
+
+`ApplicationStatusTone` is declared in `lib/` rather than imported from `components/ui`, so the directory keeps the UI-free layering every other module in it follows. A contract test asserts the two unions stay mutually assignable, so the deliberate duplication of the union cannot silently drift.
+
+### Label decision: "Offer / selected" vs "Offer"
+
+Resolved as **case A — same domain state, different context.** Both are correct and both are kept.
+
+On the Tracker the value names a stage you *move an application into*, and "Offer / selected" says that some employers call it an offer and some call it being selected; it is also the confirmation wording ("Moved to Offer / selected."). The Dashboard's dense badge has no room for that nuance and says "Offer".
+
+So the shared module owns `formatApplicationStatus()` — the compact, neutral label, including the `ready_to_apply` → "Saved" translation that both screens already agreed on — and the Tracker keeps a three-line local override for `offer` only. Domain semantic is shared; presentation copy stays with the page that owns the context.
+
+### Legacy styling removed
+
+`text-pine` / `bg-pine` (filter selection, summary-card icon tiles, spinners, links, empty-state CTA, confirmation text), `--success-surface` on the summary-card icon tiles, the hand-written status colours including the raw `border-sky-300/40 bg-sky-500/10 text-sky-500` interview treatment, `rounded-2xl`, `bg-white`, `border-line`, `shadow-sm`/`hover:shadow-md`, and the legacy `focus-ring`.
+
+Semantic green is preserved and is now *more* meaningful, not less: green appears only on the offer badge and the stage-move confirmation. The old build spent the success palette on "Total tracked", which is not an achievement.
+
+### Component treatment
+
+| Region | Treatment |
+| --- | --- |
+| page header | Dashboard hierarchy — 36px desktop / 30px mobile, muted supporting line |
+| summary counts | neutral `surface-card`, muted icon in a subtle tile, `tabular-nums` value |
+| stage filters | canonical `Chip` with `aria-pressed`, in a labelled `role="group"` |
+| search | custom markup retained for the inset icon, borrowing the canonical field visual contract |
+| application card | `surface-card`, `line-default`, canonical radius, restrained `hover:border-line-interactive` |
+| status badge | canonical `StatusBadge` + shared tone, label always present |
+| status select | native `<select>` retained with its `aria-label`, restyled with field tokens |
+| "View job" | secondary action, not primary — leaving for the posting is a normal step |
+| load error | canonical `Alert tone="danger"` |
+| stage confirmation | `status-success` text |
+| loading | sectional skeletons in the shape of the real content |
+| empty | dashed card; the primary CTA appears only when the tracker is genuinely empty, since a search that matched nothing needs a different query, not a new job |
+
+### Deliberate decisions
+
+**Fit score stays plain metadata.** The Tracker shows `NN% fit` as uncoloured text among the card metadata. The fit bands are a Jobs/Dashboard signal; in a dense tracker row the stage is what is being scanned, and a second coloured chip competes with it. `lib/fitScore.ts` is untouched.
+
+**Chips over custom buttons.** A stage filter is a toggle, and the primitive carries `aria-pressed`, so the active stage is announced rather than only coloured.
+
+**Skeletons over the spinner.** The previous loading state replaced the whole section with a centred spinner, so everything jumped when data landed. The skeletons occupy the eventual geometry. Request timing, caching and the early return are unchanged.
+
+### Responsive
+
+The Tracker is a stacked list at every size, so there is no board to scroll and **no intentional horizontal scrolling anywhere** — any document overflow would be a defect. The summary grid runs 1-up on phones, 2-up from `sm`, and 4-up from `xl`; the toolbar stacks above the search field until `lg`; the card's action row wraps below the content until `lg`.
+
+### Found, not fixed
+
+The per-card `<select>` offers only Applied / Interview / Offer / Rejected, but an application can hold `saved`, `ready_to_apply`, `applying` or `withdrawn`. For those the control falls back to displaying the first option, so a `withdrawn` application appears to read "Applied" until it is changed. This is pre-existing behaviour, unchanged by this stage, and fixing it means deciding which transitions the product actually allows — a workflow question, not a visual one. Recorded here as a Tracker-specific follow-up.
 
 ## 22. Stage 2 implementation record
 

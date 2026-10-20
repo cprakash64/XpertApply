@@ -15,27 +15,62 @@ NO_TEXT_ERROR = (
     "or paste your resume text."
 )
 
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/plain",
+#: The declared media type each supported extension must arrive with. The
+#: extension is what selects the parser, so a part whose declared type disagrees
+#: with its extension is a contradiction rather than a preference — ".pdf"
+#: announced as "text/plain" would still be handed to the PDF parser. No browser
+#: produces that pairing; only a hand-built request does.
+CONTENT_TYPE_FOR_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
 }
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+ALLOWED_CONTENT_TYPES = set(CONTENT_TYPE_FOR_EXTENSION.values())
+ALLOWED_EXTENSIONS = set(CONTENT_TYPE_FOR_EXTENSION)
 
 
 class DocumentParserError(ValueError):
     pass
 
 
-def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> None:
-    filename = file.filename or ""
-    extension = Path(filename).suffix.lower()
-    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+def validate_upload_metadata(filename: str | None, content_type: str | None) -> None:
+    """Check the declared filename and media type before any bytes are read.
+
+    Separated from the content checks so the route can refuse an unsupported
+    upload without streaming it first: rejecting an unsupported extension costs
+    nothing, and doing it early keeps unsupported bytes out of memory entirely.
+
+    A part that declares NO content type is refused rather than accepted. It used
+    to skip the media-type check altogether (``if content_type and ...``), which
+    made the allow-list opt-out: omitting the header was enough to be judged on
+    the filename alone. Browsers always send one — the spec substitutes
+    ``application/octet-stream`` when the OS reports no type — so only a
+    hand-built request reaches this branch.
+    """
+    extension = Path(filename or "").suffix.lower()
+    declared = (content_type or "").split(";", 1)[0].strip().lower()
 
     if extension not in ALLOWED_EXTENSIONS:
         raise DocumentParserError("Unsupported file extension. Upload a PDF, DOCX, or TXT file.")
-    if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+    if not declared:
+        raise DocumentParserError("Uploaded file is missing its content type. Upload a PDF, DOCX, or TXT file.")
+    if declared not in ALLOWED_CONTENT_TYPES:
         raise DocumentParserError("Unsupported file type. Upload a PDF, DOCX, or TXT file.")
+    if declared != CONTENT_TYPE_FOR_EXTENSION[extension]:
+        raise DocumentParserError(
+            "The file's content type does not match its extension. Upload a PDF, DOCX, or TXT file."
+        )
+
+
+def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> None:
+    """Full validation for an upload that has already been read into memory.
+
+    The route validates metadata up front and bounds the size while streaming, so
+    both checks are already satisfied by the time it calls in. They stay here as
+    this helper's own contract, for any caller that hands over a complete
+    ``bytes`` body instead of streaming it.
+    """
+    validate_upload_metadata(file.filename, file.content_type)
     if content is not None:
         if not content:
             raise DocumentParserError("Uploaded file is empty.")

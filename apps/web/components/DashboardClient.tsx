@@ -16,7 +16,11 @@ import {
   Trophy
 } from "lucide-react";
 import { CompanyLogo } from "@/components/CompanyLogo";
-import { Alert, Button, StatusBadge, type StatusTone } from "@/components/ui";
+import { Alert, Button, StatusBadge } from "@/components/ui";
+import {
+  formatApplicationStatus,
+  getApplicationStatusTone
+} from "@/lib/applicationStatus";
 import { getFitScoreTone } from "@/lib/fitScore";
 import {
   useDashboardSummary,
@@ -359,35 +363,18 @@ function RecentApplications({
                 {application.updatedAt ? ` · ${relativeDate(application.updatedAt)}` : ""}
               </span>
             </span>
-            <StatusBadge tone={statusTone(application.status)} className="shrink-0">
-              {statusLabel(application.status)}
+            {/* Meaning comes from the shared domain module; the compact wording
+                is this screen's own — the Tracker names the same stage
+                "Offer / selected" because that is what you move an application
+                into, while a dense row just says "Offer". */}
+            <StatusBadge tone={getApplicationStatusTone(application.status)} className="shrink-0">
+              {formatApplicationStatus(application.status)}
             </StatusBadge>
           </Link>
         </li>
       ))}
     </ul>
   );
-}
-
-/**
- * Domain status tone, matching the Tracker's existing mapping so the same
- * application reads the same way on both screens. These are outcomes, not
- * brand: an offer is success, a rejection is danger, and everything still in
- * flight stays informational rather than being recoloured navy.
- */
-function statusTone(status: string): StatusTone {
-  if (status === "offer") return "success";
-  if (status === "interview") return "info";
-  if (status === "rejected") return "danger";
-  if (status === "applied" || status === "applying") return "warning";
-  return "neutral";
-}
-
-/** Unchanged from the pre-migration Dashboard — the wording is a data contract. */
-function statusLabel(status: string): string {
-  return status === "ready_to_apply"
-    ? "Saved"
-    : status.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 /** "Today" / "3d ago" / a date — short enough for a dense row. */

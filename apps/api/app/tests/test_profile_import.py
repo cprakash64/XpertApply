@@ -156,6 +156,14 @@ def test_invalid_file_extension_is_rejected(client: TestClient) -> None:
 
 
 def test_oversized_file_is_rejected(client: TestClient) -> None:
+    """An over-limit upload is now refused with 413, not 400.
+
+    The size limit used to be applied by the document validator, after the whole
+    file had already been read into memory, so it surfaced as a generic 400
+    validation error. It is now enforced while streaming, and "the request body
+    is too large" is precisely what 413 means — which is also what lets the web
+    client show a specific message instead of "Request failed with 413".
+    """
     headers = auth_headers(client)
 
     response = client.post(
@@ -165,7 +173,7 @@ def test_oversized_file_is_rejected(client: TestClient) -> None:
         files={"file": ("resume.pdf", b"x" * (MAX_UPLOAD_BYTES + 1), "application/pdf")},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 413
     assert "too large" in response.json()["detail"]
 
 
