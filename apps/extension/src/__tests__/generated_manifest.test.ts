@@ -163,9 +163,9 @@ describe("built content bundle", () => {
   });
 });
 
-describe.skipIf(!distExists)("built toolbar overlay bootstrap", () => {
+describe("built toolbar overlay bootstrap", () => {
   const bundlePath = path.join(here, "..", "..", "dist", "overlayBootstrap.js");
-  const bundle = existsSync(bundlePath) ? readFileSync(bundlePath, "utf-8") : "";
+  const bundle = readFileSync(bundlePath, "utf-8");
 
   it("is packaged on demand without remote-code primitives or workflow bootstrap", () => {
     expect(bundle).toContain("XPERTAPPLY_SHOW_APPLICATION_OVERLAY");

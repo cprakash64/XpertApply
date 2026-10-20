@@ -44,9 +44,9 @@ test-web:
 	cd apps/web && npm run build
 	cd apps/web && npm test
 
-# `verify` is typecheck -> build -> test, in that order on purpose: the generated
-# manifest test reads dist/manifest.json, so the build must come first. CI runs
-# the same script.
+# `verify` is typecheck -> build -> build:e2e -> test, in that order on purpose:
+# the generated manifest test reads dist/, and extension_build_authority.test.ts
+# needs dist-e2e-granted/, so both builds must come first. CI runs the same script.
 test-extension:
 	cd apps/extension && npm run verify
 

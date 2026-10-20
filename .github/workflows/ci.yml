@@ -71,12 +71,13 @@ jobs:
         run: npm ci
       - name: Verify extension
         working-directory: apps/extension
-        # typecheck -> production build -> tests, as one script so CI, the
+        # typecheck -> production build -> e2e build -> tests, as one script so CI, the
         # Makefile and developers cannot drift apart. The order is load-bearing:
         # generated_manifest.test.ts asserts against the GENERATED
         # dist/manifest.json (the artifact Chrome loads, including that no
         # employer origin is reachable until the user grants it) and fails
-        # outright if the build has not run. Worker count is bounded by
+        # outright if the build has not run, and extension_build_authority.test.ts
+        # needs the dist-e2e-granted/ that `build:e2e` creates. Worker count is bounded by
         # `maxWorkers` in vitest.config.ts, not by flags here.
         run: npm run verify
 
