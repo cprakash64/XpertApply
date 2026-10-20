@@ -23,6 +23,9 @@
 # samples taken immediately before each run. If that never happens within
 # --wait-min the run is reported NOT RUN, never silently executed under load.
 #
+# Processes a spec leaks (xa12's `next dev`) are reaped after every Playwright
+# invocation and counted as leaked-procs in each run's verdict line.
+#
 # No retries are ever used. A failed run stays failed; failed tests are then
 # re-run in isolation as a DIAGNOSTIC only and never change the run's verdict.
 #
@@ -74,7 +77,7 @@ WTS=()
 cleanup() {
   [ "$KEEP" = 1 ] && return
   for wt in "${WTS[@]}"; do
-    case "$wt" in "$OUT"/*) git -C "$REPO" worktree remove --force "$wt" >/dev/null 2>&1 ;; esac
+    case "$wt" in "$OUT"/*) reap_run "$wt"; git -C "$REPO" worktree remove --force "$wt" >/dev/null 2>&1 ;; esac
   done
 }
 trap cleanup EXIT
@@ -86,6 +89,38 @@ load1() {
 below() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a<b)}'; }
 stats() { sort -n | awk '{a[NR]=$1} END{if(NR) printf "min %.1f median %.1f max %.1f (n=%d)", a[1], a[int((NR+1)/2)], a[NR], NR; else printf "no samples"}'; }
 say() { printf '%s %s\n' "$(date +%T)" "$*" | tee -a "$OUT/gate.log"; }
+
+# >>> reap
+# Specs such as xa12 spawn `next dev` and only stop it in their own cleanup. When
+# a test times out Playwright abandons that cleanup, and the dev server survives
+# (observed: a next-server left at ~100% CPU on :3000). A leaked process makes the
+# host look busy, holds a port, and makes the next isolated re-run collide with
+# it, so a failure would mimic a product problem. After every Playwright
+# invocation, kill whatever still belongs to that run's worktree: processes whose
+# command line or working directory is inside it, plus all their descendants.
+# Only paths under the worktree this script created are ever matched.
+descendants() {
+  ps -Ao pid=,ppid= | awk -v roots="$*" '
+    BEGIN { n = split(roots, r, " "); for (i = 1; i <= n; i++) want[r[i]] = 1 }
+    { pid[NR] = $1; par[$1] = $2 }
+    END { do { c = 0
+            for (i in pid) { p = pid[i]; if (!(p in want) && (par[p] in want)) { want[p] = 1; c = 1 } } } while (c)
+          for (p in want) print p }'
+}
+reap_run() {
+  local wt="$1" roots all
+  roots="$( { ps -Ao pid=,command= | grep -F "$wt/" | grep -v grep | awk '{print $1}'
+              lsof -d cwd -Fpn 2>/dev/null | awk -v w="$wt/" '/^p/{pid=substr($0,2)} /^n/{ if (index(substr($0,2), w)==1) print pid }'
+            } | sort -u | tr '\n' ' ')"
+  REAPED=0
+  [ -n "$(printf '%s' "$roots" | tr -d ' ')" ] || return 0
+  all="$(descendants $roots | sort -u | grep -vx "$$" | tr '\n' ' ')"
+  [ -n "$(printf '%s' "$all" | tr -d ' ')" ] || return 0
+  kill $all 2>/dev/null; sleep 2; kill -9 $all 2>/dev/null
+  REAPED="$(printf '%s' "$all" | wc -w | tr -d ' ')"
+  say "reaped $REAPED leaked process(es) that were still running from $wt (pids: $all)"
+}
+# <<< reap
 browser_root() {
   if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && [ "$PLAYWRIGHT_BROWSERS_PATH" != 0 ]; then echo "$PLAYWRIGHT_BROWSERS_PATH"
   elif [ "$(uname)" = Darwin ]; then echo "$HOME/Library/Caches/ms-playwright"
@@ -184,6 +219,8 @@ while [ "$n" -le "$RUNS" ]; do
     OVERALL=2; break
   fi
 
+  if port_busy 3000 && port_busy 3001; then die "run $n: ports 3000 and 3001 are both busy before the run (leaked process?)"; fi
+  port_busy 3000 && say "run $n: note: port 3000 is busy; xa12 will use 3001"
   say "run $n: START at load1=$(load1) on $SHORT"
   ( while :; do echo "$(date +%T) $(load1)" >>"$RD/load.log"; sleep 15; done ) & SAMPLER=$!
   START=$(date +%s)
@@ -192,6 +229,7 @@ while [ "$n" -le "$RUNS" ]; do
   PWEXIT=$?
   DUR=$(( $(date +%s) - START ))
   kill "$SAMPLER" 2>/dev/null; wait "$SAMPLER" 2>/dev/null
+  reap_run "$WT"; LEAKED="$REAPED"
 
   node "$HERE/e2e-gate-report.mjs" "$RD/result.json" "$RD/failed-tests.txt" >"$RD/report.txt"
   COUNTS="$(grep '^COUNTS' "$RD/report.txt")"
@@ -208,8 +246,8 @@ while [ "$n" -le "$RUNS" ]; do
   tree_intact || say "run $n: WARNING tracked files changed during the run (other than next-env.d.ts)"
   [ "$VERDICT" = PASS ] || OVERALL=1
 
-  say "run $n: $VERDICT exit=$PWEXIT $PASSED/$TOTAL passed failed=$FAILED flaky=$FLAKY skipped=$SKIPPED retries-used=$RETRIED ${DUR}s load $LOAD"
-  echo "run $n: $VERDICT exit=$PWEXIT passed=$PASSED/$TOTAL failed=$FAILED flaky=$FLAKY skipped=$SKIPPED retries=$RETRIED dur=${DUR}s load[$LOAD]" >>"$SUMMARY"
+  say "run $n: $VERDICT exit=$PWEXIT $PASSED/$TOTAL passed failed=$FAILED flaky=$FLAKY skipped=$SKIPPED retries-used=$RETRIED leaked-procs=$LEAKED ${DUR}s load $LOAD"
+  echo "run $n: $VERDICT exit=$PWEXIT passed=$PASSED/$TOTAL failed=$FAILED flaky=$FLAKY skipped=$SKIPPED retries=$RETRIED leaked-procs=$LEAKED dur=${DUR}s load[$LOAD]" >>"$SUMMARY"
 
   if [ "$VERDICT" != PASS ] && [ -s "$RD/failed-tests.txt" ]; then
     grep '^FAILED' "$RD/report.txt" | sed 's/^/    /' | tee -a "$SUMMARY"
@@ -218,7 +256,8 @@ while [ "$n" -le "$RUNS" ]; do
       [ -n "$t" ] || continue
       key="$(printf '%s' "$t" | tr '/:.' '___')"
       (cd "$WT/apps/extension" && npx playwright test "$t" --workers=1 --retries=0 --reporter=list) >"$RD/isolated-$key.log" 2>&1
-      iso=$?; say "run $n: isolated re-run of $t -> exit $iso (diagnostic only)"
+      iso=$?; reap_run "$WT"
+      say "run $n: isolated re-run of $t -> exit $iso (diagnostic only)"
       echo "    isolated $t -> exit $iso (diagnostic only; run stays FAIL)" >>"$SUMMARY"
     done <"$RD/failed-tests.txt"
   fi
