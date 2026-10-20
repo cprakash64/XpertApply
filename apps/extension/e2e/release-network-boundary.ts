@@ -9,7 +9,13 @@ import path from "node:path";
 const installed = Symbol.for("xpertapply.e2e.networkBoundary");
 const owner = chromium as typeof chromium & { [installed]?: boolean };
 const expectedDist = path.resolve("dist-e2e-granted");
-const local = (ip: string) => ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+// Playwright's response.serverAddr() reports an IPv6 address wrapped in brackets
+// ("[::1]"), unlike IPv4 ("127.0.0.1"). Compare the bare address, otherwise the
+// local dev server is reported as external traffic on any host where `localhost`
+// resolves to IPv6 first. Only the loopback addresses below are accepted; the
+// brackets are stripped, nothing else is widened.
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const local = (ip: string) => LOOPBACK.has(ip.replace(/^\[(.*)\]$/, "$1"));
 
 function confinedArgs(args: string[] = []): string[] {
   const existing = args.find(arg => arg.startsWith("--host-resolver-rules="));

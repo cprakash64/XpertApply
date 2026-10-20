@@ -36,15 +36,33 @@ async function waitForLogin(url: string, child: ChildProcess): Promise<void> {
   throw new Error("XA-12 Web fixture did not become ready");
 }
 
+// Every `next dev` this file starts. A spec that fails or times out is
+// abandoned before its own `finally` can finish, and the dev server is not a
+// child Playwright knows about, so without this it outlives the worker, keeps
+// burning a core, and the next test talks to it instead of its own server (it was
+// started with the previous test's extension id, so the bridge never matches and
+// the next test sits until its timeout).
+const fixtures = new Set<ChildProcess>();
+
 async function stopFixture(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await Promise.race([
-    new Promise<void>(resolve => child.once("exit", () => resolve())),
-    new Promise<void>(resolve => setTimeout(resolve, 2_000))
-  ]);
-  if (child.exitCode === null) child.kill("SIGKILL");
+  try {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise<void>(resolve => child.once("exit", () => resolve())),
+      new Promise<void>(resolve => setTimeout(resolve, 2_000))
+    ]);
+    if (child.exitCode === null) child.kill("SIGKILL");
+  } finally {
+    fixtures.delete(child);
+  }
 }
+
+// afterEach still runs after a failure or a timeout, unlike the test body's own
+// cleanup, so this is the backstop that guarantees no server is left behind.
+test.afterEach(async () => {
+  for (const child of [...fixtures]) await stopFixture(child);
+});
 
 async function qualifyHandoff(context: BrowserContext, worker: Worker, page: Page): Promise<void> {
     // A staging record is a locator, not private account authority. Replaying
@@ -167,6 +185,7 @@ async function runReplacement(roundTrip = false): Promise<void> {
         env: { ...process.env, NEXT_PUBLIC_CHROME_EXTENSION_ID: extensionId },
         stdio: ["ignore", "pipe", "pipe"]
       });
+      fixtures.add(webFixture);
       await waitForLogin(webUrl, webFixture);
     }
     if (!["http://localhost:3000", "http://127.0.0.1:3000"].includes(new URL(webUrl).origin)) {
@@ -375,8 +394,13 @@ async function runReplacement(roundTrip = false): Promise<void> {
 
 
   } finally {
-    await context.close();
-    if (webFixture) await stopFixture(webFixture);
+    // context.close() is where the network-boundary audit throws. Stop the dev
+    // server in a nested finally so a failed audit can no longer skip it.
+    try {
+      await context.close();
+    } finally {
+      if (webFixture) await stopFixture(webFixture);
+    }
   }
 }
 

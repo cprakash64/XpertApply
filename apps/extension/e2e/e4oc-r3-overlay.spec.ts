@@ -545,6 +545,21 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
       await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 });
     }, [tabB, applicationUrl] as const);
     expect(await pageB.locator("#xpertapply-assistant-overlay-v1").count()).toBe(1);
+    // Window B's overlay mounts before its own first view fetch has resolved, so it
+    // can still be showing the empty-state placeholder here. Taking the "before"
+    // snapshot at that moment makes B's own, legitimate first render look like a
+    // cross-window change (line "toBe(jobsBeforeCrossWindow[1])") and lets B's first
+    // GET_VIEW land inside the zero-message measurement window below. A trace of a
+    // failing run showed exactly that: B read the placeholder at the snapshot and its
+    // own job title ~1.7 s later, while A's marker never appeared in B. Wait for B to
+    // settle on its own content first, so the snapshot is a stable baseline.
+    const emptyStatePlaceholder = "Waiting for an application\u2026";
+    await expect.poll(async () => {
+      const text = await pageB.evaluate(() =>
+        document.querySelector<HTMLElement>("#xpertapply-assistant-overlay-v1")?.shadowRoot?.getElementById("job")?.textContent ?? ""
+      );
+      return text !== "" && text !== emptyStatePlaceholder;
+    }, { message: "window B's overlay must finish its initial render before the cross-window baseline is taken", timeout: 15_000 }).toBe(true);
 
     await worker.evaluate(() => {
       const state = globalThis as typeof globalThis & { __e4odWindowMessages?: Record<string, number> };
