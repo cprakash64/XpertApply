@@ -2,6 +2,7 @@ import { OwnedPackageFixture } from "./owned-package-fixture";
 import { containSyntheticNetwork } from "./network-containment";
 import {test,expect,chromium} from '@playwright/test';
 import fs from 'node:fs';import path from 'node:path';import {tmpdir} from 'node:os';import {createServer} from 'node:http';
+import { overlayCdp } from "./overlay-cdp";
 const DIST=process.env.XA_E2E_DIST??path.resolve('dist-e2e-granted');
 const controls=`<h1>Apply for Software Engineer</h1><form><label>First name <input id="first" name="first_name" autocomplete="given-name"></label><label>Email <input id="email" name="email" type="email" autocomplete="email"></label><label>Why join? <textarea id="manual" name="motivation"></textarea></label><label><input id="privacy" name="privacy" type="checkbox"> I agree to the privacy policy</label><button id="submit" type="submit">Submit application</button></form>`;
 const tracked=`<script>window.audit={inputs:0,submits:0};document.addEventListener('input',()=>audit.inputs++);document.addEventListener('submit',e=>{e.preventDefault();audit.submits++});</script>`;
@@ -116,7 +117,7 @@ test('E4O-D-R3 real all-frame recovery preserves qualified living documents and 
  for(const key of ['a','b'] as const)for(const row of idleAfter[key]){const old=idleBefore[key].find(x=>x.documentId===row.documentId)!;const delta={context:row.context-old.context,view:row.view-old.view,recoverySignals:row.signals-old.signals,ready:row.ready-old.ready,discoveryQueries:row.queries-old.queries-1};idleDeltas.push(delta);expect(delta).toEqual({context:0,view:0,recoverySignals:0,ready:0,discoveryQueries:0});}
  expect(idleNetwork).toBe(0);expect((await mutations()).flat().reduce((s,v)=>s+v.inputs,0)).toBe(0);
  expect((await topology(aid)).concat(await topology(bid)).reduce((n,r)=>n+r.formMutations,0)).toBe(0);
- const fill=a.locator('#xpertapply-assistant-overlay-v1').locator('#fill');await expect(fill).toBeEnabled();await fill.click();
+ await expect.poll(()=>overlayCdp(a).isEnabled('#fill')).toBe(true);await overlayCdp(a).click('#fill');
  const child=a.frames().find(f=>f.url().endsWith('child-a-replaced'))!;
  await expect(child.locator('#first')).toHaveValue('Riley');await expect(child.locator('#email')).toHaveValue('riley@example.test');await expect(child.locator('#manual')).toHaveValue('');await expect(child.locator('#privacy')).not.toBeChecked();
  expect((await mutations()).flat().reduce((s,v)=>s+v.submits,0)).toBe(0);
