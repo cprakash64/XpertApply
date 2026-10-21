@@ -100,3 +100,42 @@ Deployment: nothing on the web or API must change for these fixes. They ship in 
 the current web code is optional and works with both extension handshakes.
 
 Not verifiable by automation: Chrome's native Allow/Deny prompt and a live job-boards.greenhouse.io page.
+
+## XA-P2 addendum: one assistant, truthful Lever autofill
+
+Real-browser result on `1349a8d`: Greenhouse accepted; Lever (jobs.lever.co, Zoox) showed two XpertApply
+interfaces, 17 discovered / 2 filled / 15 review, email, phone, location and company blank.
+
+**Duplicate window.** `openPermissionSurface` (added in XA-P1) fell back to `openOrFocusAssistant` whenever
+`sidePanel.open` was refused, which is always the case when the Apply click's gesture does not reach it. That
+window stayed open next to the in-page assistant the worker mounts after the grant. Now the worker calls
+`chrome.permissions.addHostAccessRequest({tabId, pattern})`, Chrome's own per-tab access prompt, which needs no
+gesture and opens nothing of ours; `permissions.onAdded` resumes the workflow and `onRemoved` withdraws it
+(`permissionFlow.ts`, unit-tested). The side panel remains only as a fallback where the API is missing; the
+standalone window fallback is removed.
+
+**Blank/under-filled basics (root causes, each reproduced on a Lever-shaped form before the fix).**
+1. Label-only matches score below `AUTO_FILL_THRESHOLD` (0.95): "Phone" 0.92, "Full name" 0.90, "Current company"
+   0.85. Lever's inputs are `type="text"`, so there is no `type=tel`/autocomplete signal. They were typed in and then
+   counted as review. Exact standalone labels now score 0.96-0.99 (`EXACT_STANDALONE_LABELS`), keeping a real
+   `autocomplete` attribute's provenance. "Current location" fills the saved city but stays flagged (Lever's typeahead
+   needs the user to pick a suggestion).
+2. Radio questions were labelled by their option ("Yes"), so sponsorship and work-authorization never mapped. Lever's
+   `.application-label` question text now labels radio/checkbox controls.
+3. Checkbox sets (pronouns) were counted as N questions (20 controls vs 17 questions). A same-name set is now one
+   question with its options, filled only by exact option label.
+4. A placeholder token (`__jobpilot_company_careers_page__`) was typed verbatim into a free-text "How did you
+   hear" box; it is now limited to choice controls.
+5. A rejected upload on a visible file input still showed `filled_verified`; it is now a technical failure.
+
+**Sponsorship.** "Will you require sponsorship now?" was classified as the *future* key and "now or in the future"
+as future-only. Now / future / combined are three keys; the combined key is answered only when BOTH halves are
+verified (No if both No, Yes if either Yes), is added to the polarity/jurisdiction gates, and anything else goes to
+review. Citizenship, permanent-resident and export-control wording map to nothing.
+
+**"36 verified answers".** `answers_available` = prepared canonical answers with `requires_review` false
+(`routes/applications.py:1034`), independent of this employer's form. It is a count of facts, not of fields.
+
+**Self-identification.** The backend already stores it only with `consent_to_store` and emits it as
+`source: profile_eeo, sensitive: true`; the extension fills only those, only with an exact option, and never
+defaults to "decline". Pinned by tests; no schema change. Owner confirmation of the disclosure wording is still open.

@@ -7,6 +7,7 @@
  * summary. It never clicks Submit.
  */
 
+import { answerMapFor } from "../fields/answerMap";
 import type { DetectionOutcome } from "../ats/registry";
 import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
@@ -212,7 +213,20 @@ function buildScanLedger(
   for (const [kind, state] of uploadStates) {
     const canonicalKey = `${kind}_upload`;
     const uid = `upload:${kind}`;
-    if (entries.some((e) => e.uid === uid || e.canonicalKey === canonicalKey)) continue;
+    const existing = entries.find((e) => e.uid === uid || e.canonicalKey === canonicalKey);
+    if (existing) {
+      // A visible file input is already an entry, derived from the DOM before the upload. If the
+      // upload was then rejected or the framework replaced the input, the employer's control holds
+      // nothing, so the entry must not stay "filled".
+      if (state !== "uploaded") {
+        existing.status = "technical_failure";
+        existing.reasonCode = "DOCUMENT_UPLOAD_REJECTED";
+        existing.verified = false;
+        existing.currentValuePresent = false;
+        existing.fillSource = null;
+      }
+      continue;
+    }
     entries.push(documentEntry(kind, state));
   }
   return entries;
@@ -252,7 +266,7 @@ function buildFieldResults(
   session: ApplicationSessionData,
   summary: FillSummary
 ): FieldFillResult[] {
-  const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
+  const answers = answerMapFor(session);
   const byUid = new Map(fields.map((f) => [f.uid, f]));
   const results: FieldFillResult[] = [];
 

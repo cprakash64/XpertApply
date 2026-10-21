@@ -111,8 +111,10 @@ describe("upload provenance", () => {
 
     // The decisive assertion: no false success.
     expect(result.result.documents_uploaded).not.toContain("resume");
-    // Surfaced for the user instead, never counted as uploaded.
-    expect(result.result.review_items).toBeGreaterThan(0);
+    // Surfaced for the user instead, never counted as uploaded: either a failure or a review item.
+    // (This used to read review_items only, which passed because "First name" was being
+    // downgraded to review; exact contact labels are now verified, so the upload must stand on its own.)
+    expect(result.result.failures.length + result.result.review_items).toBeGreaterThan(0);
     // The detached node still holds the file — which is exactly why reading it
     // back was never proof.
     expect(original.isConnected).toBe(false);
@@ -126,6 +128,6 @@ describe("upload provenance", () => {
     const result = await runAutofill(session(), outcome(), { fetchDocument: async () => null });
     expect(result.result.documents_uploaded).not.toContain("resume");
     // Surfaced for the user instead, never counted as uploaded.
-    expect(result.result.review_items).toBeGreaterThan(0);
+    expect(result.result.failures).toContainEqual({ field_key: "resume", reason_code: "DOCUMENT_DOWNLOAD_FAILED" });
   }, 20_000);
 });

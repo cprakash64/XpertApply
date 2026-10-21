@@ -64,6 +64,7 @@ export const CONSEQUENTIAL_KEYS: ReadonlySet<CanonicalField> = new Set<Canonical
   "work_authorization_us",
   "sponsorship_required_now",
   "sponsorship_required_future",
+  "sponsorship_required_now_or_future",
   "gender",
   "race",
   "ethnicity",
@@ -95,7 +96,8 @@ export function isConsequentialKey(key: CanonicalField): boolean {
 const KEY_JURISDICTION: Partial<Record<CanonicalField, string>> = {
   work_authorization_us: "US",
   sponsorship_required_now: "US",
-  sponsorship_required_future: "US"
+  sponsorship_required_future: "US",
+  sponsorship_required_now_or_future: "US"
 };
 
 export function jurisdictionScopeOf(key: CanonicalField): string | null {
@@ -353,6 +355,7 @@ const POLARITY_TEMPLATES: Partial<Record<CanonicalField, { affirmative: RegExp[]
   }
 };
 POLARITY_TEMPLATES.sponsorship_required_future = POLARITY_TEMPLATES.sponsorship_required_now;
+POLARITY_TEMPLATES.sponsorship_required_now_or_future = POLARITY_TEMPLATES.sponsorship_required_now;
 
 /** Keys whose answer flips meaning with the question's polarity. */
 export function isPolaritySensitive(key: CanonicalField): boolean {

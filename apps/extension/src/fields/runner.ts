@@ -6,6 +6,7 @@
  * in the extension background). Pure and DOM-only — unit-testable under jsdom.
  */
 
+import { answerMapFor } from "./answerMap";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FillOutcome } from "../types";
 import { discoverFields } from "./discovery";
 import { fillField, highlight, isJobPilotRepeater } from "./fill";
@@ -123,7 +124,7 @@ const PHONE_COUNTRY_LABELS: Record<string, string> = {
  * one starts, so options from two different open dropdowns can never be
  * confused with each other. */
 export async function applyFill(fields: DiscoveredField[], mappings: FieldMapping[], session: ApplicationSessionData): Promise<FillSummary> {
-  const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
+  const answers = answerMapFor(session);
   const fieldByUid = new Map(fields.map((f) => [f.uid, f]));
   const summary: FillSummary = { filled: 0, skipped: 0, reviewRequired: 0, errors: [], uploadTargets: [], mappings, outcomes: new Map() };
   // Does THIS form ask for the dialing country separately? If so the phone
@@ -227,7 +228,11 @@ function resolveApplicationAnswer(
 ): SessionAnswer | undefined {
   const answer = resolvePhoneAnswer(answers, key, splitsPhoneCountry);
   if (!answer && key === "referral_source") {
-    return syntheticAnswer(key, "__jobpilot_company_careers_page__");
+    // The sentinel is resolved against a dropdown's own options. Typed into a free-text
+    // box it would reach the employer verbatim, so a text control is left for the user.
+    return ["select", "combobox", "listbox", "radio"].includes(field.control)
+      ? syntheticAnswer(key, "__jobpilot_company_careers_page__")
+      : undefined;
   }
   if (!answer && key === "privacy_policy_acknowledgement") {
     // Deliberately NOT answered.

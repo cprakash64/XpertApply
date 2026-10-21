@@ -367,6 +367,8 @@ describe("structured phone autofill", () => {
     const data = session([
       answer("city", "Tempe"),
       answer("work_authorization_us", "authorized_us"),
+      // The employer asks "now OR in the future": it is answered only because BOTH halves are verified.
+      answer("sponsorship_required_now", "No"),
       answer("sponsorship_required_future", "No")
     ]);
     data.profileData = { location: "Tempe, Arizona, United States" };

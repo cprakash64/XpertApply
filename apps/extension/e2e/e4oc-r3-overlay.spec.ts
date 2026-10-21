@@ -547,21 +547,36 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     // failing run showed exactly that: B read the placeholder at the snapshot and its
     // own job title ~1.7 s later, while A's marker never appeared in B. Wait for B to
     // settle on its own content first, so the snapshot is a stable baseline.
-    const emptyStatePlaceholder = "Waiting for an application\u2026";
+    // "Application detected" (a session id but no job title yet) is also unsettled, so the baseline is B
+    // showing ITS OWN job title.
     await expect.poll(async () => {
       const text = (await overlayCdp(pageB).text("#job")) ?? "";
-      return text !== "" && text !== emptyStatePlaceholder;
-    }, { message: "window B's overlay must finish its initial render before the cross-window baseline is taken", timeout: 15_000 }).toBe(true);
+      return text.includes("Synthetic Employer");
+    }, { message: "window B's overlay must finish its initial render before the cross-window baseline is taken", timeout: 30_000 }).toBe(true);
 
     await worker.evaluate(() => {
       const state = globalThis as typeof globalThis & { __e4odWindowMessages?: Record<string, number> };
       state.__e4odWindowMessages = {};
       chrome.runtime.onMessage.addListener((message, sender) => {
+        // Record when each tab last spoke, so the test can establish that window B is quiescent first.
+        if (sender.tab?.id != null) ((globalThis as any).__lastMsgAt ??= {})[String(sender.tab.id)] = Date.now();
         if (message?.type !== "XPERTAPPLY_OVERLAY_GET_VIEW" || sender.tab?.id == null || !state.__e4odWindowMessages) return;
         const key = String(sender.tab.id);
         state.__e4odWindowMessages[key] = (state.__e4odWindowMessages[key] ?? 0) + 1;
       });
     });
+    // Precondition, not assertion: B finishes its own initial autofill (AUTOFILL_RESULT, AUDIT_EVENT, then a
+    // view refresh) at a load-dependent moment. A request B makes for ITS OWN change says nothing about
+    // isolation from A, so wait until B has been silent before testing that A's change does not reach it.
+    await expect.poll(async () => {
+      const state = await worker.evaluate(async (id) => ((await chrome.storage.session.get("viewStates")).viewStates ?? {})[String(id)]?.state, tabB);
+      const quiet = await worker.evaluate((id) => {
+        const last = ((globalThis as any).__lastMsgAt ?? {})[String(id)] as number | undefined;
+        return last === undefined || Date.now() - last > 1_500;
+      }, tabB);
+      // B's own automatic run must have FINISHED (a terminal state), not merely paused between requests.
+      return quiet && ["completed", "completed_with_review", "failed"].includes(String(state));
+    }, { timeout: 60_000, intervals: [500] }).toBe(true);
     const jobsBeforeCrossWindow = await Promise.all([page, pageB].map(async (target) => (await overlayCdp(target).text("#job")) ?? ""));
     await pageB.waitForTimeout(300);
     await worker.evaluate(() => {

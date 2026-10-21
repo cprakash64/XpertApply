@@ -12,6 +12,7 @@
  *   sensitive: never auto-fill unless explicitly verified + enabled
  */
 
+import { answerMapFor } from "./answerMap";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FieldMappingResult } from "../types";
 import { detectSensitive } from "./sensitive";
 import { decideFill, type FillDecision, type RefusalReason } from "./answerAuthority";
@@ -137,6 +138,41 @@ const KEYWORD_RULES: { key: CanonicalField; pattern: RegExp; confidence: number 
   { key: "custom_experience", pattern: /\b(describe (?:your )?(?:experience|a (?:relevant )?project)|tell us about|relevant experience)\b/i, confidence: 0.78 }
 ];
 
+
+/** A label reduced to its words: required markers (* ✱ ★ †), a trailing colon and
+ * case removed. Anything else in the label keeps it from matching exactly. */
+export function standaloneLabel(raw: string | null | undefined): string {
+  return (raw ?? "")
+    .replace(/[*\u2731\u2605\u2020]/g, " ")
+    .replace(/\(required\)|\brequired\b/gi, " ")
+    .replace(/[:\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+const EXACT_STANDALONE_LABELS: ReadonlyMap<string, { key: CanonicalField; confidence: number }> = new Map([
+  ["full name", { key: "full_name", confidence: 0.98 }],
+  ["legal name", { key: "full_name", confidence: 0.98 }],
+  ["first name", { key: "first_name", confidence: 0.98 }],
+  ["last name", { key: "last_name", confidence: 0.98 }],
+  ["email", { key: "email", confidence: 0.99 }],
+  ["e-mail", { key: "email", confidence: 0.99 }],
+  ["email address", { key: "email", confidence: 0.99 }],
+  ["phone", { key: "phone", confidence: 0.98 }],
+  ["phone number", { key: "phone", confidence: 0.98 }],
+  ["mobile phone", { key: "phone", confidence: 0.98 }],
+  ["mobile number", { key: "phone", confidence: 0.98 }],
+  ["current company", { key: "current_company", confidence: 0.97 }],
+  ["current employer", { key: "current_company", confidence: 0.97 }],
+  ["current title", { key: "current_title", confidence: 0.96 }],
+  ["preferred name", { key: "preferred_name", confidence: 0.97 }],
+  // A free-text location is filled with the saved city, but stays flagged: a typeahead
+  // such as Lever's needs the user to pick a suggestion, which only they can confirm.
+  ["current location", { key: "city", confidence: 0.9 }],
+  ["location", { key: "city", confidence: 0.9 }]
+]);
+
 /** Classify a single field into a canonical key (session-independent). */
 export function classifyField(field: DiscoveredField): Classification {
   const text = combinedText(field);
@@ -178,6 +214,21 @@ export function classifyField(field: DiscoveredField): Classification {
     };
   }
 
+  // A standalone, exact contact/profile label is unambiguous. Without this the
+  // keyword rules above score "Phone" 0.92 / "Full name" 0.90 / "Current company"
+  // 0.85, all under AUTO_FILL_THRESHOLD, so on a form whose inputs are plain
+  // type="text" (Lever) they were typed in and then counted as "needs review".
+  // Only whole-label matches qualify, so "Company name" or "Phone type" never do.
+  const standalone = standaloneLabel(field.label || field.ariaLabel || field.placeholder);
+  const exact = EXACT_STANDALONE_LABELS.get(standalone);
+  // A real autocomplete attribute is stronger evidence and keeps its own provenance (step 3 below).
+  if (exact && !AUTOCOMPLETE_MAP[field.autocomplete]) {
+    return {
+      canonicalKey: exact.key, confidence: exact.confidence, source: "label", sensitive: false,
+      explanation: "Exact standalone profile label."
+    };
+  }
+
   // Exact high-consequence questions must be classified from the control's own
   // accessible name, before nearby/help text can introduce overlapping words.
   // Greenhouse's sponsorship prompt itself contains "work authorization", so a
@@ -191,11 +242,32 @@ export function classifyField(field: DiscoveredField): Classification {
       explanation: "Exact legal work-authorization question."
     };
   }
-  if (/\bwill you now or (?:in )?the future require\b.*\bsponsorship\b|\brequire\b.*\bsponsorship\b.*\b(?:now or )?(?:in )?the future\b/i.test(primaryText)) {
-    return {
-      canonicalKey: "sponsorship_required_future", confidence: 0.98, source: "label", sensitive: false,
-      explanation: "Exact current-or-future sponsorship question."
-    };
+  // Sponsorship has three DIFFERENT questions and each maps to its own key; one answer
+  // never stands in for another. "Now" and "future" are told apart by the words the
+  // employer used, and wording that names both is the combined question, which needs
+  // both answers. Wording that names neither is the generic ask, which is flagged.
+  if (/\bsponsorship\b|\bvisa\s+transfer\b/i.test(primaryText) && /\b(?:requir\w*|need\w*)\b/i.test(primaryText)) {
+    const names = (re: RegExp) => re.test(primaryText);
+    const now = names(/\b(?:now|currently|at this time|at the present time|to begin employment|to start)\b/i);
+    const future = names(/\b(?:future|at any point|at any time|later|going forward|down the line|after (?:your|the) (?:initial|first))\b/i);
+    if (now && future) {
+      return {
+        canonicalKey: "sponsorship_required_now_or_future", confidence: 0.98, source: "label", sensitive: false,
+        explanation: "Exact combined now-or-future sponsorship question."
+      };
+    }
+    if (future) {
+      return {
+        canonicalKey: "sponsorship_required_future", confidence: 0.98, source: "label", sensitive: false,
+        explanation: "Exact future-only sponsorship question."
+      };
+    }
+    if (now) {
+      return {
+        canonicalKey: "sponsorship_required_now", confidence: 0.97, source: "label", sensitive: false,
+        explanation: "Exact current sponsorship question."
+      };
+    }
   }
   if (/\blocation\s*\(\s*city\s*\)|^\s*city\s*\*?\s*$/i.test(field.label || field.ariaLabel || field.placeholder)) {
     return {
@@ -327,7 +399,7 @@ export function classifyField(field: DiscoveredField): Classification {
  * decision now has one owner, and "we have no answer" has exactly one outcome.
  */
 export function buildMappings(fields: DiscoveredField[], session: ApplicationSessionData): FieldMappingResult {
-  const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
+  const answers = answerMapFor(session);
   const mappings: FieldMapping[] = [];
   const unmapped: string[] = [];
 

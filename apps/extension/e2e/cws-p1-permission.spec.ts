@@ -9,11 +9,11 @@ import path from "node:path";
 /**
  * Failure B: a launch to an employer origin Chrome has NOT granted.
  *
- * 0.3.0 left no way to ask: the in-page assistant cannot call chrome.permissions
- * (not exposed to content scripts) and nothing ever opened the side panel or the
- * assistant window, so the user saw "We couldn't connect" with a button that could
- * not work. Now the launch itself opens an extension page that can ask, and the
- * employer page is not read, scripted or marked ready until Chrome grants access.
+ * 0.3.0 left no way to ask. XA-P1 fixed that by opening the assistant window, which then sat
+ * next to the in-page assistant once access was granted (two interfaces). Now the worker uses
+ * chrome.permissions.addHostAccessRequest, Chrome's own per-tab access prompt: no gesture, no
+ * XpertApply window. The employer page is not read, scripted or marked ready until Chrome
+ * grants access, and permissions.onAdded resumes the workflow.
  *
  * Chrome's native Allow/Deny prompt cannot be driven by automation, so granting
  * itself is NOT exercised here; the post-grant flow is covered in cws-p1-launch-flow.
@@ -21,7 +21,7 @@ import path from "node:path";
 const HOST = "employer-gh.test";
 const employerHtml = `<!doctype html><title>Employer</title><form id="f"><label for="first_name">First Name</label><input id="first_name" autocomplete="given-name"></form>`;
 
-test("launch to an ungranted origin opens the permission surface and reads nothing", async () => {
+test("launch to an ungranted origin asks Chrome for that origin, opens no XpertApply window and reads nothing", async () => {
   test.setTimeout(120_000);
   const dir = mkdtempSync(path.join(tmpdir(), "xa-tls-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", `/CN=${HOST}`], { stdio: "ignore" });
@@ -46,8 +46,18 @@ test("launch to an ungranted origin opens the permission surface and reads nothi
     const site = await ctx.newPage();
     await site.goto(`http://localhost:${webPort}/`);
     const payload = { requestId: "perm-req", launchToken: "synthetic", sessionId: 5005, jobId: 5005, officialUrl: applicationUrl, atsType: "greenhouse", webApiBase: `http://127.0.0.1:${(apiServer.address() as { port: number }).port}`, webAuthenticatedUserId: 1 };
-    const surfaces: string[] = [];
-    ctx.on("page", p => surfaces.push(p.url()));
+    // Record what the worker asks Chrome for, passing the call through.
+    const hasApi = await worker.evaluate(() => {
+      const g = globalThis as any; g.__hostAccess = [];
+      const perms = chrome.permissions as any;
+      if (typeof perms.addHostAccessRequest !== "function") return false;
+      const real = perms.addHostAccessRequest.bind(perms);
+      perms.addHostAccessRequest = (req: unknown) => { g.__hostAccess.push(req); return real(req); };
+      return true;
+    });
+    // The pinned Chromium (>= 133) must offer Chrome's host-access request; without it the test would prove nothing.
+    expect(hasApi, "chrome.permissions.addHostAccessRequest must exist in the pinned Chromium").toBe(true);
+    const windowsBefore = await worker.evaluate(async () => (await chrome.windows.getAll()).length);
     const ack = await site.evaluate(p => new Promise<any>(resolve => {
       const on = (e: MessageEvent) => { if (e.source === window && e.data?.source === "jobpilot-extension" && e.data.type === "JOBPILOT_START_ASSISTED_APPLY_RESULT") { window.removeEventListener("message", on); resolve(e.data.result); } };
       window.addEventListener("message", on);
@@ -57,12 +67,14 @@ test("launch to an ungranted origin opens the permission surface and reads nothi
     const employerTab = await worker.evaluate(async u => (await chrome.tabs.query({})).find(t => (t.url || t.pendingUrl || "").startsWith(u))?.id ?? null, `https://${HOST}`);
     expect(employerTab).not.toBeNull();
 
-    // The permission surface is an EXTENSION page (side panel or assistant window).
-    // Without a user gesture (automation) Chrome refuses the side panel, so the window is the one we can observe.
-    await expect.poll(async () => (await worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")))).some(u => u.includes("/assistant.html")), { timeout: 20_000 }).toBe(true);
-    const assistant = ctx.pages().find(p => p.url().includes("/assistant.html"))!;
-    await expect(assistant.locator("#grantSiteAccess")).toBeVisible({ timeout: 20_000 });
-    await expect(assistant.locator("#grantSiteAccess")).toHaveText(new RegExp(`Allow XpertApply on .*${HOST}`));
+    // Chrome is asked, with ITS access prompt for exactly this origin. XpertApply opens no window or page of its own.
+    {
+      await expect.poll(() => worker.evaluate(() => (globalThis as any).__hostAccess), { timeout: 20_000 })
+        .toEqual([{ tabId: employerTab, pattern: `https://${HOST}/*` }]);
+    }
+    await new Promise(r => setTimeout(r, 1500));
+    expect(await worker.evaluate(async () => (await chrome.windows.getAll()).length)).toBe(windowsBefore);
+    expect(ctx.pages().filter(p => p.url().startsWith("chrome-extension://"))).toEqual([]);
 
     // No grant => no script in the employer page, and nothing about it went to the API.
     const view = await worker.evaluate(async id => ((await chrome.storage.session.get("viewStates")).viewStates ?? {})[String(id)], employerTab);

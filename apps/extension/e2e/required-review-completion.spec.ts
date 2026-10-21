@@ -63,8 +63,8 @@ test(`required-review guard: ${resolveReview ? "explicit review resolution and m
   const network = await containSyntheticNetwork(context);
   try {
     const answers = [
-      { canonical_key: "first_name", value: "Test", display_value: "Test", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true },
-      { canonical_key: "last_name", value: "Candidate", display_value: "Candidate", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true },
+      // The names are deliberately NOT in the verified answers: this spec is about a required question the user must answer.
+      // (They used to appear here and were only 'review' because exact labels were wrongly scored under the auto-fill bar.)
       { canonical_key: "email", value: "candidate@example.test", display_value: "candidate@example.test", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true }
     ];
     const session = {

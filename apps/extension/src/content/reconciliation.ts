@@ -1,3 +1,4 @@
+import { answerMapFor } from "../fields/answerMap";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, SessionAnswer } from "../types";
 
 export type ReconciliationClass =
@@ -22,7 +23,7 @@ export function reconcileAtsValues(
   session: ApplicationSessionData
 ): ReconciledField[] {
   const mappingByUid = new Map(mappings.map((mapping) => [mapping.uid, mapping]));
-  const answers = new Map(session.answers.map((answer) => [answer.canonical_key, answer]));
+  const answers = answerMapFor(session);
   return fields.map((field) => reconcileField(field, mappingByUid.get(field.uid), answers));
 }
 

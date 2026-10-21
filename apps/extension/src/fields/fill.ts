@@ -10,6 +10,7 @@ import type { DiscoveredField, FillOutcome } from "../types";
 import { fillDropdown, selectAdapter } from "./dropdown";
 import type { AnswerSource } from "./dropdown/types";
 import { deepQueryAll } from "../dom/deepDom";
+import { checkboxGroupMembers, checkboxOptionLabel } from "./discovery";
 import { presentFieldStatus, removeFieldStatus } from "./statusPresentation";
 
 export type FillStatus = "verified" | "generated" | "review" | "invalid" | "neutral";
@@ -90,8 +91,12 @@ export async function fillField(field: DiscoveredField, value: string | string[]
       case "listbox":
       case "radio":
         return await fillViaDropdown(field, toValues(value), options);
-      case "checkbox":
-        return fillCheckbox(field, el as HTMLInputElement, single, options);
+      case "checkbox": {
+        const group = checkboxGroupMembers(el);
+        return group
+          ? fillCheckboxGroup(field, group, toValues(value))
+          : fillCheckbox(field, el as HTMLInputElement, single, options);
+      }
       default:
         return { uid: field.uid, status: "skipped", reason: "unsupported control" };
     }
@@ -191,6 +196,33 @@ async function fillTextLike(field: DiscoveredField, el: HTMLInputElement, value:
     return { uid: field.uid, status: "review_required", reason: "site marked the field invalid" };
   }
   return { uid: field.uid, status: "filled" };
+}
+
+/**
+ * Tick the options of a checkbox SET by their label. Every wanted value must match an option
+ * exactly (ignoring case and spacing); otherwise nothing is ticked and the question goes to
+ * review, because ticking "the nearest" box answers a question the user did not answer. An
+ * option the user already ticked is never unticked.
+ */
+function fillCheckboxGroup(field: DiscoveredField, members: HTMLInputElement[], wanted: string[]): FillOutcome {
+  const norm = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
+  const byLabel = new Map(members.map((member) => [norm(checkboxOptionLabel(member)), member]));
+  const targets = wanted.map((value) => byLabel.get(norm(value)));
+  if (wanted.length === 0 || targets.some((member) => !member)) {
+    return { uid: field.uid, status: "review_required", reason: "no matching option" };
+  }
+  for (const member of targets as HTMLInputElement[]) {
+    captureOriginal(member);
+    if (!member.checked) {
+      member.click();
+      dispatch(member, ["input", "change"]);
+    }
+    markFilled(member, "verified");
+  }
+  const verified = (targets as HTMLInputElement[]).every((member) => member.checked);
+  return verified
+    ? { uid: field.uid, status: "filled" }
+    : { uid: field.uid, status: "error", reason: "option did not stay selected" };
 }
 
 function fillCheckbox(field: DiscoveredField, el: HTMLInputElement, value: string, _options: FillOptions): FillOutcome {

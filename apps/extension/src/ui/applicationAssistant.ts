@@ -279,8 +279,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       return;
     }
     if (granted === "deferred") {
-      // Chrome's prompt is shown from the XpertApply side panel or window that just opened.
-      showButtonError("Choose Allow in the XpertApply panel that just opened to continue.");
+      // Chrome's own access prompt is now showing for this tab; the worker resumes on permissions.onAdded.
+      showButtonError("Allow XpertApply in Chrome's prompt for this site to continue. If no prompt appears, open the Extensions menu (puzzle icon) and allow XpertApply on this site.");
       return;
     }
     const response = await options.actions.reportSiteAccess(id, pattern, granted);

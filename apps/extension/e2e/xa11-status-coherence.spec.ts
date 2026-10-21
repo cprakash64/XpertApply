@@ -62,8 +62,8 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
   const network = await containSyntheticNetwork(context);
   try {
     const answers = [
-      { canonical_key: "first_name", value: "Test", display_value: "Test", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true },
-      { canonical_key: "last_name", value: "Candidate", display_value: "Candidate", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true },
+      // The names are deliberately NOT in the verified answers: this spec is about a required question the user must answer.
+      // (They used to appear here and were only 'review' because exact labels were wrongly scored under the auto-fill bar.)
       { canonical_key: "email", value: "candidate@example.test", display_value: "candidate@example.test", source: "profile", confidence: 1, sensitive: false, requires_review: false, verified: true }
     ];
     const session = {
@@ -190,12 +190,15 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
     expect(pageState.styles.map((style) => style.inlineOutline)).toEqual(["", "", ""]);
     expect(pageState.styles.map((style) => style.inlineOutlineOffset)).toEqual(["", "", ""]);
     expect(pageState.observer.style).toBe(0);
-    expect(accessibleNames.filter((name) => name === "XpertApply field status: Needs review")).toHaveLength(2);
+    // Two required names the profile did not supply are blank, so the page marks them as requiring action
+    // (not "Needs review", which is for a value that was typed in but not trusted).
+    expect(accessibleNames.filter((name) => name === "XpertApply field status: Invalid — action required")).toHaveLength(2);
+    expect(accessibleNames.filter((name) => name === "XpertApply field status: Needs review")).toHaveLength(0);
     expect(accessibleNames.filter((name) => name === "XpertApply field status: Verified")).toHaveLength(1);
     expect(summary.filled).toBe(1);
     expect(summary.discovered).toBe(3);
     expect(confirmation).toBe(authoritative.reviewRequired);
-    expect(confirmation).toBe(accessibleNames.filter(name => name === "XpertApply field status: Needs review").length);
+    expect(confirmation).toBe(accessibleNames.filter(name => name === "XpertApply field status: Needs review" || name === "XpertApply field status: Invalid — action required").length);
     expect(confirmation).toBe(2);
     let completions=0;
     await fixture.route("**/application-sessions/911/complete",route=>{completions++;return route.fulfill({status:200,contentType:"application/json",body:"{}"})});

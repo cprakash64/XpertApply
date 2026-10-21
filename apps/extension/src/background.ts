@@ -124,13 +124,13 @@ import {
   handleAssistantWindowRemoved,
   handleBoundTabUpdated,
   isTrustedAssistantSender,
-  openOrFocusAssistant,
   readAssistantState,
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
 import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
+import { createPermissionsChangedHandler } from "./permissionFlow";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
@@ -1236,25 +1236,46 @@ async function autoShowOverlay(tabId: number, documentId: string, generation: Au
 }
 
 /**
- * Show the page that can ask Chrome for the employer origin. Needs the user's
- * gesture, which the calling message carries from the click that produced it.
- * Falls back to the extension-owned window, which needs none.
+ * Ask Chrome for the employer origin, using Chrome's own UI.
+ *
+ * `permissions.addHostAccessRequest` (Chrome 133+) puts Chrome's "wants access to this site"
+ * affordance on the tab itself. It needs no user gesture and no XpertApply window; when the user
+ * allows it, Chrome fires `permissions.onAdded` and the workflow resumes (see permissionsChanged).
+ * Where the API is missing we fall back to the side panel, which can call permissions.request from
+ * its own button. There is deliberately NO standalone-window fallback: it produced a second
+ * XpertApply interface next to the in-page assistant.
  */
-async function openPermissionSurface(tabId: number, windowId?: number): Promise<"side_panel" | "window" | null> {
+type HostAccessApi = { addHostAccessRequest?: (request: { tabId: number; pattern?: string }) => Promise<void> };
+export async function openPermissionSurface(tabId: number, windowId?: number): Promise<"host_access_request" | "side_panel" | null> {
+  const pattern = (await getView(tabId))?.siteAccessPattern ?? undefined;
+  const api = chrome.permissions as unknown as HostAccessApi;
+  if (pattern && typeof api.addHostAccessRequest === "function") {
+    try {
+      await api.addHostAccessRequest({ tabId, pattern });
+      return "host_access_request";
+    } catch (error) {
+      log.info("permission surface: host access request unavailable", { reason: String(error).slice(0, 60) });
+    }
+  }
   try {
     await chrome.sidePanel.setOptions?.({ tabId, path: "sidepanel.html", enabled: true });
     await chrome.sidePanel.open({ tabId });
     return "side_panel";
   } catch (error) {
     log.info("permission surface: side panel unavailable", { reason: String(error).slice(0, 60), windowId: String(windowId ?? "") });
-  }
-  try {
-    await openOrFocusAssistant(tabId);
-    return "window";
-  } catch {
     return null;
   }
 }
+
+const permissionsChanged = createPermissionsChangedHandler({
+  workflowTabIds,
+  getView,
+  patchView: (tabId, patch) => patchView(tabId, patch, captureAuthorityGeneration()),
+  applySiteAccessResult: (tabId, pattern, granted) =>
+    applySiteAccessResult(tabId, pattern, granted, captureAuthorityGeneration())
+});
+chrome.permissions.onAdded?.addListener((permissions) => void permissionsChanged(permissions.origins ?? [], true));
+chrome.permissions.onRemoved?.addListener((permissions) => void permissionsChanged(permissions.origins ?? [], false));
 
 function handleLaunchRequest(
   payload: LaunchPayload,
