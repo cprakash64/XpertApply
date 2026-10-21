@@ -116,12 +116,15 @@ export function mountApplicationAssistantOverlay(options: {
       clearSession: () => sendWorker<ActionResponse>({ type: MSG.OVERLAY_CLEAR_SESSION }),
       completeSession: (_tabId, sessionId) => sendWorker<ActionResponse>({ type: MSG.OVERLAY_COMPLETE_SESSION, sessionId }),
       async requestSiteAccess(pattern) {
-        // Invoke only from the controller's direct button handler. Never relay
-        // permission prompts through the service worker, where user activation
-        // is not authoritative. Chrome may withhold this API from a content
-        // script; fail closed and leave the qualified Side Panel grant path.
-        if (typeof chrome === "undefined" || !chrome.permissions?.request) return false;
-        return chrome.permissions.request({ origins: [pattern] });
+        // Chrome does not expose chrome.permissions to content scripts, so this
+        // click asks the worker to open an extension page (side panel, else the
+        // assistant window) whose own button makes the request. Never relay the
+        // request itself through the worker, where user activation is not authoritative.
+        if (typeof chrome !== "undefined" && chrome.permissions?.request) {
+          return chrome.permissions.request({ origins: [pattern] });
+        }
+        const response = await sendWorker<ActionResponse>({ type: MSG.OVERLAY_OPEN_PERMISSION_SURFACE });
+        return response?.ok === true ? "deferred" : false;
       },
       reportSiteAccess: (_tabId, pattern, granted) => sendWorker<ActionResponse>({
         type: MSG.OVERLAY_SITE_ACCESS_RESULT,

@@ -74,3 +74,29 @@ policy page is deployed; deployment is a separate, explicit step.
 
 Revert the branch. The storage keys `toolbarDisclosureAcceptedVersion` (local) and `fieldEntriesV1` (session) are
 inert to older builds. No migrations, no API changes.
+
+## XA-P1 addendum: website -> extension -> employer launch
+
+Manual Chrome testing of 3907f74 found three launch-blocking faults.
+
+1. **Site said "Install extension" with the extension installed.** The deployed site detects the extension
+   with `JOBPILOT_PING` -> `JOBPILOT_PONG` (production `/jobs` chunk `b09f79efdb49d89d`). The extension stopped
+   answering both in `1fd837c` and only answers `XPERTAPPLY_EXTENSION_PRESENCE_PING`, which the deployed site
+   does not send. Local web code already uses the new message, so this is version skew: web not redeployed.
+   Fix: the bridge answers the legacy ping with capability metadata only; a page-supplied `apiBase` is never read.
+2. **No way to grant an employer origin.** The in-page assistant called `chrome.permissions.request` from a
+   content script (Chrome does not expose it there) and its comment pointed at a "Side Panel grant path"
+   that nothing opened. `handleLaunchRequest` likewise relied on a side panel "opened by this same user gesture".
+   Fix: the launch (from the real Apply click) and the in-page Allow button open the side panel, falling back to the
+   extension window, whose own button calls `chrome.permissions.request` for exactly that origin. Also fixed the
+   Allow button staying `hidden` after the panel's first "unavailable" render.
+3. **No automatic activation.** The assistant only mounted on a toolbar click. After a launch is matched, probed and
+   its package loaded for the top frame, the worker now mounts it once per document; a dismissed or open assistant
+   is left alone.
+
+Also: `HANDOFF_NOT_FOUND` no longer tells the user to refresh (refreshing cannot help); it says to start from XpertApply.
+
+Deployment: nothing on the web or API must change for these fixes. They ship in the extension build. Redeploying
+the current web code is optional and works with both extension handshakes.
+
+Not verifiable by automation: Chrome's native Allow/Deny prompt and a live job-boards.greenhouse.io page.

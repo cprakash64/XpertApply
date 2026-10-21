@@ -124,11 +124,12 @@ import {
   handleAssistantWindowRemoved,
   handleBoundTabUpdated,
   isTrustedAssistantSender,
+  openOrFocusAssistant,
   readAssistantState,
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
-import { continueToolbarOverlay, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 
@@ -759,6 +760,15 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       }
       return false;
 
+    case MSG.OVERLAY_OPEN_PERMISSION_SURFACE:
+      // chrome.permissions.request cannot run in a content script or a worker, so the
+      // user's click on the in-page "Allow" button opens an extension page that can.
+      void requireAuthorizedOverlayContextSender(sender)
+        .then(({ tabId }) => openPermissionSurface(tabId, sender.tab?.windowId))
+        .then((surface) => sendResponse({ ok: surface !== null, surface }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
     case MSG.TOOLBAR_DISCLOSURE_ACCEPT:
       // Only our own content script in a top-level http(s) document can reach
       // here (page script has no runtime messaging). Record the accepted wording
@@ -1206,6 +1216,46 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 // --------------------------------------------------------------------------- //
 // Launch (user gesture)
 // --------------------------------------------------------------------------- //
+// One automatic show per document; a user who closes the assistant is not re-prompted
+// by later passive events (the content side also honors its own dismissal).
+const autoShownDocuments = new Set<string>();
+
+async function autoShowOverlay(tabId: number, documentId: string, generation: AuthorityGeneration): Promise<void> {
+  const key = `${tabId}:${documentId}`;
+  if (autoShownDocuments.has(key)) return;
+  autoShownDocuments.add(key);
+  if (autoShownDocuments.size > 200) autoShownDocuments.delete(autoShownDocuments.values().next().value as string);
+  try {
+    if (generation !== captureAuthorityGeneration()) return;
+    await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [TOOLBAR_OVERLAY_BUNDLE] });
+    await chrome.tabs.sendMessage(tabId, { type: MSG.SHOW_APPLICATION_OVERLAY, automatic: true }, { frameId: 0 });
+  } catch (error) {
+    autoShownDocuments.delete(key);
+    log.info("automatic assistant not shown", { reason: String(error).slice(0, 60) });
+  }
+}
+
+/**
+ * Show the page that can ask Chrome for the employer origin. Needs the user's
+ * gesture, which the calling message carries from the click that produced it.
+ * Falls back to the extension-owned window, which needs none.
+ */
+async function openPermissionSurface(tabId: number, windowId?: number): Promise<"side_panel" | "window" | null> {
+  try {
+    await chrome.sidePanel.setOptions?.({ tabId, path: "sidepanel.html", enabled: true });
+    await chrome.sidePanel.open({ tabId });
+    return "side_panel";
+  } catch (error) {
+    log.info("permission surface: side panel unavailable", { reason: String(error).slice(0, 60), windowId: String(windowId ?? "") });
+  }
+  try {
+    await openOrFocusAssistant(tabId);
+    return "window";
+  } catch {
+    return null;
+  }
+}
+
 function handleLaunchRequest(
   payload: LaunchPayload,
   sender: chrome.runtime.MessageSender,
@@ -1227,7 +1277,7 @@ function handleLaunchRequest(
           await chrome.tabs.update(existing.tabId, { active: true, url: payload.officialUrl });
           if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
           await updatePending(existing.tabId, {
-            ...handoffFields(payload), targetTabId: existing.tabId, status: "opening", state: "waiting_for_tab"
+            ...handoffFields(payload), userStarted: true, targetTabId: existing.tabId, status: "opening", state: "waiting_for_tab"
           }, generation);
           await recordSiteAccess(existing.tabId, await siteAccessFor(payload.officialUrl), null, generation);
           void ensureContentReady(existing.tabId, generation);
@@ -1245,13 +1295,17 @@ function handleLaunchRequest(
       const tabId = created.id;
       if (tabId == null) throw new Error("no tab id");
 
-      const bound = { ...pending, targetTabId: tabId, status: "opening" as const, state: "waiting_for_tab" as const };
+      const bound = { ...pending, userStarted: true as const, targetTabId: tabId, status: "opening" as const, state: "waiting_for_tab" as const };
       await putPending(tabId, bound, generation);
       await putView(tabId, initialView(tabId, bound, null, null), generation);
       // The employer origin is only knowable now, and a service worker cannot
       // ask Chrome for it. Record what the workflow needs; the side panel —
       // opened by this same user gesture — presents the request.
-      await recordSiteAccess(tabId, await siteAccessFor(payload.officialUrl), null, generation);
+      const access = await siteAccessFor(payload.officialUrl);
+      await recordSiteAccess(tabId, access, null, generation);
+      // The employer origin needs a Chrome grant that only an extension page can request.
+      // This message was sent from the user's real Apply click, so open that page now.
+      if (access.state === "site_access_required") void openPermissionSurface(tabId, windowId);
       log.info("launch accepted", { requestId: payload.requestId, tabId, origin: pending.expectedOrigin });
       sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId });
     } catch (err) {
@@ -1536,6 +1590,11 @@ async function handleContentReady(
       submissionAttempt: currentView?.submissionAttempt ?? 0,
       reason: "automatic_launch" as AutofillReason
     });
+    // The workflow is authorized for this very document (Apply click, Chrome grant for
+    // this origin, matched handoff, passed probe), so bring up the in-page assistant
+    // without a toolbar click. Only for a launch the user started with the Apply click
+    // (a merely staged handoff stays silent), never in a nested frame or an unmatched page.
+    if (isTopFrame && pending.userStarted === true) void autoShowOverlay(tabId, documentId, generation);
   } catch (err) {
     const code = classifyPackageError(err);
     // Name the stage as well as the code: a 401 here means the launch token was

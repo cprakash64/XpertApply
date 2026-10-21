@@ -1,6 +1,7 @@
 import { MSG, parseRuntimeMessage } from "../messages";
 import { reopenApplicationAssistantOverlay } from "./applicationOverlayAssistant";
 import { showToolbarDisclosure } from "./toolbarDisclosure";
+import { getOverlayState, isOverlayDismissed } from "./applicationOverlay";
 
 type BootstrapWorld = typeof globalThis & {
   __xpertapplyOverlayBootstrapV1__?: true;
@@ -25,6 +26,12 @@ export function installOverlayToolbarReceiver(): void {
       return false;
     }
     if (message?.type !== MSG.SHOW_APPLICATION_OVERLAY) return false;
+    // An automatic show (authorized launch) never overrides the user: a closed assistant
+    // stays closed and an open or minimized one is left exactly as it is.
+    if (message.automatic && (isOverlayDismissed(document) || getOverlayState(document) !== "ABSENT")) {
+      sendResponse({ ok: true, skipped: true });
+      return false;
+    }
     chrome.runtime.sendMessage({ type: MSG.TOOLBAR_OVERLAY_READY }, () => {
       // Registration is best-effort for display: the worker remains the
       // authority for every action and will fail closed if it did not accept it.

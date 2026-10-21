@@ -178,6 +178,9 @@ export interface PendingLaunch {
   state: LaunchState;
   protocolVersion: number;
   atsType: string | null;
+  /** Set only by an Apply click (LAUNCH_REQUEST). A handoff that was merely staged never has it,
+   * and only a user-started launch may bring up the in-page assistant without a toolbar click. */
+  userStarted?: true;
   /** Last actionable failure reason for the side panel (safe code, not PII). */
   failureCode?: ReasonCode | string;
   lastError?: { code: string; message: string; recoverable: boolean };
@@ -359,6 +362,10 @@ export const MSG = {
    * state; the receiver must fetch the current authoritative context/view. */
   OVERLAY_VIEW_CHANGED: "XPERTAPPLY_OVERLAY_VIEW_CHANGED",
   SHOW_APPLICATION_OVERLAY: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY",
+  /** Overlay -> worker, from the user's click on "Allow XpertApply on <site>".
+   * Content scripts cannot call chrome.permissions, so the worker opens an
+   * extension page (side panel, else assistant window) whose own button requests it. */
+  OVERLAY_OPEN_PERMISSION_SURFACE: "XPERTAPPLY_OVERLAY_OPEN_PERMISSION_SURFACE",
   TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
   /** Worker -> top frame: show the static first-use disclosure. Carries no page data. */
   SHOW_TOOLBAR_DISCLOSURE: "XPERTAPPLY_SHOW_TOOLBAR_DISCLOSURE",
@@ -557,7 +564,8 @@ export type RuntimeMessage =
   | { type: typeof MSG.OVERLAY_COMPLETE_SESSION; sessionId: number }
   | { type: typeof MSG.OVERLAY_SITE_ACCESS_RESULT; pattern: string; granted: boolean }
   | { type: typeof MSG.OVERLAY_VIEW_CHANGED }
-  | { type: typeof MSG.SHOW_APPLICATION_OVERLAY }
+  | { type: typeof MSG.SHOW_APPLICATION_OVERLAY; automatic?: boolean }
+  | { type: typeof MSG.OVERLAY_OPEN_PERMISSION_SURFACE }
   | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
   | { type: typeof MSG.SHOW_TOOLBAR_DISCLOSURE }
   | { type: typeof MSG.FIELD_ENTRY_REGISTER; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } }
@@ -599,7 +607,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
   MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
-  MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY,
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.TOOLBAR_OVERLAY_READY,
   MSG.SHOW_TOOLBAR_DISCLOSURE, MSG.TOOLBAR_DISCLOSURE_ACCEPT,
   MSG.FIELD_ENTRY_REGISTER, MSG.FIELD_ENTRY_CONFIG, MSG.FIELD_ENTRY_SUBMIT, MSG.FIELD_ENTRY_DELIVER
 ]);
@@ -712,7 +720,8 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     granted: { kind: "boolean", required: true }
   },
   [MSG.OVERLAY_VIEW_CHANGED]: {},
-  [MSG.SHOW_APPLICATION_OVERLAY]: {},
+  [MSG.SHOW_APPLICATION_OVERLAY]: { automatic: { kind: "boolean" } },
+  [MSG.OVERLAY_OPEN_PERMISSION_SURFACE]: {},
   [MSG.TOOLBAR_OVERLAY_READY]: {},
   [MSG.SHOW_TOOLBAR_DISCLOSURE]: {},
   [MSG.FIELD_ENTRY_REGISTER]: {
@@ -894,7 +903,22 @@ export const PAGE_SOURCE_EXT = "jobpilot-extension";
 
 export type Capability = "fill" | "upload" | "results" | "ashby" | "greenhouse" | "lever" | "workday" | "generic";
 
+/**
+ * Legacy presence handshake, answered for sites that predate EXTENSION_PRESENCE_*.
+ *
+ * The deployed web app detects the extension by sending JOBPILOT_PING and waiting
+ * for JOBPILOT_PONG. The extension stopped answering both in 1fd837c (the old PING
+ * carried an `apiBase` the page chose), so every site build that had not yet moved
+ * to the presence message reported "Install extension" with the extension installed.
+ * The reply carries capability metadata only, exactly like EXTENSION_PRESENCE_READY,
+ * and a page-supplied `apiBase` is never read.
+ */
+export const LEGACY_PRESENCE_PING = "JOBPILOT_PING";
+export const LEGACY_PRESENCE_PONG = "JOBPILOT_PONG";
+
 export type PageMessage =
+  | { source: typeof PAGE_SOURCE_WEB; type: typeof LEGACY_PRESENCE_PING }
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof LEGACY_PRESENCE_PONG; info: { installed: true; version: string; protocolVersion: number; capabilities: Capability[] } }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.EXTENSION_PRESENCE_PING; requestId: string }
   | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.EXTENSION_PRESENCE_READY; requestId: string; info: { installed: true; version: string; protocolVersion: number; capabilities: Capability[] } }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
@@ -905,6 +929,10 @@ export function parsePageMessage(raw: unknown): PageMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as { source?: unknown; type?: unknown };
   if (data.source !== PAGE_SOURCE_WEB && data.source !== PAGE_SOURCE_EXT) return null;
+  if (data.type === LEGACY_PRESENCE_PING) {
+    // Only the page-side source may ask; nothing else in the message is trusted or kept.
+    return data.source === PAGE_SOURCE_WEB ? { source: PAGE_SOURCE_WEB, type: LEGACY_PRESENCE_PING } : null;
+  }
   if (data.type === MSG.EXTENSION_PRESENCE_PING) {
     return typeof (data as { requestId?: unknown }).requestId === "string" ? raw as PageMessage : null;
   }

@@ -35,6 +35,8 @@ import {
   PAGE_SOURCE_EXT,
   PROTOCOL_VERSION,
   parsePageMessage,
+  LEGACY_PRESENCE_PING,
+  LEGACY_PRESENCE_PONG,
   parseRuntimeMessage,
   type AutofillReason,
   type LaunchPayload,
@@ -200,7 +202,18 @@ function initWebOrigin(): void {
     if (!isApprovedJobPilotOrigin(event.origin)) return;
     const data = parsePageMessage(event.data);
     if (!data) return;
-    if (data.type === MSG.EXTENSION_PRESENCE_PING) {
+    if (data.type === LEGACY_PRESENCE_PING) {
+      window.postMessage({
+        source: PAGE_SOURCE_EXT,
+        type: LEGACY_PRESENCE_PONG,
+        info: {
+          installed: true,
+          version: BUILD_INFO.version,
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: EXTENSION_CAPABILITIES
+        }
+      } satisfies PageMessage, location.origin);
+    } else if (data.type === MSG.EXTENSION_PRESENCE_PING) {
       window.postMessage({
         source: PAGE_SOURCE_EXT,
         type: MSG.EXTENSION_PRESENCE_READY,

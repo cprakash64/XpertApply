@@ -17,7 +17,8 @@ export interface ApplicationAssistantActions {
   startAutofill(tabId: number, reason: AutofillReason): Promise<ActionResponse | undefined>;
   clearSession(tabId: number): Promise<ActionResponse | undefined>;
   completeSession(tabId: number, sessionId: number): Promise<ActionResponse | undefined>;
-  requestSiteAccess(pattern: string): Promise<boolean>;
+  /** true/false: Chrome answered here. "deferred": the request continues on another extension page. */
+  requestSiteAccess(pattern: string): Promise<boolean | "deferred">;
   reportSiteAccess(tabId: number, pattern: string, granted: boolean): Promise<ActionResponse | undefined>;
 }
 
@@ -85,7 +86,7 @@ const FAILURE_LABEL: Record<string, string> = {
   WRONG_TAB: "This panel is bound to a different tab.",
   DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
   HOST_PERMISSION_MISSING: "XpertApply needs permission to access this site. Check the extension's site access settings.",
-  HANDOFF_NOT_FOUND: "We couldn't connect to this application yet. Refresh the application page and try again.",
+  HANDOFF_NOT_FOUND: "No application from XpertApply is open on this page. Choose Apply with XpertApply on a job at xpertapply.com, then use the page it opens.",
   HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
   FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
   NO_FIELDS_DISCOVERED: "No fillable fields were found on this page."
@@ -152,6 +153,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       ? `${where} Access was declined. XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields.`
       : `${where} XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields. Relevant information may be sent to XpertApply's service only for features you request.`);
     setText("grantSiteAccess", `Allow XpertApply on ${site}`);
+    // renderUnavailable() hides this button along with the rest; showing the block
+    // without showing its only action left the user a request they could not answer.
+    button("grantSiteAccess").hidden = false;
     button("grantSiteAccess").disabled = false;
   }
 
@@ -182,9 +186,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       renderUnavailable();
       return;
     }
-    setText("job", current.jobTitle ? `${current.jobTitle}${current.company ? " · " + current.company : ""}` : "Application detected");
+    setText("job", current.jobTitle ? `${current.jobTitle}${current.company ? " · " + current.company : ""}` : current.sessionId == null ? "No XpertApply application open" : "Application detected");
     setText("stage", STAGE_LABEL[current.state] ?? current.state);
-    setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : "Detecting…");
+    setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : current.sessionId == null ? "—" : "Detecting…");
     setText("discovered", String(current.fieldsDiscovered));
     setText("filled", String(current.filled));
     setText("skipped", String(current.skipped));
@@ -204,7 +208,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const workflowAvailable = current.sessionId != null;
     const terminal = current.failureCode != null && current.failureRecoverable === false;
     button("fill").disabled = !workflowAvailable || current.running || terminal;
-    setText("fill", current.running ? "Filling…" : terminal ? "Connect application" : "Fill application");
+    setText("fill", current.running ? "Filling…" : "Fill application");
     for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = !workflowAvailable;
     button("complete").disabled = !workflowAvailable || completionFailure(current) !== null;
     button("complete").setAttribute("aria-describedby", "stage review");
@@ -267,11 +271,16 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const id = context.tabId;
     const pattern = view?.siteAccessPattern;
     if (!context.available || id == null || !pattern) return;
-    let granted = false;
+    let granted: boolean | "deferred" = false;
     try {
       granted = await options.actions.requestSiteAccess(pattern);
     } catch (error) {
       showButtonError(`Couldn't ask for site access: ${String(error).slice(0, 80)}`);
+      return;
+    }
+    if (granted === "deferred") {
+      // Chrome's prompt is shown from the XpertApply side panel or window that just opened.
+      showButtonError("Choose Allow in the XpertApply panel that just opened to continue.");
       return;
     }
     const response = await options.actions.reportSiteAccess(id, pattern, granted);
