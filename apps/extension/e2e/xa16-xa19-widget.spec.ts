@@ -161,7 +161,7 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     await page.setViewportSize({width:1280,height:720});
     await widget.openReview();
     // Retain unique real-review density/focus stress in the canonical body.
-    await widget.probe(`function(){const panel=this.querySelector('.review-panel'),sample=panel.querySelector('.item');if(!sample)throw Error('No production review card');for(let i=0;i<500;i++){const card=sample.cloneNode(true);card.removeAttribute('data-item');card.classList.add('xa-density-stress');card.querySelector('.q').textContent='Long review field '+i+' '+ 'LongLabel'.repeat(30);panel.append(card)}}`);
+    await widget.probe(`function(){const panel=this.querySelector('.review-panel'),sample=panel.querySelector('.item');if(!sample)throw Error('No production review card');for(let i=0;i<500;i++){const card=sample.cloneNode(true);card.removeAttribute('data-item');card.classList.add('xa-density-stress');const entry=card.querySelector('.private-entry');if(entry){const b=document.createElement('button');b.type='button';b.textContent='Use this answer';entry.replaceWith(b)}card.querySelector('.q').textContent='Long review field '+i+' '+ 'LongLabel'.repeat(30);panel.append(card)}}`);
     for(const height of [900,600,640,720,900]) {
       await page.setViewportSize({width:1280,height});
       const state=await widget.inspectLayout();expect(state.body.scrollHeight).toBeGreaterThan(state.body.clientHeight);expect(state.horizontalOverflow).toBe(false);
@@ -188,9 +188,8 @@ test("XA-16/XA-19: production MV3 semantics and constrained viewport acceptance"
     expect(mutations).toBe(0);expect(await idle()).toEqual(idleBefore);
     // Resolve both required review fields using current production handlers.
     for(const value of ["Test","Candidate"]) {
-      await widget.probe(`function(){const card=this.querySelector('.review-panel .item:not(.resolved)');const save=card.querySelector('label.save input');if(save)save.checked=false;card.querySelector('input[type="text"]').focus()}`);
-      await page.keyboard.press("ControlOrMeta+A");await page.keyboard.type(value);
-      await widget.probe(`function(){this.querySelector('.review-panel .item:not(.resolved) .row button').click()}`);
+      const pendingId=await widget.probe<string>(`function(){return this.querySelector('.review-panel .item:not(.resolved)').getAttribute('data-item')}`);
+      expect(await widget.answerTextItem(pendingId,value)).toBe(true);
       await expect.poll(async()=>(await state()).view?.requiredReviewRemaining).toBe(value==="Test"?1:0);
     }
     const ov=overlayCdp(page);

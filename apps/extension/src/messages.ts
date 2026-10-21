@@ -360,6 +360,18 @@ export const MSG = {
   OVERLAY_VIEW_CHANGED: "XPERTAPPLY_OVERLAY_VIEW_CHANGED",
   SHOW_APPLICATION_OVERLAY: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY",
   TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
+  /** Worker -> top frame: show the static first-use disclosure. Carries no page data. */
+  SHOW_TOOLBAR_DISCLOSURE: "XPERTAPPLY_SHOW_TOOLBAR_DISCLOSURE",
+  /** Private text entry (extension-origin iframe inside the assistant). The page
+   * can observe keystrokes in its own DOM, so text is typed in the iframe and
+   * travels only over runtime messaging. REGISTER: content -> worker, before the
+   * iframe loads. CONFIG / SUBMIT: iframe -> worker. DELIVER: worker -> top frame. */
+  FIELD_ENTRY_REGISTER: "XPERTAPPLY_FIELD_ENTRY_REGISTER",
+  FIELD_ENTRY_CONFIG: "XPERTAPPLY_FIELD_ENTRY_CONFIG",
+  FIELD_ENTRY_SUBMIT: "XPERTAPPLY_FIELD_ENTRY_SUBMIT",
+  FIELD_ENTRY_DELIVER: "XPERTAPPLY_FIELD_ENTRY_DELIVER",
+  /** Disclosure Continue -> worker. Carries nothing; the worker records the version. */
+  TOOLBAR_DISCLOSURE_ACCEPT: "XPERTAPPLY_TOOLBAR_DISCLOSURE_ACCEPT",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -547,6 +559,12 @@ export type RuntimeMessage =
   | { type: typeof MSG.OVERLAY_VIEW_CHANGED }
   | { type: typeof MSG.SHOW_APPLICATION_OVERLAY }
   | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
+  | { type: typeof MSG.SHOW_TOOLBAR_DISCLOSURE }
+  | { type: typeof MSG.FIELD_ENTRY_REGISTER; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } }
+  | { type: typeof MSG.FIELD_ENTRY_CONFIG; entryId: string }
+  | { type: typeof MSG.FIELD_ENTRY_SUBMIT; entryId: string; values: string[]; toggled?: boolean }
+  | { type: typeof MSG.FIELD_ENTRY_DELIVER; entryId: string; values: string[]; toggled?: boolean }
+  | { type: typeof MSG.TOOLBAR_DISCLOSURE_ACCEPT }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -581,7 +599,9 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
   MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
-  MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.TOOLBAR_OVERLAY_READY,
+  MSG.SHOW_TOOLBAR_DISCLOSURE, MSG.TOOLBAR_DISCLOSURE_ACCEPT,
+  MSG.FIELD_ENTRY_REGISTER, MSG.FIELD_ENTRY_CONFIG, MSG.FIELD_ENTRY_SUBMIT, MSG.FIELD_ENTRY_DELIVER
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -694,6 +714,25 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.OVERLAY_VIEW_CHANGED]: {},
   [MSG.SHOW_APPLICATION_OVERLAY]: {},
   [MSG.TOOLBAR_OVERLAY_READY]: {},
+  [MSG.SHOW_TOOLBAR_DISCLOSURE]: {},
+  [MSG.FIELD_ENTRY_REGISTER]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    fields: { kind: "array", maxItems: 8, required: true },
+    submitLabel: { kind: "string", max: LIMIT.key, required: true },
+    toggle: { kind: "object" }
+  },
+  [MSG.FIELD_ENTRY_CONFIG]: { entryId: { kind: "string", max: LIMIT.key, required: true } },
+  [MSG.FIELD_ENTRY_SUBMIT]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    values: { kind: "array", maxItems: 8, required: true },
+    toggled: { kind: "boolean" }
+  },
+  [MSG.FIELD_ENTRY_DELIVER]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    values: { kind: "array", maxItems: 8, required: true },
+    toggled: { kind: "boolean" }
+  },
+  [MSG.TOOLBAR_DISCLOSURE_ACCEPT]: {},
   [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
   [MSG.PING_CONTENT]: {},
   [MSG.CONTENT_RECONNECT]: {},

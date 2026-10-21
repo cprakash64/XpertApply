@@ -162,14 +162,17 @@ test(`required-review guard: ${resolveReview ? "explicit review resolution and m
 
       for (const [label,value] of [["First name","Test"],["Last name","Candidate"]]) {
         const card=cards.find(card=>card.title.toLowerCase().includes(label.toLowerCase()));expect(card).toBeTruthy();
-        expect(await widget.probe<boolean>(`function(id,value){const card=this.querySelector('[data-item="'+id+'"]');const input=card?.querySelector('input[type=text]');const save=card?.querySelector('input[type=checkbox]');if(!input)return false;input.value=value;if(save)save.checked=false;const button=Array.from(card.querySelectorAll('button')).find(b=>/Save and fill|Use this answer/.test(b.textContent));if(!button)return false;button.click();return true}`,card!.id,value)).toBe(true);
+        expect(await widget.answerTextItem(card!.id,value)).toBe(true);
         await expect(page.locator(label === "First name" ? "#first_name" : "#last_name")).toHaveValue(value);
       }
       await expect.poll(async()=> (await stored()).view?.required).toBe(0);
       const resolved=await stored();
       const summary=await widget.summary();expect([summary.discovered,summary.filled,summary.review]).toEqual([resolved.view!.discovered,resolved.view!.filled,resolved.view!.review]);
       await expect.poll(()=>overlayCdp(page).isEnabled("#complete")).toBe(true);
-      let dialogs=0;page.once("dialog",dialog=>{dialogs++;expect(dialog.message()).toContain("Confirm you submitted");return dialog.dismiss()});await overlayCdp(page).click("#complete");
+      let dialogs=0;page.on("dialog",dialog=>{dialogs++;expect(dialog.message()).toContain("Confirm you submitted");return dialog.dismiss()});
+      // The overlay's own view trails the worker by up to a couple of seconds after the last answer, and Complete does nothing until it catches up. Click until the confirmation appears; every click that came too early is a no-op.
+      for(let attempt=0;attempt<20&&dialogs===0;attempt++){await overlayCdp(page).click("#complete");await page.waitForTimeout(500)}
+      page.removeAllListeners("dialog");
       expect(dialogs).toBe(1);expect(completionRequests).toBe(0);expect((await stored()).packagePresent).toBe(true);
       page.once("dialog",dialog=>{dialogs++;return dialog.accept()});await overlayCdp(page).click("#complete");
       await expect.poll(async()=> (await stored()).packagePresent).toBe(false);

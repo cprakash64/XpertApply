@@ -13,6 +13,9 @@ export class CanonicalOverlayDriver {
   static async openFromToolbar(page: Page, worker: Worker) {
     const driver = new CanonicalOverlayDriver(page);
     expect(await driver.hostCount(), "passive bootstrap must not open UI").toBe(0);
+    // This driver stands for a returning user who already accepted the toolbar
+    // first-use disclosure (cws-toolbar-disclosure.spec.ts covers the first use).
+    await worker.evaluate(async () => { await chrome.storage.local.set({ toolbarDisclosureAcceptedVersion: 1 }); });
     await worker.evaluate(async (url) => {
       const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
       if (tab?.id == null) throw new Error("Employer tab not found");
@@ -58,6 +61,37 @@ export class CanonicalOverlayDriver {
   async ledgerCounts() {
     return this.call<{counts:string}>(`function(){return {counts:this.querySelector('.counts-row')?.textContent||''}}`);
   }
+  /**
+   * Answer a free-text review card the way a user does now: the text box lives in
+   * the card's extension-origin iframe (the employer page cannot observe typing),
+   * so type into that frame, set the save checkbox there, and press its button.
+   */
+  async answerTextItem(itemId: string, value: string, saveForFuture = false): Promise<boolean> {
+    const entryId = await this.call<string | null>(
+      `function(id){return this.querySelector('[data-item="'+id+'"] [data-private-entry]')?.getAttribute('data-private-entry')||null}`, itemId);
+    if (!entryId) return false;
+    const marker = `#${encodeURIComponent(entryId)}`;
+    let frame = this.page.frames().find(f => f.url().endsWith(marker));
+    for (let i = 0; i < 40 && !frame; i++) { await this.page.waitForTimeout(250); frame = this.page.frames().find(f => f.url().endsWith(marker)); }
+    if (!frame) return false;
+    const input = frame.locator("input[type=text]").first();
+    await input.waitFor({ timeout: 10_000 });
+    await input.fill(value, { timeout: 10_000 });
+    const box = frame.locator("input[type=checkbox]");
+    if (await box.count()) await box.first().setChecked(saveForFuture);
+    await frame.locator("button[type=submit]").click({ timeout: 10_000 });
+    // The answer has been delivered, filled and the card settled (resolved or gone)
+    // only once the worker->frame->handler round trip completes.
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const settled = await this.call<boolean>(
+        `function(id){const c=this.querySelector('[data-item="'+id+'"]');return !c||c.classList.contains('resolved')}`, itemId).catch(() => true);
+      if (settled) { await overlayCdp(this.page).click("#xpertapply-overlay-heading").catch(() => undefined); return true; }
+      if (Date.now() > deadline) return false;
+      await this.page.waitForTimeout(100);
+    }
+  }
+
   /** Reveal the review panel, exactly as the user's click does. */
   async openReview(): Promise<void> {
     await this.call(`function(){

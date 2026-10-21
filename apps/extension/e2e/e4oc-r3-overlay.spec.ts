@@ -262,7 +262,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
         officialUrl: url, expectedOrigin: new URL(url).origin, createdAt: now, expiresAt: now + 900_000,
         state: "waiting_for_content_script", protocolVersion: 3, atsType: "smartrecruiters"
       }});
-      await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
+      await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
       await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["content.js"] });
       await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 });
     }, [tabId, applicationUrl] as const);
@@ -512,7 +512,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     expect(await page.locator("#xpertapply-assistant-overlay-v1").count(), "passive workflow startup must not open after reload").toBe(0);
     await installMetrics();
     await worker.evaluate(async (id) => {
-      await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
+      await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
       await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["content.js"] });
       await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 });
     }, tabId);
@@ -534,7 +534,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
     await worker.evaluate(async ([id, url]) => {
       const now = Date.now();
       await chrome.storage.session.set({ activeAssistedApplyHandoffV1: { version: 1, applicationId: "e4oc-r3-b", jobId: "3003", applicationUrl: url, status: "prepared", handoffToken: "sanitized-handoff-b", requestId: "e4oc-r3-b", sessionId: 3003, launchToken: "sanitized-launch-b", officialUrl: url, expectedOrigin: new URL(url).origin, createdAt: now, expiresAt: now + 900_000, state: "waiting_for_content_script", protocolVersion: 3, atsType: "smartrecruiters" }});
-      await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
+      await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["overlayBootstrap.js"] });
       await chrome.scripting.executeScript({ target: { tabId: id!, frameIds: [0] }, files: ["content.js"] });
       await chrome.tabs.sendMessage(id!, { type: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY" }, { frameId: 0 });
     }, [tabB, applicationUrl] as const);

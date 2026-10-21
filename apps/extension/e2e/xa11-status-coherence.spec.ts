@@ -209,7 +209,7 @@ test("XA-11: widget confirmation total matches controls marked for review", asyn
     const cards=await widget.probe<{id:string,title:string}[]>(`function(){return Array.from(this.querySelectorAll('[data-item]')).map(el=>({id:el.getAttribute('data-item'),title:el.querySelector('.q')?.textContent||''}))}`);
     for(const [label,value] of [["First name","Test"],["Last name","Candidate"]]){
       const card=cards.find(c=>c.title.includes(label));expect(card).toBeTruthy();
-      expect(await widget.probe<boolean>(`function(id,value){const c=this.querySelector('[data-item="'+id+'"]');const i=c?.querySelector('input[type=text]');if(!i)return false;i.value=value;const save=c.querySelector('input[type=checkbox]');if(save)save.checked=false;const b=Array.from(c.querySelectorAll('button')).find(b=>/Save and fill|Use this answer/.test(b.textContent));if(!b)return false;b.click();return true}`,card!.id,value)).toBe(true);
+      expect(await widget.answerTextItem(card!.id,value)).toBe(true);
     }
     await expect.poll(async()=> (await stores()).view?.requiredReviewRemaining).toBe(0);await expect.poll(()=>overlayCdp(page).isEnabled("#complete")).toBe(true);expect(completions).toBe(0);
     expect(await page.evaluate(()=>(window as any).__xa11Submit)).toBe(0);expect(await page.evaluate(()=>(window as any).__xa11SubmitClicks)).toBe(0);

@@ -1,4 +1,5 @@
 import { questionLedger } from "./workflowLedger";
+import { toolbarDisclosureAccepted } from "../toolbarDisclosure";
 /**
  * Content script with two roles depending on where it runs:
  *
@@ -563,6 +564,9 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
 
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   if (!isCurrentInstance()) return;
+  // The toolbar path reads the page only after a recorded first-use acceptance,
+  // even if something other than the worker's ordered injection loaded this script.
+  if (toolbarInitiated && !(await toolbarDisclosureAccepted())) return;
   const resp = (await sendRuntime({ type: MSG.CONTENT_READY })) as
     | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null; submissionGestureAt?: number | null }
     | undefined;

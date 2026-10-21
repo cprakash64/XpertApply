@@ -8,6 +8,7 @@ import type { AuthoritativeReviewItem } from "./reviewItems";
 import { answerNotesFor, overrideFailureMessage, type OverrideRequest } from "./reviewActions";
 import { registerApplicationOverlayWorkflowSurface } from "./applicationOverlayAssistant";
 import { APPLICATION_OVERLAY_HOST_ID } from "./applicationOverlay";
+import { createPrivateEntry } from "./privateEntry";
 
 export type WidgetStage = "preparing" | "opening" | "detecting" | "filling" | "uploading" | "review" | "ready" | "failed";
 
@@ -602,39 +603,28 @@ export function createWidget(actions: {
 
     if (item.kind === "name_confirm") {
       const parts = (item.suggestedValue || "").split("|");
-      const given = textInput("First / given name", parts[0] || "");
-      const middle = textInput("Middle name (optional)", parts[1] || "");
-      const family = textInput("Last / family name", parts[2] || "");
-      const prefFirst = textInput("Preferred first name (optional)", parts[3] || "");
-      const prefLast = textInput("Preferred last name (optional)", parts[4] || "");
-      el.appendChild(given);
-      el.appendChild(middle);
-      el.appendChild(family);
-      el.appendChild(prefFirst);
-      el.appendChild(prefLast);
-      const row = document.createElement("div");
-      row.className = "row";
-      const saveBtn = document.createElement("button");
-      saveBtn.type = "button";
-      saveBtn.textContent = "Confirm and fill";
-      saveBtn.addEventListener("click", async () => {
-        saveBtn.disabled = true;
-        // first|middle|last|preferredFirst|preferredLast. Middle may be blank
-        // (many people have none). Blank preferred fields fall back to the legal
-        // name, for the common "enter your legal name" preferred-name field.
-        const value = [
-          given.value.trim(),
-          middle.value.trim(),
-          family.value.trim(),
-          prefFirst.value.trim(),
-          prefLast.value.trim()
-        ].join("|");
-        const ok = given.value.trim() && family.value.trim() ? await handlers?.onFill(item.id, value) : false;
-        if (ok) markResolved(item.id);
-        else saveBtn.disabled = false;
+      const entry = item.resolved ? null : createPrivateEntry({
+        fields: [
+          { placeholder: "First / given name", value: parts[0] || "" },
+          { placeholder: "Middle name (optional)", value: parts[1] || "" },
+          { placeholder: "Last / family name", value: parts[2] || "" },
+          { placeholder: "Preferred first name (optional)", value: parts[3] || "" },
+          { placeholder: "Preferred last name (optional)", value: parts[4] || "" }
+        ],
+        submitLabel: "Confirm and fill",
+        onSubmit: async (values) => {
+          const [given, middle, family, prefFirst, prefLast] = values.map((v) => v.trim());
+          // first|middle|last|preferredFirst|preferredLast. Middle may be blank
+          // (many people have none). Blank preferred fields fall back to the legal
+          // name, for the common "enter your legal name" preferred-name field.
+          if (!given || !family) return false;
+          const ok = await handlers?.onFill(item.id, [given, middle, family, prefFirst, prefLast].join("|"));
+          if (ok) markResolved(item.id);
+          return Boolean(ok);
+        }
       });
-      row.appendChild(saveBtn);
-      el.appendChild(row);
+      // A settled card needs no entry box (and must not stay a keyboard stop).
+      if (entry) el.appendChild(entry);
       if (item.resolved) el.classList.add("resolved");
       return el;
     }
@@ -687,12 +677,36 @@ export function createWidget(actions: {
       readValue = () => select.value.trim();
       displayValue = () => select.options[select.selectedIndex]?.text ?? select.value;
     } else {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder = inputPlaceholder(item);
-      el.appendChild(input);
-      readValue = () => input.value.trim();
-      displayValue = () => input.value.trim();
+      // Free text is typed in an extension-origin iframe (see privateEntry.ts):
+      // the employer page cannot observe keystrokes or pastes made here.
+      const scopeNote = item.defaultScope === "company" ? " (this employer only)" : "";
+      const entry = item.resolved ? null : createPrivateEntry({
+        fields: [{ placeholder: inputPlaceholder(item), value: "" }],
+        submitLabel: item.reusable ? "Save and fill" : "Use this answer",
+        toggle: item.reusable ? { label: `Save for future applications${scopeNote}`, checked: true } : undefined,
+        onSubmit: async ([raw], toggled) => {
+          const value = raw.trim();
+          if (!value) return false;
+          const filled = await handlers?.onFill(item.id, value);
+          if (filled && toggled) await handlers?.onSave(item.id, value, value);
+          if (filled) markResolved(item.id);
+          return Boolean(filled);
+        }
+      });
+      // A settled card needs no entry box (and must not stay a keyboard stop).
+      if (entry) el.appendChild(entry);
+      if (!item.required) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const skip = document.createElement("button");
+        skip.type = "button";
+        skip.textContent = "Skip";
+        skip.addEventListener("click", () => markResolved(item.id));
+        row.appendChild(skip);
+        el.appendChild(row);
+      }
+      if (item.resolved) el.classList.add("resolved");
+      return el;
     }
 
     let saveCheckbox: HTMLInputElement | null = null;
@@ -1252,13 +1266,6 @@ function renderRememberPrompt(prompt: RememberPrompt): HTMLElement {
   return el;
 }
 
-function textInput(placeholder: string, value: string): HTMLInputElement {
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = placeholder;
-  input.value = value;
-  return input;
-}
 
 function inputPlaceholder(item: ReviewItem): string {
   const question = item.question.toLowerCase();

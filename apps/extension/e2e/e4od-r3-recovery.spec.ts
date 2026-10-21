@@ -56,7 +56,7 @@ test('E4O-D-R3 real all-frame recovery preserves qualified living documents and 
  await worker.evaluate(async({id,url,sessionId})=>{const now=Date.now();await chrome.storage.session.set({activeAssistedApplyHandoffV1:{version:1,applicationId:`r3-${sessionId}`,jobId:String(sessionId),applicationUrl:url,status:'prepared',handoffToken:'synthetic-handoff',requestId:`r3-${sessionId}`,sessionId,launchToken:'synthetic-launch',officialUrl:url,expectedOrigin:new URL(url).origin,createdAt:now,expiresAt:now+900000,state:'waiting_for_content_script',protocolVersion:3,atsType:'smartrecruiters'}});
  // Explicit fixture bootstrap, never passive worker recovery. Loading the
  // toolbar receiver in all test frames keeps initial discovery read-only.
- await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['overlayBootstrap.js']});
+ await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['overlayBootstrap.js']});
  await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['content.js']});
  await chrome.tabs.sendMessage(id,{type:'XPERTAPPLY_SHOW_APPLICATION_OVERLAY'},{frameId:0});
  },{id,url,sessionId});};
@@ -76,7 +76,7 @@ test('E4O-D-R3 real all-frame recovery preserves qualified living documents and 
  await a.evaluate(()=>{(document.querySelector('#child-a') as HTMLIFrameElement).src='/apply-a/child-a-replaced';});
  await expect.poll(()=>a.frames().some(f=>f.url().endsWith('child-a-replaced'))).toBe(true);
  await instrument(aid);
- await worker.evaluate(async id=>{await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['overlayBootstrap.js']});await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['content.js']});},aid);
+ await worker.evaluate(async id=>{await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['overlayBootstrap.js']});await chrome.scripting.executeScript({target:{tabId:id,allFrames:true},files:['content.js']});},aid);
  await expect.poll(async()=> (await topology(aid)).filter(r=>r.accepted>0).length).toBe(2);
  const stopAndWake=async()=>{
  const prior={a:await topology(aid),b:await topology(bid)};
@@ -99,7 +99,7 @@ test('E4O-D-R3 real all-frame recovery preserves qualified living documents and 
  await b.evaluate(()=>{const f=document.createElement('iframe');f.id='new-child';f.src='/apply-b/new-child';document.body.append(f);});
  await expect.poll(()=>b.frames().some(f=>f.url().endsWith('new-child'))).toBe(true);await instrument(bid);
  const newFrame=(await topology(bid)).find(r=>r.url.endsWith('new-child'))!;
- await worker.evaluate(async({id,frameId})=>{await chrome.scripting.executeScript({target:{tabId:id,frameIds:[frameId]},files:['overlayBootstrap.js']});await chrome.scripting.executeScript({target:{tabId:id,frameIds:[frameId]},files:['content.js']});},{id:bid,frameId:newFrame.frameId});
+ await worker.evaluate(async({id,frameId})=>{await chrome.storage.local.set({toolbarDisclosureAcceptedVersion:1});await chrome.scripting.executeScript({target:{tabId:id,frameIds:[frameId]},files:['overlayBootstrap.js']});await chrome.scripting.executeScript({target:{tabId:id,frameIds:[frameId]},files:['content.js']});},{id:bid,frameId:newFrame.frameId});
  await expect.poll(async()=> (await topology(bid)).find(r=>r.documentId===newFrame.documentId)?.accepted??0).toBe(1);
  expect((await topology(bid)).find(r=>r.documentId===newFrame.documentId)?.signals).toBe(0);
  // Duplicate probes cannot grow registration/controller ownership or mutate

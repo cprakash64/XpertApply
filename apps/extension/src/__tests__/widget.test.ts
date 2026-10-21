@@ -14,7 +14,42 @@ import { reopenApplicationAssistantOverlay } from "../content/applicationOverlay
 let capturedRoot: ShadowRoot | null = null;
 let originalAttachShadow: typeof Element.prototype.attachShadow;
 
+// Free-text entry lives in an extension-origin iframe (see privateEntry.ts), so
+// the widget registers an entry with the worker instead of rendering an <input>.
+// This stub is the worker side: it records registrations and lets a test deliver
+// the values the iframe would submit.
+type Registration = { type: string; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } };
+let registrations: Registration[] = [];
+type RuntimeListener = (raw: unknown, sender: unknown, respond: (r: unknown) => void) => boolean | void;
+const runtimeListeners = new Set<RuntimeListener>();
+function useRuntimeStub(): void {
+  vi.stubGlobal("chrome", {
+    runtime: {
+      id: "test-extension",
+      lastError: undefined,
+      getURL: (path: string) => `chrome-extension://test-extension/${path}`,
+      sendMessage: (message: Registration, callback?: (response: unknown) => void) => { if (message?.type === "XPERTAPPLY_FIELD_ENTRY_REGISTER") registrations.push(message); callback?.({ ok: true }); },
+      onMessage: {
+        addListener: (listener: RuntimeListener) => { runtimeListeners.add(listener); },
+        removeListener: () => undefined,
+        hasListener: () => false
+      }
+    }
+  });
+}
+function deliver(entryId: string, values: string[], toggled?: boolean): Promise<unknown> {
+  return new Promise((resolve) => {
+    const message = { type: "XPERTAPPLY_FIELD_ENTRY_DELIVER", entryId, values, ...(toggled === undefined ? {} : { toggled }) };
+    // Every content-side listener sees the message, as Chrome would deliver it; the private-entry one answers.
+    for (const listener of runtimeListeners) listener(message, { id: "test-extension" }, resolve);
+  });
+}
+function entryIdIn(root: ParentNode, itemId: string): string {
+  return root.querySelector(`[data-item="${itemId}"] [data-private-entry]`)!.getAttribute("data-private-entry")!;
+}
+
 beforeEach(() => {
+  registrations = [];
   originalAttachShadow = Element.prototype.attachShadow;
   Element.prototype.attachShadow = function (init: ShadowRootInit) {
     const root = originalAttachShadow.call(this, { ...init, mode: "open" });
@@ -24,6 +59,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   Element.prototype.attachShadow = originalAttachShadow;
   capturedRoot = null;
   document.body.innerHTML = "";
@@ -125,6 +161,7 @@ describe("review widget", () => {
   });
 
   it("does not offer a save checkbox for a non-reusable (custom/application-specific) question", () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -135,10 +172,13 @@ describe("review widget", () => {
     widget.showReview(items, { onFill: vi.fn(async () => true), onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
     const root = shadowRoot();
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0].toggle).toBeUndefined();
     widget.destroy();
   });
 
   it("uses a specific placeholder instead of a generic answer prompt", () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -149,12 +189,16 @@ describe("review widget", () => {
       }
     ];
     widget.showReview(items, { onFill: vi.fn(async () => true), onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
-    expect((shadowRoot().querySelector('input[type="text"]') as HTMLInputElement).placeholder).toBe("e.g. Master's Degree");
+    // No text input exists in the employer document; the placeholder is configured in the private entry.
+    expect(shadowRoot().querySelector('input[type="text"]')).toBeNull();
+    expect(registrations[0].fields[0].placeholder).toBe("e.g. Master's Degree");
+    expect(registrations[0].toggle?.label).toContain("Save for future applications");
     expect(shadowRoot().textContent).not.toContain("Fill this application");
     widget.destroy();
   });
 
   it("a name-confirmation item shows first/middle/last separately and never offers a save checkbox", async () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -168,20 +212,23 @@ describe("review widget", () => {
     widget.showReview(items, { onFill, onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
 
     const root = shadowRoot();
-    const inputs = root.querySelectorAll('input[type="text"]');
+    // No text input in the employer document; five fields in the private entry.
+    expect(root.querySelectorAll('input[type="text"]').length).toBe(0);
+    expect(registrations).toHaveLength(1);
     // The middle name is its own field — this is what stops "Prakash Pandey"
     // from being offered as the last name.
-    expect((inputs[0] as HTMLInputElement).value).toBe("Chandra");
-    expect((inputs[1] as HTMLInputElement).value).toBe("Prakash");
-    expect((inputs[2] as HTMLInputElement).value).toBe("Pandey");
-    // Five inputs: first, middle, last, preferred first, preferred last (A/D).
-    expect(inputs.length).toBe(5);
+    expect(registrations[0].fields.map((f) => f.value)).toEqual(["Chandra", "Prakash", "Pandey", "", ""]);
+    // Five fields: first, middle, last, preferred first, preferred last (A/D).
+    expect(registrations[0].submitLabel).toBe("Confirm and fill");
+    expect(registrations[0].toggle).toBeUndefined();
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
 
-    const confirmBtn = Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.includes("Confirm and fill"))!;
-    confirmBtn.click();
-    await Promise.resolve();
-    await Promise.resolve();
+    // A first or last name left blank is refused before anything is filled.
+    expect(await deliver(entryIdIn(root, "name_confirm"), ["", "", "Pandey", "", ""])).toEqual({ ok: false });
+    expect(onFill).not.toHaveBeenCalled();
+
+    const response = await deliver(entryIdIn(root, "name_confirm"), ["Chandra", "Prakash", "Pandey", "", ""]);
+    expect(response).toEqual({ ok: true });
     // Blank preferred fields are carried as empty segments (filled from the legal
     // name downstream). first|middle|last|preferredFirst|preferredLast.
     expect(onFill).toHaveBeenCalledWith("name_confirm", "Chandra|Prakash|Pandey||");
@@ -189,6 +236,7 @@ describe("review widget", () => {
   });
 
   it("resolving an item updates the pending count without any page reload", async () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       { id: "uid-4", kind: "field", category: "optional", question: "Q1", required: false, reasonText: "x", control: "text", reusable: false },
@@ -200,16 +248,10 @@ describe("review widget", () => {
 
     // Resolve uid-5 via Skip first (it's optional) — this re-renders the
     // whole panel, so uid-4's controls are queried fresh afterward.
-    const skipBtn = root.querySelector('[data-item="uid-5"] button:not(:first-of-type)') as HTMLButtonElement;
+    const skipBtn = root.querySelector('[data-item="uid-5"] .row button') as HTMLButtonElement;
     skipBtn?.click();
 
-    const freshInput = root.querySelector('[data-item="uid-4"] input') as HTMLInputElement;
-    freshInput.value = "answer";
-    freshInput.dispatchEvent(new Event("change", { bubbles: true }));
-    const fillBtn = root.querySelector('[data-item="uid-4"] button') as HTMLButtonElement;
-    fillBtn.click();
-    await Promise.resolve();
-    await Promise.resolve();
+    await deliver(entryIdIn(root, "uid-4"), ["answer"]);
 
     expect(root.querySelector(".review-toggle")?.textContent).toContain("All caught up");
     widget.destroy();

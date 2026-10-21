@@ -23,5 +23,9 @@ manifest.externally_connectable = {
     "http://127.0.0.1/*"
   ]
 };
+manifest.web_accessible_resources = manifest.web_accessible_resources.map((entry) => ({
+  ...entry,
+  matches: [...entry.matches, "http://localhost/*", "http://127.0.0.1/*"]
+}));
 writeFileSync(file, JSON.stringify(manifest, null, 2));
 console.log("granted e2e build -> dist-e2e-granted");

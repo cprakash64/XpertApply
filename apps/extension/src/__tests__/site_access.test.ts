@@ -94,8 +94,13 @@ describe("XA-06 · the built manifest takes no authority over employer sites", (
     expect(entries[0].all_frames).toBe(false);
   });
 
-  it("exposes no resources and accepts external messages only from production XpertApply", () => {
-    expect(manifest.web_accessible_resources).toBeUndefined();
+  it("exposes only the private-entry page, https-only, with a per-session URL, and accepts external messages only from production XpertApply", () => {
+    // The one exposed page holds the assistant's text inputs so the employer page
+    // cannot observe keystrokes (e2e/cws-hostile-keystrokes.spec.ts). It carries no
+    // data of its own: its content comes from the worker, per entry id.
+    expect(manifest.web_accessible_resources).toEqual([
+      { resources: ["fieldentry.html", "fieldentry.js"], matches: ["https://*/*"], use_dynamic_url: true }
+    ]);
     expect(manifest.externally_connectable).toEqual({
       matches: ["https://xpertapply.com/*", "https://www.xpertapply.com/*"]
     });

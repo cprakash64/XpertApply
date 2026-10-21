@@ -26,6 +26,8 @@ export const EXPECTED_BUILD_OUTPUTS = [
   "content.js",
   "sidepanel.js",
   "sidepanel.html",
+  "fieldentry.html",
+  "fieldentry.js",
   "manifest.json",
   "icons/xpertapply-16.png",
   "icons/xpertapply-32.png",

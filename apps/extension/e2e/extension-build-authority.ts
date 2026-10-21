@@ -7,7 +7,7 @@ import path from "node:path";
 
 const extensionRoot = fileURLToPath(new URL("../", import.meta.url));
 export const approvedGrantedBuild = path.join(extensionRoot, "dist-e2e-granted");
-const permissionFixtures = new Map([["dist", "xa15-bridge-origins.spec.ts"], ["dist-granted-handoff", "session-handoff.spec.ts"], ["dist-granted-3c2", "zz-3c2-frame-discovery.spec.ts"], ["dist-granted-3c2granted", "zz-3c2-frame-discovery.spec.ts"]].map(([name, owner]) => [path.join(extensionRoot, name), owner]));
+const permissionFixtures = new Map<string, string | string[]>([["dist", ["xa15-bridge-origins.spec.ts", "cws-activetab-boundary.spec.ts"]], ["dist-granted-handoff", "session-handoff.spec.ts"], ["dist-granted-3c2", "zz-3c2-frame-discovery.spec.ts"], ["dist-granted-3c2granted", "zz-3c2-frame-discovery.spec.ts"]].map(([name, owner]) => [path.join(extensionRoot, name as string), owner as string | string[]]));
 const derivatives = new Map<string, {source: string; digest: string}>();
 
 function canonical(input: string): string {
@@ -30,7 +30,11 @@ function digest(directory: string): string {
 export function assertApprovedExtensionBuild(input: string, fixtureSpec?: string): void {
   const exact = canonical(input);
   if (exact === canonical(approvedGrantedBuild)) return;
-  if (permissionFixtures.has(exact)) { assert.equal(fixtureSpec, permissionFixtures.get(exact), "Permission fixture belongs to a different spec"); return; }
+  if (permissionFixtures.has(exact)) {
+    const owners = [permissionFixtures.get(exact)!].flat();
+    assert(owners.includes(fixtureSpec ?? ""), "Permission fixture belongs to a different spec");
+    return;
+  }
   const record = derivatives.get(exact);
   assert(record, "Unregistered extension fixture build");
   assert.equal(fixtureSpec, "xa13-dormancy-gate.spec.ts", "Owned derivative belongs to XA13");

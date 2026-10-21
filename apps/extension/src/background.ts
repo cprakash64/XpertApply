@@ -128,7 +128,9 @@ import {
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
-import { disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import { continueToolbarOverlay, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
+import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
 const READY_MAX_ATTEMPTS = 6;
@@ -756,6 +758,57 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         sendResponse({ ok: false, error: safeMessage(error) });
       }
       return false;
+
+    case MSG.TOOLBAR_DISCLOSURE_ACCEPT:
+      // Only our own content script in a top-level http(s) document can reach
+      // here (page script has no runtime messaging). Record the accepted wording
+      // version, then load the workflow engine that reads the page.
+      void (async () => {
+        const authority = describeOverlaySender(sender, chrome.runtime.id);
+        if (!authority.ok) throw new Error(authority.reason);
+        await recordToolbarDisclosureAccepted();
+        if (!(await continueToolbarOverlay(authority.tabId))) throw new Error("TOOLBAR_CONTINUE_FAILED");
+      })()
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.FIELD_ENTRY_REGISTER:
+      void (async () => {
+        const authority = describeOverlaySender(sender, chrome.runtime.id);
+        if (!authority.ok) throw new Error(authority.reason);
+        const fields = (message.fields as unknown[]).map((field) => {
+          const f = (field ?? {}) as { placeholder?: unknown; value?: unknown };
+          return { placeholder: String(f.placeholder ?? "").slice(0, 200), value: String(f.value ?? "").slice(0, FIELD_ENTRY_MAX_VALUE) };
+        });
+        const toggleRaw = message.toggle as { label?: unknown; checked?: unknown } | undefined;
+        const toggle = toggleRaw ? { label: String(toggleRaw.label ?? "").slice(0, 200), checked: Boolean(toggleRaw.checked) } : undefined;
+        await putFieldEntry(message.entryId, { tabId: authority.tabId, fields, submitLabel: message.submitLabel.slice(0, 80), toggle, at: Date.now() });
+      })()
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.FIELD_ENTRY_CONFIG:
+      void (async () => {
+        const entry = await authorizedFieldEntry(sender, message.entryId);
+        sendResponse({ ok: true, config: entry });
+      })().catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+
+    case MSG.FIELD_ENTRY_SUBMIT:
+      void (async () => {
+        const entry = await authorizedFieldEntry(sender, message.entryId);
+        const values = (message.values as unknown[]).map((value) => String(value).slice(0, FIELD_ENTRY_MAX_VALUE));
+        const delivered = await chrome.tabs.sendMessage(
+          entry.tabId,
+          { type: MSG.FIELD_ENTRY_DELIVER, entryId: message.entryId, values, toggled: message.toggled },
+          { frameId: 0 }
+        ) as { ok?: boolean } | undefined;
+        if (delivered?.ok) await deleteFieldEntry(message.entryId);
+        sendResponse({ ok: Boolean(delivered?.ok) });
+      })().catch(() => sendResponse({ ok: false }));
+      return true;
 
     case MSG.OVERLAY_GET_CONTEXT:
       void requireAuthorizedOverlayContextSender(sender)
@@ -2664,6 +2717,53 @@ type RegisteredFrame = {
 };
 
 const frameRegistry = new Map<string, RegisteredFrame>();
+// Private-entry configs hold the suggested values shown in the iframe, so they
+// live in session storage (memory only, cleared with the browser session) and
+// survive a worker restart while the user is typing.
+const FIELD_ENTRIES_KEY = "fieldEntriesV1";
+const FIELD_ENTRIES_MAX = 32;
+async function readFieldEntries(): Promise<Record<string, FieldEntryConfig>> {
+  const stored = await chrome.storage.session.get(FIELD_ENTRIES_KEY);
+  return (stored[FIELD_ENTRIES_KEY] as Record<string, FieldEntryConfig> | undefined) ?? {};
+}
+// Cards register in bursts; serialize the read-modify-write so none is lost.
+let fieldEntryWrites: Promise<unknown> = Promise.resolve();
+function mutateFieldEntries(change: (entries: Record<string, FieldEntryConfig>) => void): Promise<void> {
+  const run = fieldEntryWrites.then(async () => {
+    const entries = await readFieldEntries();
+    change(entries);
+    await chrome.storage.session.set({ [FIELD_ENTRIES_KEY]: entries });
+  });
+  fieldEntryWrites = run.catch(() => undefined);
+  return run;
+}
+function putFieldEntry(entryId: string, config: FieldEntryConfig): Promise<void> {
+  return mutateFieldEntries((entries) => {
+    entries[entryId] = config;
+    const ids = Object.keys(entries).sort((a, b) => entries[a].at - entries[b].at);
+    for (const id of ids.slice(0, Math.max(0, ids.length - FIELD_ENTRIES_MAX))) delete entries[id];
+  });
+}
+function deleteFieldEntry(entryId: string): Promise<void> {
+  return mutateFieldEntries((entries) => { delete entries[entryId]; });
+}
+/** The entry, but only for the extension's own private-entry page running in the
+ * very tab that registered it. */
+async function authorizedFieldEntry(sender: chrome.runtime.MessageSender, entryId: string): Promise<FieldEntryConfig> {
+  if (sender.id !== chrome.runtime.id) throw new Error("UNTRUSTED_EXTENSION_SENDER");
+  // Chrome reports the page's per-session dynamic URL (use_dynamic_url), which
+  // differs from getURL()'s host, so match scheme + path; sender.id above is the
+  // Chrome-supplied proof the page belongs to this extension.
+  let page: URL | null = null;
+  try { page = new URL(sender.url ?? ""); } catch { /* invalid */ }
+  if (page?.protocol !== "chrome-extension:" || page.pathname !== `/${FIELD_ENTRY_PAGE}` || !sender.frameId) {
+    throw new Error("FIELD_ENTRY_SENDER_INVALID");
+  }
+  const entry = (await readFieldEntries())[entryId];
+  if (!entry || sender.tab?.id !== entry.tabId) throw new Error("FIELD_ENTRY_UNKNOWN");
+  return entry;
+}
+
 const toolbarOverlayDocuments = new Map<number, { documentId: string; url: string }>();
 
 const frameKey = (tabId: number, frameId: number): string => `${tabId}:${frameId}`;

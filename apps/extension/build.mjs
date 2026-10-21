@@ -100,6 +100,8 @@ await build({
   ...common,
   format: "esm",
   entryPoints: { background: "src/background.ts" },
+  // The e2e-only toolbar hook is injected for --profile e2e and never otherwise.
+  ...(BUILD_PROFILE === "e2e" ? { inject: ["src/e2eToolbarHook.ts"] } : {}),
   outdir
 });
 
@@ -110,7 +112,8 @@ await build({
     content: "src/content/bootstrap.ts",
     overlayBootstrap: "src/content/overlayBootstrap.ts",
     sidepanel: "src/ui/sidepanel.ts",
-    assistant: "src/ui/assistant.ts"
+    assistant: "src/ui/assistant.ts",
+    fieldentry: "src/ui/fieldentry.ts"
   },
   outdir
 });
@@ -135,6 +138,7 @@ await build({
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
 cpSync("src/ui/assistant.html", `${outdir}/assistant.html`);
+cpSync("src/ui/fieldentry.html", `${outdir}/fieldentry.html`);
 cpSync("icons", `${outdir}/icons`, { recursive: true });
 
 // Fail the build if the manifest references a file that does not exist in dist/

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MSG } from "../messages";
 import manifest from "../../manifest.json";
 import {
+  continueToolbarOverlay,
   disableSidePanelToolbarOpen,
   installToolbarOverlayAction,
   showToolbarOverlay,
@@ -14,6 +15,7 @@ describe("toolbar exact-tab overlay cutover", () => {
   const sendMessage = vi.fn(async () => ({ ok: true }));
   const actionListeners: Array<(tab: chrome.tabs.Tab) => void> = [];
   const setPanelBehavior = vi.fn(async () => undefined);
+  const storageGet = vi.fn(async () => ({ toolbarDisclosureAcceptedVersion: 1 }));
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -22,6 +24,7 @@ describe("toolbar exact-tab overlay cutover", () => {
       action: { onClicked: { addListener: (listener: (tab: chrome.tabs.Tab) => void) => actionListeners.push(listener) } },
       scripting: { executeScript },
       tabs: { sendMessage },
+      storage: { local: { get: storageGet } },
       sidePanel: { setPanelBehavior }
     });
   });
@@ -38,6 +41,36 @@ describe("toolbar exact-tab overlay cutover", () => {
     });
     expect(sendMessage).toHaveBeenCalledWith(41, { type: MSG.SHOW_APPLICATION_OVERLAY }, { frameId: 0 });
     expect(JSON.stringify(executeScript.mock.calls)).not.toContain("42");
+  });
+
+  describe("first-use disclosure", () => {
+    const tab = { id: 41, url: "https://jobs.example/apply" } as chrome.tabs.Tab;
+
+    it.each([
+      ["never accepted", {}],
+      ["an older wording", { toolbarDisclosureAcceptedVersion: 0 }],
+      ["a malformed marker", { toolbarDisclosureAcceptedVersion: "yes" }]
+    ])("shows only the static disclosure and never injects the page-reading engine (%s)", async (_name, stored) => {
+      storageGet.mockResolvedValueOnce(stored as never);
+      expect(await showToolbarOverlay(tab)).toBe(true);
+      expect(executeScript).toHaveBeenCalledTimes(1);
+      expect(executeScript).toHaveBeenCalledWith({ target: { tabId: 41, frameIds: [0] }, files: [TOOLBAR_OVERLAY_BUNDLE] });
+      expect(JSON.stringify(executeScript.mock.calls)).not.toContain("content.js");
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(41, { type: MSG.SHOW_TOOLBAR_DISCLOSURE }, { frameId: 0 });
+    });
+
+    it("treats an unreadable marker as not accepted", async () => {
+      storageGet.mockRejectedValueOnce(new Error("storage unavailable"));
+      await showToolbarOverlay(tab);
+      expect(JSON.stringify(executeScript.mock.calls)).not.toContain("content.js");
+    });
+
+    it("loads the workflow engine only through continueToolbarOverlay, after acceptance", async () => {
+      expect(await continueToolbarOverlay(41)).toBe(true);
+      expect(executeScript).toHaveBeenCalledWith({ target: { tabId: 41, frameIds: [0] }, files: ["content.js"] });
+      expect(sendMessage).toHaveBeenCalledWith(41, { type: MSG.SHOW_APPLICATION_OVERLAY }, { frameId: 0 });
+    });
   });
 
   it.each([undefined, -1, 1.5])("rejects invalid tab id %s", async (id) => {
@@ -61,7 +94,7 @@ describe("toolbar exact-tab overlay cutover", () => {
     expect(setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: false });
   });
 
-  it("adds only activeTab without changing host authority or version", () => {
+  it("adds only activeTab and the private-entry page without changing host authority or version", () => {
     expect(manifest.version).toBe("0.3.0");
     expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.host_permissions).toEqual([
