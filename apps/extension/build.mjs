@@ -89,6 +89,7 @@ const buildDefine = {
   __JOBPILOT_BUILD_VERSION__: JSON.stringify(BUILD_VERSION),
   __JOBPILOT_BUILT_AT__: JSON.stringify(BUILT_AT),
   __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID),
+  __XPERTAPPLY_ALLOW_LOOPBACK__: JSON.stringify(allowLoopbackBridge),
   __XPERTAPPLY_BRIDGE_ORIGINS__: JSON.stringify(bridgeOriginsForProfile(BUILD_PROFILE))
 };
 rmSync(outdir, { recursive: true, force: true });

@@ -106,6 +106,8 @@ export type SiteAccessState =
   | "site_access_granted"
   /** The user declined. The workflow stops rather than re-asking. */
   | "site_access_denied"
+  /** Chrome withdrew a grant the workflow had. Nothing may read or fill the page until it is granted again. */
+  | "site_access_revoked"
   /** The URL is not something a permission can be requested for. */
   | "site_access_unavailable";
 

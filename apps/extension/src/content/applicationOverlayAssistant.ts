@@ -126,6 +126,7 @@ export function mountApplicationAssistantOverlay(options: {
         const response = await sendWorker<ActionResponse>({ type: MSG.OVERLAY_OPEN_PERMISSION_SURFACE });
         return response?.ok === true ? "deferred" : false;
       },
+      disableAutoOpen: () => sendWorker<ActionResponse>({ type: MSG.OVERLAY_DISABLE_AUTO_OPEN }),
       reportSiteAccess: (_tabId, pattern, granted) => sendWorker<ActionResponse>({
         type: MSG.OVERLAY_SITE_ACCESS_RESULT,
         pattern,

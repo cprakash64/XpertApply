@@ -139,3 +139,51 @@ review. Citizenship, permanent-resident and export-control wording map to nothin
 **Self-identification.** The backend already stores it only with `consent_to_store` and emits it as
 `source: profile_eeo, sensitive: true`; the extension fills only those, only with an exact option, and never
 defaults to "decline". Pinned by tests; no schema change. Owner confirmation of the disclosure wording is still open.
+
+## XA-ACT1 addendum: automatic activation without a toolbar click
+
+**First broken transition.** On 6b0bad5 an employer content script reached a page by only two routes:
+(1) the worker's `tabs.onUpdated` handler, and only for a tab bound to a pending or active XpertApply handoff;
+(2) a toolbar click (`activeTab`). There was no `registerContentScripts` anywhere, by design (XA-06: installing
+grants nothing about employer sites). A page the user opened directly, or any page on a restarted browser with no
+live handoff, therefore had no XpertApply script at all, and nothing could open the assistant. The toolbar click
+worked because it is the one route that does not depend on a handoff or a prior grant: it injects through
+`activeTab`.
+
+**Why the manual click then failed.** Three separate faults:
+1. The in-page Allow button's worker handler reached `openPermissionSurface`, which took its origin pattern from
+   the tab's *workflow view*. A toolbar-only tab has no view, so there was no pattern, the host-access request was
+   skipped, and `sidePanel.open` (which needs a live gesture, long gone after several awaits) was refused. Result
+   `null` -> "XpertApply can't fill this application without access to the site."
+2. `toolbarOverlayView` hard-coded "not granted", so a granted origin still said "Permission required".
+3. "Opening application..." / "Detecting..." came straight from the stored workflow state with no notion of site
+   access, so a tab waiting for permission looked like a slow load.
+
+**Fix.**
+- `siteRegistration.ts`: one persistent, exact-origin `registerContentScripts` entry per origin Chrome has granted
+  (never wildcard hosts, never XpertApply's own site or API), derived from `permissions.getAll()`. Reconciled on every
+  worker start, install/update (refresh), startup and `permissions.onAdded/onRemoved`; serialised; tabs already open
+  on a newly registered origin are reached directly.
+- `ats/providers.ts`: explicit provider registry (adapter / limited / unsupported) with application-page URL rules,
+  so listings and marketing pages never open anything. Indeed is recognised as unsupported.
+- Direct visit: a registered script announces an authorised, recognised application page; the worker opens the
+  assistant ("Application recognized"). Nothing is read and nothing is filled: filling needs a verified session, which
+  only an XpertApply launch creates. Website launches fill automatically, unchanged.
+- Permission: `permissions.request` is called as the *first statement* of the toolbar click, the in-page Allow button
+  and the website Apply click, for known ATS hosts only (exact origin); Chrome's own host-access prompt is the
+  fallback; revocation is `site_access_revoked`.
+- States: `activation.ts` derives the twelve named states from the stored view; the assistant stops saying
+  "Opening application..." while permission is missing.
+- Off switch: "Don't open XpertApply here automatically", per origin, stored as origins only.
+
+**Limit that remains (BLOCKED, not hidden).** Auto-FILL of a directly typed URL needs a verified session for that
+job, and the extension has no authenticated channel to the API of its own: sessions are minted by the website. A
+direct visit is therefore recognised but not filled. Closing this needs a backend/web design decision (an
+extension-to-account credential), not an extension patch.
+
+**ACT1 review finding (caught by the full E2E, not by unit tests).** A registered script runs at load, before a
+handoff exists, and goes dormant; a later bind must wake it, but re-injection is ignored (one owner per
+document). The wake was first written as "ping says not started -> start", which also fired for a script that was
+mid-handshake and produced a second concurrent run (`question-resolution` Scenario A: authorization dropdown left
+unselected; `real-extension` apply-click). A wake is now limited to an instance that reports `dormant`: handshake
+finished, no workflow found, nothing started.

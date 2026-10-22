@@ -1,5 +1,7 @@
 import { MSG } from "./messages";
 import { toolbarDisclosureAccepted } from "./toolbarDisclosure";
+import { originPatternFor } from "./security/siteAccess";
+import { providerForUrl } from "./ats/providers";
 
 export const TOOLBAR_OVERLAY_BUNDLE = "overlayBootstrap.js";
 
@@ -56,9 +58,33 @@ export async function continueToolbarOverlay(tabId: number): Promise<boolean> {
   }
 }
 
+/**
+ * Ask Chrome for ONE supported ATS origin, from inside a user gesture.
+ *
+ * chrome.permissions.request needs the user's gesture, and an await between the click and the call
+ * ends it, so this must be the first thing a click handler does and it must not await first.
+ * It returns true without any prompt when the origin is already granted. An origin that is not a
+ * known ATS host is never requested this way: the toolbar's activeTab access covers it for the
+ * moment, and a persistent grant stays a decision for the workflow that needs it.
+ */
+export function requestAtsOriginInGesture(url: string | null | undefined): Promise<boolean> {
+  const provider = providerForUrl(url);
+  const pattern = url && provider && provider.support !== "unsupported" ? originPatternFor(url) : null;
+  if (!pattern || typeof chrome === "undefined" || typeof chrome.permissions?.request !== "function") return Promise.resolve(false);
+  try {
+    return chrome.permissions.request({ origins: [pattern] }).then(Boolean, () => false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
 export function installToolbarOverlayAction(): void {
   chrome.action?.onClicked?.addListener((tab) => {
-    void showToolbarOverlay(tab);
+    // First statement, no await before it: the click is the gesture Chrome's grant dialog needs.
+    const asked = requestAtsOriginInGesture(tab.url);
+    // Granted, declined or dismissed, the assistant still opens through activeTab; the grant, when it
+    // lands, makes the next visit automatic.
+    void asked.then(() => showToolbarOverlay(tab));
   });
 }
 

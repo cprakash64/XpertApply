@@ -1,3 +1,4 @@
+import { activationLabel, deriveActivationState } from "../activation";
 import { completionFailure } from "../completionAuthority";
 import { BUILD_INFO } from "../buildInfo";
 import { PROTOCOL_VERSION, type AutofillReason, type LaunchViewState } from "../messages";
@@ -20,6 +21,8 @@ export interface ApplicationAssistantActions {
   /** true/false: Chrome answered here. "deferred": the request continues on another extension page. */
   requestSiteAccess(pattern: string): Promise<boolean | "deferred">;
   reportSiteAccess(tabId: number, pattern: string, granted: boolean): Promise<ActionResponse | undefined>;
+  /** The user's off switch: stop opening the assistant by itself on this site. Only the in-page assistant offers it. */
+  disableAutoOpen?(): Promise<ActionResponse | undefined>;
 }
 
 export interface ApplicationAssistantContextAdapter {
@@ -72,6 +75,7 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 const FAILURE_LABEL: Record<string, string> = {
+  DIRECT_VISIT_NO_SESSION: "XpertApply recognized this application page but has no prepared application for it, so nothing was read or filled. To fill it, choose Apply with XpertApply on the job at xpertapply.com.",
   APPLICATION_FORM_TOO_LARGE: "This application exceeds XpertApply’s safe limit of 1,000 form fields. Nothing was filled. Please fill it manually.",
   CONTENT_SCRIPT_NOT_INJECTED: "Couldn’t reach the application page. Reload it and click “Fill application”.",
   FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION: "Site access is granted, but Chrome hasn’t confirmed the embedded application yet. Click “Fill application” to retry.",
@@ -142,14 +146,16 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
 
   function renderSiteAccess(current: LaunchViewState): void {
     const block = element("siteAccess");
-    const needed = current.siteAccess === "site_access_required" || current.siteAccess === "site_access_denied";
+    const needed = current.siteAccess === "site_access_required" || current.siteAccess === "site_access_denied" || current.siteAccess === "site_access_revoked";
     block.hidden = !needed;
     if (!needed) return;
     const site = current.siteAccessOrigin ?? "this site";
     const where = current.siteAccessScope === "frame"
       ? `The application is embedded from ${site}.`
       : `The application is on ${site}.`;
-    setText("siteAccessText", current.siteAccess === "site_access_denied"
+    setText("siteAccessText", current.siteAccess === "site_access_revoked"
+      ? `${where} Access was removed in Chrome, so XpertApply has stopped reading this page. Allow it again to continue.`
+      : current.siteAccess === "site_access_denied"
       ? `${where} Access was declined. XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields.`
       : `${where} XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields. Relevant information may be sent to XpertApply's service only for features you request.`);
     setText("grantSiteAccess", `Allow XpertApply on ${site}`);
@@ -187,7 +193,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       return;
     }
     setText("job", current.jobTitle ? `${current.jobTitle}${current.company ? " · " + current.company : ""}` : current.sessionId == null ? "No XpertApply application open" : "Application detected");
-    setText("stage", STAGE_LABEL[current.state] ?? current.state);
+    const activation = deriveActivationState(current);
+    setText("stage", activationLabel(activation, current.siteAccessOrigin) ?? STAGE_LABEL[current.state] ?? current.state);
     setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : current.sessionId == null ? "—" : "Detecting…");
     setText("discovered", String(current.fieldsDiscovered));
     setText("filled", String(current.filled));
@@ -267,6 +274,21 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   listen("rescan", "click", () => void withTab((id) => options.actions.startAutofill(id, "continue_after_navigation"), "Couldn’t continue"));
   listen("next", "click", () => void refresh());
   listen("clear", "click", () => void withTab((id) => options.actions.clearSession(id), "Couldn’t clear"));
+  // Optional control: the side panel and assistant window do not have it.
+  const disableSite = options.root.getElementById("disableSite");
+  if (disableSite && options.actions.disableAutoOpen) {
+    const onDisable = async (): Promise<void> => {
+      const response = await options.actions.disableAutoOpen!();
+      if (response?.ok === false) showButtonError("Couldn’t save that setting. Try again.");
+      else {
+        (disableSite as HTMLButtonElement).disabled = true;
+        disableSite.textContent = "XpertApply won’t open here by itself";
+      }
+    };
+    const onClick = (): void => void onDisable();
+    disableSite.addEventListener("click", onClick);
+    ownedListeners.push(() => disableSite.removeEventListener("click", onClick));
+  }
   listen("grantSiteAccess", "click", async () => {
     const id = context.tabId;
     const pattern = view?.siteAccessPattern;

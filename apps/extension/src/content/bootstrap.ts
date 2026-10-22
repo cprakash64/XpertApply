@@ -279,6 +279,9 @@ let completedWorkflowProgress: ProgressPayload | null = null;
 let completedWorkflowSessionId: number | null = null;
 let started = false;
 let matched = false;
+/** True only once this instance FINISHED its handshake, found no workflow for the page, and went quiet.
+ * A ping during the handshake reports false, so the worker never starts a second concurrent run. */
+let dormant = false;
 // Once a launch reaches a terminal ready/review/failure state, DOM changes
 // (including the user's own answers) must not silently start autofill again.
 // Only the explicit Retry action clears this latch.
@@ -438,7 +441,9 @@ async function initAtsPage(): Promise<void> {
       return false;
     }
     if (message.type === MSG.PING_CONTENT) {
-      sendResponse({ ok: true, url: location.href });
+      // `started` lets the worker tell a live workflow from a registered instance that found no
+      // handoff when its page loaded and has been dormant since.
+      sendResponse({ ok: true, url: location.href, started, dormant });
       return false;
     }
     if (message.type === MSG.CONTENT_RECONNECT) {
@@ -576,6 +581,7 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
 }
 
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
+  dormant = false;
   if (!isCurrentInstance()) return;
   // The toolbar path reads the page only after a recorded first-use acceptance,
   // even if something other than the worker's ordered injection loaded this script.
@@ -598,6 +604,7 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
       log.info("destination session resolution", { stage: "workflow_lookup", reason: "handoff_url_mismatch_retry" });
       await requestReconnect();
     }
+    dormant = !started && !matched;
     return;
   }
   matched = true;

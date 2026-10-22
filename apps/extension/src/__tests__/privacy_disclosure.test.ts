@@ -34,7 +34,16 @@ describe("site-access privacy disclosure", () => {
     expect(toolbar).not.toContain("currentWindow");
     expect(toolbar).not.toContain("boundJobTabId");
     expect(toolbar).not.toContain("windows.create");
-    expect(toolbar).not.toContain("permissions.request");
+    // The toolbar may ask Chrome for ONE known ATS origin, from the user's click, and nothing broader:
+    // a single call site, an exact-origin pattern, gated by the provider registry. (It used to never
+    // request anything, which left a first visit with no compliant way to grant the site.)
+    const toolbarCode = toolbar.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(toolbarCode.match(/permissions\.request\(/g)).toHaveLength(1);
+    expect(toolbar).toContain("origins: [pattern]");
+    expect(toolbar).toContain("providerForUrl(url)");
+    expect(toolbar).toContain("originPatternFor(url)");
+    expect(toolbar).not.toMatch(/origins:\s*\[\s*["'`]/);          // never a literal or wildcard origin
+    expect(toolbar).not.toContain("https://*/*");
     expect(overlayBootstrap).not.toContain("permissions.request");
     expect(overlayBootstrap).not.toContain("discoverAndFill");
     expect(overlayBootstrap).not.toContain("runAutofill");

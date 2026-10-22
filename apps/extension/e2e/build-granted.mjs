@@ -14,7 +14,10 @@ execFileSync(process.execPath, ["build.mjs", "--profile", "e2e"], {
 });
 const file = path.join(out, "manifest.json");
 const manifest = JSON.parse(readFileSync(file, "utf8"));
-manifest.host_permissions = [...manifest.host_permissions, "http://localhost/*", "http://127.0.0.1/*"];
+// Real ATS hostnames, granted as Chrome would after the user approves each one, so the persistent
+// registration path runs for them. Specs serve them from loopback (host-resolver MAP + local TLS).
+const ATS_FIXTURE_HOSTS = ["job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "acme.wd5.myworkdayjobs.com"];
+manifest.host_permissions = [...manifest.host_permissions, "http://localhost/*", "http://127.0.0.1/*", ...ATS_FIXTURE_HOSTS.map((host) => `https://${host}/*`)];
 manifest.externally_connectable = {
   ...manifest.externally_connectable,
   matches: [

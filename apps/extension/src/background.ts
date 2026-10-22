@@ -128,9 +128,12 @@ import {
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
-import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGesture, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { createPermissionsChangedHandler } from "./permissionFlow";
+import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
+import { applicationProviderForUrl, providerForUrl } from "./ats/providers";
+import { isAutoOpenDisabled, setAutoOpenDisabled } from "./activationPrefs";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
@@ -161,6 +164,22 @@ installToolbarOverlayAction();
 // the affected tab's canonical top-frame overlay to fetch again. Delivery is
 // untargeted; child contexts do not own an overlay. This also covers producers
 // added later without creating a parallel state bus.
+// A handoff newly bound to a tab wakes that tab's script. A registered instance runs at load, before
+// any handoff exists, and goes dormant; this is the moment it needs to start, whatever created the
+// binding (an Apply launch, an exact-URL match, a recovery). Only NEW bindings, and a script that
+// already answers a ping and has not started, so ordinary progress updates do nothing.
+chrome.storage.onChanged?.addListener((changes, areaName) => {
+  const expectedArea = chrome.storage.session ? "session" : "local";
+  if (areaName !== expectedArea || !changes[STORAGE_KEYS.PENDING_KEY]) return;
+  const before = (changes[STORAGE_KEYS.PENDING_KEY].oldValue as Record<string, unknown> | undefined) ?? {};
+  const after = (changes[STORAGE_KEYS.PENDING_KEY].newValue as Record<string, unknown> | undefined) ?? {};
+  for (const rawTabId of Object.keys(after)) {
+    const tabId = Number(rawTabId);
+    if (!Number.isInteger(tabId) || tabId < 0 || rawTabId in before) continue;
+    void ensureContentReady(tabId).catch(() => undefined);
+  }
+});
+
 chrome.storage.onChanged?.addListener((changes, areaName) => {
   const expectedArea = chrome.storage.session ? "session" : "local";
   if (areaName !== expectedArea || !changes[STORAGE_KEYS.VIEW_KEY]) return;
@@ -760,12 +779,26 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       }
       return false;
 
-    case MSG.OVERLAY_OPEN_PERMISSION_SURFACE:
-      // chrome.permissions.request cannot run in a content script or a worker, so the
-      // user's click on the in-page "Allow" button opens an extension page that can.
+    case MSG.OVERLAY_OPEN_PERMISSION_SURFACE: {
+      // The user's click on the in-page "Allow" button. A content script cannot call
+      // chrome.permissions, so the worker asks Chrome for the origin while that click's gesture is
+      // still live (first statement, no await before it) when it is a known ATS host. Anything else,
+      // or a refusal, falls back to Chrome's own host-access prompt for the tab.
+      const gestureRequest = requestAtsOriginInGesture(sender.tab?.url ?? sender.url);
       void requireAuthorizedOverlayContextSender(sender)
-        .then(({ tabId }) => openPermissionSurface(tabId, sender.tab?.windowId))
+        .then(async ({ tabId }) => {
+          const surface = await openPermissionSurface(tabId, sender.tab?.windowId, await gestureRequest);
+          return surface;
+        })
         .then((surface) => sendResponse({ ok: surface !== null, surface }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+    }
+
+    case MSG.OVERLAY_DISABLE_AUTO_OPEN:
+      void requireAuthorizedOverlayContextSender(sender)
+        .then(async ({ url }) => { await setAutoOpenDisabled(url.origin, true); })
+        .then(() => sendResponse({ ok: true }))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
 
@@ -828,7 +861,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 
     case MSG.OVERLAY_GET_VIEW:
       void requireAuthorizedOverlayContextSender(sender)
-        .then(async (authority) => (await getView(authority.tabId)) ?? toolbarOverlayView(authority))
+        .then(async (authority) => (await getView(authority.tabId)) ?? (await toolbarOverlayView(authority)))
         .then((view) => sendResponse({ ok: true, view }))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
@@ -942,7 +975,9 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         message.payload.webAuthenticatedUserId,
         generation
       );
-      handleLaunchRequest(message.payload, sender, sendResponse, generation);
+      // First statement that can use the Apply click's gesture: ask Chrome for the employer origin
+      // now, without delaying the acknowledgement the website is waiting for.
+      handleLaunchRequest(message.payload, sender, sendResponse, generation, requestAtsOriginInGesture(message.payload.officialUrl));
       return true;
 
     case MSG.CONTENT_READY:
@@ -1220,6 +1255,27 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 // by later passive events (the content side also honors its own dismissal).
 const autoShownDocuments = new Set<string>();
 
+/**
+ * Direct visit: the user opened a supported application page themselves, on an origin they have
+ * already granted, and nothing was launched from XpertApply. The assistant opens so the page is
+ * recognised and the user knows what to do, but nothing is read (the script that announced itself
+ * is inert, no probe is sent) and nothing is filled: XpertApply fills with a verified session that
+ * only an XpertApply launch can create. Marketing and listing pages, unsupported providers, a
+ * revoked grant and a site the user switched off never open it.
+ */
+async function maybeShowDirectVisitAssistant(tabId: number, sender: chrome.runtime.MessageSender, generation: AuthorityGeneration): Promise<void> {
+  try {
+    const url = sender.tab?.url ?? sender.url;
+    if (!applicationProviderForUrl(url)) return;
+    const pattern = originPatternFor(url);
+    if (!pattern || !(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return;
+    if (await isAutoOpenDisabled(new URL(url!).origin)) return;
+    await autoShowOverlay(tabId, sender.documentId as string, generation);
+  } catch {
+    // Never let a recognition failure surface as a page error.
+  }
+}
+
 async function autoShowOverlay(tabId: number, documentId: string, generation: AuthorityGeneration): Promise<void> {
   const key = `${tabId}:${documentId}`;
   if (autoShownDocuments.has(key)) return;
@@ -1246,12 +1302,21 @@ async function autoShowOverlay(tabId: number, documentId: string, generation: Au
  * XpertApply interface next to the in-page assistant.
  */
 type HostAccessApi = { addHostAccessRequest?: (request: { tabId: number; pattern?: string }) => Promise<void> };
-export async function openPermissionSurface(tabId: number, windowId?: number): Promise<"host_access_request" | "side_panel" | null> {
-  const pattern = (await getView(tabId))?.siteAccessPattern ?? undefined;
+export async function openPermissionSurface(
+  tabId: number,
+  windowId?: number,
+  alreadyGranted = false
+): Promise<"granted" | "host_access_request" | "side_panel" | null> {
+  // The gesture-bound request already succeeded: nothing more to ask.
+  if (alreadyGranted) return "granted";
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  // A toolbar-only tab has no workflow view, so the pattern comes from the tab's own URL.
+  const pattern = (await getView(tabId))?.siteAccessPattern ?? originPatternFor(tab?.url) ?? undefined;
   const api = chrome.permissions as unknown as HostAccessApi;
   if (pattern && typeof api.addHostAccessRequest === "function") {
     try {
       await api.addHostAccessRequest({ tabId, pattern });
+      await patchView(tabId, { siteAccessRequestedAt: Date.now() }, captureAuthorityGeneration()).catch(() => undefined);
       return "host_access_request";
     } catch (error) {
       log.info("permission surface: host access request unavailable", { reason: String(error).slice(0, 60) });
@@ -1267,6 +1332,58 @@ export async function openPermissionSurface(tabId: number, windowId?: number): P
   }
 }
 
+// --------------------------------------------------------------------------- //
+// Persistent employer-script registration (see siteRegistration.ts)
+// --------------------------------------------------------------------------- //
+declare const __XPERTAPPLY_ALLOW_LOOPBACK__: boolean | undefined;
+const LOOPBACK_REGISTRATION_BUILD = typeof __XPERTAPPLY_ALLOW_LOOPBACK__ !== "undefined" && __XPERTAPPLY_ALLOW_LOOPBACK__;
+
+const siteRegistrar = createSiteRegistrar({
+  grantedOrigins: async () => (await chrome.permissions.getAll()).origins ?? [],
+  registeredIds: async () => (await chrome.scripting.getRegisteredContentScripts()).map((script) => script.id),
+  register: (scripts) => chrome.scripting.registerContentScripts(scripts),
+  unregister: (ids) => chrome.scripting.unregisterContentScripts({ ids }),
+  options: async () => ({
+    // XpertApply's own site (declarative bridge) and its API host never serve an employer application.
+    excluded: [...JOBPILOT_WEB_ORIGINS.map((origin) => `${origin}/*`), "https://api.xpertapply.com/*"],
+    // Plain-http loopback exists only in non-production builds, and only when a test asks for it.
+    allowLoopback: LOOPBACK_REGISTRATION_BUILD
+      && Boolean((await chrome.storage.local.get("xaRegisterLoopback")).xaRegisterLoopback)
+  })
+});
+
+/** Make registered employer scripts equal what Chrome says is granted. Never throws. */
+export function reconcileSiteScripts(refresh = false): Promise<void> {
+  return siteRegistrar(refresh).then(
+    async (plan) => {
+      if (plan.register.length || plan.unregister.length) log.info("site scripts reconciled", { added: String(plan.register.length), removed: String(plan.unregister.length) });
+      // Registered scripts only run on FUTURE loads, so tabs already open on a newly registered origin
+      // (first run, an extension update, a restart that missed an event) are reached directly.
+      if (plan.register.length) await injectIntoOpenTabs(plan.register.flatMap((script) => script.matches));
+    },
+    (error) => { log.info("site script reconcile failed", { reason: String(error).slice(0, 80) }); }
+  );
+}
+
+/** A grant that lands after the page loaded: registered scripts only run on FUTURE loads, so reach the open tabs now. */
+async function injectIntoOpenTabs(grantedPatterns: readonly string[]): Promise<void> {
+  for (const pattern of grantedPatterns) {
+    if (!registrablePattern(pattern, LOOPBACK_REGISTRATION_BUILD)) continue;
+    const tabs = await chrome.tabs.query({ url: pattern }).catch(() => [] as chrome.tabs.Tab[]);
+    for (const tab of tabs) {
+      if (tab.id == null) continue;
+      // The script reads nothing on its own, so injecting twice is harmless: it claims the document once.
+      await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ["content.js"] }).catch(() => undefined);
+    }
+  }
+}
+
+// Every worker start re-derives registration from Chrome's permissions: a restart, an update or a
+// missed event cannot leave it stale.
+void reconcileSiteScripts();
+chrome.runtime.onInstalled.addListener(() => { void reconcileSiteScripts(true); });
+chrome.runtime.onStartup?.addListener(() => { void reconcileSiteScripts(); });
+
 const permissionsChanged = createPermissionsChangedHandler({
   workflowTabIds,
   getView,
@@ -1274,14 +1391,20 @@ const permissionsChanged = createPermissionsChangedHandler({
   applySiteAccessResult: (tabId, pattern, granted) =>
     applySiteAccessResult(tabId, pattern, granted, captureAuthorityGeneration())
 });
-chrome.permissions.onAdded?.addListener((permissions) => void permissionsChanged(permissions.origins ?? [], true));
-chrome.permissions.onRemoved?.addListener((permissions) => void permissionsChanged(permissions.origins ?? [], false));
+chrome.permissions.onAdded?.addListener((permissions) => {
+  const origins = permissions.origins ?? [];
+  void reconcileSiteScripts().then(() => injectIntoOpenTabs(origins)).then(() => permissionsChanged(origins, true));
+});
+chrome.permissions.onRemoved?.addListener((permissions) => {
+  void reconcileSiteScripts().then(() => permissionsChanged(permissions.origins ?? [], false));
+});
 
 function handleLaunchRequest(
   payload: LaunchPayload,
   sender: chrome.runtime.MessageSender,
   sendResponse: (r: unknown) => void,
-  generation: AuthorityGeneration
+  generation: AuthorityGeneration,
+  gestureGrant: Promise<boolean> = Promise.resolve(false)
 ): void {
   const windowId = sender.tab?.windowId;
   void (async () => {
@@ -1326,7 +1449,13 @@ function handleLaunchRequest(
       await recordSiteAccess(tabId, access, null, generation);
       // The employer origin needs a Chrome grant that only an extension page can request.
       // This message was sent from the user's real Apply click, so open that page now.
-      if (access.state === "site_access_required") void openPermissionSurface(tabId, windowId);
+      if (access.state === "site_access_required") {
+        // After the acknowledgement: the user may take a while to answer Chrome's dialog.
+        void gestureGrant.then(async (granted) => {
+          if (granted) await applySiteAccessResult(tabId, access.pattern ?? "", true, generation).catch(() => undefined);
+          else await openPermissionSurface(tabId, windowId);
+        });
+      }
       log.info("launch accepted", { requestId: payload.requestId, tabId, origin: pending.expectedOrigin });
       sendResponse({ ok: true, type: MSG.LAUNCH_ACCEPTED, applicationId, tabId });
     } catch (err) {
@@ -1456,6 +1585,8 @@ async function handleContentReady(
     if (!active) {
       log.info("destination session resolution", { stage: "tab_binding_lookup", reason: "no_tab_binding" });
       sendResponse({ ok: true, matched: false, error: "HANDOFF_NOT_FOUND", launch: null });
+      // A direct visit to a recognised application page on an origin Chrome has granted.
+      if (isTopFrame && typeof sender.documentId === "string") void maybeShowDirectVisitAssistant(tabId, sender, generation);
       return;
     }
     if (Date.now() > active.expiresAt) {
@@ -2168,7 +2299,13 @@ async function ensureContentReady(
     return false;
   }
   for (let attempt = 0; attempt < READY_MAX_ATTEMPTS; attempt += 1) {
-    if (await pingContent(tabId)) return true;
+    const present = await pingContentState(tabId);
+    if (present) {
+      // A script is already on the page. A REGISTERED one runs at load, before any handoff exists, finds
+      // none and goes dormant; re-injecting would be ignored (one owner per document), so wake it.
+      if (present.dormant && !present.started) await sendToTab(tabId, { type: MSG.AUTOFILL_START, reason: "automatic_launch" });
+      return true;
+    }
     // Inject the compiled content script. The host permission this needs is
     // the OPTIONAL grant checked immediately above, not a static one — Stage 3C
     // removed install-time authority over employer origins. allFrames so an
@@ -2184,6 +2321,21 @@ async function ensureContentReady(
     await delay(Math.min(200 * 2 ** attempt, 2000));
   }
   return false;
+}
+
+/** The top frame's answer to a ping: present, and whether its workflow has started. */
+function pingContentState(tabId: number): Promise<{ started: boolean; dormant: boolean } | null> {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: MSG.PING_CONTENT }, { frameId: 0 }, (resp) => {
+        if (lastError()) return resolve(null);
+        const reply = resp as { ok?: boolean; started?: boolean; dormant?: boolean } | undefined;
+        resolve(reply?.ok ? { started: reply.started !== false, dormant: reply.dormant === true } : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 function pingContent(tabId: number): Promise<boolean> {
@@ -2873,10 +3025,12 @@ async function requireAuthorizedOverlayContextSender(
   return authority;
 }
 
-function toolbarOverlayView(authority: { tabId: number; url: URL }): LaunchViewState {
-  // activeTab is intentionally NOT consulted as persistent site access. Until
-  // a workflow view exists, the exact origin remains explicitly requestable.
-  const access = siteAccessNeedFor(authority.url.href, false, "page");
+async function toolbarOverlayView(authority: { tabId: number; url: URL }): Promise<LaunchViewState> {
+  // activeTab is intentionally NOT persistent site access, so it is never counted. What IS counted is
+  // what Chrome reports for the origin: a grant the user made earlier (the reason this assistant may
+  // have opened by itself) is a grant, and a missing one stays explicitly requestable.
+  const access = await siteAccessFor(authority.url.href, "page");
+  const provider = providerForUrl(authority.url.href);
   return {
     tabId: authority.tabId,
     requestId: "toolbar",
@@ -2884,9 +3038,9 @@ function toolbarOverlayView(authority: { tabId: number; url: URL }): LaunchViewS
     state: "idle",
     company: null,
     jobTitle: null,
-    atsId: null,
-    atsDisplayName: null,
-    limited: false,
+    atsId: provider?.id ?? null,
+    atsDisplayName: provider?.displayName ?? null,
+    limited: provider?.support === "limited",
     fieldsDiscovered: 0,
     filled: 0,
     skipped: 0,
@@ -2897,7 +3051,7 @@ function toolbarOverlayView(authority: { tabId: number; url: URL }): LaunchViewS
     contentReady: true,
     packageLoaded: false,
     running: false,
-    failureCode: "HANDOFF_NOT_FOUND",
+    failureCode: provider ? "DIRECT_VISIT_NO_SESSION" : "HANDOFF_NOT_FOUND",
     failureMessage: null,
     confirmationRequired: false,
     confirmationDismissed: false,

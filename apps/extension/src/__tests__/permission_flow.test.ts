@@ -39,10 +39,10 @@ describe("permission changes reported by Chrome", () => {
     expect(patched).toEqual([]);
   });
 
-  it("puts a granted tab back to 'access required' when Chrome revokes the origin", async () => {
+  it("marks a granted tab REVOKED, and no longer ready, when Chrome revokes the origin", async () => {
     const { handler, applied, patched } = harness({ 1: view("site_access_granted", GH), 2: view("site_access_granted", LEVER) });
     await handler([GH], false);
-    expect(patched).toEqual([[1, { siteAccess: "site_access_required" }]]);
+    expect(patched).toEqual([[1, { siteAccess: "site_access_revoked", contentReady: false, siteAccessRequestedAt: undefined }]]);
     expect(applied).toEqual([]);
   });
 

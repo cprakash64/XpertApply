@@ -25,7 +25,7 @@ export function createPermissionsChangedHandler(deps: PermissionFlowDeps) {
       if (granted && view.siteAccess !== "site_access_granted") {
         await deps.applySiteAccessResult(tabId, pattern, true).catch(() => undefined);
       } else if (!granted && view.siteAccess === "site_access_granted") {
-        await deps.patchView(tabId, { siteAccess: "site_access_required" }).catch(() => undefined);
+        await deps.patchView(tabId, { siteAccess: "site_access_revoked", contentReady: false, siteAccessRequestedAt: undefined }).catch(() => undefined);
       }
     }
   };

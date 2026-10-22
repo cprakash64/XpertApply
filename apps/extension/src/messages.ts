@@ -236,6 +236,8 @@ export interface LaunchViewState {
   siteAccess: SiteAccessState;
   /** Match pattern the side panel should request, when one can be formed. */
   siteAccessPattern: string | null;
+  /** Set when Chrome's access prompt was shown for this tab; cleared by any answer. */
+  siteAccessRequestedAt?: number;
   /** Host shown in the prompt. Never a full URL. */
   siteAccessOrigin: string | null;
   /** Whether the page itself or one embedded frame needs the grant. */
@@ -366,6 +368,8 @@ export const MSG = {
    * Content scripts cannot call chrome.permissions, so the worker opens an
    * extension page (side panel, else assistant window) whose own button requests it. */
   OVERLAY_OPEN_PERMISSION_SURFACE: "XPERTAPPLY_OVERLAY_OPEN_PERMISSION_SURFACE",
+  /** Overlay -> worker: stop opening the assistant by itself on this origin (the user's off switch). */
+  OVERLAY_DISABLE_AUTO_OPEN: "XPERTAPPLY_OVERLAY_DISABLE_AUTO_OPEN",
   TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
   /** Worker -> top frame: show the static first-use disclosure. Carries no page data. */
   SHOW_TOOLBAR_DISCLOSURE: "XPERTAPPLY_SHOW_TOOLBAR_DISCLOSURE",
@@ -566,6 +570,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.OVERLAY_VIEW_CHANGED }
   | { type: typeof MSG.SHOW_APPLICATION_OVERLAY; automatic?: boolean }
   | { type: typeof MSG.OVERLAY_OPEN_PERMISSION_SURFACE }
+  | { type: typeof MSG.OVERLAY_DISABLE_AUTO_OPEN }
   | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
   | { type: typeof MSG.SHOW_TOOLBAR_DISCLOSURE }
   | { type: typeof MSG.FIELD_ENTRY_REGISTER; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } }
@@ -607,7 +612,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
   MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
-  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.TOOLBAR_OVERLAY_READY,
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.OVERLAY_DISABLE_AUTO_OPEN, MSG.TOOLBAR_OVERLAY_READY,
   MSG.SHOW_TOOLBAR_DISCLOSURE, MSG.TOOLBAR_DISCLOSURE_ACCEPT,
   MSG.FIELD_ENTRY_REGISTER, MSG.FIELD_ENTRY_CONFIG, MSG.FIELD_ENTRY_SUBMIT, MSG.FIELD_ENTRY_DELIVER
 ]);
@@ -722,6 +727,7 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.OVERLAY_VIEW_CHANGED]: {},
   [MSG.SHOW_APPLICATION_OVERLAY]: { automatic: { kind: "boolean" } },
   [MSG.OVERLAY_OPEN_PERMISSION_SURFACE]: {},
+  [MSG.OVERLAY_DISABLE_AUTO_OPEN]: {},
   [MSG.TOOLBAR_OVERLAY_READY]: {},
   [MSG.SHOW_TOOLBAR_DISCLOSURE]: {},
   [MSG.FIELD_ENTRY_REGISTER]: {

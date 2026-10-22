@@ -27,13 +27,18 @@ export type LaunchOptions = {
   answers: ReturnType<typeof answer>[];
   /** Map a rendered question label to a canonical key for the owned resolver. */
   keyFor: (label: string) => string | null;
+  /** Launch to this URL instead of the owned fixture's (it must be served by the spec, e.g. a mapped https ATS host). */
+  officialUrl?: string;
+  /** Extra Chromium switches (host-resolver MAP rules, certificate flags). */
+  launchArgs?: string[];
+  profileDir?: string;
 };
 
 /** The deployed website's protocol, driven against a real unpacked extension. */
 export async function launchFromWebsite(opts: LaunchOptions) {
   const employer = await new OwnedPackageFixture(opts.html).start();
   const web = await webServer();
-  const applicationUrl = `${employer.origin}/jobs/${opts.sessionId}`;
+  const applicationUrl = opts.officialUrl ?? `${employer.origin}/jobs/${opts.sessionId}`;
   const sid = opts.sessionId;
   const session = { session_id: sid, ats_type: opts.atsType, official_application_url: applicationUrl, job: { title: "Software Engineer", company: "Acme" },
     resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: opts.profile };
@@ -57,7 +62,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
   }));
   for (const e of ["events", "autofill-results", "complete"]) await employer.route(`**/application-sessions/${sid}/${e}`, tap(r => r.fulfill(json({}))));
   const dist = process.env.XA_E2E_DIST!;
-  const ctx: BrowserContext = await chromium.launchPersistentContext("", { channel: "chromium", serviceWorkers: "allow", args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`] });
+  const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.launchArgs ?? [])] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 15_000 });
   await worker.evaluate(async b => chrome.storage.local.set({ apiBase: b }), employer.origin);
   const site: Page = await ctx.newPage();
