@@ -77,3 +77,31 @@ redirect must return 400.
 ## 6. Not yet tested
 Chrome's native sign-in window and the real `staging.xpertapply.com` round trip have not been run. The automated browser
 tests replace only that native window, against a local website and API; they cannot exercise the staging hostnames.
+
+## 7. First visit to a supported application (XA-EXT-DIRECT-ENTRY-02)
+Chrome grants an extension nothing about employer sites at install, so on a first visit no XpertApply code is on the page. The
+staging manifest correctly lists only the staging website and API: employer origins are never in `host_permissions`; they come
+from the user's per-site grant (`optional_host_permissions`) and the persistent script registration built on it. The e2e build
+pre-grants fixture origins, which is why automated tests passed while a real first visit showed nothing.
+
+What happens now on a supported ATS **application** page (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Rippling,
+BambooHR, JazzHR, Teamtailor) with no grant:
+1. The worker (from the tab URL only, nothing read from the page) asks Chrome for exactly that origin with
+   `permissions.addHostAccessRequest`, once per tab and origin, and
+2. puts a `!` badge on the toolbar icon. Clicking the icon is the gesture that opens Chrome's own grant prompt.
+3. After the user allows the site, the page gets the assistant automatically: **Connect XpertApply** if disconnected, or the
+   fill if connected. Nothing on the page is read or changed before that, and nothing is sent to XpertApply.
+
+Not covered by the passive prompt: custom careers domains that are not a known ATS (the URL gives no signal). For those, click
+the toolbar icon on the page; the assistant opens through `activeTab` and offers the site grant.
+
+### Manual retest in desktop Chrome (dedicated profile, staging test user)
+1. `npm run build:staging` (see section 1) and load `dist-staging`; confirm the card id.
+2. Open a **public** Greenhouse application URL (`https://job-boards.greenhouse.io/<company>/jobs/<number>`). Within a few
+   seconds expect a Chrome "wants access to this site" notice on the tab and a `!` badge on the XpertApply icon. If neither shows,
+   record the Chrome version (the notice needs 133+; the badge works on any).
+3. Click the XpertApply icon, choose **Allow** in Chrome's prompt. The assistant opens and says it is not connected, with **Connect XpertApply**.
+4. Click Connect: Chrome's sign-in window opens on `staging.xpertapply.com/extension/connect`; continue with section 5 of the
+   earlier checklist. Reload the page: still one assistant.
+5. In Chrome's extension menu, with the site removed (`chrome://extensions` -> Details -> Site access), repeat from step 2.
+6. Open the Greenhouse company *listing* page (not an application) and any unrelated site: no badge, no request.

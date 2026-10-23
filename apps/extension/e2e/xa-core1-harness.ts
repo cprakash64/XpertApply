@@ -82,7 +82,7 @@ export function employerPage(host: string, url: string): string {
   return /\/apply$/.test(p) ? simpleForm("Apply - Workday-shaped") : listing("Workday careers");
 }
 
-export async function employerTls() {
+export async function employerTls(extraMaps: string[] = []) {
   const dir = mkdtempSync(path.join(tmpdir(), "xa-core1-tls-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", "/CN=employer.test"], { stdio: "ignore" });
   const requests: string[] = [];
@@ -95,7 +95,7 @@ export async function employerTls() {
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   const mapped = [...HOSTS, UNGRANTED_HOST];
-  return { server, port, requests, args: [`--host-resolver-rules=${mapped.map(h => `MAP ${h} 127.0.0.1:${port}`).join(",")}`, "--ignore-certificate-errors"] };
+  return { server, port, requests, args: [`--host-resolver-rules=${[...mapped.map(h => `MAP ${h} 127.0.0.1:${port}`), ...extraMaps].join(",")}`, "--ignore-certificate-errors"] };
 }
 
 const labelKey = (t: string) => /first name/i.test(t) ? "first_name" : /last name/i.test(t) ? "last_name" : /^full name/i.test(t) ? "full_name"
@@ -194,3 +194,22 @@ export async function launchSignedIn(opts: { api: Awaited<ReturnType<typeof star
 export const directDrafts = (api: { log: ApiLogEntry[] }) => api.log.filter(l => l.method === "POST" && l.path === "/extension/direct-sessions");
 export const overlayCount = (p: Page) => p.locator("#xpertapply-assistant-overlay-v1").count();
 export const submitsUntouched = (p: Page) => p.evaluate(() => (window as any).__emp);
+
+/** XA-EXT-DIRECT-ENTRY-02: `https://api-staging.xpertapply.com` served from loopback. A TLS front that forwards every request to the
+ * owned mock API, so the STAGING build (which accepts only that exact API origin) can be exercised in a real browser. */
+export async function stagingApiFront(api: { origin: string }) {
+  const dir = mkdtempSync(path.join(tmpdir(), "xa-stg-api-tls-"));
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", "/CN=api-staging.test"], { stdio: "ignore" });
+  const seen: string[] = [];
+  const server: HttpsServer = createHttps({ key: readFileSync(`${dir}/k.pem`), cert: readFileSync(`${dir}/c.pem`) }, async (rq, rs) => {
+    seen.push(`${rq.method} ${rq.url}`);
+    const chunks: Buffer[] = [];
+    for await (const chunk of rq) chunks.push(Buffer.from(chunk));
+    const body = chunks.length ? Buffer.concat(chunks) : undefined;
+    const upstream = await fetch(`${api.origin}${rq.url}`, { method: rq.method, headers: { authorization: String(rq.headers.authorization ?? ""), "content-type": String(rq.headers["content-type"] ?? "application/json") }, body });
+    rs.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
+    rs.end(Buffer.from(await upstream.arrayBuffer()));
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  return { port: (server.address() as { port: number }).port, seen, close: () => server.close() };
+}

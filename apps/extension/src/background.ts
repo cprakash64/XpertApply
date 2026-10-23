@@ -134,7 +134,7 @@ import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGestu
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
-import { providerForUrl } from "./ats/providers";
+import { applicationProviderForUrl, providerForUrl } from "./ats/providers";
 import { isAutoOpenDisabled, setAutoOpenDisabled } from "./activationPrefs";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 import {
@@ -667,8 +667,9 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 // When a tab with a pending launch finishes loading (initial load, refresh, or
 // SPA navigation reported as complete), make sure the content script is ready.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const generation = captureAuthorityGeneration();
+  if (changeInfo.url || changeInfo.status === "complete") void offerSiteAccessForSupportedApplication(tabId, changeInfo.url ?? tab?.url);
   if (changeInfo.url || changeInfo.status === "complete") {
     void handleBoundTabUpdated(tabId);
   }
@@ -763,6 +764,58 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     await ensureContentReady(tabId, generation).catch(() => undefined);
   })();
 });
+
+// --------------------------------------------------------------------------- //
+// First visit to a supported application: the way in, before any grant exists
+// --------------------------------------------------------------------------- //
+// Chrome grants an extension nothing about employer sites at install, so on a first visit no XpertApply code
+// is on the page and nothing could ever appear. The only passive signal available is the URL (the `tabs`
+// permission already provides it): when it is a supported ATS's APPLICATION page, ask Chrome — with its own
+// "wants access to this site" request, for exactly that origin — and put a badge on the toolbar button, whose
+// click is the user gesture that opens Chrome's grant prompt. Nothing on the page is read, no request goes to
+// XpertApply, and nothing is requested for a site that is not a known application page. Once the user allows
+// the origin, the persistent registration and the direct-application flow take over.
+const accessOffered = new Set<string>();
+const ACCESS_BADGE_TITLE = "XpertApply: click to allow this site and fill this application";
+
+async function setAccessBadge(tabId: number, on: boolean): Promise<void> {
+  try {
+    await chrome.action.setBadgeText({ tabId, text: on ? "!" : "" });
+    if (on) {
+      await chrome.action.setBadgeBackgroundColor({ tabId, color: "#0891b2" });
+      await chrome.action.setTitle({ tabId, title: ACCESS_BADGE_TITLE });
+    }
+  } catch {
+    /* the tab went away; the badge is a convenience */
+  }
+}
+
+async function offerSiteAccessForSupportedApplication(tabId: number, url: string | undefined): Promise<void> {
+  try {
+    const pattern = originPatternFor(url);
+    if (!url || !pattern || !applicationProviderForUrl(url)) {
+      // A navigation away from an application page takes the prompt with it.
+      if (url && accessOffered.has(`${tabId}:badge`)) { accessOffered.delete(`${tabId}:badge`); await setAccessBadge(tabId, false); }
+      return;
+    }
+    const origin = new URL(url).origin;
+    if (await isAutoOpenDisabled(origin)) return;
+    if (await chrome.permissions.contains({ origins: [pattern] }).catch(() => false)) {
+      await setAccessBadge(tabId, false);
+      return;
+    }
+    accessOffered.add(`${tabId}:badge`);
+    await setAccessBadge(tabId, true);
+    const key = `${tabId}:${origin}`;
+    if (accessOffered.has(key)) return;               // one request per tab and origin: reloads never repeat it
+    accessOffered.add(key);
+    if (accessOffered.size > 400) accessOffered.delete(accessOffered.values().next().value as string);
+    const api = chrome.permissions as unknown as HostAccessApi;
+    if (typeof api.addHostAccessRequest === "function") await api.addHostAccessRequest({ tabId, pattern }).catch(() => undefined);
+  } catch (error) {
+    log.info("site access offer skipped", { reason: String(error).slice(0, 60) });
+  }
+}
 
 // --------------------------------------------------------------------------- //
 // Message router (validates every message; unknown → structured error)
@@ -1602,6 +1655,9 @@ const permissionsChanged = createPermissionsChangedHandler({
 });
 chrome.permissions.onAdded?.addListener((permissions) => {
   const origins = permissions.origins ?? [];
+  for (const pattern of origins) {
+    void chrome.tabs.query({ url: pattern }).then((tabs) => tabs.forEach((t) => { if (t.id != null) { accessOffered.delete(`${t.id}:badge`); void setAccessBadge(t.id, false); } })).catch(() => undefined);
+  }
   void reconcileSiteScripts().then(() => injectIntoOpenTabs(origins)).then(() => permissionsChanged(origins, true));
 });
 chrome.permissions.onRemoved?.addListener((permissions) => {
