@@ -17,6 +17,7 @@ from app.routes import (
     auth,
     dashboard,
     debug,
+    extension,
     google_auth,
     jobs,
     people,
@@ -152,6 +153,7 @@ app.include_router(people.router)
 app.include_router(privacy.router)
 app.include_router(debug.router)
 app.include_router(applications.router)
+app.include_router(extension.router)
 app.include_router(applications.answers_router)
 
 
