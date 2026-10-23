@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -25,17 +26,22 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.applications.direct_sessions import (
+    direct_lock,
+    open_direct_session,
+    prepare_direct_documents,
+    release_direct_lock,
+)
 from app.applications.preparation import PreparationError
-from app.applications.session_service import create_application_session
 from app.applications.url_validation import InvalidApplicationURL, validate_official_url
 from app.core.config import settings
 from app.core.session_tokens import create_session_token, hash_token
@@ -52,6 +58,8 @@ router = APIRouter(prefix="/extension", tags=["extension"])
 _bearer = HTTPBearer(auto_error=False)
 
 ALGORITHM = "HS256"
+ISSUER = "xpertapply-api"
+AUDIENCE = "xpertapply-extension"
 ACCESS_TOKEN_TTL_MINUTES = 30
 AUTH_CODE_TTL_SECONDS = 120
 REFRESH_TTL_DAYS = 30
@@ -59,6 +67,25 @@ REFRESH_TTL_DAYS = 30
 # Chrome's identity API redirects to https://<extension-id>.chromiumapp.org/...
 # An extension id is 32 characters in a-p. Anything else is not an extension.
 _REDIRECT_RE = re.compile(r"^https://[a-p]{32}\.chromiumapp\.org/[A-Za-z0-9._~/-]{0,100}$")
+
+
+def _redirect_allowed(redirect_uri: str) -> bool:
+    """Exact-match redirect policy (RFC 9700 §4.1).
+
+    The shape must be Chrome's identity redirect, AND the extension id must be one
+    the deployment names. An unconfigured production deployment accepts nothing, so
+    a rogue extension can never be handed a code; non-production accepts any
+    well-formed id so unpacked development builds work.
+    """
+    if not _REDIRECT_RE.match(redirect_uri):
+        return False
+    extension_id = redirect_uri.removeprefix("https://").split(".", 1)[0]
+    allowed = {value.strip().lower() for value in settings.extension_allowed_ids if value.strip()}
+    if allowed:
+        return extension_id in allowed
+    return settings.app_env.lower() not in {"production", "prod"}
+
+
 _CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 
@@ -82,6 +109,8 @@ def _access_token(user_id: int, family_id: str) -> str:
     return jwt.encode(
         {
             "typ": "ext",
+            "iss": ISSUER,
+            "aud": AUDIENCE,
             "uid": int(user_id),
             "fam": family_id,
             "exp": int((_now() + timedelta(minutes=ACCESS_TOKEN_TTL_MINUTES)).timestamp()),
@@ -128,7 +157,14 @@ def get_extension_user(
     if credentials is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     try:
-        claims = jwt.decode(credentials.credentials, settings.secret_key, algorithms=[ALGORITHM])
+        claims = jwt.decode(
+            credentials.credentials,
+            settings.secret_key,
+            algorithms=[ALGORITHM],
+            audience=AUDIENCE,
+            issuer=ISSUER,
+            options={"require": ["exp", "aud", "iss"]},
+        )
     except InvalidTokenError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
     uid, fam = claims.get("uid"), claims.get("fam")
@@ -177,7 +213,7 @@ def create_code(
 ) -> dict[str, str]:
     """Called by the signed-in website's connect page, never by the extension."""
     _rate_limit(f"extcode:{user.id}", limit=10, window_seconds=60)
-    if not _CHALLENGE_RE.match(payload.code_challenge) or not _REDIRECT_RE.match(payload.redirect_uri):
+    if not _CHALLENGE_RE.match(payload.code_challenge) or not _redirect_allowed(payload.redirect_uri):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid extension authorization request")
     code = secrets.token_urlsafe(32)
     db.add(
@@ -205,21 +241,25 @@ def token(payload: TokenIn, db: Session = Depends(get_db)) -> dict[str, Any]:
         if not payload.code or not payload.code_verifier or not payload.redirect_uri:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
         row = db.scalar(select(ExtensionAuthCode).where(ExtensionAuthCode.code_hash == hash_token(payload.code)))
-        # Single use: mark it spent before anything else can fail, so a replayed
-        # or guessed-verifier attempt cannot be retried against the same code.
         if row is None or row.used_at is not None or _aware(row.expires_at) < _now():
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
-        row.used_at = _now()
-        db.flush()
+        # Single use, decided by the database: the conditional UPDATE is the only claim, so two
+        # concurrent redemptions of one code cannot both succeed. A failed verifier still burns it.
+        claimed = db.execute(
+            update(ExtensionAuthCode)
+            .where(ExtensionAuthCode.id == row.id, ExtensionAuthCode.used_at.is_(None))
+            .values(used_at=_now())
+        )
+        db.commit()
+        if claimed.rowcount != 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
         verifier_ok = _VERIFIER_RE.match(payload.code_verifier) is not None and secrets.compare_digest(
             _pkce_challenge(payload.code_verifier), row.code_challenge
         )
         if not verifier_ok or payload.redirect_uri != row.redirect_uri:
-            db.commit()
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
         user = db.get(User, row.user_id)
         if user is None:
-            db.commit()
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
         body = _issue(db, user)
         db.commit()
@@ -227,6 +267,8 @@ def token(payload: TokenIn, db: Session = Depends(get_db)) -> dict[str, Any]:
 
     if not payload.refresh_token:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid grant")
+    # Per-token ceiling on top of the shared one, so one leaked token cannot be hammered.
+    _rate_limit(f"extrefresh:{hash_token(payload.refresh_token)[:16]}", limit=30, window_seconds=60)
     cred = db.scalar(
         select(ExtensionCredential).where(ExtensionCredential.refresh_hash == hash_token(payload.refresh_token))
     )
@@ -234,16 +276,25 @@ def token(payload: TokenIn, db: Session = Depends(get_db)) -> dict[str, Any]:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     if cred.revoked_at is not None or _aware(cred.expires_at) < _now():
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    if cred.rotated_at is not None:
-        # A token that was already exchanged is being replayed: assume theft and
-        # end the whole family, including the holder's newest token.
+    # Rotation is claimed by the database. Exactly one concurrent presentation of a refresh token can
+    # win; every other one (a replay, or a thief racing the owner) fails the claim, and that is treated
+    # as theft: the whole credential family ends.
+    claimed = db.execute(
+        update(ExtensionCredential)
+        .where(
+            ExtensionCredential.id == cred.id,
+            ExtensionCredential.rotated_at.is_(None),
+            ExtensionCredential.revoked_at.is_(None),
+        )
+        .values(rotated_at=_now())
+    )
+    if claimed.rowcount != 1:
         _revoke_family(db, cred.family_id)
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     user = db.get(User, cred.user_id)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    cred.rotated_at = _now()
     body = _issue(db, user, cred.family_id)
     db.commit()
     return body
@@ -252,6 +303,7 @@ def token(payload: TokenIn, db: Session = Depends(get_db)) -> dict[str, Any]:
 @router.post("/auth/revoke", status_code=status.HTTP_204_NO_CONTENT)
 def revoke(payload: RevokeIn, db: Session = Depends(get_db)) -> Response:
     """Logout. Always 204 so the endpoint reveals nothing about token validity."""
+    _rate_limit("extrevoke", limit=60, window_seconds=60)
     cred = db.scalar(
         select(ExtensionCredential).where(ExtensionCredential.refresh_hash == hash_token(payload.refresh_token))
     )
@@ -275,11 +327,51 @@ class DirectSessionIn(BaseModel):
     job_title: str | None = Field(default=None, max_length=300)
 
 
+_INTERNAL_SUFFIXES = (
+    ".local", ".localhost", ".internal", ".lan", ".home", ".corp", ".intranet", ".test", ".invalid", ".example",
+)
+
+
+def _validate_direct_url(url: str) -> str:
+    """Accept only a public https employer URL; return it, or raise 422.
+
+    The server never fetches this URL, but it is stored, shown and later handed to
+    other components, so private, loopback, link-local and internal destinations are
+    refused up front (as are credentials and non-default ports) rather than trusted.
+    """
+    try:
+        validate_official_url(url)
+        parsed = urlparse(url.strip())
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except (InvalidApplicationURL, ValueError) as exc:
+        detail = str(exc) or "Unusable application URL"
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail) from exc
+    bad = (
+        parsed.scheme.lower() != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or host == "localhost"
+        or host.endswith(_INTERNAL_SUFFIXES)
+        or "." not in host
+    )
+    if not bad:
+        try:
+            ipaddress.ip_address(host.strip("[]"))
+            bad = True  # IP literals are never an employer's careers site
+        except ValueError:
+            pass
+    if bad:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unusable application URL")
+    return url
+
+
 def _canonical_direct_url(url: str) -> str:
     parsed = urlparse(url.strip())
     # Query strings and fragments carry tracking ids, tokens and emails; the
     # application's identity is its origin and path.
-    return f"{parsed.scheme.lower()}://{(parsed.hostname or '').lower()}{parsed.path.rstrip('/') or '/'}"
+    return f"https://{(parsed.hostname or '').lower()}{parsed.path.rstrip('/') or '/'}"
 
 
 def _direct_job(db: Session, user: User, payload: DirectSessionIn, canonical: str) -> JobPosting:
@@ -313,30 +405,28 @@ def _direct_job(db: Session, user: User, payload: DirectSessionIn, canonical: st
 async def create_direct_session(
     payload: DirectSessionIn,
     request: Request,
+    background: BackgroundTasks,
     user: User = Depends(get_extension_user),
     db: Session = Depends(get_db),
 ):
+    """Open (or resume) the caller's draft for the page they are on. No AI on this path."""
     request_id = getattr(request.state, "request_id", None)
     _rate_limit(f"direct:{user.id}", limit=20, window_seconds=60)
-    try:
-        validate_official_url(payload.url)
-    except InvalidApplicationURL as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    canonical = _canonical_direct_url(payload.url)
-    try:
-        job = _direct_job(db, user, payload, canonical)
-        session, _launch_token = await create_application_session(db, user, job)
-    except PreparationError as exc:
-        return _preparation_error_response(exc, request_id)
-    except OperationalError:
-        db.rollback()
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable") from None
-    # The extension never needs the website launch token for a direct draft: it
-    # already holds the user's extension credential, so the launch token is
-    # voided rather than left redeemable.
-    session.launch_token_hash = None
-    session.launch_token_used = True
-    db.commit()
+    canonical = _canonical_direct_url(_validate_direct_url(payload.url))
+    lock_key = hashlib.sha256(canonical.encode()).hexdigest()[:32]
+    # Concurrent requests for the same (user, page) share one draft and one preparation.
+    async with direct_lock(user.id, lock_key):
+        try:
+            job = _direct_job(db, user, payload, canonical)
+            session, needs_preparation = open_direct_session(db, user, job)
+        except PreparationError as exc:
+            return _preparation_error_response(exc, request_id)
+        except OperationalError:
+            db.rollback()
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable") from None
+    release_direct_lock(user.id, lock_key)
+    if needs_preparation:
+        background.add_task(prepare_direct_documents, session.id)
     body = _serialize_session(db, session)
     body["session_token"] = create_session_token(session.id, user.id)
     return body

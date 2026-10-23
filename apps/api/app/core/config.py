@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     jwt_expires_minutes: int = 60 * 24 * 7
     cors_origins: list[str] = ["http://localhost:3000"]
     app_env: str = "development"
+    # Exact Chrome extension ids allowed to receive an authorization code
+    # (redirect https://<id>.chromiumapp.org/...). Production fails closed when empty.
+    extension_allowed_ids: list[str] = []
     # Validated at startup by app.core.config_validation: when app_env names a
     # production environment, development defaults (the shipped SECRET_KEY, the
     # compose database password, wildcard CORS, DEBUG) are refused outright.
