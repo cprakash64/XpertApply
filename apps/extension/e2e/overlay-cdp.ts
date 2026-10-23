@@ -204,17 +204,24 @@ export class OverlayCdp {
   async click(selector: string, timeoutMs = 10_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let point: { x: number; y: number } | null = null;
+    const measure = () => this.evaluate((root, sel) => {
+      const el = root.querySelector<HTMLButtonElement>(sel);
+      if (!el || el.hidden || el.disabled) return null;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      const box = el.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) return null;
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    }, selector);
+    // Like Playwright's actionability check, only click once the control has held still: the assistant re-renders (notices,
+    // counts, account row) as the worker answers, and a click at a position measured before that lands on whatever moved there.
     while (Date.now() < deadline) {
-      point = await this.evaluate((root, sel) => {
-        const el = root.querySelector<HTMLButtonElement>(sel);
-        if (!el || el.hidden || el.disabled) return null;
-        el.scrollIntoView({ block: "center", inline: "center" });
-        const box = el.getBoundingClientRect();
-        if (box.width === 0 || box.height === 0) return null;
-        return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-      }, selector);
-      if (point) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      const first = await measure();
+      if (first) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const second = await measure();
+        if (second && Math.abs(second.x - first.x) < 0.5 && Math.abs(second.y - first.y) < 0.5) { point = second; break; }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
     if (!point) throw new Error(`overlay control not clickable within ${timeoutMs} ms: ${selector}`);
     const cdp = await this.session();

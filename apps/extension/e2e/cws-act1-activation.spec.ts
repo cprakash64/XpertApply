@@ -154,6 +154,8 @@ test("a dismissed assistant stays dismissed through DOM and route changes; 'don'
     await p.goto(url);
     await expect(p.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 30_000 });
     await overlayCdp(p).click("#disableSite");
+    // The control confirms only after the worker has stored the setting; reloading earlier races that write (1 in ~20 runs).
+    await expect.poll(async () => (await overlayCdp(p).text("#disableSite")) ?? "", { timeout: 10_000 }).toMatch(/won.t open here/i);
     await p.reload();
     await p.waitForTimeout(3500);
     await expect(p.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(0);

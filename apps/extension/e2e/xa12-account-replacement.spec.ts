@@ -44,15 +44,32 @@ async function waitForLogin(url: string, child: ChildProcess): Promise<void> {
 // the next test sits until its timeout).
 const fixtures = new Set<ChildProcess>();
 
+// `next dev` forks its real server, so signalling only the launcher (what this did) leaves the server orphaned on the port and the
+// next XA-12 test cannot bind it. The fixture is spawned as its own process group and the whole group is signalled.
+function signalFixture(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (child.pid) process.kill(-child.pid, signal);
+  } catch { /* group already gone */ }
+}
+
 async function stopFixture(child: ChildProcess): Promise<void> {
   try {
-    if (child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await Promise.race([
-      new Promise<void>(resolve => child.once("exit", () => resolve())),
-      new Promise<void>(resolve => setTimeout(resolve, 2_000))
-    ]);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    signalFixture(child, "SIGTERM");
+    await new Promise<void>(resolve => setTimeout(resolve, 500));
+    signalFixture(child, "SIGKILL");
+    // The port must really be free before the next test starts.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const free = await new Promise<boolean>(resolve => {
+        const server = createServer();
+        server.once("error", () => resolve(false));
+        server.listen(3000, "127.0.0.1", () => server.close(() => resolve(true)));
+      });
+      if (free) return;
+      signalFixture(child, "SIGKILL");
+      await new Promise<void>(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error("XA-12 fixture left port 3000 occupied after teardown");
   } finally {
     fixtures.delete(child);
   }
@@ -183,7 +200,8 @@ async function runReplacement(roundTrip = false): Promise<void> {
       ], {
         cwd: webRoot,
         env: { ...process.env, NEXT_PUBLIC_CHROME_EXTENSION_ID: extensionId },
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true
       });
       fixtures.add(webFixture);
       await waitForLogin(webUrl, webFixture);
