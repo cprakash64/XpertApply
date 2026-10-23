@@ -172,7 +172,9 @@ export async function putPending(tabId: number, launch: PendingLaunch, generatio
     map[String(tabId)] = next;
     const active = await getActive();
     const update: Record<string, unknown> = { [PENDING_KEY]: map };
-    if (!active || active.requestId === launch.requestId) update[ACTIVE_KEY] = next;
+    // A direct draft is bound to its one tab and one account. It is never the website launch
+    // other tabs may claim, so it must not become the global active handoff.
+    if (launch.source !== "direct" && (!active || active.requestId === launch.requestId)) update[ACTIVE_KEY] = next;
     await workflowStorage().set(update);
   });
 }
@@ -202,7 +204,7 @@ export async function updatePending(tabId: number, patch: Partial<PendingLaunch>
     map[String(tabId)] = next;
     const active = await getActive();
     const update: Record<string, unknown> = { [PENDING_KEY]: map };
-    if (!active || active.requestId === next.requestId) update[ACTIVE_KEY] = next;
+    if (next.source !== "direct" && (!active || active.requestId === next.requestId)) update[ACTIVE_KEY] = next;
     await workflowStorage().set(update);
   });
 }
@@ -309,6 +311,20 @@ export function initialView(tabId: number, launch: PendingLaunch, company: strin
     siteAccessOrigin: null,
     siteAccessScope: "page",
     siteAccessFramePathShape: null,
+    updatedAt: Date.now()
+  };
+}
+
+/** A tab that holds an application XpertApply cannot yet act on (signed out, draft not prepared).
+ * It has no session, so the assistant can say what to do instead of showing "waiting". */
+export function noticeView(tabId: number, failureCode: string, company: string | null): LaunchViewState {
+  return {
+    tabId, requestId: `notice-${tabId}`, sessionId: null, state: "failed", company, jobTitle: null,
+    atsId: null, atsDisplayName: null, limited: false, fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0,
+    resumeStatus: "pending", coverStatus: "pending", reachedFinalStep: false, contentReady: true, packageLoaded: false,
+    running: false, failureCode, failureMessage: null, confirmationRequired: false, confirmationDismissed: false,
+    submissionGestureAt: null, submissionAttempt: 0, failureRecoverable: true, siteAccess: "no_workflow",
+    siteAccessPattern: null, siteAccessOrigin: null, siteAccessScope: "page", siteAccessFramePathShape: null,
     updatedAt: Date.now()
   };
 }

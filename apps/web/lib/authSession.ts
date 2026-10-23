@@ -21,6 +21,7 @@ const protectedRouteRoots = [
   "/tracker",
   "/profile",
   "/settings",
+  "/extension/connect",
   "/matches",
   "/application-answers",
   "/cover-letter"

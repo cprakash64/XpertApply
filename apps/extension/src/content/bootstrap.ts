@@ -580,6 +580,42 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
   });
 }
 
+// A form that renders late (Apply Now, a React route, a delayed widget) is recognised by
+// looking again when the document changes. Bounded on every axis: one observer, one pending
+// timer, a minimum gap between looks, a cap on looks and on total time, reset only by a real
+// URL change. It stops the moment the page binds or the budget is spent.
+const DIRECT_RECHECK_GAP_MS = 2_500;
+const DIRECT_RECHECK_MAX = 12;
+const DIRECT_RECHECK_WINDOW_MS = 3 * 60_000;
+let directWatchActive = false;
+
+function watchForDirectApplication(): void {
+  if (!isTopFrame || directWatchActive || started || !document.documentElement) return;
+  directWatchActive = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let checks = 0;
+  let windowStart = Date.now();
+  let href = location.href;
+  const stop = () => {
+    directWatchActive = false;
+    observer.disconnect();
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  const look = () => {
+    timer = null;
+    if (started || matched || !isCurrentInstance()) return stop();
+    if (location.href !== href) { href = location.href; checks = 0; windowStart = Date.now(); }
+    if (checks >= DIRECT_RECHECK_MAX || Date.now() - windowStart > DIRECT_RECHECK_WINDOW_MS) return stop();
+    checks += 1;
+    void checkHandoffAndStart("automatic_launch").finally(() => { if (started || matched) stop(); });
+  };
+  const observer = new MutationObserver(() => {
+    if (timer === null) timer = setTimeout(look, DIRECT_RECHECK_GAP_MS);
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+}
+
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   dormant = false;
   if (!isCurrentInstance()) return;
@@ -602,8 +638,12 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
       || (toolbarInitiated && resp?.error === "HANDOFF_NOT_FOUND")) && !reconnectAttempted) {
       reconnectAttempted = true;
       log.info("destination session resolution", { stage: "workflow_lookup", reason: "handoff_url_mismatch_retry" });
-      await requestReconnect();
+      if (!(await requestReconnect())) watchForDirectApplication();
     }
+    // Independent application on a permitted site: no website launch is involved, so the worker
+    // answers with where direct resolution stopped. A page that is not (yet) an application is
+    // watched, boundedly. (Signed-out / unavailable are shown by the worker's own assistant view.)
+    if (isTopFrame && (resp?.error === "DIRECT_NOT_ELIGIBLE" || resp?.error === "HANDOFF_URL_MISMATCH")) watchForDirectApplication();
     dormant = !started && !matched;
     return;
   }

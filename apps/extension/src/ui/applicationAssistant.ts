@@ -90,6 +90,8 @@ const FAILURE_LABEL: Record<string, string> = {
   WRONG_TAB: "This panel is bound to a different tab.",
   DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
   HOST_PERMISSION_MISSING: "XpertApply needs permission to access this site. Check the extension's site access settings.",
+  DIRECT_SIGNED_OUT: "This looks like a job application, but XpertApply isn’t connected. Choose “Connect XpertApply” to sign in; nothing is filled until you do.",
+  DIRECT_UNAVAILABLE: "XpertApply couldn’t prepare this application. Check that your profile is complete and you’re online, then try again.",
   HANDOFF_NOT_FOUND: "No application from XpertApply is open on this page. Choose Apply with XpertApply on a job at xpertapply.com, then use the page it opens.",
   HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
   FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
@@ -214,8 +216,11 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     }
     const workflowAvailable = current.sessionId != null;
     const terminal = current.failureCode != null && current.failureRecoverable === false;
-    button("fill").disabled = !workflowAvailable || current.running || terminal;
-    setText("fill", current.running ? "Filling…" : "Fill application");
+    // An application the worker recognised but cannot act on yet: the one button is the way forward.
+    const needsConnect = !workflowAvailable && current.failureCode === "DIRECT_SIGNED_OUT";
+    const needsRetry = !workflowAvailable && current.failureCode === "DIRECT_UNAVAILABLE";
+    button("fill").disabled = needsConnect || needsRetry ? false : !workflowAvailable || current.running || terminal;
+    setText("fill", needsConnect ? "Connect XpertApply" : needsRetry ? "Try again" : current.running ? "Filling…" : "Fill application");
     for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = !workflowAvailable;
     button("complete").disabled = !workflowAvailable || completionFailure(current) !== null;
     button("complete").setAttribute("aria-describedby", "stage review");

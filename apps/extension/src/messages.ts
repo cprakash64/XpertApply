@@ -98,6 +98,11 @@ export type ReasonCode =
   | "CONTENT_SCRIPT_NOT_INJECTED"
   | "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION"
   | "HANDOFF_URL_MISMATCH"
+  // Independent (direct) application resolution: structural states only.
+  | "DIRECT_NOT_ELIGIBLE"
+  | "DIRECT_SIGNED_OUT"
+  | "DIRECT_DISABLED"
+  | "DIRECT_UNAVAILABLE"
   | "NO_MATCHING_FRAME"
   | "FORM_NOT_RENDERED"
   | "NO_FIELDS_DISCOVERED"
@@ -181,6 +186,13 @@ export interface PendingLaunch {
   /** Set only by an Apply click (LAUNCH_REQUEST). A handoff that was merely staged never has it,
    * and only a user-started launch may bring up the in-page assistant without a toolbar click. */
   userStarted?: true;
+  /** "direct" for a draft the extension opened itself for the page the user is on; absent
+   * for a website-prepared launch. A direct binding is tab-bound, owner-bound
+   * (`directUserId`) and never carries a launch token. */
+  source?: "direct";
+  /** The extension account this direct draft belongs to. Compared against the
+   * signed-in account on every use, so a switch can never inherit it. */
+  directUserId?: number;
   /** Last actionable failure reason for the side panel (safe code, not PII). */
   failureCode?: ReasonCode | string;
   lastError?: { code: string; message: string; recoverable: boolean };
@@ -296,6 +308,10 @@ export const MSG = {
   /** Destination page lost its binding and asks the worker to re-establish it.
    * Carries only safe browser context; the worker derives tab, session and job. */
   RECONNECT_APPLICATION_WORKFLOW: "JOBPILOT_RECONNECT_APPLICATION_WORKFLOW",
+  /** Sign the extension out (revokes server-side). Extension pages only. */
+  DIRECT_DISCONNECT: "XPERTAPPLY_DIRECT_DISCONNECT",
+  /** Who, if anyone, the extension is signed in as. Never returns a token. */
+  DIRECT_AUTH_STATE: "XPERTAPPLY_DIRECT_AUTH_STATE",
   /** Content script asks the worker to resolve a batch of employer questions.
    * The worker holds the session token; the page never sees it. */
   RESOLVE_QUESTIONS: "JOBPILOT_RESOLVE_QUESTIONS",
@@ -427,6 +443,8 @@ export type RuntimeMessage =
   | { type: typeof MSG.START_AUTOFILL; tabId?: number; reason: AutofillReason }
   | { type: typeof MSG.CLEAR_SESSION; tabId?: number }
   | { type: typeof MSG.COMPLETE_SESSION; sessionId: number }
+  | { type: typeof MSG.DIRECT_DISCONNECT }
+  | { type: typeof MSG.DIRECT_AUTH_STATE }
   | {
       type: typeof MSG.RESOLVE_QUESTIONS;
       sessionId: number;
@@ -606,6 +624,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.USER_CONFIRMED_SUBMITTED, MSG.USER_CONFIRMED_NOT_SUBMITTED, MSG.EMPLOYER_AUTH_REQUIRED,
   MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
   MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT,
+  MSG.DIRECT_DISCONNECT, MSG.DIRECT_AUTH_STATE,
   MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED,
   MSG.ASSISTANT_START_AUTOFILL, MSG.ASSISTANT_CLEAR_SESSION,
   MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT,
@@ -855,6 +874,8 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     origin: { kind: "string", max: LIMIT.url, required: true }
   },
   [MSG.PROBE_FRAME_APPLICATION]: {},
+  [MSG.DIRECT_DISCONNECT]: {},
+  [MSG.DIRECT_AUTH_STATE]: {},
   [MSG.REQUEST_FILL_LEASE]: { rootConfident: { kind: "boolean" } },
   [MSG.GET_SITE_ACCESS]: { tabId: { kind: "integer" } },
   [MSG.SITE_ACCESS_RESULT]: {

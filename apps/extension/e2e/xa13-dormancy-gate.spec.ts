@@ -7,7 +7,11 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 
-test("XA-13: an injected no-handoff frame performs zero DOM probes", async () => {
+// XA-CORE1 amends the contract this test pinned. A granted origin with no website launch used to be fully inert. It
+// is now judged on its own so an independently opened application can be filled, which needs ONE local probe
+// (field-label categories and counts; never sent anywhere). Everything else the old test pinned still holds: no fetch
+// (the extension is signed out here, so nothing is created), no value written, no submit, no second observer.
+test("XA-13: a granted page with no launch is probed once, locally; nothing is fetched, filled or submitted", async () => {
   test.setTimeout(60_000);
   const server = createServer((_request, response) => {
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -98,7 +102,7 @@ test("XA-13: an injected no-handoff frame performs zero DOM probes", async () =>
       });
       return Number(result?.result ?? 0);
     }, tabId);
-    expect(noHandoffProbeCount).toBe(0);
+    expect(noHandoffProbeCount).toBeLessThanOrEqual(1);
     const noHandoffMutationObservers = await worker.evaluate(async (id) => {
       const [result] = await chrome.scripting.executeScript({
         target: { tabId: id! },
@@ -106,7 +110,7 @@ test("XA-13: an injected no-handoff frame performs zero DOM probes", async () =>
       });
       return Number(result?.result ?? 0);
     }, tabId);
-    expect(noHandoffMutationObservers).toBe(0);
+    expect(noHandoffMutationObservers).toBeLessThanOrEqual(1);
     expect(await worker.evaluate(() =>
       Number((globalThis as typeof globalThis & { __xa13FetchCount?: number }).__xa13FetchCount ?? 0)
     )).toBe(0);

@@ -19,7 +19,8 @@ import { LEVER_FORM } from "../src/__tests__/lever_form.fixture";
  * Chrome's native Allow dialog cannot be driven by automation; the grant itself is NOT exercised
  * here (see the report's manual steps). What is exercised is everything after a grant exists.
  */
-const HOSTS = ["job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "acme.wd5.myworkdayjobs.com"];
+// The e2e build also grants a custom careers domain (XA-CORE1), so grants and registrations are five.
+const HOSTS = ["job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "acme.wd5.myworkdayjobs.com", "careers.withwaymo.com"];
 const UUID = "11111111-2222-3333-4444-555555555555";
 const common = `<script>window.__emp={submits:0,clicks:0};
 document.addEventListener('click',e=>{const t=e.target&&e.target.closest&&e.target.closest('button[type=submit],.template-btn-submit');if(t)window.__emp.clicks++},true);
@@ -87,30 +88,30 @@ test("registered scripts mirror Chrome's grants and survive a browser restart wi
   } finally { await session.ctx.close().catch(() => undefined); tls.server.close(); }
 });
 
-test("a granted supported application page opens ONE assistant with no toolbar click; listings and other sites stay silent", async () => {
+// XA-CORE1: a direct visit is no longer "recognised, nothing more". With the extension signed out the one assistant
+// opens on a real application form and says exactly what is needed (connect); it still reads, fills and sends nothing.
+// The signed-in direct flow is covered by xa-core1-direct.spec.ts.
+test("a granted application page, extension signed out: ONE assistant, no toolbar click, asks to connect; listings stay silent", async () => {
   test.setTimeout(180_000);
   const tls = await tlsServer();
   const { ctx, worker } = await launch("", tls.args);
   try {
     const api: string[] = [];
     ctx.on("request", r => { if (/application-sessions|api\.xpertapply/.test(r.url())) api.push(r.url()); });
-    const cases: Array<[string, string, RegExp, boolean]> = [
-      ["Greenhouse", `https://job-boards.greenhouse.io/acme/jobs/4012345`, /Greenhouse/, false],
-      ["Lever", `https://jobs.lever.co/zoox/${UUID}/apply`, /Lever/, false],
-      ["Ashby", `https://jobs.ashbyhq.com/acme/${UUID}/application`, /Ashby/, false],
-      ["Workday", `https://acme.wd5.myworkdayjobs.com/en-US/careers/job/Remote/Engineer_R1/apply`, /Workday/, true]
+    const cases: Array<[string, string]> = [
+      ["Greenhouse", `https://job-boards.greenhouse.io/acme/jobs/4012345`],
+      ["Lever", `https://jobs.lever.co/zoox/${UUID}/apply`],
+      ["Ashby", `https://jobs.ashbyhq.com/acme/${UUID}/application`],
+      ["Workday", `https://acme.wd5.myworkdayjobs.com/en-US/careers/job/Remote/Engineer_R1/apply`]
     ];
-    for (const [name, url, atsLabel, limited] of cases) {
+    for (const [name, url] of cases) {
       const p = await ctx.newPage();
       await p.goto(url);
       await expect(p.locator("#xpertapply-assistant-overlay-v1"), name).toHaveCount(1, { timeout: 30_000 });
       const ov = overlayCdp(p);
-      await expect.poll(async () => (await ov.text("#ats")) ?? "", { message: `${name} ATS`, timeout: 15_000 }).toMatch(atsLabel);
-      if (limited) expect(await ov.text("#ats")).toMatch(/limited/i);
-      // Truthful: recognised from the URL, nothing read, nothing filled, and it says how to get a fill.
+      // Truthful: a real form was recognised on a granted site, nothing is filled or sent, and it says what to do.
+      await expect.poll(async () => (await ov.text("#errors")) ?? "", { message: `${name} connect`, timeout: 15_000 }).toMatch(/Connect XpertApply/);
       expect(Number(await ov.text("#discovered"))).toBe(0);
-      await expect.poll(async () => await ov.text("#stage"), { message: `${name} stage` }).toBe("Application recognized");
-      expect(await ov.text("#errors")).toMatch(/Apply with XpertApply/);
       expect(await p.locator('[name="email"], #email').first().inputValue()).toBe("");
       expect(await p.evaluate(() => (window as any).__emp)).toEqual({ submits: 0, clicks: 0 });
       // Reload: a new document gets exactly one assistant again, never two.
@@ -196,7 +197,7 @@ test("website launch to a granted ATS host: one assistant, verified fields fille
     const again = await ctx2.newPage();
     await again.goto(officialUrl);
     await expect(again.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 30_000 });
-    await expect.poll(async () => await overlayCdp(again).text("#stage")).toBe("Application recognized");
+    await expect.poll(async () => (await overlayCdp(again).text("#errors")) ?? "").toMatch(/Connect XpertApply/);
     expect(await again.inputValue("#first_name")).toBe("");        // no stale session was resurrected
   } finally {
     await ctx2?.close().catch(() => undefined);
@@ -220,7 +221,7 @@ test("a page opened directly (script dormant, assistant open) wakes and fills wh
     const p = await h.ctx.newPage();
     await p.goto(officialUrl);                                   // direct visit: no handoff exists yet
     await expect(p.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 30_000 });
-    await expect.poll(async () => await overlayCdp(p).text("#stage")).toBe("Application recognized");
+    await expect.poll(async () => (await overlayCdp(p).text("#errors")) ?? "").toMatch(/Connect XpertApply/);
     expect(await p.inputValue("#first_name")).toBe("");
 
     // The user's launch binds a verified session to THIS tab (as a recovery or exact-URL bind would).

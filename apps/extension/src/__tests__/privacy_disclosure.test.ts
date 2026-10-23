@@ -23,7 +23,7 @@ describe("site-access privacy disclosure", () => {
   });
 
   it("keeps site access optional without adding webNavigation or blanket install-time hosts", () => {
-    expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+    expect(manifest.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
     expect(manifest.host_permissions).toEqual(["https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"]);
     expect(manifest.permissions).not.toContain("webNavigation");

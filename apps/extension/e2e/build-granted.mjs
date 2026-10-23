@@ -16,7 +16,7 @@ const file = path.join(out, "manifest.json");
 const manifest = JSON.parse(readFileSync(file, "utf8"));
 // Real ATS hostnames, granted as Chrome would after the user approves each one, so the persistent
 // registration path runs for them. Specs serve them from loopback (host-resolver MAP + local TLS).
-const ATS_FIXTURE_HOSTS = ["job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "acme.wd5.myworkdayjobs.com"];
+const ATS_FIXTURE_HOSTS = ["job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "acme.wd5.myworkdayjobs.com", "careers.withwaymo.com"];
 manifest.host_permissions = [...manifest.host_permissions, "http://localhost/*", "http://127.0.0.1/*", ...ATS_FIXTURE_HOSTS.map((host) => `https://${host}/*`)];
 manifest.externally_connectable = {
   ...manifest.externally_connectable,

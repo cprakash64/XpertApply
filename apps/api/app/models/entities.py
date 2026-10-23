@@ -1110,3 +1110,43 @@ class ApplicationAnswer(Base):
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class ExtensionAuthCode(Base):
+    """One-time authorization code for the browser extension's PKCE sign-in.
+
+    Minted by the signed-in website for a ``code_challenge`` the extension
+    generated, redeemed once at ``/extension/auth/token`` with the matching
+    verifier. Only the SHA-256 of the code is stored.
+    """
+
+    __tablename__ = "extension_auth_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    code_challenge: Mapped[str] = mapped_column(String(64))
+    redirect_uri: Mapped[str] = mapped_column(String(300))
+    expires_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExtensionCredential(Base):
+    """A rotating refresh credential held only by the extension's service worker.
+
+    Each refresh retires the presented row and issues a new one in the same
+    ``family_id``. Presenting an already-rotated token revokes the whole family;
+    revoking a family also ends every access token minted for it.
+    """
+
+    __tablename__ = "extension_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    family_id: Mapped[str] = mapped_column(String(32), index=True)
+    refresh_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    rotated_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())

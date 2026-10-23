@@ -36,7 +36,7 @@ describe.skipIf(!built)("production package", () => {
 
   it("ships exactly the audited permission and surface set", () => {
     const manifest = JSON.parse(text("manifest.json"));
-    expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+    expect(manifest.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.host_permissions).toEqual(["https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"]);
     expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
     expect(manifest.action.default_popup).toBeUndefined();

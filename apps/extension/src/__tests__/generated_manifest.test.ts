@@ -77,7 +77,7 @@ describe("generated dist/manifest.json", () => {
 
   it("packages the exact E4O-C permissions and on-demand overlay bootstrap", () => {
     expect(manifest.version).toBe("0.3.0");
-    expect(manifest.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+    expect(manifest.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.host_permissions).toEqual([
       "https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"
     ]);
@@ -178,7 +178,7 @@ describe("built toolbar overlay bootstrap", () => {
 // R3 recovery must use existing tabs messaging, never permission expansion.
 it("keeps recovery independent of the webNavigation permission", () => {
   const production = JSON.parse(readFileSync(DIST_MANIFEST, "utf8"));
-  expect(production.permissions).toEqual(["activeTab", "sidePanel", "storage", "scripting", "tabs"]);
+  expect(production.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
   expect(production.optional_permissions ?? []).not.toContain("webNavigation");
 });
 

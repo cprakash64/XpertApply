@@ -18,6 +18,7 @@ import { createContentRegistrationRecovery } from "./contentRegistrationRecovery
 import { BUILD_INFO } from "./buildInfo";
 import {
   ApiError,
+  createDirectSession,
   completeSession,
   confirmSessionName,
   confirmSubmission,
@@ -73,6 +74,7 @@ import {
   getPending,
   getView,
   initialView,
+  noticeView,
   isSessionAuthorityActive,
   patchView,
   putPackage,
@@ -132,11 +134,44 @@ import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGestu
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
-import { applicationProviderForUrl, providerForUrl } from "./ats/providers";
+import { providerForUrl } from "./ats/providers";
 import { isAutoOpenDisabled, setAutoOpenDisabled } from "./activationPrefs";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
+import {
+  AuthUnavailableError,
+  createExtensionAuth,
+  createIndexedDbAuthStore
+} from "./auth/extensionAuth";
+import {
+  buildDirectPending,
+  canonicalDirectUrl,
+  directDraftStillMatches,
+  judgeApplicationEvidence
+} from "./direct/directApplication";
 
 const LAUNCH_TTL_MS = 15 * 60 * 1000;
+/** A direct draft stays attached to its tab this long; the backend session slides on activity. */
+const DIRECT_DRAFT_TTL_MS = 60 * 60 * 1000;
+/** The user's choice to let XpertApply fill independently opened applications. Absent means on:
+ * connecting the extension is the explicit consent, and this is the off switch. */
+const DIRECT_AUTOFILL_KEY = "xaDirectAutofillEnabled";
+
+async function webBase(): Promise<string> {
+  const stored = await chrome.storage.local.get("webBase").catch(() => ({} as Record<string, unknown>));
+  const override = typeof stored.webBase === "string" ? stored.webBase : "";
+  return JOBPILOT_WEB_ORIGINS.includes(override) ? override : JOBPILOT_WEB_ORIGINS[0];
+}
+
+const extensionAuth = createExtensionAuth({
+  storage: createIndexedDbAuthStore(),
+  fetchFn: (input, init) => fetch(input, init),
+  apiBase: getApiBase,
+  webBase,
+  redirectUrl: () => chrome.identity.getRedirectURL("xpertapply"),
+  launchWebAuthFlow: (details) => chrome.identity.launchWebAuthFlow(details),
+  now: () => Date.now(),
+  randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length))
+});
 const READY_MAX_ATTEMPTS = 6;
 const packageLoads = new Map<number, Promise<SessionPackage>>();
 void cleanupExpired();
@@ -1210,6 +1245,23 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         .catch((err) => sendResponse({ ok: false, error: safeMessage(err) }));
       return true;
 
+    case MSG.DIRECT_AUTH_STATE:
+    case MSG.DIRECT_DISCONNECT: {
+      // Extension pages only; a content script (and so an employer page) can never read or end it.
+      if (sender.id !== chrome.runtime.id || sender.tab) {
+        sendResponse({ ok: false, error: "UNTRUSTED_SENDER" });
+        return false;
+      }
+      const disconnecting = message.type === MSG.DIRECT_DISCONNECT;
+      void (disconnecting
+        ? extensionAuth.disconnect().then(() => purgeSessionState("disconnect"))
+        : Promise.resolve())
+        .then(() => extensionAuth.state())
+        .then((state) => sendResponse({ ok: true, state }))
+        .catch(() => sendResponse({ ok: false, error: "AUTH_FAILED" }));
+      return true;
+    }
+
     case MSG.GET_SITE_ACCESS:
       void resolveViewTab(message.tabId)
         .then(async (id) => {
@@ -1255,24 +1307,152 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 // by later passive events (the content side also honors its own dismissal).
 const autoShownDocuments = new Set<string>();
 
-/**
- * Direct visit: the user opened a supported application page themselves, on an origin they have
- * already granted, and nothing was launched from XpertApply. The assistant opens so the page is
- * recognised and the user knows what to do, but nothing is read (the script that announced itself
- * is inert, no probe is sent) and nothing is filled: XpertApply fills with a verified session that
- * only an XpertApply launch can create. Marketing and listing pages, unsupported providers, a
- * revoked grant and a site the user switched off never open it.
- */
-async function maybeShowDirectVisitAssistant(tabId: number, sender: chrome.runtime.MessageSender, generation: AuthorityGeneration): Promise<void> {
+// --------------------------------------------------------------------------- //
+// Independent (direct) applications
+// --------------------------------------------------------------------------- //
+type DirectBind = { ok: true; pending: PendingLaunch } | { ok: false; reason: string };
+const directBinds = new Map<number, Promise<DirectBind>>();
+
+/** The launch's own tab, or the tab it handed the workflow to. */
+async function tabBelongsToLaunch(tabId: number, active: PendingLaunch): Promise<boolean> {
+  if (active.targetTabId === tabId) return true;
+  const activation = await readPendingActivation();
+  return Boolean(activation && (activation.sourceTabId === tabId || activation.destinationTabId === tabId));
+}
+
+function isXpertApplyOwnOrigin(url: URL): boolean {
+  return isApprovedJobPilotOrigin(url.origin) || url.origin === "https://api.xpertapply.com";
+}
+
+/** Open (or resume) a draft for `url` as the signed-in extension user, and load its package. */
+async function mintDirectPackage(
+  url: URL,
+  generation: AuthorityGeneration
+): Promise<{ ok: true; pkg: SessionPackage; atsType: string | null; userId: number } | { ok: false; reason: string }> {
+  let access: { token: string; userId: number } | null;
   try {
-    const url = sender.tab?.url ?? sender.url;
-    if (!applicationProviderForUrl(url)) return;
-    const pattern = originPatternFor(url);
-    if (!pattern || !(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return;
-    if (await isAutoOpenDisabled(new URL(url!).origin)) return;
-    await autoShowOverlay(tabId, sender.documentId as string, generation);
-  } catch {
-    // Never let a recognition failure surface as a page error.
+    access = await extensionAuth.accessToken();
+  } catch (error) {
+    // An outage is not a sign-out: the credential stays, the user is told to try again.
+    if (!(error instanceof AuthUnavailableError)) log.info("direct auth failed", { reason: "unexpected" });
+    return { ok: false, reason: "DIRECT_UNAVAILABLE" };
+  }
+  if (!access) return { ok: false, reason: "DIRECT_SIGNED_OUT" };
+  const body = { url: canonicalDirectUrl(url) };
+  let created: Awaited<ReturnType<typeof createDirectSession>>;
+  try {
+    try {
+      created = await createDirectSession(access.token, body);
+    } catch (error) {
+      // A token the server no longer honours (revoked, rotated elsewhere) gets exactly one refresh.
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      const renewed = await extensionAuth.recoverFromUnauthorized();
+      if (!renewed) return { ok: false, reason: "DIRECT_SIGNED_OUT" };
+      access = renewed;
+      created = await createDirectSession(renewed.token, body);
+    }
+    // The draft must belong to the account that is signed in; anything else is dropped unread.
+    if (created.session.authenticated_user_id !== undefined && created.session.authenticated_user_id !== access.userId) {
+      return { ok: false, reason: "DIRECT_SIGNED_OUT" };
+    }
+    const session = await fetchSessionData(created.session_token, created.session.session_id);
+    if (generation !== captureAuthorityGeneration()) return { ok: false, reason: "STALE_AUTHORITY" };
+    return {
+      ok: true,
+      pkg: { sessionToken: created.session_token, session, cachedAt: Date.now() },
+      atsType: created.session.ats_type,
+      userId: access.userId
+    };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return { ok: false, reason: "DIRECT_SIGNED_OUT" };
+    log.info("direct session unavailable", { reason: error instanceof ApiError ? `http_${error.status}` : "network" });
+    return { ok: false, reason: "DIRECT_UNAVAILABLE" };
+  }
+}
+
+/**
+ * Resolve an application the user opened directly, with no website launch behind it.
+ *
+ * Every input is Chrome's: the sender's tab, frame and URL, the user's own site grant, and a
+ * count/label probe taken from the frame after that grant. The page contributes nothing it could
+ * forge — not an account id, not a session id. A draft is opened only for a top frame on a granted,
+ * non-XpertApply origin that the user has not switched off, whose form is judged a real
+ * application, and only for the account the extension is signed in as.
+ */
+function bindDirectApplication(
+  context: SenderContext,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<DirectBind> {
+  const inFlight = directBinds.get(context.tabId);
+  if (inFlight) return inFlight;
+  const run = resolveDirectApplication(context, sender, generation).finally(() => {
+    if (directBinds.get(context.tabId) === run) directBinds.delete(context.tabId);
+  });
+  directBinds.set(context.tabId, run);
+  return run;
+}
+
+async function resolveDirectApplication(
+  context: SenderContext,
+  sender: chrome.runtime.MessageSender,
+  generation: AuthorityGeneration
+): Promise<DirectBind> {
+  const fail = (reason: string): DirectBind => ({ ok: false, reason });
+  const { tabId, frameUrl: url } = context;
+  if (!context.isTopFrame || !url || isXpertApplyOwnOrigin(url)) return fail("DIRECT_NOT_ELIGIBLE");
+  const pattern = originPatternFor(url.href);
+  if (!pattern || (url.protocol === "http:" && !LOOPBACK_REGISTRATION_BUILD)) return fail("DIRECT_NOT_ELIGIBLE");
+  if (await isAutoOpenDisabled(url.origin)) return fail("DIRECT_DISABLED");
+  const preference = (await chrome.storage.local.get(DIRECT_AUTOFILL_KEY).catch(() => ({} as Record<string, unknown>)))[DIRECT_AUTOFILL_KEY];
+  if (preference === false) return fail("DIRECT_DISABLED");
+  const documentId = typeof sender.documentId === "string" && sender.documentId.length > 0 ? sender.documentId : null;
+  if (!documentId) return fail("DIRECT_NOT_ELIGIBLE");
+  // Never act on a grant that is only assumed: ask Chrome, now.
+  if (!(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return fail("HOST_PERMISSION_MISSING");
+  if (generation !== captureAuthorityGeneration()) return fail("STALE_AUTHORITY");
+
+  const probed = await probeFrameApplication(tabId, context.frameId, documentId);
+  const probe = probed?.probe && frameProbeMatchesSender(probed.probe, context) ? probed.probe : null;
+  const verdict = judgeApplicationEvidence(probe);
+  if (!verdict.eligible) return fail("DIRECT_NOT_ELIGIBLE");
+  // The grant could have been withdrawn while the probe ran.
+  if (!(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return fail("HOST_PERMISSION_MISSING");
+
+  const minted = await mintDirectPackage(url, generation);
+  if (!minted.ok) return fail(minted.reason);
+  if (generation !== captureAuthorityGeneration()) return fail("STALE_AUTHORITY");
+
+  const pending = buildDirectPending({
+    tabId,
+    sessionId: minted.pkg.session.sessionId,
+    userId: minted.userId,
+    url,
+    atsType: minted.atsType,
+    now: Date.now(),
+    ttlMs: DIRECT_DRAFT_TTL_MS,
+    requestId: `direct-${crypto.randomUUID()}`,
+    protocolVersion: PROTOCOL_VERSION
+  });
+  await putPending(tabId, pending, generation);
+  await putPackage(tabId, minted.pkg, generation);
+  await putView(tabId, initialView(tabId, pending, minted.pkg.session.company, minted.pkg.session.jobTitle), generation);
+  log.info("direct application bound", { tabId, ats: pending.atsType ?? "generic" });
+  return { ok: true, pending };
+}
+
+async function connectExtension(senderTabId: number | undefined): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await extensionAuth.connect();
+    // A different account than the one the extension held: nothing the previous
+    // account loaded may survive into the new one.
+    if (result.previousUserId !== null && result.previousUserId !== result.userId) {
+      await purgeSessionState("account_switch");
+    }
+    log.info("extension connected", { tabId: String(senderTabId ?? "") });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message.slice(0, 40) : "AUTH_FAILED" };
   }
 }
 
@@ -1578,34 +1758,72 @@ async function handleContentReady(
   }
   const { tabId, frameId, isTopFrame } = context;
   let pending = await getPending(tabId);
-  let boundVia: "tab_binding" | "active_self_bind" = "tab_binding";
+  let boundVia: "tab_binding" | "active_self_bind" | "direct" = "tab_binding";
+
+  // A direct draft belongs to the application it was opened for. When the top frame
+  // has moved on to a different posting, or the account has changed, the draft is
+  // dropped and the page is resolved again from scratch — it never inherits it.
+  if (pending?.source === "direct" && isTopFrame) {
+    const signedIn = await extensionAuth.state();
+    const stillOwned = signedIn.status === "signed_in" && signedIn.userId === pending.directUserId;
+    if (!stillOwned || !context.frameUrl || !directDraftStillMatches(pending, context.frameUrl)) {
+      await clearTab(tabId, generation);
+      pending = null;
+    }
+  }
+
   if (!pending) {
     boundVia = "active_self_bind";
     const active = await getActive();
-    if (!active) {
-      log.info("destination session resolution", { stage: "tab_binding_lookup", reason: "no_tab_binding" });
-      sendResponse({ ok: true, matched: false, error: "HANDOFF_NOT_FOUND", launch: null });
-      // A direct visit to a recognised application page on an origin Chrome has granted.
-      if (isTopFrame && typeof sender.documentId === "string") void maybeShowDirectVisitAssistant(tabId, sender, generation);
-      return;
+    const activeLive = active !== null && Date.now() <= active.expiresAt;
+    // A website launch claims this page only on evidence Chrome supplies: the page
+    // IS the prepared application, or it is the tab the launch opened and is still
+    // inside that workflow's origin graph (employer login, ATS hop). Anything else
+    // is a different application and is resolved independently.
+    const websiteClaim = activeLive && (
+      senderCanBindTab(context, active)
+      || (await tabBelongsToLaunch(tabId, active)
+        && context.frameOrigin !== null
+        && originJoinsLaunchWorkflow(active, context.frameOrigin))
+    );
+    if (!websiteClaim) {
+      const direct = await bindDirectApplication(context, sender, generation);
+      if (!direct.ok) {
+        // A live website launch whose workflow this page's origin belongs to (employer login, ATS hop
+        // in a tab the launch has not recorded yet) keeps the historical answer, which is what sends
+        // the content script down the reconnect path. Everything else is simply "not an application
+        // (yet)", so an unrelated stale launch is never offered to it.
+        const error = direct.reason === "DIRECT_NOT_ELIGIBLE" && activeLive && context.frameOrigin !== null
+          && originJoinsLaunchWorkflow(active, context.frameOrigin)
+          ? "HANDOFF_URL_MISMATCH"
+          : direct.reason;
+        log.info("destination session resolution", { stage: "direct_resolution", reason: direct.reason.toLowerCase() });
+        sendResponse({ ok: true, matched: false, error, launch: null });
+        // The page IS an application but cannot be filled yet (signed out, or the draft could not
+        // be prepared): the user needs to be told what to do, so the one in-page assistant opens.
+        if (isTopFrame && typeof sender.documentId === "string"
+          && (direct.reason === "DIRECT_SIGNED_OUT" || direct.reason === "DIRECT_UNAVAILABLE")) {
+          await putView(tabId, noticeView(tabId, direct.reason, context.frameUrl?.host ?? null), generation);
+          void autoShowOverlay(tabId, sender.documentId, generation);
+        }
+        return;
+      }
+      pending = direct.pending;
+      boundVia = "direct";
+    } else {
+      // Binding the TAB and authorizing this FRAME are different questions. A
+      // nested frame that reports in first may bind the tab it lives in — the
+      // tab's own top-level URL is honest evidence about the tab — but binding
+      // buys it nothing on its own: it still has to pass the frame gate below.
+      if (!senderCanBindTab(context, active)) {
+        log.info("destination session resolution", { stage: "origin_validation", reason: "handoff_url_mismatch" });
+        sendResponse({ ok: true, matched: false, error: "HANDOFF_URL_MISMATCH", launch: null });
+        return;
+      }
+      pending = { ...active, targetTabId: tabId, status: "detecting", state: "detecting_ats" };
+      await putPending(tabId, pending, generation);
+      await putView(tabId, initialView(tabId, pending, null, null), generation);
     }
-    if (Date.now() > active.expiresAt) {
-      log.info("destination session resolution", { stage: "workflow_lookup", reason: "pending_activation_expired" });
-      sendResponse({ ok: true, matched: false, error: "HANDOFF_EXPIRED", launch: null });
-      return;
-    }
-    // Binding the TAB and authorizing this FRAME are different questions. A
-    // nested frame that reports in first may bind the tab it lives in — the
-    // tab's own top-level URL is honest evidence about the tab — but binding
-    // buys it nothing on its own: it still has to pass the frame gate below.
-    if (!senderCanBindTab(context, active)) {
-      log.info("destination session resolution", { stage: "origin_validation", reason: "handoff_url_mismatch" });
-      sendResponse({ ok: true, matched: false, error: "HANDOFF_URL_MISMATCH", launch: null });
-      return;
-    }
-    pending = { ...active, targetTabId: tabId, status: "detecting", state: "detecting_ats" };
-    await putPending(tabId, pending, generation);
-    await putView(tabId, initialView(tabId, pending, null, null), generation);
   }
   const reject = validateLaunch(pending, context);
   if (reject) {
@@ -2266,7 +2484,22 @@ async function startAutofillForTab(
   const id = await resolveViewTab(tabId);
   if (id == null) return { ok: false, error: "NO_TAB" };
   const pending = await getPending(id);
-  if (!pending) return { ok: false, error: "SESSION_PACKAGE_FAILED" };
+  if (!pending) {
+    // The assistant is showing "Connect XpertApply" or "couldn't prepare" for an application the
+    // worker already judged real. The button is the user's go-ahead: sign in (Chrome's own window)
+    // when that is what is missing, then let the page resolve again from the top.
+    const notice = await getView(id);
+    if (notice?.sessionId == null && (notice?.failureCode === "DIRECT_SIGNED_OUT" || notice?.failureCode === "DIRECT_UNAVAILABLE")) {
+      if (notice.failureCode === "DIRECT_SIGNED_OUT") {
+        const connected = await connectExtension(id);
+        if (!connected.ok) return connected;
+      }
+      await clearTab(id, generation);
+      await ensureContentReady(id, generation);
+      return { ok: true };
+    }
+    return { ok: false, error: "SESSION_PACKAGE_FAILED" };
+  }
   const ready = await ensureContentReady(id, generation);
   if (!ready) {
     await applyFailure(id, "CONTENT_SCRIPT_NOT_INJECTED", undefined, undefined, generation);
@@ -2368,6 +2601,16 @@ async function ensurePackage(
   const load = (async () => {
     const again = await getPackage(tabId);
     if (again) return again;
+    if (pending.source === "direct") {
+      // A direct draft has no launch token to exchange. Re-opening the same page is
+      // idempotent server-side, so a lost package is re-minted from the user's own
+      // credential — and only if that is still the account this draft belongs to.
+      const minted = await mintDirectPackage(new URL(pending.applicationUrl), generation);
+      if (!minted.ok || minted.userId !== pending.directUserId) throw new Error("SESSION_PACKAGE_FAILED");
+      if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) throw new Error("SESSION_ENDED");
+      await putPackage(tabId, minted.pkg, generation);
+      return minted.pkg;
+    }
     // Before minting anything: does another tab already hold a package for this
     // exact session? A destination tab that bound itself through the
     // getActive() path never inherited one, and the launch token has already
@@ -3518,6 +3761,20 @@ function validateLaunch(pending: PendingLaunch, sender: SenderContext): string |
   if (pending.protocolVersion !== PROTOCOL_VERSION) return "PROTOCOL_MISMATCH";
   if (pending.targetTabId != null && pending.targetTabId !== sender.tabId) return "WRONG_TAB";
   if (Date.now() > pending.expiresAt) return "HANDOFF_EXPIRED";
+  if (pending.source === "direct") {
+    // A direct draft has no launch URL to be "prepared for": the top frame must
+    // still be the posting it was opened on. Nested frames are judged by the same
+    // workflow origin graph as any other launch.
+    if (pending.targetTabId !== sender.tabId) return "WRONG_TAB";
+    if (sender.isTopFrame && !(sender.frameUrl && directDraftStillMatches(pending, sender.frameUrl))) {
+      return "HANDOFF_URL_MISMATCH";
+    }
+    if (!sender.isTopFrame) {
+      const nested = authorizeFrameForLaunch(sender, pending);
+      return nested.ok ? null : nested.reason;
+    }
+    return null;
+  }
   const authorized = authorizeFrameForLaunch(sender, pending);
   return authorized.ok ? null : authorized.reason;
 }

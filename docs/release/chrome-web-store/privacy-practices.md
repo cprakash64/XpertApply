@@ -11,6 +11,7 @@ XpertApply helps users prepare, fill, and track job applications using informati
 | Permission shown by package | Dashboard-ready justification |
 | --- | --- |
 | `activeTab` | Temporary authorization after an explicit Chrome toolbar action to bootstrap the packaged assistant on the selected application tab. It does not create blanket access to all employer origins. |
+| `identity` | Signs the user in to XpertApply from the extension itself, through Chrome's own `identity.launchWebAuthFlow` window and an authorization-code + PKCE exchange, so an application opened directly on an employer site can be filled without launching from xpertapply.com. The resulting credential is held only by the extension's service worker, never in an employer page, and is revoked on disconnect. No Google account or Chrome profile identity is read. |
 | `sidePanel` | Displays the selected application's context, progress, review controls, and site-access disclosure beside the current tab. The Side Panel is a fallback; the primary in-page assistant keeps the employer form visible and usable. |
 | `storage` | Retains temporary application handoffs, tab binding, prepared answers, and progress across MV3 service-worker suspension, plus limited local configuration. In-memory state alone would be lost when Chrome suspends the worker. |
 | `scripting` | Injects the packaged form assistant into the specific application tab/frame after site access is granted. A static first-party content script cannot cover user-selected third-party employer origins. |
@@ -19,7 +20,7 @@ XpertApply helps users prepare, fill, and track job applications using informati
 | Required `https://xpertapply.com/*`, `https://www.xpertapply.com/*` | Enables the first-party launch/content-script bridge on the established apex and `www` web origins. Both are supported site forms; unrelated hosts are excluded. |
 | Optional `https://*/*` | Allows an explicit per-origin Chrome permission request for the employer or ATS site the user selected, including redirects/embedded application forms. Those destinations cannot be enumerated in advance; the grant is requested at runtime for the chosen origin, not automatically at installation. |
 
-No `webNavigation` permission is present. Do not describe optional employer access as a blanket install-time grant.
+On an employer origin the user has already granted, the packaged script reads only counts and field-label categories to decide whether the page is a job application; that evidence stays in the browser, and a draft is created for the signed-in user only when the page qualifies. No `webNavigation` permission is present. Do not describe optional employer access as a blanket install-time grant.
 
 ## User-data categories
 

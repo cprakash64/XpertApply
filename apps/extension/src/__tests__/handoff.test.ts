@@ -82,7 +82,8 @@ function installFakeChrome(existingStore?: Record<string, unknown>, queryTabs: c
                 sanitizedUrl: (globalThis as typeof globalThis & { __testMessageSenderUrl?: string })
                   .__testMessageSenderUrl ?? "https://careers.mongodb.com/jobs/123/apply",
                 rootConfident: true,
-                applicationLabelsFound: ["first_name", "last_name", "email", "resume"],
+                applicationLabelsFound: (globalThis as typeof globalThis & { __testProbeLabels?: string[] })
+                  .__testProbeLabels ?? ["first_name", "last_name", "email", "resume"],
                 bestScore: 12
               }
             }
@@ -212,7 +213,12 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     void fakeChrome;
   });
 
-  it("stays dormant (matched:false, HANDOFF_NOT_FOUND) on an unrelated https page with no handoff at all", async () => {
+  // XA-CORE1: a page with no website launch is no longer a dead end. After the user's own site
+  // grant it is judged on its own (a counts-and-labels probe that never leaves the browser); a real
+  // application form then resolves as an independent draft for the signed-in account. These tests
+  // run with no extension sign-in, so the answer is "connect" — and, crucially, never a binding
+  // to someone else's launch, a session, or a package.
+  it("never binds an unrelated page with no handoff, and asks the signed-out user to connect", async () => {
     installFakeFetch();
     const { messageListeners, sentToTabs } = installFakeChrome();
     await import("../background");
@@ -224,14 +230,70 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     )) as { ok: boolean; matched: boolean; error?: string; session?: unknown };
 
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
     expect(resp.session).toBeUndefined();
     expect(sentToTabs.filter(({ message }) =>
       (message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
-    )).toHaveLength(0);
+    ).length).toBeLessThanOrEqual(1);
   });
 
-  it("stays dormant on an https page whose URL does not match the active handoff", async () => {
+  // A page that is NOT an application never gets a draft. It is also never claimed by a stale
+  // website launch it does not belong to: it is reported as "not an application (yet)", which the
+  // content script answers by watching the page, boundedly, for a form that renders later.
+  describe("a page that is not an application is neither drafted nor claimed by a stale launch", () => {
+    const newsletterOnly = ["email"];
+    beforeEach(() => { (globalThis as { __testProbeLabels?: string[] }).__testProbeLabels = newsletterOnly; });
+    afterEach(() => { delete (globalThis as { __testProbeLabels?: string[] }).__testProbeLabels; });
+
+    it("no handoff: not an application", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      await import("../background");
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://www.google.com/", title: "g", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 2, url: "https://www.google.com/" }, frameId: 0, url: "https://www.google.com/" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+
+    it("a live handoff for another page is not applied to it", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await state.putActive(seedHandoff());
+      await import("../background");
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://evil.example.com/phish", title: "n", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 3, url: "https://evil.example.com/phish" }, frameId: 0, url: "https://evil.example.com/phish" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+
+    it("a page inside the live launch's own workflow still gets the reconnect answer", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await state.putActive(seedHandoff());
+      await import("../background");
+      // Same employer as the launch (careers.mongodb.com), a different path: the employer's own login/hop page.
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://careers.mongodb.com/login", title: "l", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 4, url: "https://careers.mongodb.com/login" }, frameId: 0, url: "https://careers.mongodb.com/login" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "HANDOFF_URL_MISMATCH" });
+    });
+
+    it("an expired handoff is not applied to it either", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await import("../background");
+      await state.putActive(seedHandoff({ expiresAt: Date.now() - 1000 }));
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://careers.mongodb.com/jobs/123/apply", title: "a", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 2, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+  });
+
+  it("does not claim an unrelated page for the active handoff", async () => {
     installFakeFetch();
     const { messageListeners } = installFakeChrome();
     const state = await import("../state");
@@ -245,7 +307,7 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     )) as { ok: boolean; matched: boolean; error?: string };
 
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_URL_MISMATCH");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("does not probe when the exact sender-origin grant has been revoked", async () => {
@@ -590,7 +652,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 1, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("returns HANDOFF_EXPIRED (not HANDOFF_NOT_FOUND) when the active handoff's TTL has passed", async () => {
@@ -609,7 +671,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 2, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_EXPIRED");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   // Regression for the exact reported bug: a PREVIOUS Temporal (Ashby)
@@ -631,7 +693,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 3, url: "https://jobs.ashbyhq.com/acme-corp/9f81c3e2" }, frameId: 0, url: "https://jobs.ashbyhq.com/acme-corp/9f81c3e2" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_URL_MISMATCH");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("classifies a 401 session-package failure as SESSION_UNAUTHORIZED, not a generic failure", async () => {
@@ -684,7 +746,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 6, url: "https://careers.mongodb.com/jobs/1" }, frameId: 0, url: "https://careers.mongodb.com/jobs/1" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("on install/update, re-injects the bridge into already-open XpertApply tabs but never an ATS/employer tab", async () => {

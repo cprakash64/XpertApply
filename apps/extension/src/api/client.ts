@@ -43,6 +43,24 @@ export async function exchangeLaunchToken(
   return (await res.json()) as { session_token: string; session: RawSession };
 }
 
+/**
+ * Open an independent draft for the page the user is on, authenticated as the
+ * extension's own user. The worker passes only the origin+path it read from
+ * Chrome; the server derives the owner from the access token and returns a token
+ * scoped to that one session, exactly as the website handoff does.
+ */
+export async function createDirectSession(
+  accessToken: string,
+  body: { url: string }
+): Promise<{ session_token: string; session: RawSession }> {
+  const session = await request<RawSession & { session_token: string }>("/extension/direct-sessions", accessToken, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+  const { session_token, ...raw } = session;
+  return { session_token, session: raw as RawSession };
+}
+
 type RawSession = {
   session_id: number;
   authenticated_user_id?: number;
