@@ -169,7 +169,9 @@ const extensionAuth = createExtensionAuth({
   redirectUrl: () => chrome.identity.getRedirectURL("xpertapply"),
   launchWebAuthFlow: (details) => chrome.identity.launchWebAuthFlow(details),
   now: () => Date.now(),
-  randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length))
+  randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length)),
+  // The server refused the credential (revoked, expired, wrong account): the drafts built on it must not keep working or looking live.
+  onSignedOut: () => { void signOutDirectWorkflows(); }
 });
 const READY_MAX_ATTEMPTS = 6;
 const packageLoads = new Map<number, Promise<SessionPackage>>();
@@ -855,7 +857,28 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     sendResponse({ ok: false, error: "UNKNOWN_MESSAGE" });
     return false;
   }
+  const senderTabId = sender.tab?.id;
+  if (DIRECT_OWNER_GUARDED.has(message.type) && typeof senderTabId === "number") {
+    void directSessionStillOwned(senderTabId).then((owned) => {
+      // The assistant's single button after a sign-out is "Connect XpertApply": its click is allowed through so the
+      // connect path (which now has a notice to act on) can run. Everything else is refused.
+      if (!owned && message.type !== MSG.OVERLAY_START_AUTOFILL && message.type !== MSG.OVERLAY_GET_VIEW) {
+        sendResponse({ ok: false, error: "DIRECT_SIGNED_OUT" });
+        return;
+      }
+      routeRuntimeMessage(message, sender, sendResponse, generation);
+    });
+    return true;
+  }
+  return routeRuntimeMessage(message, sender, sendResponse, generation);
+});
 
+function routeRuntimeMessage(
+  message: RuntimeMessage,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: unknown) => void,
+  generation: AuthorityGeneration
+): boolean {
   switch (message.type) {
     case MSG.TOOLBAR_OVERLAY_READY:
       try {
@@ -888,8 +911,16 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       void requireAuthorizedOverlayContextSender(sender)
         .then(async () => {
           if (disconnecting) {
+            const directTabs = await directWorkflowTabs();
             await extensionAuth.disconnect();
             await purgeSessionState("disconnect");
+            // Say "Connect XpertApply" at once, not "no prepared application", in the tabs that had a draft.
+            await signOutDirectWorkflows(directTabs);
+          } else {
+            // Opening or refreshing the account row is also when an expired or revoked credential is discovered.
+            await extensionAuth.accessToken().catch(() => undefined);
+            // A draft started under another account (or a credential that is gone) must not keep showing progress.
+            for (const tabId of await directWorkflowTabs()) await directSessionStillOwned(tabId);
           }
           return extensionAuth.state();
         })
@@ -1372,7 +1403,7 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       sendResponse({ ok: false, error: "UNKNOWN_MESSAGE" });
       return false;
   }
-});
+}
 
 // --------------------------------------------------------------------------- //
 // Launch (user gesture)
@@ -1380,6 +1411,62 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
 // One automatic show per document; a user who closes the assistant is not re-prompted
 // by later passive events (the content side also honors its own dismissal).
 const autoShownDocuments = new Set<string>();
+
+/** Tabs whose workflow is a direct draft (never a website launch). */
+async function directWorkflowTabs(): Promise<number[]> {
+  const found: number[] = [];
+  for (const tabId of await workflowTabIds()) {
+    if ((await getPending(tabId))?.source === "direct") found.push(tabId);
+  }
+  return found;
+}
+
+/**
+ * The extension is no longer signed in as the account these drafts belong to (credential revoked or expired, a refresh
+ * refused, an account change, a disconnect). The assistant must say so and stop: drop the draft, its session credential and
+ * the page's in-memory copy, and leave an explicit "Connect XpertApply" notice in its place. Drafts of website launches are
+ * not touched: they run on their own session credential, not on the extension account.
+ */
+async function signOutDirectWorkflows(tabIds?: number[]): Promise<void> {
+  const generation = captureAuthorityGeneration();
+  for (const tabId of tabIds ?? await directWorkflowTabs()) {
+    const pending = await getPending(tabId);
+    if (pending && pending.source !== "direct") continue;
+    packageLoads.delete(tabId);
+    await clearTab(tabId, generation).catch(() => undefined);
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    let host: string | null = null;
+    try { host = tab?.url ? new URL(tab.url).host : null; } catch { /* keep null */ }
+    await putView(tabId, noticeView(tabId, "DIRECT_SIGNED_OUT", host), generation).catch(() => undefined);
+    void sendToTab(tabId, { type: MSG.CLEAR_SESSION });
+  }
+}
+
+/**
+ * Is this tab's direct draft still backed by the signed-in extension account? Checked before any message that acts on a
+ * session. A refresh is attempted when the access token is close to expiry, so a revoked credential is discovered here
+ * rather than after the next fill. An outage proves nothing and leaves the draft alone.
+ */
+async function directSessionStillOwned(tabId: number): Promise<boolean> {
+  const pending = await getPending(tabId);
+  if (!pending || pending.source !== "direct") return true;
+  let access: { userId: number } | null;
+  try {
+    access = await extensionAuth.accessToken();
+  } catch {
+    return true;
+  }
+  if (access && access.userId === pending.directUserId) return true;
+  await signOutDirectWorkflows([tabId]);
+  return false;
+}
+
+/** Messages that read, write or act on an application session. A direct draft must still be owned to receive them. */
+const DIRECT_OWNER_GUARDED = new Set<string>([
+  MSG.OVERLAY_START_AUTOFILL, MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION, MSG.OVERLAY_GET_VIEW,
+  MSG.RESOLVE_QUESTIONS, MSG.REQUEST_DOCUMENT, MSG.SAVE_ANSWER, MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES,
+  MSG.CONFIRM_NAME, MSG.AUDIT_EVENT, MSG.REQUEST_FILL_LEASE, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT
+]);
 
 // --------------------------------------------------------------------------- //
 // Independent (direct) applications
@@ -3223,6 +3310,7 @@ async function applyProgress(
   await updatePending(tabId, { status: durableStatus, state: p.state }, generation);
   const resumeUploaded = p.documentsUploaded.includes("resume");
   const coverUploaded = p.documentsUploaded.includes("cover_letter");
+  const finished = p.state === "completed" || p.state === "completed_with_review" || p.state === "failed";
   await patchView(tabId, {
     state: p.state,
     atsId: p.atsId,
@@ -3234,8 +3322,10 @@ async function applyProgress(
     reviewRequired: p.reviewRequired,
     requiredReviewRemaining: p.requiredReviewRemaining,
     reachedFinalStep: p.reachedFinalStep,
-    resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : "pending",
-    coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : "pending"
+    // "Preparing…" is only true while the run is still going. Once it has finished, a document that was neither uploaded nor
+    // handed back for manual attachment simply has nothing to attach on this form, and saying "Preparing…" forever is wrong.
+    resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : finished ? "—" : "pending",
+    coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : finished ? "—" : "pending"
   }, generation);
   // Only the top frame owns the floating widget, but the authoritative fill may
   // run inside an embedded ATS iframe. Mirror the PII-free progress back to the

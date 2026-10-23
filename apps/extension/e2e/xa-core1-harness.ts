@@ -65,13 +65,56 @@ document.getElementById('apply-now').addEventListener('click',()=>{setTimeout(()
 <button type="submit">Submit application</button></form>\`},600)});
 </script>${track}`;
 
+
+/** A realistic Ashby application: 35 controls, long labels, required markers, a scrolling inner container, and host CSS that is
+ * deliberately hostile to anything it does not own (inheritable text styles, generic element rules). */
+export const ASHBY_RICH = (() => {
+  const long = (n: number) => `Please describe in as much detail as you can how your experience relates to requirement number ${n} of this role, including tools and outcomes`;
+  const q = (id: string, label: string, kind: "text" | "area" | "select" | "radio" | "check", required = true) => {
+    const mark = required ? ' <span style="color:#c00">*</span>' : "";
+    if (kind === "text") return `<div class="ashby-application-form-field-entry"><label for="${id}">${label}${mark}</label><input id="${id}" name="${id}" type="text"${required ? " required" : ""}></div>`;
+    if (kind === "area") return `<div class="ashby-application-form-field-entry"><label for="${id}">${label}${mark}</label><textarea id="${id}" name="${id}"${required ? " required" : ""}></textarea></div>`;
+    if (kind === "select") return `<div class="ashby-application-form-field-entry"><label for="${id}">${label}${mark}</label><select id="${id}" name="${id}"><option value="">Select…</option><option>Yes</option><option>No</option><option>Prefer not to say</option></select></div>`;
+    if (kind === "radio") return `<fieldset class="ashby-application-form-field-entry"><legend>${label}${mark}</legend><label><input type="radio" name="${id}" value="yes"> Yes</label><label><input type="radio" name="${id}" value="no"> No</label></fieldset>`;
+    return `<div class="ashby-application-form-field-entry"><label><input type="checkbox" id="${id}" name="${id}"> ${label}${mark}</label></div>`;
+  };
+  const inner = [1, 2, 3, 4, 5, 6].map(n => q(`scroll_${n}`, `Scrolling section question ${n}: ${long(n)}`, n % 2 ? "text" : "area")).join("");
+  const many = Array.from({ length: 20 }, (_, i) => q(`extra_${i + 1}`, i % 5 === 0 ? long(i + 1) : `Question ${i + 1} about your background and preferences`, (["text", "area", "select", "radio", "check"] as const)[i % 5], i % 3 !== 0)).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Plaid - Senior Software Engineer, Platform and Reliability - Application</title>
+<style>
+ /* Host styles an employer site really has: they must not reach the assistant, and nothing of ours may reach them. */
+ body{margin:0;font:16px/1.7 Georgia,serif;letter-spacing:.04em;text-transform:none;color:#222;text-align:justify;background:#fff}
+ div,section,fieldset,label,span,p,h1,h2,button,input,select,textarea{position:relative}
+ h1,h2{font-size:34px;text-transform:uppercase;letter-spacing:.2em;margin:24px}
+ button{padding:20px 40px;font-size:22px;background:#e11;color:#fff}
+ label{display:block;margin:6px 0 2px;font-weight:700}
+ input[type=text],textarea,select{display:block;width:100%;max-width:520px;padding:10px;font-size:16px}
+ form{max-width:760px;margin:0 auto;padding:24px}
+ .ashby-application-form-field-entry,fieldset{margin:14px 0;border:0;padding:0}
+ #scroller{max-height:260px;overflow:auto;border:1px solid #bbb;padding:10px}
+</style></head><body>
+<main class="ashby-application-form-container"><h1>Senior Software Engineer, Platform and Reliability</h1>
+<form id="application-form" novalidate>
+${q("_systemfield_name", "Name", "text")}${q("_systemfield_email", "Email", "text")}
+<div class="ashby-application-form-field-entry"><label for="_systemfield_phone">Phone <span style="color:#c00">*</span></label><input id="_systemfield_phone" name="phone" type="tel"></div>
+${q("location", "Current location (city and country)", "text")}${q("linkedin", "LinkedIn profile", "text", false)}${q("website", "Personal website", "text", false)}
+<div class="ashby-application-form-field-entry"><label for="_systemfield_resume">Resume <span style="color:#c00">*</span></label><input id="_systemfield_resume" name="resume" type="file"></div>
+<div id="scroller">${inner}</div>
+${many}
+<button type="submit">Submit application</button></form></main>
+<script>window.__emp={submits:0,clicks:0};document.addEventListener('click',e=>{if(e.target&&e.target.closest&&e.target.closest('button[type=submit]'))window.__emp.clicks++},true);document.addEventListener('submit',e=>{e.preventDefault();window.__emp.submits++},true);</script>
+</body></html>`;
+})();
+
 const newsletter = `<!doctype html><meta charset="utf-8"><title>Newsletter</title><main><h1>Stay in touch</h1><form><label for="e">Email</label><input id="e" type="email"><button type="submit">Subscribe</button></form></main>`;
 const login = `<!doctype html><meta charset="utf-8"><title>Sign in</title><main><h1>Sign in</h1><form><label for="e">Email</label><input id="e" type="email"><label for="p">Password</label><input id="p" type="password"><button type="submit">Sign in</button></form></main>`;
 const search = `<!doctype html><meta charset="utf-8"><title>Search jobs</title><main><h1>Search</h1><form role="search"><label for="q">Search jobs</label><input id="q" type="search"><button type="submit">Search</button></form></main>`;
 const listing = (t: string) => `<!doctype html><title>${t}</title><main><h1>${t}</h1><p>Open roles</p><a href="#">Software Engineer</a></main>`;
 
 export function employerPage(host: string, url: string): string {
-  const p = new URL(url, "https://x").pathname;
+  const parsed = new URL(url, "https://x");
+  const p = parsed.pathname;
+  if (host === "jobs.ashbyhq.com" && p.endsWith("/application") && parsed.searchParams.get("rich")) return ASHBY_RICH;
   if (p === "/newsletter") return newsletter;
   if (p === "/login") return login;
   if (p === "/search") return search;

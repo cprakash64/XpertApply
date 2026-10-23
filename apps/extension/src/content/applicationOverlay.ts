@@ -91,7 +91,15 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
     panel.hidden = state !== "OPEN";
     pill.hidden = state !== "MINIMIZED";
     host.dataset.overlayState = state.toLowerCase();
+    announceLayout();
   };
+  // Field badges keep clear of the assistant, which moves inside this closed root where page observers cannot see it. The event
+  // carries no data; it only says "look again".
+  const announceLayout = (): void => { ownerDocument.dispatchEvent(new Event(OVERLAY_LAYOUT_EVENT)); };
+  const layoutObserver = typeof ownerDocument.defaultView?.ResizeObserver === "function"
+    ? new ownerDocument.defaultView.ResizeObserver(announceLayout) : null;
+  layoutObserver?.observe(panel);
+  layoutObserver?.observe(pill);
   const show = (): void => { state = "OPEN"; render(); };
   const minimize = (): void => {
     if (state === "ABSENT") return;
@@ -122,6 +130,7 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
   pill.addEventListener("click", onRestore);
   closeButton.addEventListener("click", onClose);
   const disposeListeners = (): void => {
+    layoutObserver?.disconnect();
     minimizeButton.removeEventListener("click", onMinimize);
     pill.removeEventListener("click", onRestore);
     closeButton.removeEventListener("click", onClose);
@@ -157,6 +166,18 @@ export function showOverlay(ownerDocument: Document = document): ApplicationOver
   overlay.show();
   return overlay;
 }
+/** Where the assistant panel (or its minimized pill) currently is, so page annotations never sit under or over it. */
+/** Fired on the document whenever the assistant opens, minimizes, closes or changes size. */
+export const OVERLAY_LAYOUT_EVENT = "xpertapply:overlay-layout";
+
+export function overlayAvoidanceRect(ownerDocument: Document = document): DOMRect | null {
+  const instance = instances.get(ownerDocument);
+  if (!instance?.controller.host.isConnected) return null;
+  const root = ownedRoots.get(instance.controller.host);
+  const el = root?.querySelector<HTMLElement>("[data-overlay-panel]:not([hidden]), [data-overlay-restore]:not([hidden])");
+  return el ? el.getBoundingClientRect() : null;
+}
+
 export function isOverlayDismissed(ownerDocument: Document = document): boolean {
   return dismissedDocuments.has(ownerDocument);
 }
@@ -242,7 +263,7 @@ function overlayMarkup(): string {
         font-weight: 680;
       }
       .restore-pill:hover { background: #ffffff; }
-      button:focus-visible, h2:focus-visible { outline: 3px solid #1598bd; outline-offset: 2px; }
+      button:focus-visible { outline: 3px solid #1598bd; outline-offset: 2px; } h2:focus, h2:focus-visible { outline: none; }
       @media (max-width: 363px) {
         .panel { right: 12px; bottom: 12px; width: calc(100% - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
         .header { padding-left: 12px; } .body { padding: 20px 16px; } .restore-pill { right: 12px; bottom: 12px; }
@@ -252,7 +273,7 @@ function overlayMarkup(): string {
         .panel, .restore-pill { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
         .header, .warn, .actions button, #grantSiteAccess { border-color: CanvasText; }
         .context, .message, .status, .warn { color: CanvasText; }
-        .status-dot { background: Highlight; } button:focus-visible, h2:focus-visible { outline-color: Highlight; }
+        .status-dot { background: Highlight; } button:focus-visible { outline-color: Highlight; }
       }
     </style>
     <div data-overlay-root="${OVERLAY_MARKER}">
@@ -272,7 +293,7 @@ function overlayMarkup(): string {
             <div id="limited" class="warn" hidden>Limited support for this ATS. Complete unsupported fields manually.</div>
             <div class="row"><span class="muted">Fields discovered</span><span id="discovered">0</span></div>
             <div class="stats">
-              <div class="stat"><b id="filled">0</b><span class="muted">Filled</span></div>
+              <div class="stat"><b id="filled">0</b><span class="muted">Filled by XpertApply</span></div>
               <div class="stat"><b id="skipped">0</b><span class="muted">Skipped</span></div>
               <div class="stat"><b id="review">0</b><span class="muted">Review</span></div>
             </div>

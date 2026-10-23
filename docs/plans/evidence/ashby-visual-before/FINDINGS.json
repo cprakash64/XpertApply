@@ -1,0 +1,434 @@
+{
+  "1366x768@100": {
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    },
+    "panel": {
+      "left": 938,
+      "top": 18,
+      "right": 1348,
+      "bottom": 750
+    },
+    "visibleBadges": 7,
+    "badgesOverPanel": 2,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1366x768@125": {
+    "viewport": {
+      "width": 1093,
+      "height": 614
+    },
+    "panel": {
+      "left": 665,
+      "top": 18,
+      "right": 1075,
+      "bottom": 596
+    },
+    "visibleBadges": 5,
+    "badgesOverPanel": 4,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1440x900@100": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "panel": {
+      "left": 1012,
+      "top": 122,
+      "right": 1422,
+      "bottom": 882
+    },
+    "visibleBadges": 7,
+    "badgesOverPanel": 1,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1440x900@125": {
+    "viewport": {
+      "width": 1152,
+      "height": 720
+    },
+    "panel": {
+      "left": 724,
+      "top": 18,
+      "right": 1134,
+      "bottom": 702
+    },
+    "visibleBadges": 6,
+    "badgesOverPanel": 5,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1756x864@100": {
+    "viewport": {
+      "width": 1756,
+      "height": 864
+    },
+    "panel": {
+      "left": 1328,
+      "top": 86,
+      "right": 1738,
+      "bottom": 846
+    },
+    "visibleBadges": 7,
+    "badgesOverPanel": 0,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1756x864@125": {
+    "viewport": {
+      "width": 1405,
+      "height": 691
+    },
+    "panel": {
+      "left": 977,
+      "top": 18,
+      "right": 1387,
+      "bottom": 673
+    },
+    "visibleBadges": 6,
+    "badgesOverPanel": 1,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1920x1080@100": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "panel": {
+      "left": 1492,
+      "top": 302,
+      "right": 1902,
+      "bottom": 1062
+    },
+    "visibleBadges": 7,
+    "badgesOverPanel": 0,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  },
+  "1920x1080@125": {
+    "viewport": {
+      "width": 1536,
+      "height": 864
+    },
+    "panel": {
+      "left": 1108,
+      "top": 86,
+      "right": 1518,
+      "bottom": 846
+    },
+    "visibleBadges": 7,
+    "badgesOverPanel": 0,
+    "badgesOutside": 0,
+    "panelOutside": false,
+    "overlaps": [],
+    "clipped": [],
+    "job": "Job application · jobs.ashbyhq.com",
+    "bodyScrolls": true,
+    "buttons": [
+      {
+        "id": "fill",
+        "text": "Fill application",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "rescan",
+        "text": "Continue filling",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "next",
+        "text": "Refresh application status",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "clear",
+        "text": "Clear XpertApply-filled fields",
+        "disabled": false,
+        "h": 40
+      },
+      {
+        "id": "complete",
+        "text": "Mark application complete",
+        "disabled": true,
+        "h": 40
+      }
+    ],
+    "widgetOverlaps": [],
+    "widgetClipped": []
+  }
+}

@@ -105,3 +105,24 @@ the toolbar icon on the page; the assistant opens through `activeTab` and offers
    earlier checklist. Reload the page: still one assistant.
 5. In Chrome's extension menu, with the site removed (`chrome://extensions` -> Details -> Site access), repeat from step 2.
 6. Open the Greenhouse company *listing* page (not an application) and any unrelated site: no badge, no request.
+
+## 8. Authentication state and assistant layout (XA-EXT-ASHBY-03)
+
+Rules now enforced (and covered by `e2e/xa-ashby-state.spec.ts`, `e2e/xa-ashby-visual.spec.ts`):
+
+* A Chrome site grant is **not** XpertApply authorization. Granted but not connected: the assistant shows "Not connected to XpertApply", one
+  primary button "Connect XpertApply", all counts at 0, no fill claim; nothing is written to the page and no authenticated API call is made.
+* When the credential disappears (refresh refused, revoked, disconnected, replaced by another account) the worker tears the tab's direct draft
+  down; the assistant also trusts its own account row over a stale view. Session-touching messages from a direct tab are refused while the
+  account no longer owns the draft. Re-read happens on open, refresh and when the tab regains focus.
+* Counters say "Filled by XpertApply"; resume/cover show "—" unless a prepared application exists, never a permanent "Preparing…".
+* Field badges are clipped to their scroll containers and the viewport, sit below the assistant, and move or hide rather than cover it.
+
+### Manual retest in desktop Chrome (dedicated profile, staging test user)
+1. Load `dist-staging` (`npm run build:staging`), fresh profile, no grant, not connected. Open a Plaid Ashby application.
+2. Allow site access for jobs.ashbyhq.com only. Expect: "Not connected", button "Connect XpertApply", counts 0, form untouched.
+3. Connect with the staging test account. Expect: fill runs, "Filled by XpertApply" equals the fields you can see changed; no submit.
+4. Disconnect in the assistant: it must read "Not connected" immediately, with "Connect XpertApply". Reload: same.
+5. Sign in as a second staging user in another tab, return to the first tab (focus it): it must not keep showing the first account's progress.
+6. Check badges and the assistant at 100% and 125% zoom and a narrow window: no badge over the assistant, no overlapping text.
+Send back: the assistant state per step (screenshot) and, if anything looks wrong, which step.

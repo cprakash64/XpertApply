@@ -195,8 +195,26 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     ].join("\n");
   }
 
+  /** Whether the extension account is signed in, as last reported by the worker. Unknown until it answers. */
+  let accountStatus: "unknown" | "signed_in" | "signed_out" = "unknown";
+
+  /**
+   * The progress a direct draft shows is only true while the account that owns it is connected. The worker tears a draft
+   * down when it learns of a sign-out, but the two answers can arrive in either order; until they agree, trust the account
+   * row and show the one honest state: not connected, nothing in progress, "Connect XpertApply".
+   */
+  function effectiveView(raw: LaunchViewState): LaunchViewState {
+    const direct = typeof raw.requestId === "string" && raw.requestId.startsWith("direct-");
+    if (!(accountStatus === "signed_out" && direct && raw.sessionId != null)) return raw;
+    return {
+      ...raw, sessionId: null, state: "failed", failureCode: "DIRECT_SIGNED_OUT", failureRecoverable: true, running: false,
+      fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0, requiredReviewRemaining: undefined, reachedFinalStep: false,
+      atsDisplayName: raw.atsDisplayName, resumeStatus: "—", coverStatus: "—", jobTitle: null
+    } as LaunchViewState;
+  }
+
   function render(): void {
-    const current = view;
+    const current = view ? effectiveView(view) : null;
     if (!current) {
       renderUnavailable();
       return;
@@ -211,8 +229,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     setText("review", String(current.reviewRequired));
     element("limited").hidden = !current.limited;
     element("final").hidden = !current.reachedFinalStep;
-    setText("resume", documentLabel(current.resumeStatus));
-    setText("cover", documentLabel(current.coverStatus));
+    // Documents belong to a prepared application; with none open there is nothing to prepare.
+    setText("resume", current.sessionId == null ? "—" : documentLabel(current.resumeStatus));
+    setText("cover", current.sessionId == null ? "—" : documentLabel(current.coverStatus));
     const errorBox = element("errors");
     if (current.failureCode) {
       errorBox.hidden = false;
@@ -309,6 +328,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     if (!account || !options.actions.authState) return;
     const response = await options.actions.authState().catch(() => undefined);
     if (disposed || !response?.ok || !response.state) return;
+    const before = accountStatus;
+    accountStatus = response.state.status === "signed_in" ? "signed_in" : "signed_out";
+    if (before !== accountStatus) render();
     account.hidden = false;
     if (response.state.status === "signed_in") {
       account.textContent = `Connected as ${response.state.email}`;

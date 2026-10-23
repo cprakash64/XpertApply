@@ -188,7 +188,8 @@ describe("XA-17 extension-owned status presentation", () => {
     const rect = replacement.getBoundingClientRect as ReturnType<typeof vi.fn>;
     highlight(replacement, "verified");
     const callsAfterRender = rect.mock.calls.length;
-    vi.runAllTimers();
+    // Flush every stale callback from the reset instance; stop short of the replacement's own 400 ms reposition poll.
+    vi.advanceTimersByTime(399);
 
     expect(rect).toHaveBeenCalledTimes(callsAfterRender);
     expect(fieldStatusPresentationForTest(replacement)?.status).toBe("verified");

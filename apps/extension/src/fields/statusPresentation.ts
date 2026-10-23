@@ -7,6 +7,8 @@
  * through WeakRef so detached controls are not retained.
  */
 
+import { OVERLAY_LAYOUT_EVENT, overlayAvoidanceRect } from "../content/applicationOverlay";
+
 export type PresentedFieldStatus = "verified" | "generated" | "review" | "invalid";
 
 interface StatusDefinition {
@@ -29,7 +31,7 @@ const STATUS: Record<PresentedFieldStatus, StatusDefinition> = {
 };
 
 const LAYER_CSS = `
-  :host{all:initial;position:fixed;inset:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483646}
+  :host{all:initial;position:fixed;inset:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147482999}
   .status{position:fixed;left:0;top:0;display:flex;align-items:center;gap:4px;max-width:180px;
     padding:3px 7px;border:2px solid currentColor;border-radius:999px;background:#fff;color:var(--status-color);
     box-shadow:0 2px 7px rgba(0,0,0,.16);font:600 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -83,6 +85,8 @@ function installSharedTracking(): void {
       attributeFilter: ["class", "style", "hidden"]
     });
   }
+  // The assistant opens, minimizes and resizes inside its own shadow root, which none of the observers above can see.
+  doc.addEventListener(OVERLAY_LAYOUT_EVENT, schedulePosition);
 }
 
 function schedulePosition(): void {
@@ -120,9 +124,31 @@ function positionAll(): void {
   if (records.size === 0) resetLayer();
 }
 
+/** The part of `element` a person can actually see: its box clipped by every scrolling or clipping ancestor and the viewport. */
+function visibleRect(element: HTMLElement): { left: number; top: number; right: number; bottom: number } | null {
+  const own = element.getBoundingClientRect();
+  let left = Math.max(own.left, 0), top = Math.max(own.top, 0);
+  let right = Math.min(own.right, innerWidth), bottom = Math.min(own.bottom, innerHeight);
+  const view = element.ownerDocument.defaultView;
+  for (let node = element.parentElement; node && view; node = node.parentElement) {
+    const style = view.getComputedStyle(node);
+    if (style.display === "contents") continue;
+    if (/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) {
+      const r = node.getBoundingClientRect();
+      left = Math.max(left, r.left); top = Math.max(top, r.top); right = Math.min(right, r.right); bottom = Math.min(bottom, r.bottom);
+    }
+  }
+  return right - left > 1 && bottom - top > 1 ? { left, top, right, bottom } : null;
+}
+
+const overlaps = (a: { left: number; top: number; right: number; bottom: number }, b: DOMRect, pad = 6): boolean =>
+  a.left < b.right + pad && a.right > b.left - pad && a.top < b.bottom + pad && a.bottom > b.top - pad;
+
 function position(record: DecorationRecord, target: HTMLElement): void {
-  const rect = target.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) {
+  const visible = visibleRect(target);
+  const avoid = overlayAvoidanceRect(target.ownerDocument);
+  // Hidden, scrolled out of its container, or sitting under the assistant: there is nothing to annotate that anyone can see.
+  if (!visible || (avoid && overlaps(visible, avoid, 0))) {
     record.badge.hidden = true;
     return;
   }
@@ -130,12 +156,25 @@ function position(record: DecorationRecord, target: HTMLElement): void {
   const badgeRect = record.badge.getBoundingClientRect();
   const width = badgeRect.width || 120;
   const height = badgeRect.height || 22;
-  const hasRightRoom = rect.right + 6 + width <= innerWidth - 4;
-  const left = hasRightRoom ? rect.right + 6 : Math.max(4, Math.min(rect.right - width, innerWidth - width - 4));
-  const top = hasRightRoom
-    ? Math.max(4, Math.min(rect.top, innerHeight - height - 4))
-    : Math.max(4, rect.top - height - 4);
-  record.badge.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  const place = (left: number, top: number) => ({
+    left: Math.max(4, Math.min(left, innerWidth - width - 4)),
+    top: Math.max(4, Math.min(top, innerHeight - height - 4))
+  });
+  const candidates = [
+    place(visible.right + 6, visible.top),                       // beside the control
+    place(visible.right - width, visible.top - height - 4),      // above its right edge
+    place(visible.left, visible.top - height - 4),               // above its left edge
+    place(visible.left, visible.bottom + 4)                      // below it
+  ];
+  const chosen = candidates.find((c) => {
+    const box = { left: c.left, top: c.top, right: c.left + width, bottom: c.top + height };
+    return !(avoid && overlaps(box, avoid)) && !(box.left < visible.right && box.right > visible.left && box.top < visible.bottom && box.bottom > visible.top);
+  });
+  if (!chosen) {
+    record.badge.hidden = true;                                   // no clear spot: say nothing rather than cover something
+    return;
+  }
+  record.badge.style.transform = `translate(${Math.round(chosen.left)}px, ${Math.round(chosen.top)}px)`;
 }
 
 function render(record: DecorationRecord): void {
@@ -190,6 +229,7 @@ function resetLayer(): void {
   }
   ownerWindow?.removeEventListener("resize", schedulePosition);
   ownerDocument?.removeEventListener("scroll", schedulePosition, true);
+  ownerDocument?.removeEventListener(OVERLAY_LAYOUT_EVENT, schedulePosition);
   resizeObserver?.disconnect();
   mutationObserver?.disconnect();
   resizeObserver = null;

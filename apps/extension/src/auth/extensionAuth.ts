@@ -61,6 +61,9 @@ export interface AuthDeps {
   launchWebAuthFlow: (details: { url: string; interactive: boolean }) => Promise<string | undefined>;
   now: () => number;
   randomBytes: (length: number) => Uint8Array;
+  /** Called when the credential is dropped because the SERVER refused it (revoked, expired, replayed, wrong account),
+   * so everything that was built on it can be torn down. Not called for an outage, nor for an explicit disconnect. */
+  onSignedOut?: (reason: "refresh_refused" | "account_changed") => void;
 }
 
 interface TokenResponse {
@@ -143,6 +146,7 @@ export function createExtensionAuth(deps: AuthDeps) {
       const res = await post("/extension/auth/token", { grant_type: "refresh_token", refresh_token: current.refreshToken });
       if (res.status === 401 || res.status === 400) {
         await deps.storage.remove(AUTH_STORAGE_KEY);
+        deps.onSignedOut?.("refresh_refused");
         return null;
       }
       if (!res.ok) throw new AuthUnavailableError();
@@ -152,6 +156,7 @@ export function createExtensionAuth(deps: AuthDeps) {
       // rather than silently adopted.
       if (body.user.id !== current.userId) {
         await deps.storage.remove(AUTH_STORAGE_KEY);
+        deps.onSignedOut?.("account_changed");
         return null;
       }
       return write(body);
