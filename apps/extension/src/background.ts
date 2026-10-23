@@ -34,7 +34,7 @@ import {
   setApplicationOverride
 } from "./api/client";
 import { validateOverrideRequest } from "./content/reviewActions";
-import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS } from "./config";
+import { DEFAULT_API_BASE, EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS, resolveWebBase } from "./config";
 import {
   classifyEnvironment,
   safeApiBase,
@@ -158,8 +158,7 @@ const DIRECT_AUTOFILL_KEY = "xaDirectAutofillEnabled";
 
 async function webBase(): Promise<string> {
   const stored = await chrome.storage.local.get("webBase").catch(() => ({} as Record<string, unknown>));
-  const override = typeof stored.webBase === "string" ? stored.webBase : "";
-  return JOBPILOT_WEB_ORIGINS.includes(override) ? override : JOBPILOT_WEB_ORIGINS[0];
+  return resolveWebBase(stored.webBase, JOBPILOT_WEB_ORIGINS);
 }
 
 const extensionAuth = createExtensionAuth({
@@ -1343,7 +1342,7 @@ async function tabBelongsToLaunch(tabId: number, active: PendingLaunch): Promise
 }
 
 function isXpertApplyOwnOrigin(url: URL): boolean {
-  return isApprovedJobPilotOrigin(url.origin) || url.origin === "https://api.xpertapply.com";
+  return isApprovedJobPilotOrigin(url.origin) || url.origin === new URL(DEFAULT_API_BASE).origin;
 }
 
 /** Open (or resume) a draft for `url` as the signed-in extension user, and load its package. */
@@ -1555,7 +1554,7 @@ const siteRegistrar = createSiteRegistrar({
   unregister: (ids) => chrome.scripting.unregisterContentScripts({ ids }),
   options: async () => ({
     // XpertApply's own site (declarative bridge) and its API host never serve an employer application.
-    excluded: [...JOBPILOT_WEB_ORIGINS.map((origin) => `${origin}/*`), "https://api.xpertapply.com/*"],
+    excluded: [...JOBPILOT_WEB_ORIGINS.map((origin) => `${origin}/*`), `${new URL(DEFAULT_API_BASE).origin}/*`],
     // Plain-http loopback exists only in non-production builds, and only when a test asks for it.
     allowLoopback: LOOPBACK_REGISTRATION_BUILD
       && Boolean((await chrome.storage.local.get("xaRegisterLoopback")).xaRegisterLoopback)

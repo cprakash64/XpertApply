@@ -13,12 +13,16 @@ import {
 } from "./src/bridge-origin-profiles.mjs";
 import { DEVELOPMENT_BRIDGE_ORIGINS } from "./src/development-bridge-origins.mjs";
 import { resolveExtensionBuild } from "./src/build-profile.mjs";
+import { manifestForProfile } from "./src/staging-manifest.mjs";
+import { STAGING_API_ORIGIN } from "./src/staging-origins.mjs";
 
 const { profile: BUILD_PROFILE, outdir } = resolveExtensionBuild({
   argv: process.argv.slice(2),
   env: process.env
 });
-const allowLoopbackBridge = BUILD_PROFILE !== "production";
+// Loopback is a development/e2e convenience only. Production and staging never trust or register it.
+const allowLoopbackBridge = BUILD_PROFILE === "development" || BUILD_PROFILE === "e2e";
+const STAGING = BUILD_PROFILE === "staging";
 
 // --------------------------------------------------------------------------- //
 // Build identity
@@ -90,7 +94,11 @@ const buildDefine = {
   __JOBPILOT_BUILT_AT__: JSON.stringify(BUILT_AT),
   __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID),
   __XPERTAPPLY_ALLOW_LOOPBACK__: JSON.stringify(allowLoopbackBridge),
-  __XPERTAPPLY_BRIDGE_ORIGINS__: JSON.stringify(bridgeOriginsForProfile(BUILD_PROFILE))
+  __XPERTAPPLY_BRIDGE_ORIGINS__: JSON.stringify(bridgeOriginsForProfile(BUILD_PROFILE)),
+  __XPERTAPPLY_PROFILE__: JSON.stringify(BUILD_PROFILE),
+  // Staging pins its API and refuses any stored override outside this list; other profiles keep their existing behaviour.
+  __XPERTAPPLY_DEFAULT_API_BASE__: JSON.stringify(STAGING ? STAGING_API_ORIGIN : "https://api.xpertapply.com"),
+  __XPERTAPPLY_STRICT_API_ORIGINS__: JSON.stringify(STAGING ? [STAGING_API_ORIGIN] : null)
 };
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
@@ -122,19 +130,11 @@ await build({
 // Write the manifest with the same identity compiled into the bundle, so the
 // two can never disagree about which build is loaded.
 {
-  const generated = {
-    ...sourceManifest,
-    version_name: `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT}; ${BUILD_PROFILE})`,
-    content_scripts: sourceManifest.content_scripts.map((entry, index) => index === 0
-      ? { ...entry, matches: bridgeMatchPatternsForProfile(BUILD_PROFILE) }
-      : { ...entry }),
-    optional_host_permissions: allowLoopbackBridge
-      ? [...new Set([
-          ...(sourceManifest.optional_host_permissions ?? []),
-          ...DEVELOPMENT_BRIDGE_ORIGINS.map((origin) => `${new URL(origin).protocol}//${new URL(origin).hostname}/*`)
-        ])]
-      : [...(sourceManifest.optional_host_permissions ?? [])]
-  };
+  const generated = manifestForProfile(
+    sourceManifest,
+    BUILD_PROFILE,
+    `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT}; ${BUILD_PROFILE})`
+  );
   writeFileSync(`${outdir}/manifest.json`, JSON.stringify(generated, null, 2));
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);

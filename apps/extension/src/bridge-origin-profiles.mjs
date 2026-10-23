@@ -1,5 +1,6 @@
 import { PRODUCTION_BRIDGE_ORIGINS } from "./bridge-origins.mjs";
 import { DEVELOPMENT_BRIDGE_ORIGINS } from "./development-bridge-origins.mjs";
+import { STAGING_BRIDGE_ORIGINS, assertStagingBridgeOrigins } from "./staging-origins.mjs";
 
 export function assertProductionBridgeOrigins(origins) {
   const expected = ["https://xpertapply.com", "https://www.xpertapply.com"];
@@ -11,6 +12,11 @@ export function assertProductionBridgeOrigins(origins) {
 export function bridgeOriginsForProfile(profile) {
   assertProductionBridgeOrigins(PRODUCTION_BRIDGE_ORIGINS);
   if (profile === "production") return [...PRODUCTION_BRIDGE_ORIGINS];
+  if (profile === "staging") {
+    // Exactly the staging website: no production origin and no loopback may ever be trusted by this build.
+    assertStagingBridgeOrigins(STAGING_BRIDGE_ORIGINS);
+    return [...STAGING_BRIDGE_ORIGINS];
+  }
   if (profile === "development" || profile === "e2e") {
     return [...PRODUCTION_BRIDGE_ORIGINS, ...DEVELOPMENT_BRIDGE_ORIGINS];
   }

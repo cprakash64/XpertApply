@@ -1,3 +1,5 @@
+import { BUILD_PROFILE, JOBPILOT_WEB_ORIGINS } from "../config";
+
 const PRODUCTION_ORIGINS = new Set([
   "https://xpertapply.com",
   "https://www.xpertapply.com"
@@ -20,6 +22,8 @@ export function isApprovedExternalWebSender(
   try {
     const urlOrigin = new URL(sender.url).origin;
     if (urlOrigin !== sender.origin) return false;
+    // The staging build trusts exactly its own website: not production, and not loopback even though it is unpacked.
+    if (BUILD_PROFILE === "staging") return JOBPILOT_WEB_ORIGINS.includes(urlOrigin);
     if (PRODUCTION_ORIGINS.has(urlOrigin)) return true;
     return isUnpacked && DEVELOPMENT_ORIGINS.has(urlOrigin);
   } catch {

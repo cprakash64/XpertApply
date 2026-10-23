@@ -78,7 +78,8 @@ describe("XA-15 · production bridge origins", () => {
     expect(EXTENSION_BUILD_OUTPUTS).toEqual({
       production: "dist",
       development: "dist-development",
-      e2e: "dist-e2e-granted"
+      e2e: "dist-e2e-granted",
+      staging: "dist-staging" // XA-EXT-STAGING-01: its own folder; the three above are unchanged
     });
     expect(resolveExtensionBuild({ argv: ["--profile", "production"] })).toEqual({
       profile: "production",

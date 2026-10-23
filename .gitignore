@@ -88,3 +88,6 @@ docker-compose.override.yml
 * copy.*
 
 .pnpm-store/
+
+# XA-EXT-STAGING-01: generated staging extension build.
+apps/extension/dist-staging/

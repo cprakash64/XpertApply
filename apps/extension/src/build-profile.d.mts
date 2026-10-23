@@ -1,4 +1,4 @@
-export type ExtensionBuildProfile = "production" | "development" | "e2e";
+export type ExtensionBuildProfile = "production" | "development" | "e2e" | "staging";
 
 export const EXTENSION_BUILD_OUTPUTS: Readonly<Record<ExtensionBuildProfile, string>>;
 

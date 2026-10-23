@@ -1,7 +1,8 @@
 export const EXTENSION_BUILD_OUTPUTS = Object.freeze({
   production: "dist",
   development: "dist-development",
-  e2e: "dist-e2e-granted"
+  e2e: "dist-e2e-granted",
+  staging: "dist-staging"
 });
 
 function profileFromArguments(argv) {
