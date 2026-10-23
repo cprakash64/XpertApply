@@ -191,13 +191,27 @@ export function createExtensionAuth(deps: AuthDeps) {
       url.searchParams.set("challenge", await sha256Challenge(verifier));
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("state", state);
-      const responseUrl = await deps.launchWebAuthFlow({ url: url.toString(), interactive: true });
+      let responseUrl: string | undefined;
+      try {
+        responseUrl = await deps.launchWebAuthFlow({ url: url.toString(), interactive: true });
+      } catch {
+        // Chrome rejects when the user closes the window or declines ("The user did not approve access").
+        throw new Error("AUTH_CANCELLED");
+      }
       if (!responseUrl) throw new Error("AUTH_CANCELLED");
-      const returned = new URL(responseUrl);
-      const code = returned.searchParams.get("code");
-      if (!code || returned.searchParams.get("state") !== state || !responseUrl.startsWith(redirectUri)) {
+      let returned: URL;
+      try {
+        returned = new URL(responseUrl);
+      } catch {
         throw new Error("AUTH_REJECTED");
       }
+      // Origin AND path must be the extension's own redirect; a prefix match would accept lookalikes.
+      if (`${returned.origin}${returned.pathname}` !== redirectUri) throw new Error("AUTH_REJECTED");
+      // State is verified before anything else in the response is believed, errors included.
+      if (returned.searchParams.get("state") !== state) throw new Error("AUTH_REJECTED");
+      if (returned.searchParams.get("error")) throw new Error("AUTH_DENIED");
+      const code = returned.searchParams.get("code");
+      if (!code) throw new Error("AUTH_REJECTED");
       const res = await post("/extension/auth/token", {
         grant_type: "authorization_code",
         code,

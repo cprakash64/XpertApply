@@ -155,3 +155,88 @@ describe("token lifetime", () => {
     expect(await h.auth.state()).toEqual({ status: "signed_out" });
   });
 });
+
+describe("authorization failures and interruptions", () => {
+  const echo = (extra: string) => async ({ url }: { url: string }) =>
+    `${REDIRECT}?state=${new URL(url).searchParams.get("state")}${extra}`;
+
+  it("treats a window closed or declined in Chrome as a cancellation, not a crash", async () => {
+    const h = harness({ launchWebAuthFlow: async () => { throw new Error("The user did not approve access."); } });
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_CANCELLED");
+    expect(h.calls).toHaveLength(0);
+    expect(await h.auth.state()).toEqual({ status: "signed_out" });
+  });
+
+  it("reports an explicit denial from the consent page, after checking the state", async () => {
+    const h = harness({ launchWebAuthFlow: echo("&error=access_denied") });
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_DENIED");
+    expect(h.calls).toHaveLength(0);
+    // A denial with the wrong state is not believed either.
+    const forged = harness({ launchWebAuthFlow: async () => `${REDIRECT}?state=forged&error=access_denied` });
+    await expect(forged.auth.connect()).rejects.toThrow("AUTH_REJECTED");
+  });
+
+  it.each([
+    ["a lookalike host", (state: string) => `https://${"a".repeat(32)}.chromiumapp.org.evil.example/xpertapply?code=c&state=${state}`],
+    ["another extension's redirect", (state: string) => `https://${"b".repeat(32)}.chromiumapp.org/xpertapply?code=c&state=${state}`],
+    ["a different path", (state: string) => `https://${"a".repeat(32)}.chromiumapp.org/other?code=c&state=${state}`],
+    ["a prefix-extended path", (state: string) => `https://${"a".repeat(32)}.chromiumapp.org/xpertapply-evil?code=c&state=${state}`],
+    ["garbage", () => "not a url"]
+  ])("refuses %s as the redirect target", async (_name, build) => {
+    const h = harness({ launchWebAuthFlow: async ({ url }) => build(new URL(url).searchParams.get("state")!) });
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_REJECTED");
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it("refuses a response with no code", async () => {
+    const h = harness({ launchWebAuthFlow: echo("") });
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_REJECTED");
+  });
+
+  it("surfaces an expired or replayed code (server 400) as rejected and stores nothing", async () => {
+    const h = harness();
+    h.respond.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Invalid grant" }), { status: 400 }));
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_REJECTED");
+    expect(h.store[AUTH_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("surfaces a network interruption during the exchange as unavailable and stores nothing", async () => {
+    const h = harness();
+    h.respond.mockRejectedValueOnce(new Error("offline"));
+    await expect(h.auth.connect()).rejects.toThrow("AUTH_UNAVAILABLE");
+    const down = harness();
+    down.respond.mockResolvedValueOnce(new Response("{}", { status: 503 }));
+    await expect(down.auth.connect()).rejects.toThrow("AUTH_UNAVAILABLE");
+    expect(down.store[AUTH_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("each attempt uses a fresh verifier and state (repeated login)", async () => {
+    const urls: string[] = [];
+    const verifiers: string[] = [];
+    const h = harness({
+      launchWebAuthFlow: async ({ url }) => {
+        urls.push(url);
+        return `${REDIRECT}?code=c&state=${new URL(url).searchParams.get("state")}`;
+      }
+    });
+    h.respond.mockImplementation(async (_p, body) => { verifiers.push(body.code_verifier); return tokens(7); });
+    await h.auth.connect();
+    await h.auth.connect();
+    const [a, b] = urls.map((u) => new URL(u).searchParams);
+    expect(a.get("state")).not.toBe(b.get("state"));
+    expect(a.get("challenge")).not.toBe(b.get("challenge"));
+    expect(verifiers[0]).not.toBe(verifiers[1]);
+    expect(verifiers[0]).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it("recovers from one revoked-mid-life token with a single refresh, then signs out if that fails too", async () => {
+    const h = harness();
+    h.respond.mockResolvedValueOnce(tokens(7, "acc-1", "ref-1"));
+    await h.auth.connect();
+    h.respond.mockResolvedValueOnce(tokens(7, "acc-2", "ref-2"));
+    expect((await h.auth.recoverFromUnauthorized())?.token).toBe("acc-2");
+    h.respond.mockResolvedValueOnce(new Response("{}", { status: 401 }));
+    expect(await h.auth.recoverFromUnauthorized()).toBeNull();
+    expect(await h.auth.state()).toEqual({ status: "signed_out" });
+  });
+});

@@ -38,16 +38,33 @@ describe("extension connect page", () => {
     expect(screen.queryByRole("button", { name: /connect extension/i })).toBeNull();
   });
 
+  it("shows which account will be connected and lets the user decline with a verified state", async () => {
+    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, "website-token");
+    Object.defineProperty(window.location, "search", { configurable: true, value: `?challenge=${CHALLENGE}&redirect_uri=${encodeURIComponent(REDIRECT)}&state=s9` });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ email: "person@work.test" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ConnectExtensionPage />);
+    expect(await screen.findByText("person@work.test")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    const target = new URL(String(assign.mock.calls[0][0]));
+    expect(target.origin + target.pathname).toBe(REDIRECT);
+    expect(target.searchParams.get("error")).toBe("access_denied");
+    expect(target.searchParams.get("state")).toBe("s9");
+    expect(target.searchParams.get("code")).toBeNull();
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/extension/auth/code"))).toBe(true);
+  });
+
   it("mints a code only after the user approves, and returns it to the extension with the state", async () => {
     window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, "website-token");
     Object.defineProperty(window.location, "search", { configurable: true, value: `?challenge=${CHALLENGE}&redirect_uri=${encodeURIComponent(REDIRECT)}&state=s1` });
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ code: "the-code" }), { status: 200 }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: "the-code" }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<ConnectExtensionPage />);
-    expect(fetchMock).not.toHaveBeenCalled();             // nothing is granted by merely opening the page
+    // Opening the page may look up who is signed in, but it never mints a code.
+    expect(fetchMock.mock.calls.every(([called]) => !String(called).includes("/extension/auth/code"))).toBe(true);
     fireEvent.click(await screen.findByRole("button", { name: /connect extension/i }));
     await waitFor(() => expect(assign).toHaveBeenCalled());
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls.find(([called]) => String(called).includes("/extension/auth/code")) as [string, RequestInit];
     expect(url).toMatch(/\/extension\/auth\/code$/);
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer website-token");
     expect(JSON.parse(String(init.body))).toEqual({ code_challenge: CHALLENGE, redirect_uri: REDIRECT });

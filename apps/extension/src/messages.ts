@@ -384,6 +384,10 @@ export const MSG = {
    * Content scripts cannot call chrome.permissions, so the worker opens an
    * extension page (side panel, else assistant window) whose own button requests it. */
   OVERLAY_OPEN_PERMISSION_SURFACE: "XPERTAPPLY_OVERLAY_OPEN_PERMISSION_SURFACE",
+  /** Overlay -> worker: who the extension is signed in as (the overlay shows it; no token is returned). */
+  OVERLAY_AUTH_STATE: "XPERTAPPLY_OVERLAY_AUTH_STATE",
+  /** Overlay -> worker: the user's explicit "Disconnect XpertApply". Revokes server-side, purges local state. */
+  OVERLAY_DISCONNECT: "XPERTAPPLY_OVERLAY_DISCONNECT",
   /** Overlay -> worker: stop opening the assistant by itself on this origin (the user's off switch). */
   OVERLAY_DISABLE_AUTO_OPEN: "XPERTAPPLY_OVERLAY_DISABLE_AUTO_OPEN",
   TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
@@ -589,6 +593,8 @@ export type RuntimeMessage =
   | { type: typeof MSG.SHOW_APPLICATION_OVERLAY; automatic?: boolean }
   | { type: typeof MSG.OVERLAY_OPEN_PERMISSION_SURFACE }
   | { type: typeof MSG.OVERLAY_DISABLE_AUTO_OPEN }
+  | { type: typeof MSG.OVERLAY_AUTH_STATE }
+  | { type: typeof MSG.OVERLAY_DISCONNECT }
   | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
   | { type: typeof MSG.SHOW_TOOLBAR_DISCLOSURE }
   | { type: typeof MSG.FIELD_ENTRY_REGISTER; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } }
@@ -631,7 +637,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
   MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
   MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
-  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.OVERLAY_DISABLE_AUTO_OPEN, MSG.TOOLBAR_OVERLAY_READY,
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.OVERLAY_DISABLE_AUTO_OPEN, MSG.OVERLAY_AUTH_STATE, MSG.OVERLAY_DISCONNECT, MSG.TOOLBAR_OVERLAY_READY,
   MSG.SHOW_TOOLBAR_DISCLOSURE, MSG.TOOLBAR_DISCLOSURE_ACCEPT,
   MSG.FIELD_ENTRY_REGISTER, MSG.FIELD_ENTRY_CONFIG, MSG.FIELD_ENTRY_SUBMIT, MSG.FIELD_ENTRY_DELIVER
 ]);
@@ -747,6 +753,8 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.SHOW_APPLICATION_OVERLAY]: { automatic: { kind: "boolean" } },
   [MSG.OVERLAY_OPEN_PERMISSION_SURFACE]: {},
   [MSG.OVERLAY_DISABLE_AUTO_OPEN]: {},
+  [MSG.OVERLAY_AUTH_STATE]: {},
+  [MSG.OVERLAY_DISCONNECT]: {},
   [MSG.TOOLBAR_OVERLAY_READY]: {},
   [MSG.SHOW_TOOLBAR_DISCLOSURE]: {},
   [MSG.FIELD_ENTRY_REGISTER]: {

@@ -23,6 +23,9 @@ export interface ApplicationAssistantActions {
   reportSiteAccess(tabId: number, pattern: string, granted: boolean): Promise<ActionResponse | undefined>;
   /** The user's off switch: stop opening the assistant by itself on this site. Only the in-page assistant offers it. */
   disableAutoOpen?(): Promise<ActionResponse | undefined>;
+  /** Who the extension is signed in as (email only, never a token). Only the in-page assistant offers it. */
+  authState?(): Promise<{ ok?: boolean; state?: { status: "signed_out" } | { status: "signed_in"; email: string } } | undefined>;
+  disconnect?(): Promise<{ ok?: boolean; state?: { status: string } } | undefined>;
 }
 
 export interface ApplicationAssistantContextAdapter {
@@ -90,6 +93,10 @@ const FAILURE_LABEL: Record<string, string> = {
   WRONG_TAB: "This panel is bound to a different tab.",
   DOCUMENT_UPLOAD_REJECTED: "The employer blocked automatic file upload. Attach the document manually.",
   HOST_PERMISSION_MISSING: "XpertApply needs permission to access this site. Check the extension's site access settings.",
+  AUTH_CANCELLED: "Sign-in was cancelled. Choose “Connect XpertApply” to try again.",
+  AUTH_DENIED: "XpertApply wasn’t connected because access was declined. Choose “Connect XpertApply” to try again.",
+  AUTH_REJECTED: "The sign-in response couldn’t be verified, so nothing was connected. Try again.",
+  AUTH_UNAVAILABLE: "XpertApply couldn’t be reached to finish signing in. Check your connection and try again.",
   DIRECT_SIGNED_OUT: "This looks like a job application, but XpertApply isn’t connected. Choose “Connect XpertApply” to sign in; nothing is filled until you do.",
   DIRECT_UNAVAILABLE: "XpertApply couldn’t prepare this application. Check that your profile is complete and you’re online, then try again.",
   HANDOFF_NOT_FOUND: "No application from XpertApply is open on this page. Choose Apply with XpertApply on a job at xpertapply.com, then use the page it opens.",
@@ -252,6 +259,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     view = nextView;
     if (!nextView && context.status === "bound") context = { ...context, status: "unsupported" };
     render();
+    void refreshAccount();
   }
 
   function scheduleRefresh(): void {
@@ -294,6 +302,37 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     disableSite.addEventListener("click", onClick);
     ownedListeners.push(() => disableSite.removeEventListener("click", onClick));
   }
+  // Account status: always visible, so it is clear whether XpertApply can fill, and who it fills as.
+  const account = options.root.getElementById("account");
+  const disconnect = options.root.getElementById("disconnect") as HTMLButtonElement | null;
+  async function refreshAccount(): Promise<void> {
+    if (!account || !options.actions.authState) return;
+    const response = await options.actions.authState().catch(() => undefined);
+    if (disposed || !response?.ok || !response.state) return;
+    account.hidden = false;
+    if (response.state.status === "signed_in") {
+      account.textContent = `Connected as ${response.state.email}`;
+      if (disconnect) disconnect.hidden = !options.actions.disconnect;
+    } else {
+      account.textContent = "Not connected to XpertApply";
+      if (disconnect) disconnect.hidden = true;
+    }
+  }
+  if (disconnect && options.actions.disconnect) {
+    const onDisconnect = (): void => {
+      void (async () => {
+        if (!(await options.confirmAction("Disconnect XpertApply from this browser? Autofill will stop until you connect again."))) return;
+        const response = await options.actions.disconnect!();
+        if (response?.ok === false) showButtonError("Couldn’t disconnect. Try again.");
+        await refreshAccount();
+        await refresh();
+      })();
+    };
+    disconnect.addEventListener("click", onDisconnect);
+    ownedListeners.push(() => disconnect.removeEventListener("click", onDisconnect));
+  }
+  void refreshAccount();
+
   listen("grantSiteAccess", "click", async () => {
     const id = context.tabId;
     const pattern = view?.siteAccessPattern;

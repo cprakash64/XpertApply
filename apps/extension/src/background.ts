@@ -830,6 +830,22 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
     }
 
+    case MSG.OVERLAY_AUTH_STATE:
+    case MSG.OVERLAY_DISCONNECT: {
+      const disconnecting = message.type === MSG.OVERLAY_DISCONNECT;
+      void requireAuthorizedOverlayContextSender(sender)
+        .then(async () => {
+          if (disconnecting) {
+            await extensionAuth.disconnect();
+            await purgeSessionState("disconnect");
+          }
+          return extensionAuth.state();
+        })
+        .then((state) => sendResponse({ ok: true, state }))
+        .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
+      return true;
+    }
+
     case MSG.OVERLAY_DISABLE_AUTO_OPEN:
       void requireAuthorizedOverlayContextSender(sender)
         .then(async ({ url }) => { await setAutoOpenDisabled(url.origin, true); })
@@ -902,7 +918,13 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true;
 
     case MSG.OVERLAY_START_AUTOFILL:
+      // With no workflow bound yet, the overlay's one button is "Connect XpertApply" / "Try again"; the
+      // document must still be a registered XpertApply overlay in this exact top frame.
       void requireAuthorizedOverlaySender(sender)
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.message === "OVERLAY_WORKFLOW_NOT_BOUND") return requireAuthorizedOverlayContextSender(sender);
+          throw error;
+        })
         .then(({ tabId }) => startAutofillForTab(tabId, message.reason, generation))
         .then((result) => sendResponse(result))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
@@ -1441,7 +1463,15 @@ async function resolveDirectApplication(
   return { ok: true, pending };
 }
 
-async function connectExtension(senderTabId: number | undefined): Promise<{ ok: boolean; error?: string }> {
+let connectInFlight: Promise<{ ok: boolean; error?: string }> | null = null;
+
+/** One sign-in window at a time: a second click while Chrome's window is open joins it. */
+function connectExtension(senderTabId: number | undefined): Promise<{ ok: boolean; error?: string }> {
+  connectInFlight ??= runConnect(senderTabId).finally(() => { connectInFlight = null; });
+  return connectInFlight;
+}
+
+async function runConnect(senderTabId: number | undefined): Promise<{ ok: boolean; error?: string }> {
   try {
     const result = await extensionAuth.connect();
     // A different account than the one the extension held: nothing the previous

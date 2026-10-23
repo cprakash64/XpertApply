@@ -288,6 +288,8 @@ function overlayMarkup(): string {
               <button id="complete" type="button">Mark application complete</button>
             </div>
             <p class="note">Review the information, then submit directly on the employer’s website.</p>
+            <p class="note" id="account" hidden></p>
+            <button id="disconnect" type="button" class="quiet" hidden>Disconnect XpertApply</button>
             <button id="disableSite" type="button" class="quiet">Don’t open XpertApply here automatically</button>
             <div class="workflow-extensions" data-overlay-workflow-extensions></div>
           </main>
