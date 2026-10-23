@@ -53,7 +53,8 @@ async function stack() {
   });
   await waitFor(`${apiOrigin}/healthz`, api);
   const web = spawn(process.execPath, [path.join(webRoot, "node_modules", "next", "dist", "bin", "next"), "dev", "--hostname", "localhost", "--port", "3000"], {
-    cwd: webRoot, env: { ...process.env, NEXT_PUBLIC_API_URL: apiOrigin }, stdio: ["ignore", "ignore", "ignore"]
+    // Own process group: `next dev` forks its server, and killing only the launcher left it holding port 3000 for later specs.
+    cwd: webRoot, env: { ...process.env, NEXT_PUBLIC_API_URL: apiOrigin }, stdio: ["ignore", "ignore", "ignore"], detached: true
   });
   await waitFor(`${WEB}/login`, web);
 
@@ -113,7 +114,9 @@ async function stack() {
   };
   return {
     ctx, worker, extId, apiOrigin, call, signup, websiteTab, authUrl, completeWith, closeWindow, captureRedirect, credential, employerApply,
-    async close() { await ctx.close().catch(() => undefined); web.kill("SIGKILL"); api.kill("SIGKILL"); tls.server.close(); }
+    async close() { await ctx.close().catch(() => undefined); try { if (web.pid) process.kill(-web.pid, "SIGKILL"); } catch { /* already gone */ } api.kill("SIGKILL"); tls.server.close();
+      for (let i = 0; i < 50 && await fetch(`${WEB}/login`).then(() => true, () => false); i++) await new Promise(r => setTimeout(r, 100));
+    }
   };
 }
 const consent = (p: Page) => p.getByRole("button", { name: /connect extension/i }).click();
