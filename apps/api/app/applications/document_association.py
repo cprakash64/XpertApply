@@ -49,6 +49,9 @@ from app.models.entities import (
 logger = logging.getLogger("jobpilot.applications")
 
 KINDS = ("resume", "cover_letter")
+#: Every value ``ApplicationDocumentSnapshot.association_basis`` can hold. The deployed column is VARCHAR(24) NOT NULL DEFAULT
+#: 'sole_session' (migration 0036), so each must fit in 24 characters; a test pins that.
+ASSOCIATION_BASES = ("confirming_session", "linked_session", "sole_session", "job_document")
 #: URL spelling of each kind.
 KIND_SLUG = {"resume": "resume", "cover-letter": "cover_letter", "cover_letter": "cover_letter"}
 

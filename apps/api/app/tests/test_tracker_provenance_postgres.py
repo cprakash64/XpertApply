@@ -124,6 +124,36 @@ class Live:
             return conn.execute(text(sql), params).all()
 
 
+def spawn_api(api_dir: Path, url: str) -> tuple[subprocess.Popen, str]:
+    """Start the API found in ``api_dir`` (this checkout, or another one) on a free port against ``url``, like staging minus its secrets."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    work = tempfile.mkdtemp(prefix="xa-prov-")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI", "DATABASE_URL", "APP_ENV"))}
+    env.update(DATABASE_URL=url, APP_ENV="development", DEBUG="false", UPLOAD_DIR=f"{work}/uploads", PYTHONPATH=str(api_dir))
+    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port), "--log-level", "warning"], cwd=api_dir, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/health", timeout=2).status_code == 200:
+                return proc, base
+        except httpx.HTTPError:
+            time.sleep(0.2)
+    detail = proc.stdout.read(2000).decode() if proc.poll() is not None else "timeout"
+    proc.kill()
+    raise RuntimeError("API did not start: " + detail)
+
+
+def stop_api(proc: subprocess.Popen) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 @pytest.fixture(scope="module")
 def live() -> Generator[Live, None, None]:
     name = f"xa_prov_{uuid.uuid4().hex[:8]}"
@@ -138,33 +168,13 @@ def live() -> Generator[Live, None, None]:
         command.upgrade(_alembic_config(url), "head")
     finally:
         os.environ.pop("DATABASE_URL", None)
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    work = tempfile.mkdtemp(prefix="xa-prov-")
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI", "DATABASE_URL", "APP_ENV"))}
-    env.update(DATABASE_URL=url, APP_ENV="development", DEBUG="false", UPLOAD_DIR=f"{work}/uploads", PYTHONPATH=str(API_DIR))
-    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port), "--log-level", "warning"], cwd=API_DIR, env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    base = f"http://127.0.0.1:{port}"
+    proc, base = spawn_api(API_DIR, url)
     try:
-        for _ in range(100):
-            try:
-                if httpx.get(f"{base}/health", timeout=2).status_code == 200:
-                    break
-            except httpx.HTTPError:
-                time.sleep(0.2)
-        else:
-            raise RuntimeError("API did not start: " + (proc.stdout.read(2000).decode() if proc.poll() is not None else "timeout"))
         engine = create_engine(url)
         yield Live(base, engine)
         engine.dispose()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        stop_api(proc)
         with admin.connect() as conn:
             conn.execute(text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :n AND pid <> pg_backend_pid()"), {"n": name})
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))

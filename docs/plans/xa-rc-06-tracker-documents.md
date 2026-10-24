@@ -41,7 +41,7 @@ Defects found and fixed here:
 * **CORS.** The API did not expose `Content-Disposition`, so a browser on another origin saved "Resume.pdf" instead of the server's filename. Found only by the live-API browser run; the mocked spec had masked it.
 * **Privacy export** now includes the user's snapshots.
 
-`0036_application_doc_snapshots` was edited in place to add `association_basis`: it has never been applied outside disposable databases (staging is at 0035).
+`0036_application_doc_snapshots` was edited in place at R1 (commit 959b994) to create `association_basis` with the table. That is the revision staging was then upgraded with, so it is the deployed 0036 and is immutable from here on (see R3 below).
 
 Document states a user can tell apart: `frozen` (immutable copy), `historical` (older record, saved copy as it is now), `unknown_association`, `none`.
 
@@ -62,8 +62,8 @@ Reconstructed from the code and reproduced on PostgreSQL 16 over real HTTP (a re
 | The submission date a client claims | R1 used it to exclude sessions "created after" it. A claimed or skewed date must never choose a session (E4). | Latent defect, fixed |
 | The actual cause on the user's staging application | **Not determinable from here.** No staging data was accessed. The user's flow matches several of the above; the Tracker now states which one applies (`documents_unavailable_reason`). | Unverified |
 
-### Migration correction
-R1 edited `0036_application_doc_snapshots` in place to add `association_basis`, on the stated belief that 0036 had not been applied outside disposable databases. Staging **is** at 0036, so that edit would have left staging without the column (the API would fail to read snapshots). 0036 is restored byte-for-byte to the deployed revision and the column now arrives in `0037_snapshot_association_basis` (additive, reversible; existing rows read `sole_session`).
+### Migration correction (superseded by R3)
+This section originally claimed that 0036 had to be restored to its 29b8919 content and that `association_basis` needed a new revision 0037. That was wrong; see "R3 reconcile" below. There is no 0037.
 
 ### Contract changes
 * Tracker rows: `documents_availability` (`frozen | historical | unknown_association | none`) and `documents_unavailable_reason` (`no_session | documents_not_prepared | job_documents_not_linked | unknown_association | null`). Document `association`: `confirming_session | linked_session | sole_session | job_document`.
@@ -85,4 +85,21 @@ R1 edited `0036_application_doc_snapshots` in place to add `association_basis`, 
 6. If no legitimate document source exists on staging (no profile, or generation disabled in a way that raises), say so; do not seed documents into a live account.
 
 ### Rollout
-Run `alembic upgrade head` (0037) on staging **before** deploying this API; the new code reads the `association_basis` column. Then the web.
+No migration. See R3: staging is already at the final head.
+
+
+## R3: reconcile the deployed Alembic history (XA-RC-06-B-R3)
+
+**What went wrong.** 0036 existed in two forms. The version at 29b8919 creates the snapshot table without `association_basis`. R1 (959b994) edited 0036 to add the column, and that is the revision staging was upgraded with: the live staging table has `association_basis VARCHAR(24) NOT NULL DEFAULT 'sole_session'` at revision 0036. In R2 I restored 0036 to the 29b8919 form (an older, never-deployed shape) and added `0037_snapshot_association_basis` to add the column again. On the deployed shape `alembic upgrade head` runs 0037 and fails with `DuplicateColumn: column "association_basis" ... already exists` (reproduced on PostgreSQL 16 against a database built by the deployed code; Postgres DDL is transactional, so nothing is half-applied and the version stays 0036). The R2 handoff's claim that staging was at the 29b8919 form was not verified against the deployed source.
+
+**Correction.**
+* 0036 is restored byte-for-byte from 959b994 (SHA-256 `b1a697c3247804c4e6a01dbc4bdc99a35598cfdd2a73ee743e56dd0c304b66cd`); a test pins the hash.
+* `0037_snapshot_association_basis` is removed. It only ever did `ADD COLUMN association_basis VARCHAR(24) NOT NULL DEFAULT 'sole_session'` and `DROP COLUMN` on downgrade: no index, constraint or other change. The deployed 0036 already supplies exactly that.
+* The head is `0036_application_doc_snapshots`. Staging needs **no schema migration**.
+* All R2 association fixes, reason messages, the CORS fix and the security protections are kept.
+
+**Values and legacy rows.** The bases the code writes are `confirming_session` (18 characters), `linked_session` (14), `sole_session` (12) and `job_document` (12); all fit 24 and `ASSOCIATION_BASES` is pinned by a test, including that a 25-character value is rejected. Rows written by 959b994 carry an explicit basis chosen under R1's stricter rules (named session, or the only prepared session), so none of them was defaulted into a provenance it did not have; the default only applies to a row inserted without a basis, which the application never does. R2 reads `sole_session` as "every prepared session for this job points at the same documents", of which R1's single-session case is a special case, so existing values are not over-claimed. No backfill or rewrite is performed.
+
+**Remaining limitation.** A database that was created from the 29b8919 form of 0036 (never deployed to staging) would lack the column. None is known; a read-only check for it is `SELECT 1 FROM information_schema.columns WHERE table_name='application_document_snapshots' AND column_name='association_basis'`.
+
+**Verification.** `test_deployed_schema_compat_postgres.py`, on disposable PostgreSQL 16: file hash, single head with no dangling revision, a fresh upgrade producing the exact deployed column, running the upgrade twice as a no-op, every basis value storing and an oversized one failing, default-basis rows staying readable, and (with `XA_DEPLOYED_API_DIR` pointing at a 959b994 checkout) a database migrated, populated and snapshotted by the deployed code then read by the corrected code without a migration, with edits unable to change the archive and new snapshots still creatable.
