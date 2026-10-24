@@ -32,6 +32,9 @@ export type LaunchOptions = {
   /** Extra Chromium switches (host-resolver MAP rules, certificate flags). */
   launchArgs?: string[];
   profileDir?: string;
+  /** Shown as the job in the assistant (default "Software Engineer" at "Acme"). */
+  jobTitle?: string;
+  company?: string;
 };
 
 /** The deployed website's protocol, driven against a real unpacked extension. */
@@ -40,7 +43,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
   const web = await webServer();
   const applicationUrl = opts.officialUrl ?? `${employer.origin}/jobs/${opts.sessionId}`;
   const sid = opts.sessionId;
-  const session = { session_id: sid, ats_type: opts.atsType, official_application_url: applicationUrl, job: { title: "Software Engineer", company: "Acme" },
+  const session = { session_id: sid, ats_type: opts.atsType, official_application_url: applicationUrl, job: { title: opts.jobTitle ?? "Software Engineer", company: opts.company ?? "Acme" },
     resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: opts.profile };
   const json = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
   const apiLog: string[] = [];

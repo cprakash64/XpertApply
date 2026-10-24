@@ -171,7 +171,7 @@ describe("application overlay isolation and accessibility", () => {
     expect(css).toContain("max-height: min(760px, calc(100dvh - 36px))");
     expect(css).toContain("right: 18px; bottom: 18px");
     expect(overlay.root.querySelector("[data-backdrop]")).toBeNull();
-    expect(overlay.host.style.pointerEvents).toBe("");
+    expect(overlay.host.style.pointerEvents).toBe("none");
   });
 
   it("does not clear unrelated document-local application state", () => {

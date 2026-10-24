@@ -1,4 +1,5 @@
 import { MSG } from "../messages";
+import { isolateHost, isolatedTextBase } from "./hostIsolation";
 
 export const TOOLBAR_DISCLOSURE_HOST_ID = "xpertapply-toolbar-disclosure-v1";
 
@@ -13,13 +14,14 @@ export function showToolbarDisclosure(ownerDocument: Document = document): void 
   ownerDocument.getElementById(TOOLBAR_DISCLOSURE_HOST_ID)?.remove();
   const host = ownerDocument.createElement("div");
   host.id = TOOLBAR_DISCLOSURE_HOST_ID;
+  isolateHost(host, { zIndex: 2147483647 });
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `
     <style>
       :host{all:initial}
-      .box{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:min(380px,calc(100vw - 32px));box-sizing:border-box;
+      .box{${isolatedTextBase({ fontFamily: "system-ui,-apple-system,Segoe UI,sans-serif", fontSize: "14px", lineHeight: "1.45", color: "#1a2b21" })}pointer-events:auto;position:fixed;right:16px;bottom:16px;z-index:2147483647;width:min(380px,calc(100vw - 32px));box-sizing:border-box;
         padding:18px;border-radius:14px;background:#fff;color:#1a2b21;border:1px solid rgba(57,93,70,.28);
-        box-shadow:0 12px 36px rgba(26,43,33,.22);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+        box-shadow:0 12px 36px rgba(26,43,33,.22)}
       h2{margin:0 0 8px;font-size:16px;line-height:1.3}
       ul{margin:0 0 14px;padding-left:18px}li{margin:0 0 6px}
       .row{display:flex;gap:8px;justify-content:flex-end}

@@ -194,6 +194,31 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     button("grantSiteAccess").disabled = false;
   }
 
+  /** One plain sentence on what XpertApply actually wrote and what is still the applicant's, so a partial fill never reads as done. */
+  function renderSummary(current: LaunchViewState): void {
+    const target = options.root.getElementById("summary");
+    if (!target) return;
+    let text = "";
+    if (current.sessionId != null && !current.failureCode) {
+      const required = current.requiredReviewRemaining ?? 0;
+      if (current.running) text = "XpertApply is filling this application.";
+      else if (/^completed/.test(current.state) || current.filled > 0) {
+        const wrote = `${required > 0 ? "Partially filled: " : ""}XpertApply filled ${current.filled} of ${current.fieldsDiscovered} fields. Values the employer or your browser had already entered are not counted.`;
+        const left = required > 0
+          ? ` ${required} required question${required === 1 ? " is" : "s are"} still unanswered.`
+          : current.reviewRequired > 0
+            ? ` ${current.reviewRequired} item${current.reviewRequired === 1 ? " needs" : "s need"} your review.`
+            : " Check each answer before you submit.";
+        const resume = current.resumeStatus === "uploaded" && (required > 0 || current.reviewRequired > 0)
+          ? " A resume is attached, but the application is not complete."
+          : "";
+        text = wrote + left + resume;
+      }
+    }
+    target.hidden = text === "";
+    if (target.textContent !== text) target.textContent = text;
+  }
+
   function renderDiagnostics(current: LaunchViewState): void {
     const diagnostics = options.diagnostics;
     const diag = options.root.getElementById("diag");
@@ -242,19 +267,19 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     setText("job", current.jobTitle ? `${current.jobTitle}${current.company ? " · " + current.company : ""}` : current.sessionId == null ? "No XpertApply application open" : "Application detected");
     const activation = deriveActivationState(current);
     setText("stage", activationLabel(activation, current.siteAccessOrigin) ?? STAGE_LABEL[current.state] ?? current.state);
+    renderSummary(current);
     setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : current.sessionId == null ? "—" : "Detecting…");
     setText("discovered", String(current.fieldsDiscovered));
     setText("filled", String(current.filled));
     setText("skipped", String(current.skipped));
     setText("review", String(current.reviewRequired));
     element("limited").hidden = !current.limited;
-    const finalNotice = element("final");
-    finalNotice.hidden = !current.reachedFinalStep;
-    // A visible submit control says nothing about whether the application is complete. Only claim "review, then submit" when
-    // nothing is known to be outstanding; otherwise say what is outstanding.
+    element("final").hidden = !current.reachedFinalStep;
+    // A visible submit control says nothing about whether the application is complete, so the notice says which it is. The counts
+    // live in the summary above; this card only says what the page is and who submits.
     const outstanding = current.requiredReviewRemaining ?? current.reviewRequired;
     setText("final", outstanding > 0
-      ? `The employer’s submit step is on this page, but ${outstanding} item${outstanding === 1 ? " still needs" : "s still need"} your review and XpertApply has not confirmed the application is complete. XpertApply never submits for you; check every answer and submit yourself only when you are ready.`
+      ? "The employer’s submit step is on this page, but the application is not complete. XpertApply never submits for you."
       : "You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.");
     // Documents belong to a prepared application; with none open there is nothing to prepare.
     setText("resume", current.sessionId == null ? "—" : documentLabel(current.resumeStatus));
@@ -359,12 +384,17 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     if (before !== accountStatus) render();
     account.hidden = false;
     if (response.state.status === "signed_in") {
-      account.textContent = `Connected as ${response.state.email}`;
+      const websiteLaunchSignedIn = view?.sessionId != null && !(typeof view.requestId === "string" && view.requestId.startsWith("direct-"));
+      account.dataset.kind = "account";
+      account.textContent = websiteLaunchSignedIn
+        ? `Extension signed in as ${response.state.email} · this application was opened from xpertapply.com`
+        : `Connected as ${response.state.email}`;
       if (disconnect) disconnect.hidden = !options.actions.disconnect;
     } else {
       // A page opened from xpertapply.com runs on that launch's own session, which is not the extension's account. Say which it
       // is, so "Extension connected" on the website is never read as a signed-in extension, and vice versa.
       const websiteLaunch = view?.sessionId != null && !(typeof view.requestId === "string" && view.requestId.startsWith("direct-"));
+      account.dataset.kind = websiteLaunch ? "website" : "disconnected";
       account.textContent = websiteLaunch
         ? "Extension not signed in · this application was opened from xpertapply.com"
         : "Not connected to XpertApply";

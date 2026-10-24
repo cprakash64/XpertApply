@@ -9,6 +9,7 @@
 
 import { OVERLAY_LAYOUT_EVENT, STATUS_SUPPRESSED_EVENT, overlayAvoidanceRect } from "../content/applicationOverlay";
 import { deepQueryAll } from "../dom/deepDom";
+import { isolateHost, isolatedTextBase } from "../content/hostIsolation";
 import { chooseBadgePlacement, type Box } from "./badgePlacement";
 
 
@@ -38,7 +39,7 @@ const STATUS: Record<PresentedFieldStatus, StatusDefinition> = {
 
 const LAYER_CSS = `
   :host{all:initial;position:fixed;inset:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147482999}
-  .status{position:fixed;left:0;top:0;display:flex;align-items:center;gap:4px;max-width:180px;
+  .status{${isolatedTextBase({ fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', fontSize: "11px", lineHeight: "1.25", color: "#176b46" })}position:fixed;left:0;top:0;display:flex;align-items:center;gap:4px;max-width:180px;
     padding:3px 7px;border:2px solid currentColor;border-radius:999px;background:#fff;color:var(--status-color);
     box-shadow:0 2px 7px rgba(0,0,0,.16);font:600 11px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
     white-space:nowrap;pointer-events:none;user-select:none}
@@ -63,6 +64,7 @@ function ensureLayer(): ShadowRoot | null {
   if (host || root) resetLayer();
   try {
     host = document.createElement("div");
+    isolateHost(host, { zIndex: 2147482999 });
     ownerDocument = document;
     ownerWindow = document.defaultView ?? window;
     root = host.attachShadow({ mode: "closed" });

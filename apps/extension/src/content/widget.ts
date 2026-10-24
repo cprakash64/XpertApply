@@ -367,7 +367,7 @@ export function createWidget(actions: {
           <div class="row"><button type="button" data-confirm="yes">Yes, I applied</button><button type="button" data-confirm="no">Not yet</button></div>
           <p class="confirmation-status"></p>
         </section>
-        <div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div>
+        <details class="tech-details" style="margin-top:8px"><summary style="font-size:11px;color:#5c675f;cursor:pointer">Technical details</summary><div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div></details>
         <div class="count"></div>
         <div class="counts-row"></div>
         <button class="review-toggle" type="button" aria-expanded="false" style="display:none"></button>
@@ -826,7 +826,6 @@ export function createWidget(actions: {
     el.innerHTML = `
       <div class="q">${escapeHtml(item.title)}${reqBadge}</div>
       <div class="why">${escapeHtml(item.explanation)}</div>`;
-
     // The stable failure code, on the card itself.
     //
     // It was only ever reachable by expanding the transaction trace, so the one

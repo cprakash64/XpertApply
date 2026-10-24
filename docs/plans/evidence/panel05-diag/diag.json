@@ -1,0 +1,70 @@
+{
+ "1366x768": {
+  "overlay": {
+   "runs": 33,
+   "overlaps": [],
+   "panel": {
+    "l": 938,
+    "t": 18,
+    "w": 410,
+    "h": 732
+   }
+  },
+  "widget": {
+   "runs": 286,
+   "overlaps": [
+    [
+     "Capture current control",
+     "BUTTON",
+     "TikTok adapter health unresolved · NOT_A",
+     "transaction-row",
+     148,
+     8
+    ],
+    [
+     "Capture current control",
+     "BUTTON",
+     "TikTok adapter health unresolved · NOT_A",
+     "transaction-row",
+     148,
+     6
+    ]
+   ],
+   "panel": null
+  }
+ },
+ "1440x900": {
+  "overlay": {
+   "runs": 33,
+   "overlaps": [],
+   "panel": {
+    "l": 1012,
+    "t": 122,
+    "w": 410,
+    "h": 760
+   }
+  },
+  "widget": {
+   "runs": 286,
+   "overlaps": [
+    [
+     "Capture current control",
+     "BUTTON",
+     "TikTok adapter health unresolved · NOT_A",
+     "transaction-row",
+     148,
+     8
+    ],
+    [
+     "Capture current control",
+     "BUTTON",
+     "TikTok adapter health unresolved · NOT_A",
+     "transaction-row",
+     148,
+     6
+    ]
+   ],
+   "panel": null
+  }
+ }
+}

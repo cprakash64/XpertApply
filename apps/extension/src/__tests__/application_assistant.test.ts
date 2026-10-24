@@ -9,7 +9,7 @@ import {
   type ApplicationAssistantController
 } from "../ui/applicationAssistant";
 
-const ids = ["job", "stage", "ats", "discovered", "filled", "skipped", "review", "limited", "final", "resume", "cover", "errors", "siteAccess", "siteAccessText", "diag", "diagBody"];
+const ids = ["job", "stage", "ats", "discovered", "filled", "skipped", "review", "limited", "final", "resume", "cover", "errors", "summary", "siteAccess", "siteAccessText", "diag", "diagBody"];
 const buttons = ["fill", "rescan", "next", "clear", "complete", "grantSiteAccess"];
 
 function mount(): void {
@@ -162,9 +162,26 @@ describe("shared application assistant", () => {
     await controller.refresh();
     const final = document.getElementById("final")!;
     expect(final.hidden).toBe(false);
-    expect(final.textContent).toContain("5 items still need your review");
+    expect(final.textContent).toContain("the application is not complete");
     expect(final.textContent).toMatch(/never submits for you/i);
     expect(final.textContent).not.toMatch(/Review everything, then submit/);
+  });
+
+  // XA-EXT-PANEL-05: a partial fill must read as partial, say what XpertApply itself wrote, and never let an attached resume stand in
+  // for a finished application.
+  it("distinguishes a partial fill from a completed one and counts only XpertApply's own writes", async () => {
+    view = makeView({ fieldsDiscovered: 35, filled: 4, reviewRequired: 31, requiredReviewRemaining: 22, resumeStatus: "uploaded" });
+    await controller.refresh();
+    const summary = document.getElementById("summary")!;
+    expect(summary.hidden).toBe(false);
+    expect(summary.textContent).toMatch(/^Partially filled: XpertApply filled 4 of 35 fields/);
+    expect(summary.textContent).toContain("already entered are not counted");
+    expect(summary.textContent).toContain("22 required questions are still unanswered");
+    expect(summary.textContent).toContain("resume is attached, but the application is not complete");
+    view = makeView({ fieldsDiscovered: 6, filled: 6, reviewRequired: 0, requiredReviewRemaining: 0 });
+    viewListener?.(42, view);
+    await vi.waitFor(() => expect(document.getElementById("summary")?.textContent).toContain("Check each answer before you submit"));
+    expect(document.getElementById("summary")?.textContent).not.toMatch(/Partially/);
   });
 
   it("separates the extension account from a website launch: a signed-out extension never reads as connected, and never hides a launch", async () => {
@@ -177,6 +194,7 @@ describe("shared application assistant", () => {
     await controller.refresh();
     await vi.waitFor(() => expect(document.getElementById("account")?.textContent).toMatch(/Extension not signed in/));
     expect(document.getElementById("account")?.textContent).toMatch(/opened from xpertapply\.com/);
+    expect(document.getElementById("account")?.dataset.kind).toBe("website");
     expect(document.getElementById("account")?.textContent).not.toMatch(/^Connected/);
     // a direct draft with no account is torn down to the single Connect state, whatever the cached view says
     view = makeView({ requestId: "direct-1" });

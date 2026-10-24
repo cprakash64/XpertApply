@@ -1,0 +1,161 @@
+{
+ "items": [
+  {
+   "q": "This question needs your answerRequired",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answerRequired",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "This question needs your answer",
+   "why": "XpertApply does not have a saved answer for this question.",
+   "code": "answer_missing"
+  },
+  {
+   "q": "Personal website",
+   "why": "XpertApply found this field but isn't confident enough to fill it automatically.",
+   "code": null
+  },
+  {
+   "q": "Which country do you currently live in?Required",
+   "why": "Choose the employer's country option that matches your saved location.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 1: Please describe in as much detail as you can how your experience relates to requirement number 1 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 2: Please describe in as much detail as you can how your experience relates to requirement number 2 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 3: Please describe in as much detail as you can how your experience relates to requirement number 3 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 4: Please describe in as much detail as you can how your experience relates to requirement number 4 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 5: Please describe in as much detail as you can how your experience relates to requirement number 5 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Scrolling section question 6: Please describe in as much detail as you can how your experience relates to requirement number 6 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 2 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 3 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 5 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Please describe in as much detail as you can how your experience relates to requirement number 6 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 8 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "YesRequired",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Please describe in as much detail as you can how your experience relates to requirement number 11 of this role, including tools and outcomes *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 12 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "YesRequired",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 15 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 17 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 18 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  },
+  {
+   "q": "Question 20 about your background and preferences *Required",
+   "why": "XpertApply tried to fill this, but the page didn't accept the value.",
+   "code": null
+  }
+ ],
+ "values": {
+  "_systemfield_name": "filled",
+  "_systemfield_email": "filled",
+  "_systemfield_phone": "filled",
+  "location": "empty",
+  "linkedin": "filled"
+ }
+}

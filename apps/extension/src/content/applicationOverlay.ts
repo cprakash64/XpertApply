@@ -1,3 +1,5 @@
+import { isolateHost, isolatedTextBase } from "./hostIsolation";
+
 /** Dormant, document-local foundation for the future in-page assistant. */
 export const APPLICATION_OVERLAY_HOST_ID = "xpertapply-assistant-overlay-v1";
 
@@ -71,6 +73,7 @@ export function ensureOverlay(ownerDocument: Document = document): ApplicationOv
 
   const host = ownerDocument.createElement("div");
   host.id = APPLICATION_OVERLAY_HOST_ID;
+  isolateHost(host, { zIndex: 2147483000 });
   // CLOSED on purpose, and it must stay closed: with an open root any script on the
   // employer page could read the overlay (job, company, progress) and synthesise
   // clicks on Fill / Clear / Mark complete. Tests reach it over the DevTools
@@ -210,6 +213,8 @@ function overlayMarkup(): string {
       }
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
+      /* Everything the host inherited from the page (see hostIsolation.ts) is discarded here. */
+      [data-overlay-root] { ${isolatedTextBase({ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif', fontSize: "14px", lineHeight: "1.45", color: "#10243a" })} pointer-events: none; }
       .panel {
         position: fixed; right: 18px; bottom: 18px;
         width: min(410px, calc(100% - 28px)); max-width: 420px;
@@ -221,11 +226,11 @@ function overlayMarkup(): string {
         -webkit-backdrop-filter: blur(22px) saturate(145%);
         backdrop-filter: blur(22px) saturate(145%);
       }
-      .header { min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 18px; border-bottom: 1px solid rgba(15, 35, 50, 0.07); }
+      .header { min-height: 62px; display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-bottom: 1px solid rgba(15, 35, 50, 0.07); }
       .identity { min-width: 0; flex: 1; }
       .brand { margin: 0; font-size: 15px; line-height: 20px; font-weight: 680; letter-spacing: -0.01em; }
-      .context { margin: 1px 0 0; color: #667687; font-size: 12px; line-height: 16px; }
-      .controls { display: flex; align-items: center; gap: 4px; }
+      .context { margin: 2px 0 0; color: #667687; font-size: 12px; line-height: 16px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+      .controls { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
       button { appearance: none; border: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
       .icon-button { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 999px; background: rgba(255,255,255,.38); }
       .icon-button:hover { background: rgba(16, 36, 58, 0.06); }
@@ -234,25 +239,35 @@ function overlayMarkup(): string {
       .close-icon::before, .close-icon::after { content: ""; position: absolute; left: 6px; top: 1px; width: 1.5px; height: 12px; border-radius: 2px; background: currentColor; }
       .close-icon::before { transform: rotate(45deg); }
       .close-icon::after { transform: rotate(-45deg); }
-      .body { max-height: calc(100vh - 98px); max-height: calc(100dvh - 98px); padding: 22px; overflow: auto; overflow-wrap: anywhere; }
-      .status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #155d78; font-size: 12px; font-weight: 650; }
-      .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #1da8c7; }
-      .message { margin: 0; color: #44566a; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
-      .assistant-main { display: grid; gap: 16px; }
-      .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; }
+      .body { max-height: calc(100vh - 98px); max-height: calc(100dvh - 98px); padding: 18px 20px 20px; overflow: auto; overflow-wrap: anywhere; }
+      .assistant-main { display: grid; gap: 14px; min-width: 0; }
+      .card { min-width: 0; padding: 14px 16px; border: 1px solid rgba(15, 35, 50, 0.08); border-radius: 16px; background: rgba(255, 255, 255, 0.72); }
+      .status { display: flex; align-items: flex-start; gap: 9px; margin: 0; color: #0f4a63; font-size: 14px; line-height: 1.35; font-weight: 680; }
+      .status-dot { width: 8px; height: 8px; margin-top: 5px; flex: 0 0 auto; border-radius: 50%; background: #1da8c7; }
+      .summary { margin: 8px 0 0 17px; color: #44566a; font-size: 13px; line-height: 1.5; }
+      .section-title { margin: 0 0 8px; color: #667687; font-size: 11px; line-height: 1.3; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; padding: 3px 0; }
+      .row > :first-child { flex: 0 0 auto; }
       .row > :last-child { min-width: 0; text-align: right; }
       .muted { color: #667687; }
-      .badge { display: inline-block; max-width: 70%; padding: 2px 8px; border-radius: 999px; background: rgba(21, 152, 189, 0.08); font-size: 12px; }
-      .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-      .stat { min-width: 0; padding: 8px 4px; text-align: center; }
-      .stat b { display: block; font-size: 18px; color: #10243a; }
+      .badge { display: inline-block; max-width: 70%; padding: 2px 9px; border-radius: 999px; background: rgba(21, 152, 189, 0.1); color: #0f4a63; font-size: 12px; font-weight: 600; }
+      .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+      .stat { min-width: 0; padding: 10px 12px; border-radius: 12px; background: rgba(16, 36, 58, 0.045); }
+      .stat b { display: block; color: #10243a; font-size: 22px; line-height: 1.15; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .stat span { display: block; margin-top: 3px; color: #566a7e; font-size: 12px; line-height: 1.3; }
       .actions { display: grid; gap: 8px; }
-      .actions button, #grantSiteAccess { min-height: 40px; padding: 9px 12px; border: 1px solid rgba(15, 35, 50, 0.12); border-radius: 10px; background: rgba(255,255,255,.72); }
-      .actions .primary, #grantSiteAccess { border-color: #155d78; background: #155d78; color: #fff; }
+      .actions-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .actions-more { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid rgba(15, 35, 50, 0.08); }
+      .actions button, #grantSiteAccess { min-height: 40px; padding: 9px 12px; border: 1px solid rgba(15, 35, 50, 0.14); border-radius: 10px; background: rgba(255,255,255,.8); line-height: 1.3; white-space: normal; }
+      .actions .primary, #grantSiteAccess { border-color: #155d78; background: #155d78; color: #fff; font-weight: 650; }
       .actions .danger { color: #8a3528; border-color: rgba(138,53,40,.28); background: transparent; }
       button:disabled { cursor: not-allowed; opacity: .55; }
-      .warn { padding: 14px; border: 1px solid rgba(155,110,15,.14); border-radius: 16px; background: rgba(255,248,232,.82); color: #594711; font-size: 13px; }
-      .note { margin: 0; padding: 12px; border-radius: 12px; background: rgba(16,36,58,.04); color: #526276; font-size: 13px; }
+      .warn { margin: 0; padding: 12px 14px; border: 1px solid rgba(155,110,15,.2); border-radius: 14px; background: rgba(255,248,232,.9); color: #594711; font-size: 13px; line-height: 1.5; }
+      .warn p { margin: 0 0 10px; }
+      .note { margin: 0; padding: 10px 12px; border-radius: 12px; background: rgba(16,36,58,.04); color: #526276; font-size: 13px; line-height: 1.5; }
+      .account { display: grid; gap: 4px; }
+      .account[data-kind="disconnected"] { background: rgba(155,110,15,.08); }
+      .quiet { min-height: 32px; padding: 6px 8px; background: transparent; color: #155d78; font-size: 13px; line-height: 1.3; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
       .workflow-extensions:empty { display: none; }
       .restore-pill {
         position: fixed; right: 16px; bottom: 16px; min-width: 126px; height: 44px;
@@ -268,7 +283,8 @@ function overlayMarkup(): string {
       button:focus-visible { outline: 3px solid #1598bd; outline-offset: 2px; } h2:focus, h2:focus-visible { outline: none; }
       @media (max-width: 363px) {
         .panel { right: 12px; bottom: 12px; width: calc(100% - 24px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
-        .header { padding-left: 12px; } .body { padding: 20px 16px; } .restore-pill { right: 12px; bottom: 12px; }
+        .header { padding-left: 12px; } .body { padding: 16px 14px; } .restore-pill { right: 12px; bottom: 12px; }
+        .actions-secondary { grid-template-columns: minmax(0, 1fr); } .stat b { font-size: 20px; }
       }
       @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
       @media (forced-colors: active) {
@@ -289,30 +305,42 @@ function overlayMarkup(): string {
         </header>
         <div class="body">
           <main class="assistant-main">
-            <p class="status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="stage">Ready when you are</span></p>
-            <div class="row"><span class="muted">ATS</span><span class="badge" id="ats">—</span></div>
+            <section class="card" aria-label="Application status">
+              <p class="status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span id="stage">Ready when you are</span></p>
+              <p class="summary" id="summary" hidden></p>
+            </section>
             <div id="siteAccess" class="warn" hidden><p id="siteAccessText"></p><button id="grantSiteAccess" type="button">Allow XpertApply on this site</button></div>
             <div id="limited" class="warn" hidden>Limited support for this ATS. Complete unsupported fields manually.</div>
-            <div class="row"><span class="muted">Fields discovered</span><span id="discovered">0</span></div>
-            <div class="stats">
-              <div class="stat"><b id="filled">0</b><span class="muted">Filled by XpertApply</span></div>
-              <div class="stat"><b id="skipped">0</b><span class="muted">Skipped</span></div>
-              <div class="stat"><b id="review">0</b><span class="muted">Review</span></div>
-            </div>
-            <div class="row"><span class="muted">Resume</span><span id="resume">—</span></div>
-            <div class="row"><span class="muted">Cover letter</span><span id="cover">—</span></div>
+            <section class="card" aria-label="Field summary">
+              <div class="row"><span class="muted">Application form</span><span class="badge" id="ats">—</span></div>
+              <div class="stats">
+                <div class="stat"><b id="discovered">0</b><span>Fields found</span></div>
+                <div class="stat"><b id="filled">0</b><span>Filled by XpertApply</span></div>
+                <div class="stat"><b id="skipped">0</b><span>Skipped</span></div>
+                <div class="stat"><b id="review">0</b><span>Needs review</span></div>
+              </div>
+            </section>
+            <section class="card" aria-label="Documents">
+              <p class="section-title">Documents</p>
+              <div class="row"><span class="muted">Resume</span><span id="resume">—</span></div>
+              <div class="row"><span class="muted">Cover letter</span><span id="cover">—</span></div>
+            </section>
             <div id="errors" role="alert" hidden class="warn"></div>
-            <div id="suppressedMarks" hidden class="muted"></div>
-            <div id="final" hidden class="warn">You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.</div>
+            <div id="final" hidden class="warn">You’ve reached the employer’s submit step. XpertApply never submits for you.</div>
+            <p id="suppressedMarks" hidden class="note"></p>
             <div class="actions">
               <button class="primary" id="fill" type="button">Fill application</button>
-              <button id="rescan" type="button">Continue filling</button>
-              <button id="next" type="button">Refresh application status</button>
-              <button class="danger" id="clear" type="button">Clear XpertApply-filled fields</button>
-              <button id="complete" type="button">Mark application complete</button>
+              <div class="actions-secondary">
+                <button id="rescan" type="button">Continue filling</button>
+                <button id="next" type="button">Refresh status</button>
+              </div>
+              <div class="actions-more">
+                <button class="danger" id="clear" type="button">Clear XpertApply-filled fields</button>
+                <button id="complete" type="button">Mark application complete</button>
+              </div>
             </div>
-            <p class="note">Review the information, then submit directly on the employer’s website.</p>
-            <p class="note" id="account" hidden></p>
+            <p class="note">XpertApply never submits for you. Review the form, then submit on the employer’s website.</p>
+            <section class="card account" id="account" hidden></section>
             <button id="disconnect" type="button" class="quiet" hidden>Disconnect XpertApply</button>
             <button id="disableSite" type="button" class="quiet">Don’t open XpertApply here automatically</button>
             <div class="workflow-extensions" data-overlay-workflow-extensions></div>
