@@ -38,7 +38,10 @@ describe("site-access privacy disclosure", () => {
     // a single call site, an exact-origin pattern, gated by the provider registry. (It used to never
     // request anything, which left a first visit with no compliant way to grant the site.)
     const toolbarCode = toolbar.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    expect(toolbarCode.match(/permissions\.request\(/g)).toHaveLength(1);
+    // XA-RC-06: there is still exactly ONE call site. The toolbar click and launches reach it only through the provider gate
+    // (requestAtsOriginInGesture); the assistant's own Allow button reaches it for any https origin, which must be one exact host.
+    expect(toolbarCode.match(/\.request\(\{ origins: \[pattern\] \}\)/g)).toHaveLength(1);
+    expect(toolbarCode).toMatch(/\^https:\\\/\\\/\[a-z0-9\]\[a-z0-9\.-\]\*\\\/\\\*\$/);
     expect(toolbar).toContain("origins: [pattern]");
     expect(toolbar).toContain("providerForUrl(url)");
     expect(toolbar).toContain("originPatternFor(url)");

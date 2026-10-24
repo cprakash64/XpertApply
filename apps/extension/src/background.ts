@@ -130,7 +130,7 @@ import {
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
-import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGesture, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGesture, requestOriginInGesture, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
@@ -890,17 +890,19 @@ function routeRuntimeMessage(
       return false;
 
     case MSG.OVERLAY_OPEN_PERMISSION_SURFACE: {
-      // The user's click on the in-page "Allow" button. A content script cannot call
-      // chrome.permissions, so the worker asks Chrome for the origin while that click's gesture is
-      // still live (first statement, no await before it) when it is a known ATS host. Anything else,
-      // or a refusal, falls back to Chrome's own host-access prompt for the tab.
-      const gestureRequest = requestAtsOriginInGesture(sender.tab?.url ?? sender.url);
+      // The user's click on the in-page "Allow" button, for the exact origin the assistant is showing. A content script cannot call
+      // chrome.permissions, so the worker asks Chrome's own consent dialog for that origin while the click's gesture is still live
+      // (first statement, no await before it). It does so for ANY https origin, not only known ATS hosts: a custom careers domain
+      // (careers.withwaymo.com) is exactly where a user needs this button to work. The origin is the sender tab's own URL as Chrome
+      // recorded it. A refusal is reported as one ("denied"); only a missing gesture or API falls back to Chrome's toolbar request.
+      const asked = requestOriginInGesture(sender.tab?.url ?? sender.url);
       void requireAuthorizedOverlayContextSender(sender)
         .then(async ({ tabId }) => {
-          const surface = await openPermissionSurface(tabId, sender.tab?.windowId, await gestureRequest);
-          return surface;
+          const outcome = await asked;
+          if (outcome === "denied") return "denied" as const;
+          return openPermissionSurface(tabId, sender.tab?.windowId, outcome === "granted");
         })
-        .then((surface) => sendResponse({ ok: surface !== null, surface }))
+        .then((surface) => sendResponse({ ok: surface !== null && surface !== "denied", surface }))
         .catch((error) => sendResponse({ ok: false, error: safeMessage(error) }));
       return true;
     }
@@ -1939,7 +1941,9 @@ async function handleContentReady(
   if (pending?.source === "direct" && isTopFrame) {
     const signedIn = await extensionAuth.state();
     const stillOwned = signedIn.status === "signed_in" && signedIn.userId === pending.directUserId;
-    if (!stillOwned || !context.frameUrl || !directDraftStillMatches(pending, context.frameUrl)) {
+    // The user's per-site off switch ends a draft's automatic life too: a reload in the same tab must not quietly resume it.
+    const switchedOff = await isAutoOpenDisabled(pending.expectedOrigin);
+    if (!stillOwned || switchedOff || !context.frameUrl || !directDraftStillMatches(pending, context.frameUrl)) {
       await clearTab(tabId, generation);
       pending = null;
     }

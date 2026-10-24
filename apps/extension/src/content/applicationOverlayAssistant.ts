@@ -124,7 +124,11 @@ export function mountApplicationAssistantOverlay(options: {
         if (typeof chrome !== "undefined" && chrome.permissions?.request) {
           return chrome.permissions.request({ origins: [pattern] });
         }
-        const response = await sendWorker<ActionResponse>({ type: MSG.OVERLAY_OPEN_PERMISSION_SURFACE });
+        const response = await sendWorker<ActionResponse & { surface?: string | null }>({ type: MSG.OVERLAY_OPEN_PERMISSION_SURFACE });
+        // "granted": Chrome's dialog was accepted and the worker re-checks it with permissions.contains before anything resumes.
+        // "denied": the user said no; nothing is pending in Chrome, so this is a refusal, not a prompt to wait for.
+        if (response?.surface === "granted") return true;
+        if (response?.surface === "denied") return false;
         return response?.ok === true ? "deferred" : false;
       },
       disableAutoOpen: () => sendWorker<ActionResponse>({ type: MSG.OVERLAY_DISABLE_AUTO_OPEN }),

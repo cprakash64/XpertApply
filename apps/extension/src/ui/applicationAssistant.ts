@@ -185,7 +185,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     setText("siteAccessText", current.siteAccess === "site_access_revoked"
       ? `${where} Access was removed in Chrome, so XpertApply has stopped reading this page. Allow it again to continue.`
       : current.siteAccess === "site_access_denied"
-      ? `${where} Access was declined. XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields.`
+      ? `${where} Access was declined, so nothing on this page has been read. Choose the button to ask Chrome again. If Chrome does not ask, open the Extensions menu (puzzle icon), choose XpertApply, and allow it on this site.`
       : `${where} XpertApply needs permission to read relevant application-page and form information so it can identify and fill fields. Relevant information may be sent to XpertApply's service only for features you request.`);
     setText("grantSiteAccess", `Allow XpertApply on ${site}`);
     // renderUnavailable() hides this button along with the rest; showing the block
