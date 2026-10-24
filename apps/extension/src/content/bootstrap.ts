@@ -430,6 +430,7 @@ const TERMINAL_FAILURE_CODES = new Set([
 
 async function initAtsPage(): Promise<void> {
   installSubmissionGestureObserver();
+  installApplyClickObserver();
   // Cheap and always safe to register: answers liveness pings and gives an
   // unmatched frame a second chance if the tab becomes bound to a handoff
   // shortly after this frame's own (negative) initial check — e.g. an
@@ -521,6 +522,41 @@ async function initAtsPage(): Promise<void> {
   });
 
   await checkHandoffAndStart("automatic_launch");
+}
+
+
+/**
+ * The user clicks the employer's own Apply control themselves.
+ *
+ * XpertApply follows the navigation that click causes only if the worker knows the click happened, because a live Apply activation
+ * is the evidence that lets the launch's tab move to the next page (a shared employer domain is never enough). The automatic path
+ * records that activation before it clicks; a user's own click, which is the only path when the page offers several candidate Apply
+ * controls, had no such record, so the next page was refused as "not the prepared application". This records it, from a TRUSTED
+ * click on a control that already passed the candidate rules (so never a Submit, a consent control, or XpertApply's own UI). The
+ * click itself is untouched: nothing is prevented, repeated or synthesised.
+ */
+function installApplyClickObserver(): void {
+  // Called from initAtsPage() while the module is still evaluating, before the `isTopFrame` initialiser below have run,
+  // so this must not read module-level state declared later in the file. initAtsPage runs once per claimed instance.
+  if (window !== window.top) return;
+  document.addEventListener("click", (event) => {
+    if (!event.isTrusted || !isCurrentInstance() || !session || !(event.target instanceof Element)) return;
+    const hit = findActivationCandidates(document).find((candidate) => candidate.element.contains(event.target as Node));
+    if (!hit) return;
+    const anchor = hit.element.closest("a[href]");
+    const destination = resolveApplyDestination(hit.element, location.href);
+    void sendRuntime({
+      type: MSG.PREPARE_APPLICATION_LAUNCH,
+      sessionId: session.sessionId,
+      sourceUrl: location.href,
+      normalizedCtaText: accessibleName(hit.element).toLowerCase().replace(/\s+/g, " ").trim(),
+      confidence: hit.score,
+      href: destination.ok ? destination.destination.url : null,
+      target: anchor?.getAttribute("target") ?? hit.element.getAttribute("target"),
+      expectedDestinationOrigin: destination.ok ? new URL(destination.destination.url).origin : null,
+      jobFingerprint: shortHash(`${session.company ?? ""}|${session.jobTitle ?? ""}|${session.officialUrl ?? location.href}`)
+    });
+  }, true);
 }
 
 function installSubmissionGestureObserver(): void {
@@ -1079,7 +1115,7 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
       : canOpen
         ? "Click once to open the application form. XpertApply will continue automatically."
         : stillOnEntryUrl
-          ? "This looks like a job listing rather than an application form. Open the employer's apply link, then choose Retry."
+          ? "Click Apply now to continue. XpertApply will follow you to the application form."
           : "The application page opened, but its form did not finish loading in time. Choose Retry.";
 
   log.info("destination discovery terminal", {
@@ -1101,7 +1137,10 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
       ? "CONSENT_OVERLAY_BLOCKING"
       : canOpen
         ? "NAVIGATION_NEEDS_USER_GESTURE"
-        : code
+        // Still on the job-details page and no single Apply control could be chosen safely: say so, instead of a form timeout.
+        : stillOnEntryUrl && code !== "APPLICATION_FORM_TOO_LARGE" && code !== "FIELD_DISCOVERY_RETURNED_ZERO"
+          ? (findActivationCandidates(document).length > 0 ? "APPLICATION_CTA_AMBIGUOUS" : "APPLICATION_CTA_NOT_FOUND")
+          : code
   });
 }
 
@@ -1504,7 +1543,9 @@ async function activateApplicationSurfaceOnce(): Promise<SurfaceActivation> {
       failureCode: candidates.length ? "APPLICATION_CTA_AMBIGUOUS" : "APPLICATION_CTA_NOT_FOUND"
     };
     log.debug("no safe application-surface control on this page");
-    void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: "FORM_NOT_RENDERED" });
+    // Several plausible Apply controls and no way to tell which is this job's is a different state from "no form yet": the user is
+    // asked to choose, and the launch follows whichever they click (see installApplyClickObserver).
+    void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: candidates.length ? "APPLICATION_CTA_AMBIGUOUS" : "FORM_NOT_RENDERED" });
     return "no_candidate";
   }
 

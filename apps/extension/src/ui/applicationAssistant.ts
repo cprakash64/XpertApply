@@ -65,8 +65,8 @@ const STAGE_LABEL: Record<string, string> = {
   idle: "Idle",
   preparing: "Preparing…",
   package_ready: "Ready",
-  opening_tab: "Opening application…",
-  waiting_for_tab: "Opening application…",
+  opening_tab: "Opening the employer’s application form…",
+  waiting_for_tab: "Opening the employer’s application form…",
   waiting_for_content_script: "Loading the application form…",
   fetching_package: "Loading your prepared application…",
   detecting_ats: "Detecting application…",
@@ -109,7 +109,9 @@ const FAILURE_LABEL: Record<string, string> = {
   NO_APPLICATION_FORM: "XpertApply couldn’t identify an application form on this page.",
   APPLICATION_FORM_AMBIGUOUS: "This page has more than one possible application form, so XpertApply did not guess. Fill it manually.",
   CONSENT_OVERLAY_BLOCKING: "A cookie or consent banner is covering the page. Dismiss it, then choose “Fill application”.",
-  NAVIGATION_NEEDS_USER_GESTURE: "Open the application form yourself, then choose “Fill application”.",
+  NAVIGATION_NEEDS_USER_GESTURE: "Click Apply now to continue. XpertApply will follow you to the application form.",
+  APPLICATION_CTA_AMBIGUOUS: "Click Apply now to continue. XpertApply will follow you to the application form.",
+  APPLICATION_CTA_NOT_FOUND: "Click Apply now to continue. XpertApply will follow you to the application form.",
   SITE_ACCESS_DENIED: "XpertApply can’t fill this application without access to the site.",
   INTERNAL_HANDOFF_FAILURE: "XpertApply couldn’t hand this application to the page. Reopen it from XpertApply."
 };

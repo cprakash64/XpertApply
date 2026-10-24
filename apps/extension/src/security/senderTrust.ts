@@ -227,6 +227,21 @@ function joinsWorkflow(launch: PendingLaunch, candidate: URL): boolean {
 }
 
 /**
+ * The URL a TOP frame is at right now, as far as Chrome can tell.
+ *
+ * After a same-document navigation (history.pushState, a hash change, a client-side router) Chrome keeps reporting the document's
+ * ORIGINAL URL as `sender.url`, while `sender.tab.url` follows the route. A single-page application that mounts its form on a new
+ * route is therefore described by two URLs, and only the tab's is current. The tab's URL is used only when it shares the frame's
+ * origin, which is exactly what a same-document navigation guarantees; a tab that has gone to another origin does not vouch for a
+ * frame that is still reporting the old one. Both values come from Chrome's MessageSender, never from the message body.
+ */
+export function currentTopFrameUrl(sender: SenderContext): URL | null {
+  if (!sender.isTopFrame || !sender.frameUrl) return sender.frameUrl;
+  const tab = parseHttpUrl(sender.tabUrl);
+  return tab && tab.origin === sender.frameUrl.origin ? tab : sender.frameUrl;
+}
+
+/**
  * May this exact document receive the session package for this launch?
  *
  * Deny by default. Exactly two shapes are authorized:
@@ -252,8 +267,9 @@ export function authorizeFrameForLaunch(
   if (!sender) return { ok: false, reason: "NO_SENDER_TAB" };
 
   if (sender.isTopFrame) {
-    if (!sender.frameUrl) return { ok: false, reason: "FRAME_ORIGIN_UNRESOLVABLE" };
-    return urlsMatchForHandoff(launch.applicationUrl, sender.frameUrl.href)
+    const current = currentTopFrameUrl(sender);
+    if (!current) return { ok: false, reason: "FRAME_ORIGIN_UNRESOLVABLE" };
+    return urlsMatchForHandoff(launch.applicationUrl, current.href)
       ? { ok: true, isTopFrame: true }
       : { ok: false, reason: "HANDOFF_URL_MISMATCH" };
   }

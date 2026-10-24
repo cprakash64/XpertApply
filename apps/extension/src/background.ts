@@ -93,6 +93,7 @@ import {
   authorizeFrameForSubmission,
   authorizeFrameForLaunch,
   authorizeOverlayDocument,
+  currentTopFrameUrl,
   describeOverlaySender,
   describeSender,
   originJoinsLaunchWorkflow,
@@ -548,6 +549,22 @@ async function navigateToApplicationDestination(
 }
 
 /**
+ * Is there evidence, beyond a shared domain, that this tab is part of this launch?
+ *   - it already holds this launch (the tab the user started in, or one the worker bound to it);
+ *   - a live Apply activation of this session names it as the source or the destination of the hop;
+ *   - Chrome says it was opened by the launch's own tab (a popup, a target=_blank link the user or the page followed).
+ */
+async function tabHasLaunchEvidence(tabId: number, launch: PendingLaunch): Promise<boolean> {
+  if (launch.targetTabId === tabId) return true;
+  const bound = await getPending(tabId);
+  if (bound && bound.sessionId === launch.sessionId) return true;
+  const activation = await readPendingActivation();
+  if (activation && activation.sessionId === launch.sessionId && (activation.sourceTabId === tabId || activation.destinationTabId === tabId)) return true;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  return typeof tab?.openerTabId === "number" && tab.openerTabId === launch.targetTabId;
+}
+
+/**
  * Re-establish this tab's binding to the active application workflow.
  *
  * Called by a destination page that has no usable session — typically because
@@ -575,6 +592,13 @@ async function reconnectWorkflow(
   }
   if (!originJoinsWorkflow(active.officialUrl ?? active.applicationUrl, candidate)) {
     return { ok: false, reason: "origin_not_allowed" };
+  }
+  // The origin graph says a page MAY belong to this workflow; it does not say THIS tab does. Another job on the same employer, opened
+  // in another tab, shares the registrable domain too and must never inherit the applicant's session. A tab takes part only on
+  // evidence that ties it to this launch.
+  if (!(await tabHasLaunchEvidence(tabId, active))) {
+    log.info("workflow reconnect refused", { stage: "rebind_request", reason: "tab_not_part_of_launch" });
+    return { ok: false, reason: "tab_not_part_of_launch" };
   }
 
   await putPending(tabId, { ...active, targetTabId: tabId }, generation);
@@ -619,12 +643,18 @@ async function bindTabToLaunch(
   generation: AuthorityGeneration
 ): Promise<void> {
   await putPending(tabId, launch, generation);
+  let carried: Awaited<ReturnType<typeof getPackage>> = null;
   if (typeof sourceTabId === "number" && sourceTabId !== tabId) {
-    const carried = await getPackage(sourceTabId);
+    carried = await getPackage(sourceTabId);
     if (carried) {
       await putPackage(tabId, carried, generation);
       log.info("carried session package to destination tab");
     }
+  }
+  // The assistant renders from the tab's VIEW. A destination tab with a launch and a package but no view reads as "no application is
+  // open here" (0 fields, no documents) while the page is bound and being filled, so it gets the initial view a bound tab always has.
+  if (!(await getView(tabId))) {
+    await putView(tabId, initialView(tabId, launch, carried?.session.company ?? null, carried?.session.jobTitle ?? null), generation);
   }
   await ensureContentReady(tabId, generation).catch(() => undefined);
 }
@@ -1901,6 +1931,52 @@ async function recordSiteAccess(
 // Readiness handshake (pull-based)
 // --------------------------------------------------------------------------- //
 /**
+ * The launch's own tab has just loaded a document whose URL the launch does not yet name. Is that the page the user's Apply click was
+ * heading for?
+ *
+ * The launch stores the URL it expects ("the job page"), and a click on the employer's "Apply now" moves the tab somewhere the page,
+ * not XpertApply, chose: a script-driven `location.href`, a redirect, an ATS hand-off. The worker advances the stored URL from
+ * `tabs.onUpdated`, but that is asynchronous (storage reads and writes) and the new document's CONTENT_READY can arrive first. Judging
+ * that arrival against a URL that is about to be replaced turned a valid navigation into HANDOFF_URL_MISMATCH, which is terminal and
+ * non-recoverable, so the assistant never opened and the form read "Detecting… 0 fields" (XA-EXT-NAV-01, reproduced).
+ *
+ * What counts as evidence, all of it supplied by Chrome or by state this worker wrote:
+ *   - the sender is the TOP frame of the launch's own tab (`targetTabId`), the tab the Apply workflow was started in;
+ *   - an unexpired Apply activation exists for this very session and was recorded for this tab (the click that began the hop);
+ *   - the document's origin joins the workflow's origin graph (same registrable domain as the job page, or an allow-listed ATS);
+ *   - the activation has not already followed several hops.
+ * The same employer domain alone is never enough: without a live activation for this session and tab, nothing changes.
+ */
+async function adoptActivationDestination(
+  pending: PendingLaunch,
+  context: SenderContext,
+  generation: AuthorityGeneration
+): Promise<PendingLaunch | null> {
+  if (!context.isTopFrame || !context.frameUrl || pending.source === "direct") return null;
+  if (pending.targetTabId !== context.tabId) return null;
+  const arrived = currentTopFrameUrl(context) ?? context.frameUrl;
+  const activation = await readPendingActivation();
+  if (!activation || activation.sessionId !== pending.sessionId) return null;
+  if (activation.sourceTabId !== context.tabId && activation.destinationTabId !== context.tabId) return null;
+  if (activation.redirectSequence.length > 6) return null;
+  const url = arrived;
+  const loopback = ["localhost", "127.0.0.1"].includes(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return null;
+  if (!originJoinsLaunchWorkflow(pending, url)) return null;
+  const advanced: PendingLaunch = { ...pending, applicationUrl: url.toString(), expectedOrigin: url.origin, targetTabId: context.tabId };
+  await putPending(context.tabId, advanced, generation);
+  const next = safeOriginPath(url.toString());
+  await writePendingActivation({
+    ...activation,
+    destinationTabId: context.tabId,
+    state: "DESTINATION_DETECTED",
+    redirectSequence: activation.redirectSequence.at(-1) === next ? activation.redirectSequence : [...activation.redirectSequence, next].slice(-12)
+  }, generation);
+  log.info("application destination adopted from a live activation", { tabId: context.tabId, stage: "destination_adopted" });
+  return advanced;
+}
+
+/**
  * The single gate every ATS-page content script frame must pass before it is
  * allowed to touch the DOM. Employer and ATS origins carry no install-time
  * authority (Stage 3C): there is no declarative content script for them, and a
@@ -2002,7 +2078,14 @@ async function handleContentReady(
       await putView(tabId, initialView(tabId, pending, null, null), generation);
     }
   }
-  const reject = validateLaunch(pending, context);
+  let reject = validateLaunch(pending, context);
+  if (reject === "HANDOFF_URL_MISMATCH") {
+    const adopted = await adoptActivationDestination(pending, context, generation);
+    if (adopted) {
+      pending = adopted;
+      reject = validateLaunch(pending, context);
+    }
+  }
   if (reject) {
     // A REFUSED NESTED FRAME IS NOT A TAB FAILURE. Third-party frames — ad
     // slots, analytics, chat widgets — are a normal part of employer pages, and
@@ -2015,6 +2098,12 @@ async function handleContentReady(
       sendResponse({ ok: true, matched: false, error: reject, launch: null });
       return;
     }
+    log.info("top frame refused", {
+      tabId, reason: reject,
+      // Structure only, never a URL: was the sender the tab's CURRENT document, and does the launch point at where the tab is now?
+      status: context.frameUrl && context.tabUrl && context.frameUrl.href.split("#")[0] === context.tabUrl.split("#")[0] ? "current_document" : "departing_document",
+      stage: context.tabUrl && urlsMatchForHandoff(pending.applicationUrl, context.tabUrl) ? "launch_matches_tab" : "launch_differs_from_tab"
+    });
     // The TOP frame is the tab, so its rejection is the tab's rejection.
     // Surface the sanitized launch + a specific error rather than pretending
     // nothing matched — the widget can then show a meaningful failure instead
@@ -2022,6 +2111,14 @@ async function handleContentReady(
     await applyFailure(tabId, reject, undefined, undefined, generation);
     sendResponse({ ok: false, matched: true, error: reject, launch: sanitize(pending) });
     return;
+  }
+  if (isTopFrame && typeof pending.failureCode === "string" && LISTING_STAGE_FAILURES.has(pending.failureCode)) {
+    // An earlier verdict from the page BEFORE this one: the tab had left the application (a document that arrived before the launch
+    // learned where the tab was going), or the listing offered several Apply controls and asked the user to choose. The document in
+    // front of us now matches the launch, so that verdict no longer holds and must not keep blocking it.
+    pending = { ...pending, status: "detecting", state: "detecting_ats", failureCode: undefined, lastError: undefined };
+    await putPending(tabId, pending, generation);
+    await patchView(tabId, { failureCode: null, failureMessage: null, failureRecoverable: null, state: "detecting_ats" }, generation);
   }
   // frameId is reused when a frame navigates. Chrome's documentId is the
   // immutable identity of the document that sent this READY, and is therefore
@@ -3637,7 +3734,14 @@ export async function grantFillLease(
   const pending = await getPending(context.tabId);
   if (!pending) return { granted: false, reason: "NO_ACTIVE_LAUNCH" };
   const authorized = authorizeFrameForLaunch(context, pending);
-  if (!authorized.ok) return { granted: false, reason: authorized.reason };
+  if (!authorized.ok) {
+    log.info("fill lease refused", {
+      reason: authorized.reason,
+      status: context.frameUrl && context.tabUrl && context.frameUrl.href.split("#")[0] === context.tabUrl.split("#")[0] ? "frame_url_is_tab_url" : "frame_url_differs_from_tab_url",
+      stage: context.frameUrl && urlsMatchForHandoff(pending.applicationUrl, context.frameUrl.href) ? "launch_matches_frame" : context.tabUrl && urlsMatchForHandoff(pending.applicationUrl, context.tabUrl) ? "launch_matches_tab_only" : "launch_matches_neither"
+    });
+    return { granted: false, reason: authorized.reason };
+  }
 
   const held = fillLeases.get(context.tabId);
   if (held && held.frameId === context.frameId) {
@@ -3880,6 +3984,9 @@ export function frameRegistrySnapshot(tabId: number): RegisteredFrame[] {
  * These codes may only become a tab failure once NO frame in the tab has a
  * credible application.
  */
+/** Failures that describe the job-details page, not the application, and so end when the launch reaches a page it accepts. */
+const LISTING_STAGE_FAILURES = new Set(["HANDOFF_URL_MISMATCH", "APPLICATION_CTA_AMBIGUOUS", "NAVIGATION_NEEDS_USER_GESTURE", "APPLICATION_CTA_NOT_FOUND"]);
+
 const PER_FRAME_FAILURE_CODES = new Set([
   "FORM_NOT_RENDERED",
   "NO_APPLICATION_FORM",
