@@ -43,7 +43,14 @@ export type TrackerDocument = {
   /** An immutable copy made when the application was marked applied; false for older records (the saved copy as it is now). */
   frozen?: boolean;
   formats?: string[];
+  /** "confirming_session" or "sole_session": the evidence that tied this document to this application. */
+  association?: string;
+  /** The download is the saved text re-rendered on request, not the byte stream once attached to an employer. */
+  reproduction?: string;
 };
+
+/** Why the documents are what they are: an immutable copy, an older record's saved copy, an ambiguous history, or nothing. */
+export type TrackerDocumentsAvailability = "frozen" | "historical" | "unknown_association" | "none";
 
 export type TrackerApplication = {
   id: number;
@@ -58,6 +65,7 @@ export type TrackerApplication = {
   application_url?: string | null;
   /** The tailored documents that were prepared for this application, if any. */
   documents?: { resume: TrackerDocument | null; cover_letter: TrackerDocument | null };
+  documents_availability?: TrackerDocumentsAvailability;
   created_at?: string | null;
   updated_at?: string | null;
   job: Pick<
@@ -124,6 +132,9 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
           return (
             <div key={kind} className="rounded-control border border-line-default px-3 py-2 text-xs text-foreground-muted">
               <span className="font-medium capitalize text-foreground-secondary">{label}</span>: Not available
+              {application.documents_availability === "unknown_association" && (
+                <span className="block">We can’t tell which saved documents were used for this application.</span>
+              )}
             </div>
           );
         }
@@ -158,8 +169,10 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
               )}
             </div>
             <p className="mt-1.5 text-xs text-foreground-muted">
-              {doc.frozen === false ? "Prepared for this application (current saved copy)" : "Prepared for this application"}
-              {" · "}
+              {doc.frozen === false
+                ? "Saved document prepared for this application (current saved copy; may have changed since)"
+                : "Saved document prepared for this application"}
+              {" · Re-created from the saved text, so the file can differ from the one you attached · "}
               {doc.attached_by_extension
                 ? "XpertApply reported attaching it on the employer’s form (not confirmed by the employer)"
                 : "Not confirmed as uploaded to the employer"}

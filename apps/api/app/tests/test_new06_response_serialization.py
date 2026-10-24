@@ -162,7 +162,7 @@ def provider_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 
 EXPORT_CATEGORIES = {
     "user", "external_identities", "profile", "career", "sensitive_demographics", "matches",
-    "documents", "applications", "people_recommendations",
+    "documents", "applications", "application_document_snapshots", "people_recommendations",
     "people_discovery_runs", "people_feedback",
 }
 CAREER_CATEGORIES = {"education", "experience", "projects", "certifications", "awards"}
@@ -187,7 +187,7 @@ def test_privacy_export_succeeds_and_is_json(client: TestClient) -> None:
     assert isinstance(body["profile"], dict), "profile must be a mapping, not an ORM row"
     assert body["profile"]["full_name"] == "Export User"
     assert body["user"]["email"] == "export@mailbox.test-domain.co"
-    for key in ("matches", "documents", "applications", "people_recommendations",
+    for key in ("matches", "documents", "applications", "application_document_snapshots", "people_recommendations",
                 "people_discovery_runs", "people_feedback"):
         assert isinstance(body[key], list), f"{key} must be a list"
     for key in CAREER_CATEGORIES:

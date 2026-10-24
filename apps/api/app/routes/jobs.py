@@ -603,7 +603,9 @@ def _tracker_payload(
         for match in db.scalars(select(JobMatch).where(JobMatch.user_id == user_id)).all()
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
-    documents = _tracker_documents(db, [tracker for tracker, _ in rows])
+    # NOT "latest document per job": that changes the moment the user tailors again. See app.applications.document_association for
+    # exactly where each document comes from and when an association is refused.
+    resolved = resolve_documents(db, [tracker for tracker, _ in rows])
     return {
         "applications": [
             {
@@ -621,7 +623,12 @@ def _tracker_payload(
                 "follow_up_date": tracker.follow_up_date,
                 "created_at": tracker.created_at,
                 "updated_at": tracker.updated_at,
-                "documents": documents.get(tracker.id, {"resume": None, "cover_letter": None}),
+                "documents": {
+                    kind: document_summary(tracker.id, kind, doc)
+                    for kind, doc in resolved[tracker.id].documents.items()
+                },
+                # "frozen" | "historical" | "unknown_association" | "none": why the documents above are what they are.
+                "documents_availability": resolved[tracker.id].state,
                 "job": _tracker_job_payload(
                     job,
                     matches.get(job.id),
@@ -630,20 +637,6 @@ def _tracker_payload(
             }
             for tracker, job in rows
         ]
-    }
-
-
-def _tracker_documents(
-    db: Session, trackers: list[ApplicationTracker]
-) -> dict[int, dict[str, dict | None]]:
-    """The documents prepared for each application, one set of queries for the whole list.
-
-    NOT "latest document per job": that changes the moment the user tailors again. See
-    :mod:`app.applications.document_association` for exactly where each document comes from."""
-    resolved = resolve_documents(db, trackers)
-    return {
-        tracker_id: {kind: document_summary(tracker_id, kind, doc) for kind, doc in docs.items()}
-        for tracker_id, docs in resolved.items()
     }
 
 
@@ -670,7 +663,7 @@ def download_tracker_document(
     tracker = db.get(ApplicationTracker, tracker_id)
     if slug is None or fmt not in _TRACKER_DOWNLOAD_TYPES or tracker is None or tracker.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    doc = resolve_documents(db, [tracker])[tracker.id][slug]
+    doc = resolve_documents(db, [tracker])[tracker.id].documents[slug]
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not available")
     try:

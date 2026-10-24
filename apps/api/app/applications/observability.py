@@ -23,6 +23,7 @@ METRICS = frozenset(
         "application_mark_applied_completed",
         "application_mark_applied_duplicate",
         "application_mark_applied_failed",
+        "application_document_snapshot_failed",
         "application_transition_total",
         "applied_job_filtered_from_discovery",
         "extension_submission_confirmation_total",

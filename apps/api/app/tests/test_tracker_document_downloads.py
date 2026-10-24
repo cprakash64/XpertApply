@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.models import entities as E
+from app.applications import document_association
 from app.tests.test_application_applied_lifecycle import (  # noqa: F401  (client is a pytest fixture)
     auth,
     client,
@@ -349,3 +350,163 @@ def test_snapshot_is_written_once(client: TestClient) -> None:
         assert sorted(r.kind for r in rows) == ["cover_letter", "resume"]
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# XA-RC-06-B-R1: fidelity, association by evidence, honest availability
+# --------------------------------------------------------------------------- #
+def test_downloads_are_content_equivalent_never_byte_identical_and_say_so(client: TestClient) -> None:
+    """Two renders of the SAME stored content differ in bytes (PDF/DOCX carry creation metadata), and the original attached file is
+    not kept. So a download is the saved text re-rendered, and the API must not present it as the exact file."""
+    import time
+
+    headers, job_id, tracker_id = _setup(client)
+    first = client.get(f"/jobs/tracker/{tracker_id}/documents/resume?fmt=docx", headers=headers).content
+    time.sleep(1.1)
+    second = client.get(f"/jobs/tracker/{tracker_id}/documents/resume?fmt=docx", headers=headers).content
+    assert _docx_text(first) == _docx_text(second) and RESUME_MARKER in _docx_text(first)
+    # Bytes are NOT a guarantee in either direction (PDF carries a creation time; DOCX depends on the library), so nothing here may
+    # promise a byte-identical file; only the text is pinned.
+    pdf_a = client.get(f"/jobs/tracker/{tracker_id}/documents/resume", headers=headers).content
+    time.sleep(1.1)
+    pdf_b = client.get(f"/jobs/tracker/{tracker_id}/documents/resume", headers=headers).content
+    assert pdf_a.startswith(b"%PDF") and pdf_b.startswith(b"%PDF")
+    doc = _tracker_entry(client, headers, job_id)["documents"]["resume"]
+    assert doc["reproduction"] == "re_rendered_from_saved_content"
+
+
+def test_availability_states_are_reported(client: TestClient) -> None:
+    headers, job_id, _ = _setup(client)
+    assert _tracker_entry(client, headers, job_id)["documents_availability"] == "frozen"
+    other = seed_job(external="none-1")
+    assert confirm_applied(client, headers, other).status_code == 200
+    assert _tracker_entry(client, headers, other)["documents_availability"] == "none"
+
+
+def _second_session(job_id: int, user_id: int) -> int:
+    """A second prepared session for the same user and job, with its own documents."""
+    db = db_session()
+    try:
+        first = db.scalar(select(E.ApplicationSession).where(E.ApplicationSession.job_id == job_id))
+        docs = []
+        for doc_type, marker in ((E.DocumentType.resume, "SECOND-SESSION-RESUME"), (E.DocumentType.cover_letter, "SECOND-SESSION-COVER")):
+            doc = E.GeneratedDocument(user_id=user_id, job_id=job_id, type=doc_type, format=E.DocumentFormat.json, title=marker,
+                                      content={"summary": marker, "paragraphs": [marker], "skills": [], "experience": [], "education": []}, plain_text=marker)
+            db.add(doc)
+            docs.append(doc)
+        db.flush()
+        second = E.ApplicationSession(user_id=user_id, job_id=job_id, source_url=first.source_url, status=E.ApplicationSessionStatus.ready,
+                                      tailored_resume_id=docs[0].id, tailored_cover_letter_id=docs[1].id)
+        db.add(second)
+        db.commit()
+        return second.id
+    finally:
+        db.close()
+
+
+def test_two_prepared_sessions_and_no_evidence_means_no_association_rather_than_a_guess(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    _prepare(client, headers, job_id)
+    _second_session(job_id, user_id_for(client, headers))
+    assert confirm_applied(client, headers, job_id).status_code == 200      # manual confirmation: no session named
+    entry = _tracker_entry(client, headers, job_id)
+    assert entry["status"] == "applied"                                     # the application itself is unaffected
+    assert entry["documents"] == {"resume": None, "cover_letter": None}
+    assert entry["documents_availability"] == "unknown_association"
+    assert client.get(f"/jobs/tracker/{entry['id']}/documents/resume", headers=headers).status_code == 404
+    db = db_session()
+    try:
+        assert db.scalars(select(E.ApplicationDocumentSnapshot)).all() == []
+    finally:
+        db.close()
+
+
+def test_the_confirming_session_is_used_even_when_another_exists(client: TestClient) -> None:
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    first_id = _prepare(client, headers, job_id)
+    second_id = _second_session(job_id, user_id_for(client, headers))
+    resp = client.post(f"/application-sessions/{first_id}/submission-confirmed", headers=headers,
+                       json={"evidence_type": "success_page", "confirmation_source": "extension_confirmed"})
+    assert resp.status_code == 200, resp.text
+    entry = _tracker_entry(client, headers, job_id)
+    assert entry["documents_availability"] == "frozen"
+    assert entry["documents"]["resume"]["association"] == "confirming_session"
+    text = _docx_text(client.get(f"/jobs/tracker/{entry['id']}/documents/resume?fmt=docx", headers=headers).content)
+    assert RESUME_MARKER in text and "SECOND-SESSION" not in text           # the session that confirmed, not the newest
+    assert second_id != first_id
+
+
+def test_a_failed_snapshot_keeps_applied_is_logged_and_is_never_reported_as_archived(client: TestClient, monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated archival failure")
+
+    monkeypatch.setattr(document_association, "freeze_application_documents", boom)
+    headers = auth(client)
+    complete_profile(client, headers)
+    job_id = seed_job()
+    _prepare(client, headers, job_id)
+    assert confirm_applied(client, headers, job_id).status_code == 200
+    entry = _tracker_entry(client, headers, job_id)
+    assert entry["status"] == "applied" and entry["applied_at"] is not None
+    # The documents are still reachable through the sole session, but honestly: not frozen, not "archived".
+    assert entry["documents_availability"] == "historical"
+    assert entry["documents"]["resume"]["frozen"] is False
+    db = db_session()
+    try:
+        assert db.scalars(select(E.ApplicationDocumentSnapshot)).all() == []
+        failure = db.scalars(select(E.AuditLog).where(E.AuditLog.action == "document_snapshot_failed")).all()
+        assert len(failure) == 1 and failure[0].metadata_json["job_id"] == job_id
+    finally:
+        db.close()
+
+
+def test_privacy_export_contains_only_the_owners_snapshots(client: TestClient) -> None:
+    headers, job_id, tracker_id = _setup(client)
+    other = auth(client, "other-export@mailbox.test-domain.co")
+    complete_profile(client, other)
+    mine = client.get("/privacy/export", headers=headers)
+    assert mine.status_code == 200
+    snaps = mine.json()["application_document_snapshots"]
+    assert sorted(s["kind"] for s in snaps) == ["cover_letter", "resume"]
+    assert all(s["application_id"] == tracker_id for s in snaps)
+    assert client.get("/privacy/export", headers=other).json()["application_document_snapshots"] == []
+
+
+def test_deleting_the_source_documents_keeps_the_applied_copy_downloadable(client: TestClient) -> None:
+    """Retention: the application's own copy is independent of the editable document it was taken from."""
+    headers, job_id, tracker_id = _setup(client)
+    db = db_session()
+    try:
+        db.execute(delete(E.ApplicationSession))
+        db.execute(delete(E.GeneratedDocument))
+        db.commit()
+    finally:
+        db.close()
+    response = client.get(f"/jobs/tracker/{tracker_id}/documents/resume?fmt=docx", headers=headers)
+    assert response.status_code == 200 and RESUME_MARKER in _docx_text(response.content)
+    assert _tracker_entry(client, headers, job_id)["documents_availability"] == "frozen"
+
+
+def test_error_answers_expose_no_private_content_or_paths(client: TestClient) -> None:
+    headers, job_id, tracker_id = _setup(client)
+    intruder = auth(client, "probe@mailbox.test-domain.co")
+    bodies = [
+        client.get(f"/jobs/tracker/{tracker_id}/documents/resume", headers=intruder).text,
+        client.get("/jobs/tracker/424242/documents/resume", headers=headers).text,
+        client.get(f"/jobs/tracker/{tracker_id}/documents/nope", headers=headers).text,
+    ]
+    for body in bodies:
+        assert RESUME_MARKER not in body and "generated" not in body.lower() and "/" not in body.replace("Document not found", "")
+
+
+def test_a_browser_on_another_origin_can_read_the_download_filename(client: TestClient) -> None:
+    """Found by the live-API browser run: without Access-Control-Expose-Headers the web app cannot see Content-Disposition."""
+    headers, job_id, tracker_id = _setup(client)
+    response = client.get(f"/jobs/tracker/{tracker_id}/documents/resume", headers={**headers, "Origin": "http://localhost:3000"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "content-disposition" in response.headers["access-control-expose-headers"].lower()

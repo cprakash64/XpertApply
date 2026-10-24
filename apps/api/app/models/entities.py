@@ -928,6 +928,9 @@ class ApplicationDocumentSnapshot(Base):
     plain_text: Mapped[str | None] = mapped_column(Text)
     format_version: Mapped[str] = mapped_column(String(20), default="v1")
     attached_by_extension: Mapped[bool] = mapped_column(Boolean, default=False)
+    # How the session that supplied these documents was established: "confirming_session" (the session whose completion made the
+    # application applied) or "sole_session" (the only prepared session for this user and job). Never a guess between several.
+    association_basis: Mapped[str] = mapped_column(String(24), default="sole_session", server_default="sole_session")
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

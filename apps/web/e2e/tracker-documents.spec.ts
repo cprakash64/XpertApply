@@ -31,7 +31,7 @@ async function install(page: Page, opts: { status?: number; documents?: unknown 
     if (url.pathname === "/jobs/tracker/31/documents/resume") {
       if (opts.status && opts.status !== 200) return route.fulfill({ status: opts.status, contentType: "application/json", body: JSON.stringify({ detail: "/srv/generated/document-9.pdf" }) });
       expect(request.headers()["authorization"]).toBe("Bearer synthetic-e2e-token");
-      return route.fulfill({ status: 200, headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="Plaid_Resume_2026-07-20.pdf"', "Access-Control-Expose-Headers": "Content-Disposition" }, body: PDF_BYTES });
+      return route.fulfill({ status: 200, headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="Plaid_Resume_2026-07-20.pdf"', "Access-Control-Expose-Headers": "Content-Disposition" /* the real API sends this too: asserted by tracker-documents-live.spec.ts and the API CORS test */ }, body: PDF_BYTES });
     }
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
@@ -50,7 +50,8 @@ test("the Tracker offers Download resume, saves the exact file under the server'
   const saved = await download.path();
   expect(readFileSync(saved!).equals(PDF_BYTES)).toBe(true);
   expect(seen.filter((s) => s.includes("/documents/"))).toEqual(["GET /jobs/tracker/31/documents/resume?fmt=pdf"]);
-  await expect(page.getByText("Prepared for this application", { exact: false })).toBeVisible();
+  await expect(page.getByText("Saved document prepared for this application", { exact: false })).toBeVisible();
+  await expect(page.getByText(/Re-created from the saved text/)).toBeVisible();
   await expect(page.getByText(/Not confirmed as uploaded to the employer/i)).toBeVisible();
   // nothing sensitive in the address bar or visible text
   expect(page.url()).not.toMatch(/token|synthetic-e2e|generated|\.pdf/i);

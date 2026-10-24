@@ -170,6 +170,7 @@ def mark_application_applied(
     submission_reference: str | None = None,
     application_url: str | None = None,
     metadata: dict[str, Any] | None = None,
+    session_id: int | None = None,
 ) -> MarkAppliedResult:
     """Create or update the user's application record for ``job_id`` as applied.
 
@@ -248,14 +249,25 @@ def mark_application_applied(
 
     if not already_applied:
         # Keep an immutable copy of the documents prepared for this application. Best effort in a savepoint: failing to copy them
-        # must never cost the user the confirmation itself (the Tracker then falls back to the session's documents, unfrozen).
+        # must never cost the user the confirmation. It must never be silent either: the failure is logged and audited, and the
+        # Tracker derives "frozen" from the snapshot rows themselves, so a failed copy can never be presented as an archived one.
         try:
             with db.begin_nested():
                 from app.applications.document_association import freeze_application_documents
 
-                freeze_application_documents(db, tracker)
+                freeze_application_documents(db, tracker, session_id)
         except Exception:  # noqa: BLE001
+            # Nothing in this handler may raise: reporting a failed archive must never turn into a failed confirmation.
             logger.warning("application.document_snapshot_failed user=%s job=%s", user_id, job_id, exc_info=True)
+            try:
+                metric("application_document_snapshot_failed", source=source.value)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                with db.begin_nested():
+                    db.add(AuditLog(user_id=user_id, action="document_snapshot_failed", metadata_json={"job_id": job_id, "source": source.value}))
+            except Exception:  # noqa: BLE001
+                logger.warning("application.document_snapshot_audit_failed user=%s job=%s", user_id, job_id, exc_info=True)
 
     _write_audit(
         db,
@@ -353,8 +365,15 @@ def _insert_or_reload(
     except IntegrityError:
         # uq_tracker_user_job: someone else got there first. Undo only our
         # INSERT (the SAVEPOINT), never the caller's outer transaction.
-        savepoint.rollback()
-        db.expunge(tracker)
+        # The failed flush may already have closed the savepoint and detached the pending row; on PostgreSQL under real concurrency it
+        # does, and a bare rollback()/expunge() then raised InvalidRequestError, turning the harmless losing side of the race into a
+        # 500. Both steps are idempotent here.
+        try:
+            savepoint.rollback()
+        except Exception:  # noqa: BLE001  (already inactive)
+            pass
+        if tracker in db:
+            db.expunge(tracker)
         existing = _load_tracker(db, user_id=user_id, job_id=job_id)
         if existing is None:
             # The constraint fired but the row is not visible — the database is

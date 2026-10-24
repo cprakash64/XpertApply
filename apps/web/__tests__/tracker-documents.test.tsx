@@ -88,6 +88,14 @@ describe("Tracker document downloads", () => {
     expect(screen.getAllByText(/Not available/i).length).toBe(4);
   });
 
+  it("says when the history is ambiguous instead of offering a guess", async () => {
+    applications = [{ ...app(11, { resume: null, cover_letter: null }), documents_availability: "unknown_association" }];
+    render(React.createElement(TrackerClient));
+    await screen.findByText("Engineer 11");
+    expect(screen.queryByRole("button", { name: /^Download/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/can.t tell which saved documents were used/i).length).toBe(2);
+  });
+
   it("keeps applications of the same company apart", async () => {
     applications = [app(11, { resume: doc({ download_path: "/jobs/tracker/11/documents/resume" }), cover_letter: null }), app(12, { resume: doc(), cover_letter: null })];
     render(React.createElement(TrackerClient));
@@ -150,7 +158,9 @@ describe("Tracker document downloads", () => {
     await screen.findByRole("button", { name: /Download resume for/i });
     const group = screen.getByLabelText(/Documents for Engineer 11/i);
     const text = group.textContent ?? "";
-    expect(text).toMatch(/Prepared for this application/);
+    expect(text).toMatch(/Saved document prepared for this application/);
+    expect(text).toMatch(/Re-created from the saved text/);          // never "the exact file you attached"
+    expect(text).not.toMatch(/exact file|identical|same file/i);
     expect(text).toMatch(/reported attaching it on the employer.s form \(not confirmed by the employer\)/);
     expect(text).toMatch(/Not confirmed as uploaded to the employer/);
     expect(text).not.toMatch(/submitted to the employer|sent to the employer|uploaded to the employer\./i);
@@ -160,7 +170,7 @@ describe("Tracker document downloads", () => {
     applications = [app(11, { resume: doc({ frozen: false }), cover_letter: null })];
     render(React.createElement(TrackerClient));
     await screen.findByRole("button", { name: /Download resume for/i });
-    expect(screen.getByLabelText(/Documents for Engineer 11/i)).toHaveTextContent("(current saved copy)");
+    expect(screen.getByLabelText(/Documents for Engineer 11/i)).toHaveTextContent("current saved copy; may have changed since");
   });
 
   it("works on a phone: tap targets are at least 40px and the two documents stack", async () => {

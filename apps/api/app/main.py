@@ -142,6 +142,9 @@ app.add_middleware(
     allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    # A cross-origin page can read only the response headers named here. The Tracker's download needs the server's filename
+    # (company, document type, date); without this the browser silently saves "Resume.pdf".
+    expose_headers=["Content-Disposition"],
 )
 
 app.include_router(auth.router)

@@ -28,3 +28,19 @@ Backend first (migration `0036`, additive), then web. **Staging deployment requi
 
 ## Rollback
 `alembic downgrade 0035_extension_auth` drops only the snapshot table. The route and payload fields are additive; the web falls back to "Not available" if the fields are absent.
+
+## R1 release verification (XA-RC-06-B-R1)
+
+Verified on a disposable PostgreSQL 16.13 (never staging or production): the migration up/down/up on a populated 0035 schema, constraints, indexes and delete rules from the PostgreSQL catalog, the whole download suite re-run on an Alembic-built schema, concurrent Applied transitions, a real savepoint failure, account deletion, and the browser flow against the real API.
+
+Defects found and fixed here:
+* **Duplicate-insert race (pre-existing, production code).** Eight simultaneous confirmations on PostgreSQL made the losing side of `_insert_or_reload` raise `InvalidRequestError` ("Instance is not present in this Session") and answer 500. SQLite cannot race, so the suite never saw it. The handler is now idempotent.
+* **Association by guess.** The first version fell back to the newest session for the job. Association now needs evidence (the confirming session, the completed session linked to the application, or the only prepared session); several candidates and no evidence means no association and `documents_availability: "unknown_association"`.
+* **Misleading wording.** Downloads are the saved content re-rendered, not the file once attached: two renders of identical content differ in bytes (PDF carries a creation time; DOCX bytes are not guaranteed). The UI and API now say "Saved document prepared for this application" and "Re-created from the saved text, so the file can differ from the one you attached".
+* **Snapshot failure handling.** Failures are logged, counted and audited (`document_snapshot_failed`), never raise into the confirmation, and "frozen" is derived from the snapshot rows themselves. (A first draft of the handler called an unregistered metric and would have failed the confirmation; caught by a test before commit.)
+* **CORS.** The API did not expose `Content-Disposition`, so a browser on another origin saved "Resume.pdf" instead of the server's filename. Found only by the live-API browser run; the mocked spec had masked it.
+* **Privacy export** now includes the user's snapshots.
+
+`0036_application_doc_snapshots` was edited in place to add `association_basis`: it has never been applied outside disposable databases (staging is at 0035).
+
+Document states a user can tell apart: `frozen` (immutable copy), `historical` (older record, saved copy as it is now), `unknown_association`, `none`.
