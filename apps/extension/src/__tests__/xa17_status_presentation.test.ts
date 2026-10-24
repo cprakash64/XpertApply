@@ -187,9 +187,11 @@ describe("XA-17 extension-owned status presentation", () => {
     const replacement = target("replacement-instance");
     const rect = replacement.getBoundingClientRect as ReturnType<typeof vi.fn>;
     highlight(replacement, "verified");
+    // The replacement lays itself out once, on the next frame (event driven; there is no polling).
+    vi.advanceTimersByTime(50);
     const callsAfterRender = rect.mock.calls.length;
-    // Flush every stale callback from the reset instance; stop short of the replacement's own 400 ms reposition poll.
-    vi.advanceTimersByTime(399);
+    // Everything the reset instance had pending must now be gone: no further reads, however long we wait.
+    vi.advanceTimersByTime(5_000);
 
     expect(rect).toHaveBeenCalledTimes(callsAfterRender);
     expect(fieldStatusPresentationForTest(replacement)?.status).toBe("verified");

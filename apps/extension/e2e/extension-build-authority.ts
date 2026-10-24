@@ -7,7 +7,7 @@ import path from "node:path";
 
 const extensionRoot = fileURLToPath(new URL("../", import.meta.url));
 export const approvedGrantedBuild = path.join(extensionRoot, "dist-e2e-granted");
-const permissionFixtures = new Map<string, string | string[]>([["dist", ["xa15-bridge-origins.spec.ts", "cws-activetab-boundary.spec.ts"]], ["dist-granted-handoff", "session-handoff.spec.ts"], ["dist-granted-3c2", "zz-3c2-frame-discovery.spec.ts"], ["dist-granted-3c2granted", "zz-3c2-frame-discovery.spec.ts"], ["dist-staging", ["xa-direct-entry.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-visual.spec.ts"]], ["dist-staging-granted", ["xa-direct-entry.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-visual.spec.ts"]]].map(([name, owner]) => [path.join(extensionRoot, name as string), owner as string | string[]]));
+const permissionFixtures = new Map<string, string | string[]>([["dist", ["xa15-bridge-origins.spec.ts", "cws-activetab-boundary.spec.ts"]], ["dist-granted-handoff", "session-handoff.spec.ts"], ["dist-granted-3c2", "zz-3c2-frame-discovery.spec.ts"], ["dist-granted-3c2granted", "zz-3c2-frame-discovery.spec.ts"], ["dist-staging", ["xa-direct-entry.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-visual.spec.ts", "xa-gh04-greenhouse.spec.ts"]], ["dist-staging-granted", ["xa-direct-entry.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-state.spec.ts", "xa-ashby-visual.spec.ts", "xa-gh04-greenhouse.spec.ts"]]].map(([name, owner]) => [path.join(extensionRoot, name as string), owner as string | string[]]));
 const derivatives = new Map<string, {source: string; digest: string}>();
 
 function canonical(input: string): string {

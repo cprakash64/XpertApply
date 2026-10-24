@@ -169,6 +169,8 @@ export function showOverlay(ownerDocument: Document = document): ApplicationOver
 /** Where the assistant panel (or its minimized pill) currently is, so page annotations never sit under or over it. */
 /** Fired on the document whenever the assistant opens, minimizes, closes or changes size. */
 export const OVERLAY_LAYOUT_EVENT = "xpertapply:overlay-layout";
+/** Fired on the document, with `detail.count`, when field marks are withheld because no spot covers nothing on the employer form. */
+export const STATUS_SUPPRESSED_EVENT = "xpertapply:status-suppressed";
 
 export function overlayAvoidanceRect(ownerDocument: Document = document): DOMRect | null {
   const instance = instances.get(ownerDocument);
@@ -300,6 +302,7 @@ function overlayMarkup(): string {
             <div class="row"><span class="muted">Resume</span><span id="resume">—</span></div>
             <div class="row"><span class="muted">Cover letter</span><span id="cover">—</span></div>
             <div id="errors" role="alert" hidden class="warn"></div>
+            <div id="suppressedMarks" hidden class="muted"></div>
             <div id="final" hidden class="warn">You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.</div>
             <div class="actions">
               <button class="primary" id="fill" type="button">Fill application</button>

@@ -15,9 +15,11 @@ import { deepQueryAll, scopedElementById } from "../dom/deepDom";
 import { MAX_DROPDOWN_OPTIONS } from "../fields/controlBudget";
 import { isBlankValue } from "../fields/dropdown/dom";
 import { optionPolarity, type OptionPolarity } from "../fields/consequentialAnswer";
+import { fillAuthorityActive } from "../fields/fill";
 import type { DiscoveredField } from "../types";
 
 export type TransactionFailure =
+  | "authorization_withdrawn"
   | "control_not_found"
   | "control_replaced"
   | "control_disabled"
@@ -1068,6 +1070,7 @@ export async function selectApprovedOption(
   options: ChoiceTransactionOptions = {}
 ): Promise<TransactionResult> {
   const states: ChoiceTransactionState[] = ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED", "QUEUED_FOR_ACTUATION"];
+  if (!fillAuthorityActive()) return { ok: false, reason: "authorization_withdrawn", states, adapter: "custom_choice" };
   const element = locateChoiceTrigger(field);
   if (!element) return { ok: false, reason: "control_not_found", states, adapter: "custom_choice" };
   states.push("CONTROL_LOCATED");

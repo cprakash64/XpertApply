@@ -297,6 +297,9 @@ export const MSG = {
   // side panel → background (runtime)
   START_AUTOFILL: "JOBPILOT_START_AUTOFILL",
   CLEAR_SESSION: "JOBPILOT_CLEAR_SESSION",
+  /** Worker -> employer tab when the authorization behind a session is gone (sign-out, revocation). The page stops
+   * writing and drops its annotations; values already on the employer form are left exactly as they are. */
+  SESSION_DETACH: "XPERTAPPLY_SESSION_DETACH",
   COMPLETE_SESSION: "JOBPILOT_COMPLETE_SESSION",
   /** Content script asks the service worker to navigate to a validated
    * application destination. The content script never touches chrome.tabs. */
@@ -446,6 +449,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.AUDIT_EVENT; sessionId: number; action_type: string; field_key?: string; status?: string }
   | { type: typeof MSG.START_AUTOFILL; tabId?: number; reason: AutofillReason }
   | { type: typeof MSG.CLEAR_SESSION; tabId?: number }
+  | { type: typeof MSG.SESSION_DETACH }
   | { type: typeof MSG.COMPLETE_SESSION; sessionId: number }
   | { type: typeof MSG.DIRECT_DISCONNECT }
   | { type: typeof MSG.DIRECT_AUTH_STATE }
@@ -622,7 +626,7 @@ export type ObservedFramePayload = {
 const RUNTIME_TYPES = new Set<string>([
   MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
-  MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
+  MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION, MSG.SESSION_DETACH,
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
   MSG.SUBMISSION_CONFIRMED, MSG.SUBMISSION_GESTURE_CANDIDATE,
@@ -882,6 +886,7 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
     origin: { kind: "string", max: LIMIT.url, required: true }
   },
   [MSG.PROBE_FRAME_APPLICATION]: {},
+  [MSG.SESSION_DETACH]: {},
   [MSG.DIRECT_DISCONNECT]: {},
   [MSG.DIRECT_AUTH_STATE]: {},
   [MSG.REQUEST_FILL_LEASE]: { rootConfident: { kind: "boolean" } },

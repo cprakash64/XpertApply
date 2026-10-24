@@ -27,7 +27,8 @@ import {
   tikTokFailureCode,
   type TikTokAdapterTrace
 } from "../ats/tiktokApplication";
-import { clearJobPilotFields, fillField } from "../fields/fill";
+import { clearJobPilotFields, fillField, restoreFillAuthority, withdrawFillAuthority } from "../fields/fill";
+import { resetFieldStatusPresentation } from "../fields/statusPresentation";
 import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin } from "../config";
 import { log } from "../logger";
 import {
@@ -334,6 +335,7 @@ async function requestReconnect(): Promise<boolean> {
     if (result?.ok && result.session) {
       if (session?.sessionId !== result.session.sessionId) preparedDocuments = null;
       session = result.session;
+      restoreFillAuthority();
       matched = true;
       automaticRunSettled = false;
       rootRecoveryAttempted = false;
@@ -455,6 +457,7 @@ async function initAtsPage(): Promise<void> {
         const ready = response as { matched?: boolean; session?: ApplicationSessionData | null } | undefined;
         matched = Boolean(ready?.matched);
         session = ready?.session ?? null;
+        if (session) restoreFillAuthority();
       }).finally(() => { registrationRecovery = null; });
       void registrationRecovery.then(() => sendResponse({ ok: true }));
       return true;
@@ -490,6 +493,19 @@ async function initAtsPage(): Promise<void> {
       // sanitized progress here so the top widget does not remain stuck on
       // "Opening the application…" after filling and uploads have completed.
       if (isTopFrame) mirrorFrameProgress(message.payload);
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (message.type === MSG.SESSION_DETACH) {
+      // Only the worker sends this, when the authorization behind this page's session is gone. Stop writing, forget the
+      // in-memory package and drop XpertApply's annotations. Nothing on the employer form is changed or cleared.
+      if (_sender.id !== chrome.runtime.id) return false;
+      withdrawFillAuthority();
+      session = null;
+      matched = false;
+      preparedDocuments = null;
+      running = false;
+      resetFieldStatusPresentation();
       sendResponse({ ok: true });
       return false;
     }
@@ -694,6 +710,7 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   });
   if (session?.sessionId !== resp.session.sessionId) preparedDocuments = null;
   session = resp.session;
+  restoreFillAuthority();
   if (resp.submissionGestureAt && Date.now() - resp.submissionGestureAt <= SUBMISSION_OBSERVATION_MS) {
     submitGestureObserved = true;
     submissionGestureAt = resp.submissionGestureAt;

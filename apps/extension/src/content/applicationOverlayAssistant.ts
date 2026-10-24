@@ -6,6 +6,7 @@ import {
   type ApplicationAssistantContext
 } from "../ui/applicationAssistant";
 import {
+  STATUS_SUPPRESSED_EVENT,
   showOverlay,
   type ApplicationOverlayController
 } from "./applicationOverlay";
@@ -169,6 +170,17 @@ export function mountApplicationAssistantOverlay(options: {
   const onVisibilityChange = (): void => {
     if (ownerDocument.visibilityState === "visible") recover();
   };
+  // Marks that would have covered the employer's form are not drawn; say so here, where nothing is covered.
+  const onSuppressed = (event: Event): void => {
+    const note = overlay.root.querySelector<HTMLElement>("#suppressedMarks");
+    if (!note) return;
+    const count = Number((event as CustomEvent<{ count?: number }>).detail?.count ?? 0);
+    note.hidden = !(count > 0);
+    note.textContent = count > 0
+      ? `${count === 1 ? "1 field mark is" : `${count} field marks are`} hidden so ${count === 1 ? "it doesn’t" : "they don’t"} cover the form. Scroll the form to check ${count === 1 ? "that field" : "those fields"} yourself.`
+      : "";
+  };
+  ownerDocument.addEventListener(STATUS_SUPPRESSED_EVENT, onSuppressed);
   const ownerWindow = ownerDocument.defaultView;
   ownerDocument.addEventListener("visibilitychange", onVisibilityChange);
   ownerWindow?.addEventListener("focus", recover);
@@ -180,6 +192,7 @@ export function mountApplicationAssistantOverlay(options: {
       if (disposed) return;
       disposed = true;
       ownerDocument.removeEventListener("visibilitychange", onVisibilityChange);
+      ownerDocument.removeEventListener(STATUS_SUPPRESSED_EVENT, onSuppressed);
       ownerWindow?.removeEventListener("focus", recover);
       ownerWindow?.removeEventListener("pageshow", recover);
       for (const type of keyboardEvents) overlay.host.removeEventListener(type, stopKeyboardPropagation);

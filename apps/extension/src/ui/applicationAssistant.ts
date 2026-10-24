@@ -102,8 +102,28 @@ const FAILURE_LABEL: Record<string, string> = {
   HANDOFF_NOT_FOUND: "No application from XpertApply is open on this page. Choose Apply with XpertApply on a job at xpertapply.com, then use the page it opens.",
   HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
   FORM_NOT_RENDERED: "The application form did not render in time. You can retry.",
-  NO_FIELDS_DISCOVERED: "No fillable fields were found on this page."
+  NO_FIELDS_DISCOVERED: "No fillable fields were found on this page.",
+  // The application was prepared and the form read; these stop a run that was already under way.
+  VALUE_DID_NOT_STICK: "XpertApply stopped partway because the form did not accept a value. Nothing already on the form was changed. Choose “Fill application” to retry, or finish the rest yourself.",
+  APPLICATION_DISCOVERY_TIMEOUT: "The application form did not finish loading in time. Nothing was filled. You can retry.",
+  NO_APPLICATION_FORM: "XpertApply couldn’t identify an application form on this page.",
+  APPLICATION_FORM_AMBIGUOUS: "This page has more than one possible application form, so XpertApply did not guess. Fill it manually.",
+  CONSENT_OVERLAY_BLOCKING: "A cookie or consent banner is covering the page. Dismiss it, then choose “Fill application”.",
+  NAVIGATION_NEEDS_USER_GESTURE: "Open the application form yourself, then choose “Fill application”.",
+  SITE_ACCESS_DENIED: "XpertApply can’t fill this application without access to the site.",
+  INTERNAL_HANDOFF_FAILURE: "XpertApply couldn’t hand this application to the page. Reopen it from XpertApply."
 };
+
+/**
+ * What to say for a failure code with no specific text. "Preparing" is only true while no application is open; once the form has been
+ * read, the preparation succeeded and saying it failed would be false.
+ */
+function genericFailureText(current: LaunchViewState): string {
+  if (current.sessionId != null && current.fieldsDiscovered > 0) {
+    return "XpertApply stopped before it finished this application. Nothing already on the form was changed. Choose “Fill application” to retry, or finish the rest yourself.";
+  }
+  return "Something went wrong while preparing this application. Try again or reopen it from XpertApply.";
+}
 
 export function createApplicationAssistant(options: ApplicationAssistantOptions): ApplicationAssistantController {
   const ownedListeners: Array<() => void> = [];
@@ -228,15 +248,21 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     setText("skipped", String(current.skipped));
     setText("review", String(current.reviewRequired));
     element("limited").hidden = !current.limited;
-    element("final").hidden = !current.reachedFinalStep;
+    const finalNotice = element("final");
+    finalNotice.hidden = !current.reachedFinalStep;
+    // A visible submit control says nothing about whether the application is complete. Only claim "review, then submit" when
+    // nothing is known to be outstanding; otherwise say what is outstanding.
+    const outstanding = current.requiredReviewRemaining ?? current.reviewRequired;
+    setText("final", outstanding > 0
+      ? `The employer’s submit step is on this page, but ${outstanding} item${outstanding === 1 ? " still needs" : "s still need"} your review and XpertApply has not confirmed the application is complete. XpertApply never submits for you; check every answer and submit yourself only when you are ready.`
+      : "You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.");
     // Documents belong to a prepared application; with none open there is nothing to prepare.
     setText("resume", current.sessionId == null ? "—" : documentLabel(current.resumeStatus));
     setText("cover", current.sessionId == null ? "—" : documentLabel(current.coverStatus));
     const errorBox = element("errors");
     if (current.failureCode) {
       errorBox.hidden = false;
-      errorBox.textContent = FAILURE_LABEL[current.failureCode]
-        ?? "Something went wrong while preparing this application. Try again or reopen it from XpertApply.";
+      errorBox.textContent = FAILURE_LABEL[current.failureCode] ?? genericFailureText(current);
     } else {
       errorBox.hidden = true;
     }
@@ -336,7 +362,12 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       account.textContent = `Connected as ${response.state.email}`;
       if (disconnect) disconnect.hidden = !options.actions.disconnect;
     } else {
-      account.textContent = "Not connected to XpertApply";
+      // A page opened from xpertapply.com runs on that launch's own session, which is not the extension's account. Say which it
+      // is, so "Extension connected" on the website is never read as a signed-in extension, and vice versa.
+      const websiteLaunch = view?.sessionId != null && !(typeof view.requestId === "string" && view.requestId.startsWith("direct-"));
+      account.textContent = websiteLaunch
+        ? "Extension not signed in · this application was opened from xpertapply.com"
+        : "Not connected to XpertApply";
       if (disconnect) disconnect.hidden = true;
     }
   }

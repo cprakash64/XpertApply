@@ -137,11 +137,54 @@ describe("shared application assistant", () => {
     });
   });
 
-  it("preserves generic preparation copy for an unknown failure and renders no raw failure text", async () => {
-    view = makeView({ state: "failed", failureCode: "UNKNOWN_PREPARATION_FAILURE", failureMessage: "<img src=x onerror=alert(1)>" });
+  it("keeps the preparation wording only while no application is open, and renders no raw failure text", async () => {
+    view = makeView({ state: "failed", sessionId: null, fieldsDiscovered: 0, filled: 0, failureCode: "UNKNOWN_PREPARATION_FAILURE", failureMessage: "<img src=x onerror=alert(1)>" });
     await controller.refresh();
     expect(document.getElementById("errors")?.textContent).toBe("Something went wrong while preparing this application. Try again or reopen it from XpertApply.");
     expect(document.getElementById("errors")?.querySelector("img")).toBeNull();
+  });
+
+  // XA-EXT-GREENHOUSE-04: the assistant showed "while preparing" beside "21 fields discovered, 3 filled". A run that has read the form
+  // was prepared; an unlabelled failure after that must not claim the preparation failed.
+  it("never reports a preparation failure for an application that was prepared and read", async () => {
+    view = makeView({ state: "failed", fieldsDiscovered: 21, filled: 3, reviewRequired: 18, failureCode: "SOME_LATER_FAILURE" });
+    await controller.refresh();
+    const text = document.getElementById("errors")?.textContent ?? "";
+    expect(text).not.toMatch(/preparing/i);
+    expect(text).toMatch(/stopped before it finished/i);
+    view = makeView({ state: "failed", fieldsDiscovered: 21, filled: 3, failureCode: "VALUE_DID_NOT_STICK" });
+    viewListener?.(42, view);
+    await vi.waitFor(() => expect(document.getElementById("errors")?.textContent).toMatch(/did not accept a value/i));
+  });
+
+  it("does not call the application ready at the submit step while required items are outstanding", async () => {
+    view = makeView({ reachedFinalStep: true, reviewRequired: 18, requiredReviewRemaining: 5, filled: 3 });
+    await controller.refresh();
+    const final = document.getElementById("final")!;
+    expect(final.hidden).toBe(false);
+    expect(final.textContent).toContain("5 items still need your review");
+    expect(final.textContent).toMatch(/never submits for you/i);
+    expect(final.textContent).not.toMatch(/Review everything, then submit/);
+  });
+
+  it("separates the extension account from a website launch: a signed-out extension never reads as connected, and never hides a launch", async () => {
+    document.body.insertAdjacentHTML("beforeend", '<div id="account" hidden></div><button id="disconnect" hidden>x</button>');
+    actions.authState = vi.fn().mockResolvedValue({ ok: true, state: { status: "signed_out" } });
+    actions.disconnect = vi.fn();
+    controller.dispose();
+    controller = createController();
+    view = makeView({ requestId: "web-launch-1" });
+    await controller.refresh();
+    await vi.waitFor(() => expect(document.getElementById("account")?.textContent).toMatch(/Extension not signed in/));
+    expect(document.getElementById("account")?.textContent).toMatch(/opened from xpertapply\.com/);
+    expect(document.getElementById("account")?.textContent).not.toMatch(/^Connected/);
+    // a direct draft with no account is torn down to the single Connect state, whatever the cached view says
+    view = makeView({ requestId: "direct-1" });
+    viewListener?.(42, view);
+    await vi.waitFor(() => expect(document.getElementById("fill")?.textContent).toBe("Connect XpertApply"));
+    expect(document.getElementById("filled")?.textContent).toBe("0");
+    expect((document.getElementById("rescan") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById("complete") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("renders unsupported/no-view state and disables actions", async () => {

@@ -1438,7 +1438,8 @@ async function signOutDirectWorkflows(tabIds?: number[]): Promise<void> {
     let host: string | null = null;
     try { host = tab?.url ? new URL(tab.url).host : null; } catch { /* keep null */ }
     await putView(tabId, noticeView(tabId, "DIRECT_SIGNED_OUT", host), generation).catch(() => undefined);
-    void sendToTab(tabId, { type: MSG.CLEAR_SESSION });
+    // Authorization is gone, so the page must stop writing; what is already on the employer form is the user's to keep.
+    void sendToTab(tabId, { type: MSG.SESSION_DETACH });
   }
 }
 
@@ -3247,6 +3248,8 @@ async function clearSession(tabId: number | undefined, generation: AuthorityGene
 
 /** Account/session teardown is global to this extension profile, not one tab. */
 async function purgeSessionState(reason: string): Promise<void> {
+  // Disconnecting ends XpertApply's authority; it is not a request to erase the employer form, so those tabs only detach.
+  const keepPageValues = reason === "disconnect";
   // Invalidate first, synchronously. Any mutation already queued under the old
   // epoch is now stale; any mutation already executing finishes ahead of the
   // queued purge and is then removed by that purge.
@@ -3269,7 +3272,7 @@ async function purgeSessionState(reason: string): Promise<void> {
   // security-critical path. A closed or broken employer tab cannot retain
   // extension authority or delay account replacement.
   void Promise.all(tabIds.map((tabId) =>
-    sendToTab(tabId, { type: MSG.CLEAR_SESSION }).catch(() => undefined)
+    sendToTab(tabId, keepPageValues ? { type: MSG.SESSION_DETACH } : { type: MSG.CLEAR_SESSION }).catch(() => undefined)
   ));
 }
 

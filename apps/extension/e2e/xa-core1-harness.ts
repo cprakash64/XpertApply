@@ -106,6 +106,97 @@ ${many}
 </body></html>`;
 })();
 
+
+/**
+ * XA-EXT-GREENHOUSE-04: a Greenhouse job-board application of the shape the user reported (React Select comboboxes, a required
+ * marker on every label, a voluntary self-identification section, a sticky header, an inner scrolling section, host CSS that
+ * restyles every element). Sanitized: no real employer text, no real person. `?prefill=1` starts with values Chrome's own autofill or
+ * the employer could already have put in.
+ */
+export const GREENHOUSE_RICH = (prefill: boolean) => {
+  const select = (id: string, label: string, options: string[], required = true) => `<div class="select__container"><label id="${id}-label" class="label select__label" for="${id}">${label}${required ? ' <span class="req">*</span>' : ""}</label>
+<div class="select-shell"><div class="select__control" data-for="${id}"><div class="select__value-container"><div class="select__placeholder">Select...</div><div class="select__input-container"><input id="${id}" class="select__input" type="text" role="combobox" aria-expanded="false" aria-haspopup="true" aria-autocomplete="list" autocomplete="off" data-options="${options.join("|")}"></div></div><div class="select__indicators"><span class="select__dropdown-indicator">▾</span></div></div></div></div>`;
+  const text = (id: string, label: string, value = "", required = true, type = "text") => `<div class="text-input-wrapper"><label for="${id}" class="label">${label}${required ? ' <span class="req">*</span>' : ""}</label><input id="${id}" name="${id}" type="${type}" class="input" value="${value}"></div>`;
+  const yn = ["Yes", "No"];
+  const eeo = [
+    select("gender", "Gender", ["Male", "Female", "Non-binary", "Decline to self-identify"], false),
+    select("hispanic_ethnicity", "Are you Hispanic/Latino?", ["Yes", "No", "Decline to self-identify"], false),
+    select("veteran_status", "Veteran Status", ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran", "I don't wish to answer"], false),
+    select("disability_status", "Disability Status", ["Yes, I have a disability, or have had one in the past", "No, I do not have a disability and have not had one in the past", "I do not want to answer"], false)
+  ].join("");
+  const scrolling = [1, 2, 3].map(n => text(`inner_${n}`, `Scrolling section question ${n}: describe your experience with the systems named in requirement ${n} of this role`, "", n === 1)).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Job Application for Senior Machine Learning Engineer, Ads ML Efficiency</title>
+<style>
+ body{margin:0;font:16px/1.6 "Helvetica Neue",Arial,sans-serif;color:#1d1d1f;letter-spacing:.02em;background:#fff}
+ header.top{position:sticky;top:0;z-index:50;height:56px;display:flex;align-items:center;gap:16px;padding:0 24px;background:#fff;border-bottom:1px solid #ddd}
+ header.top a{color:#06c}
+ main{max-width:720px;margin:0 auto;padding:24px}
+ div,section,fieldset,label,span,p,h1,h2,button,input,select,textarea{position:relative}
+ label.label{display:block;margin:18px 0 6px;font-weight:600;font-size:14px}
+ .req{color:#c00}
+ input.input,textarea{display:block;width:100%;box-sizing:border-box;padding:10px;font-size:16px;border:1px solid #888;border-radius:4px}
+ .select__control{display:flex;align-items:center;min-height:44px;border:1px solid #888;border-radius:4px;background:#fff;cursor:pointer}
+ .select__value-container{flex:1;padding:0 10px;display:flex;align-items:center}
+ .select__placeholder{color:#777;position:absolute}
+ .select__input{border:0;outline:0;width:2px;min-width:2px;padding:0;background:transparent;opacity:1}
+ .select__single-value{color:#111}
+ .select__indicators{padding:0 10px;color:#555}
+ .select__menu{position:absolute;left:0;right:0;top:100%;z-index:40;margin-top:4px;background:#fff;border:1px solid #888;border-radius:4px;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+ .select__option{padding:10px 12px;cursor:pointer}
+ .select__option:hover{background:#eef}
+ .select-shell{position:relative}
+ #inner{max-height:230px;overflow:auto;border:1px solid #bbb;padding:12px;margin:18px 0}
+ .section-title{font-size:20px;margin:32px 0 4px}
+ .submit{margin-top:32px;padding:14px 28px;font-size:18px;background:#1a4;color:#fff;border:0;border-radius:6px}
+</style></head><body>
+<header class="top"><strong>Acme Ads</strong><a href="#">Back to jobs</a><a href="#">Benefits</a></header>
+<main><h1>Senior Machine Learning Engineer, Ads ML Efficiency</h1>
+<form id="application-form" novalidate>
+${text("first_name", "First Name")}${text("last_name", "Last Name", prefill ? "ChromeFilled" : "")}${text("email", "Email", "", true, "email")}
+${text("phone", "Phone", "", true, "tel")}
+<div class="text-input-wrapper"><label for="resume" class="label">Resume/CV <span class="req">*</span></label><input id="resume" name="resume" type="file"></div>
+<div class="text-input-wrapper"><label for="cover_letter" class="label">Cover Letter</label><input id="cover_letter" name="cover_letter" type="file"></div>
+${text("linkedin", "LinkedIn Profile", "", false)}${text("website", "Website", "", false)}
+${select("work_auth", "Are you legally authorized to work in the United States?", yn)}
+${select("sponsorship", "Will you now or in the future require sponsorship for employment visa status?", yn)}
+${select("relocate", "Are you willing to relocate for this role?", yn)}
+<div id="inner">${scrolling}</div>
+${text("why", "Why are you interested in this role?", "", true)}
+<h2 class="section-title">Voluntary Self-Identification</h2>
+<p>This information is optional and kept separate from your application.</p>
+${eeo}
+<button class="submit" type="submit">Submit application</button></form></main>
+<script>
+window.__emp={submits:0,clicks:0};
+document.addEventListener('click',e=>{if(e.target&&e.target.closest&&e.target.closest('button[type=submit]'))window.__emp.clicks++},true);
+document.addEventListener('submit',e=>{e.preventDefault();window.__emp.submits++},true);
+// A minimal React-Select: the menu is rendered into the control's own shell when it opens, and removed when it closes.
+function closeMenus(){document.querySelectorAll('.select__menu').forEach(m=>m.remove());document.querySelectorAll('.select__input').forEach(i=>i.setAttribute('aria-expanded','false'))}
+function openMenu(control){
+  closeMenus();
+  const input=control.querySelector('input');
+  const menu=document.createElement('div');menu.className='select__menu';
+  const list=document.createElement('div');list.className='select__menu-list';list.setAttribute('role','listbox');list.id=input.id+'-listbox';
+  input.dataset.options.split('|').forEach((label,i)=>{const o=document.createElement('div');o.className='select__option';o.setAttribute('role','option');o.id=input.id+'-option-'+i;o.textContent=label;
+    o.addEventListener('mousedown',ev=>{ev.preventDefault();pick(control,label)});list.appendChild(o)});
+  menu.appendChild(list);control.parentElement.appendChild(menu);input.setAttribute('aria-expanded','true');input.setAttribute('aria-controls',list.id);
+}
+function pick(control,label){
+  const vc=control.querySelector('.select__value-container');const old=vc.querySelector('.select__single-value');if(old)old.remove();
+  const ph=vc.querySelector('.select__placeholder');if(ph)ph.style.display='none';
+  const v=document.createElement('div');v.className='select__single-value';v.textContent=label;vc.prepend(v);
+  const input=control.querySelector('input');input.value='';input.dataset.selected=label;closeMenus();
+}
+document.querySelectorAll('.select__control').forEach(control=>{
+  control.addEventListener('mousedown',e=>{e.preventDefault();control.querySelector('input').focus();if(control.parentElement.querySelector('.select__menu'))closeMenus();else openMenu(control)});
+  const input=control.querySelector('input');
+  input.addEventListener('keydown',e=>{if(e.key==='ArrowDown'||e.key==='Enter'){if(!control.parentElement.querySelector('.select__menu'))openMenu(control)}if(e.key==='Escape')closeMenus()});
+});
+document.addEventListener('mousedown',e=>{if(!e.target.closest('.select-shell'))closeMenus()});
+window.__selected=()=>Object.fromEntries([...document.querySelectorAll('.select__input')].map(i=>[i.id,i.dataset.selected||'']));
+</script></body></html>`;
+};
+
 const newsletter = `<!doctype html><meta charset="utf-8"><title>Newsletter</title><main><h1>Stay in touch</h1><form><label for="e">Email</label><input id="e" type="email"><button type="submit">Subscribe</button></form></main>`;
 const login = `<!doctype html><meta charset="utf-8"><title>Sign in</title><main><h1>Sign in</h1><form><label for="e">Email</label><input id="e" type="email"><label for="p">Password</label><input id="p" type="password"><button type="submit">Sign in</button></form></main>`;
 const search = `<!doctype html><meta charset="utf-8"><title>Search jobs</title><main><h1>Search</h1><form role="search"><label for="q">Search jobs</label><input id="q" type="search"><button type="submit">Search</button></form></main>`;
@@ -119,6 +210,7 @@ export function employerPage(host: string, url: string): string {
   if (p === "/login") return login;
   if (p === "/search") return search;
   if (host === "careers.withwaymo.com" || host === UNGRANTED_HOST) return /^\/jobs\/[\w-]+(\/apply)?$/.test(p) ? waymoApplication : listing("Waymo careers");
+  if (host === "job-boards.greenhouse.io" && /\/jobs\/\d+/.test(p) && parsed.searchParams.get("rich")) return GREENHOUSE_RICH(parsed.searchParams.get("prefill") === "1");
   if (host === "job-boards.greenhouse.io") return /\/jobs\/\d+/.test(p) ? simpleForm("Apply - Greenhouse-shaped") : listing("Acme jobs");
   if (host === "jobs.lever.co") return p.endsWith("/apply") ? `<!doctype html><meta charset="utf-8"><title>Lever-shaped</title>${LEVER_FORM}${track}` : listing("Zoox - job description");
   if (host === "jobs.ashbyhq.com") return p.endsWith("/application") ? simpleForm("Application - Ashby-shaped") : listing("Acme at Ashby");
@@ -152,7 +244,7 @@ export async function startDirectApi() {
   const log: ApiLogEntry[] = [];
   const sessions = new Map<number, { userId: number; url: string }>();
   let nextId = 7000;
-  const state = { revoked: false, refreshes: 0 };
+  const state = { revoked: false, refreshes: 0, failDirect: false, failSessions: false };
   const json = (res: import("node:http").ServerResponse, status: number, body: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
   const server: HttpServer = createHttp(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -170,6 +262,7 @@ export async function startDirectApi() {
     };
     if (url.pathname === "/extension/direct-sessions" && req.method === "POST") {
       if (!access || state.revoked) return json(res, 401, { detail: "Invalid token" });
+      if (state.failDirect) return json(res, 500, { detail: "preparation failed" });
       const userId = Number(access[1]);
       const u = new URL(String(body.url));
       if (u.search || u.hash) return json(res, 400, { detail: "query must not be sent" });
@@ -186,6 +279,7 @@ export async function startDirectApi() {
     const m = /^\/application-sessions\/(\d+)(\/.*)?$/.exec(url.pathname);
     if (m) {
       const id = Number(m[1]);
+      if (state.failSessions) return json(res, 401, { detail: "session revoked" });
       const owner = sessions.get(id);
       if (!owner || !sess || Number(sess[2]) !== id || Number(sess[1]) !== owner.userId) return json(res, 403, { detail: "Token not valid for this session" });
       const rest = m[2] ?? "";

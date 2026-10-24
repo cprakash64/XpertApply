@@ -64,6 +64,16 @@ function isComboboxLike(el: HTMLElement): boolean {
   return false;
 }
 
+/**
+ * Whether this document may still write to the employer form. The worker withdraws it (sign-out, revocation) with
+ * SESSION_DETACH and a new authorized session restores it; while withdrawn every write is refused, including one that was
+ * already queued behind an await when the credential disappeared.
+ */
+let writeAuthorityWithdrawn = false;
+export function withdrawFillAuthority(): void { writeAuthorityWithdrawn = true; }
+export function restoreFillAuthority(): void { writeAuthorityWithdrawn = false; }
+export function fillAuthorityActive(): boolean { return !writeAuthorityWithdrawn; }
+
 /** Fill one field with a value. Returns the outcome for the audit trail.
  * Async: custom/JS-controlled dropdowns (comboboxes, React Select, etc.) may
  * render their options asynchronously, so filling one control involves a
@@ -72,6 +82,7 @@ function isComboboxLike(el: HTMLElement): boolean {
  * from two different open dropdowns can never be confused with each other. */
 export async function fillField(field: DiscoveredField, value: string | string[], options: FillOptions = {}): Promise<FillOutcome> {
   const el = field.element;
+  if (writeAuthorityWithdrawn) return { uid: field.uid, status: "skipped", reason: "authorization withdrawn" };
   if (!el) {
     return { uid: field.uid, status: "error", reason: "no element" };
   }

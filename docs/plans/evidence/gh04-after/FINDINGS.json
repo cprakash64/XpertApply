@@ -1,0 +1,642 @@
+{
+  "1366x768@100/y0": {
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 938,
+      "top": 18,
+      "right": 1348,
+      "bottom": 750
+    }
+  },
+  "1366x768@100/y380": {
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 938,
+      "top": 18,
+      "right": 1348,
+      "bottom": 750
+    }
+  },
+  "1366x768@100/y900": {
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 938,
+      "top": 18,
+      "right": 1348,
+      "bottom": 750
+    }
+  },
+  "1366x768@100/y1500": {
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 938,
+      "top": 18,
+      "right": 1348,
+      "bottom": 750
+    }
+  },
+  "1366x768@125/y0": {
+    "viewport": {
+      "width": 1093,
+      "height": 614
+    },
+    "badges": 5,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 665,
+      "top": 18,
+      "right": 1075,
+      "bottom": 596
+    }
+  },
+  "1366x768@125/y380": {
+    "viewport": {
+      "width": 1093,
+      "height": 614
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 665,
+      "top": 18,
+      "right": 1075,
+      "bottom": 596
+    }
+  },
+  "1366x768@125/y900": {
+    "viewport": {
+      "width": 1093,
+      "height": 614
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 665,
+      "top": 18,
+      "right": 1075,
+      "bottom": 596
+    }
+  },
+  "1366x768@125/y1500": {
+    "viewport": {
+      "width": 1093,
+      "height": 614
+    },
+    "badges": 4,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 665,
+      "top": 18,
+      "right": 1075,
+      "bottom": 596
+    }
+  },
+  "1440x900@100/y0": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1012,
+      "top": 122,
+      "right": 1422,
+      "bottom": 882
+    }
+  },
+  "1440x900@100/y380": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "badges": 10,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1012,
+      "top": 122,
+      "right": 1422,
+      "bottom": 882
+    }
+  },
+  "1440x900@100/y900": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1012,
+      "top": 122,
+      "right": 1422,
+      "bottom": 882
+    }
+  },
+  "1440x900@100/y1500": {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "badges": 7,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1012,
+      "top": 122,
+      "right": 1422,
+      "bottom": 882
+    }
+  },
+  "1440x900@125/y0": {
+    "viewport": {
+      "width": 1152,
+      "height": 720
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 724,
+      "top": 18,
+      "right": 1134,
+      "bottom": 702
+    }
+  },
+  "1440x900@125/y380": {
+    "viewport": {
+      "width": 1152,
+      "height": 720
+    },
+    "badges": 7,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 724,
+      "top": 18,
+      "right": 1134,
+      "bottom": 702
+    }
+  },
+  "1440x900@125/y900": {
+    "viewport": {
+      "width": 1152,
+      "height": 720
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 724,
+      "top": 18,
+      "right": 1134,
+      "bottom": 702
+    }
+  },
+  "1440x900@125/y1500": {
+    "viewport": {
+      "width": 1152,
+      "height": 720
+    },
+    "badges": 5,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 724,
+      "top": 18,
+      "right": 1134,
+      "bottom": 702
+    }
+  },
+  "1756x864@100/y0": {
+    "viewport": {
+      "width": 1756,
+      "height": 864
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1328,
+      "top": 86,
+      "right": 1738,
+      "bottom": 846
+    }
+  },
+  "1756x864@100/y380": {
+    "viewport": {
+      "width": 1756,
+      "height": 864
+    },
+    "badges": 9,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1328,
+      "top": 86,
+      "right": 1738,
+      "bottom": 846
+    }
+  },
+  "1756x864@100/y900": {
+    "viewport": {
+      "width": 1756,
+      "height": 864
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1328,
+      "top": 86,
+      "right": 1738,
+      "bottom": 846
+    }
+  },
+  "1756x864@100/y1500": {
+    "viewport": {
+      "width": 1756,
+      "height": 864
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1328,
+      "top": 86,
+      "right": 1738,
+      "bottom": 846
+    }
+  },
+  "1756x864@125/y0": {
+    "viewport": {
+      "width": 1405,
+      "height": 691
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 977,
+      "top": 18,
+      "right": 1387,
+      "bottom": 673
+    }
+  },
+  "1756x864@125/y380": {
+    "viewport": {
+      "width": 1405,
+      "height": 691
+    },
+    "badges": 7,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 977,
+      "top": 18,
+      "right": 1387,
+      "bottom": 673
+    }
+  },
+  "1756x864@125/y900": {
+    "viewport": {
+      "width": 1405,
+      "height": 691
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 977,
+      "top": 18,
+      "right": 1387,
+      "bottom": 673
+    }
+  },
+  "1756x864@125/y1500": {
+    "viewport": {
+      "width": 1405,
+      "height": 691
+    },
+    "badges": 5,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 977,
+      "top": 18,
+      "right": 1387,
+      "bottom": 673
+    }
+  },
+  "1920x1080@100/y0": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "badges": 10,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1492,
+      "top": 302,
+      "right": 1902,
+      "bottom": 1062
+    }
+  },
+  "1920x1080@100/y380": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "badges": 11,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1492,
+      "top": 302,
+      "right": 1902,
+      "bottom": 1062
+    }
+  },
+  "1920x1080@100/y900": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "badges": 10,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1492,
+      "top": 302,
+      "right": 1902,
+      "bottom": 1062
+    }
+  },
+  "1920x1080@100/y1500": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "badges": 9,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1492,
+      "top": 302,
+      "right": 1902,
+      "bottom": 1062
+    }
+  },
+  "1920x1080@125/y0": {
+    "viewport": {
+      "width": 1536,
+      "height": 864
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1108,
+      "top": 86,
+      "right": 1518,
+      "bottom": 846
+    }
+  },
+  "1920x1080@125/y380": {
+    "viewport": {
+      "width": 1536,
+      "height": 864
+    },
+    "badges": 8,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1108,
+      "top": 86,
+      "right": 1518,
+      "bottom": 846
+    }
+  },
+  "1920x1080@125/y900": {
+    "viewport": {
+      "width": 1536,
+      "height": 864
+    },
+    "badges": 7,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1108,
+      "top": 86,
+      "right": 1518,
+      "bottom": 846
+    }
+  },
+  "1920x1080@125/y1500": {
+    "viewport": {
+      "width": 1536,
+      "height": 864
+    },
+    "badges": 6,
+    "overLabels": 0,
+    "overControls": 0,
+    "overMenus": 0,
+    "overSticky": 0,
+    "overBadges": 0,
+    "overPanel": 0,
+    "outsideViewport": 0,
+    "panel": {
+      "left": 1108,
+      "top": 86,
+      "right": 1518,
+      "bottom": 846
+    }
+  }
+}
