@@ -21,7 +21,8 @@ from app.applications.observability import metric
 from app.core.config import settings
 from app.db.session import get_db
 from app.documents.cover_letter_generation_service import generate_cover_letter
-from app.documents.filenames import build_document_filename
+from app.applications.document_association import KIND_SLUG, document_summary, resolve_documents
+from app.documents.filenames import build_document_filename, build_tracker_document_filename
 from app.documents.materialized_files import (
     MaterializedFileError,
     remove_document_exports,
@@ -29,7 +30,7 @@ from app.documents.materialized_files import (
 )
 from app.documents.resume_generation_service import generate_resume
 from app.documents.store import export_document as render_document_file
-from app.documents.store import persist_document, serialize_document
+from app.documents.store import persist_document, render_document_bytes, serialize_document
 from app.jobs.company_logo_service import (
     is_safe_logo_url,
     is_untrusted_simplify_logo_url,
@@ -602,7 +603,7 @@ def _tracker_payload(
         for match in db.scalars(select(JobMatch).where(JobMatch.user_id == user_id)).all()
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
-    documents = _tracker_documents(db, user_id, [tracker.job_id for tracker, _ in rows])
+    documents = _tracker_documents(db, [tracker for tracker, _ in rows])
     return {
         "applications": [
             {
@@ -620,7 +621,7 @@ def _tracker_payload(
                 "follow_up_date": tracker.follow_up_date,
                 "created_at": tracker.created_at,
                 "updated_at": tracker.updated_at,
-                "documents": documents.get(tracker.job_id, {"resume": None, "cover_letter": None}),
+                "documents": documents.get(tracker.id, {"resume": None, "cover_letter": None}),
                 "job": _tracker_job_payload(
                     job,
                     matches.get(job.id),
@@ -633,33 +634,65 @@ def _tracker_payload(
 
 
 def _tracker_documents(
-    db: Session, user_id: int, job_ids: list[int]
+    db: Session, trackers: list[ApplicationTracker]
 ) -> dict[int, dict[str, dict | None]]:
-    """Latest tailored resume + cover letter per job, in ONE query.
+    """The documents prepared for each application, one set of queries for the whole list.
 
-    Looking these up per application row is the obvious N+1 in this endpoint —
-    a user with 80 tracked applications would issue 160 document queries per
-    Tracker load. One ordered pass and a dict keyed by (job, type) gives the
-    same answer."""
-    if not job_ids:
-        return {}
-    rows = db.scalars(
-        select(GeneratedDocument)
-        .where(
-            (GeneratedDocument.user_id == user_id)
-            & (GeneratedDocument.job_id.in_(job_ids))
-            & (GeneratedDocument.type.in_((DocumentType.resume, DocumentType.cover_letter)))
-        )
-        .order_by(GeneratedDocument.created_at.asc(), GeneratedDocument.id.asc())
-    ).all()
-    result: dict[int, dict[str, dict | None]] = {
-        job_id: {"resume": None, "cover_letter": None} for job_id in job_ids
+    NOT "latest document per job": that changes the moment the user tailors again. See
+    :mod:`app.applications.document_association` for exactly where each document comes from."""
+    resolved = resolve_documents(db, trackers)
+    return {
+        tracker_id: {kind: document_summary(tracker_id, kind, doc) for kind, doc in docs.items()}
+        for tracker_id, docs in resolved.items()
     }
-    for row in rows:
-        key = "resume" if row.type == DocumentType.resume else "cover_letter"
-        # Ascending order means the last write wins — the most recent document.
-        result[row.job_id][key] = {"id": row.id, "title": row.title, "created_at": row.created_at}
-    return result
+
+
+_TRACKER_DOWNLOAD_TYPES = {
+    DocumentFormat.pdf: "application/pdf",
+    DocumentFormat.docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+@router.get("/tracker/{tracker_id}/documents/{kind}")
+def download_tracker_document(
+    tracker_id: int,
+    kind: str,
+    fmt: DocumentFormat = DocumentFormat.pdf,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The resume or cover letter prepared for ONE tracked application.
+
+    Authenticated, and scoped by the application's owner: someone else's application id, an unknown id and an application with no
+    document all answer the same 404, so ids cannot be probed. The bytes are rendered from the stored copy (never regenerated
+    from the current profile) and sent as an attachment; no storage path or file URL is ever exposed."""
+    slug = KIND_SLUG.get(kind)
+    tracker = db.get(ApplicationTracker, tracker_id)
+    if slug is None or fmt not in _TRACKER_DOWNLOAD_TYPES or tracker is None or tracker.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    doc = resolve_documents(db, [tracker])[tracker.id][slug]
+    if doc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not available")
+    try:
+        data = render_document_bytes(doc.content, is_resume=slug == "resume", fmt=fmt, plain_text=doc.plain_text)
+    except ValueError:
+        # The stored copy exists but cannot be opened. Say so; never substitute a regenerated document.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This saved document can't be opened") from None
+    job = db.get(JobPosting, tracker.job_id)
+    when = tracker.applied_at or doc.created_at
+    filename = build_tracker_document_filename(
+        kind=slug, fmt=fmt.value, company=job.company if job else None,
+        date=when.date().isoformat() if when else None,
+    )
+    return Response(
+        content=data,
+        media_type=_TRACKER_DOWNLOAD_TYPES[fmt],
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/tracker/all")

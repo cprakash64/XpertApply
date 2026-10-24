@@ -64,3 +64,17 @@ def build_document_filename(
     stem = stem[:MAX_STEM_LENGTH].rstrip("_") or "Applicant_Document"
     extension = _sanitize(fmt).lower() or "pdf"
     return f"{stem}.{extension}"
+
+
+def build_tracker_document_filename(*, kind: str, fmt: str, company: str | None, date: str | None) -> str:
+    """``Plaid_Resume_2026-10-24.pdf``: company, document type and (when known) the application date.
+
+    Built only from sanitized parts, so no path separator, quote, newline or header-injection character can reach a
+    Content-Disposition value. Never the internal title, an id, or "undefined"."""
+    label = "Cover_Letter" if kind in ("cover-letter", "cover_letter") else "Resume"
+    parts = [_sanitize(company or "")[:40], label]
+    if date and re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        parts.append(date)
+    stem = "_".join(part for part in parts if part)[:MAX_STEM_LENGTH].strip("_") or label
+    ext = fmt if fmt in ("pdf", "docx") else "pdf"
+    return f"{stem}.{ext}"

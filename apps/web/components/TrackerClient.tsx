@@ -5,10 +5,9 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
+  Download,
   ExternalLink,
-  FileText,
   Loader2,
-  Mail,
   MapPin,
   Search,
   Trophy
@@ -20,7 +19,7 @@ import {
   formatApplicationStatus,
   getApplicationStatusTone
 } from "@/lib/applicationStatus";
-import { api, type Job } from "@/lib/api";
+import { api, downloadTrackerDocument, TrackerDownloadError, type Job, type TrackerDocumentKind } from "@/lib/api";
 import { invalidateDashboardSummary } from "@/lib/dashboardSummary";
 
 export type TrackerStatus =
@@ -33,7 +32,18 @@ export type TrackerStatus =
   | "rejected"
   | "withdrawn";
 
-export type TrackerDocument = { id: number; title: string | null; created_at: string | null };
+export type TrackerDocument = {
+  id: number | null;
+  title: string | null;
+  created_at: string | null;
+  /** The document XpertApply prepared for THIS application. A different claim from the next one. */
+  prepared_for_application?: boolean;
+  /** The extension reported attaching it to the employer's form. Never employer confirmation, and Applied does not imply it. */
+  attached_by_extension?: boolean;
+  /** An immutable copy made when the application was marked applied; false for older records (the saved copy as it is now). */
+  frozen?: boolean;
+  formats?: string[];
+};
 
 export type TrackerApplication = {
   id: number;
@@ -68,6 +78,103 @@ export type TrackerApplication = {
 };
 
 type TrackerFilter = "all" | "applied" | "interview" | "offer" | "rejected";
+
+const DOWNLOAD_ERROR: Record<string, string> = {
+  not_available: "This document is no longer available.",
+  unreadable: "This saved document can't be opened.",
+  signed_out: "Your session expired. Sign in again to download.",
+  unavailable: "Couldn't download. Check your connection and try again."
+};
+
+const DOCUMENT_LABEL: Record<TrackerDocumentKind, string> = { resume: "resume", cover_letter: "cover letter" };
+
+/**
+ * The documents prepared for one application, with a download for each.
+ *
+ * "Prepared for this application" and "attached on the employer's form" are different claims and are worded differently: the
+ * second appears only when the extension reported attaching the file, and even then it is not the employer's confirmation.
+ * A document that was never prepared or kept says "Not available" instead of offering a file that does not exist.
+ */
+function TrackerDocuments({ application }: { application: TrackerApplication }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<TrackerDocumentKind, string>>>({});
+
+  async function download(kind: TrackerDocumentKind, format: "pdf" | "docx") {
+    const key = `${kind}:${format}`;
+    if (busy) return;
+    setBusy(key);
+    setErrors((current) => ({ ...current, [kind]: undefined }));
+    try {
+      await downloadTrackerDocument(application.id, kind, format);
+    } catch (error) {
+      const code = error instanceof TrackerDownloadError ? error.code : "unavailable";
+      setErrors((current) => ({ ...current, [kind]: DOWNLOAD_ERROR[code] }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const kinds: TrackerDocumentKind[] = ["resume", "cover_letter"];
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-label={`Documents for ${application.job.title}`}>
+      {kinds.map((kind) => {
+        const doc = application.documents?.[kind] ?? null;
+        const label = DOCUMENT_LABEL[kind];
+        if (!doc) {
+          return (
+            <div key={kind} className="rounded-control border border-line-default px-3 py-2 text-xs text-foreground-muted">
+              <span className="font-medium capitalize text-foreground-secondary">{label}</span>: Not available
+            </div>
+          );
+        }
+        const loading = busy?.startsWith(`${kind}:`) ?? false;
+        return (
+          <div key={kind} className="rounded-control border border-line-default px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void download(kind, "pdf")}
+                disabled={busy !== null}
+                aria-label={`Download ${label} for ${application.job.title} at ${application.job.company}`}
+                className="ds-focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-control bg-action-primary px-3 text-sm font-semibold text-action-primary-foreground transition duration-fast ease-standard hover:bg-action-primary-hover disabled:opacity-60"
+              >
+                {loading && busy?.endsWith("pdf") ? (
+                  <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download aria-hidden className="h-4 w-4" />
+                )}
+                {loading ? "Preparing…" : `Download ${label}`}
+              </button>
+              {doc.formats?.includes("docx") && (
+                <button
+                  type="button"
+                  onClick={() => void download(kind, "docx")}
+                  disabled={busy !== null}
+                  aria-label={`Download ${label} as Word document`}
+                  className="ds-focus-ring inline-flex min-h-10 items-center rounded-control border border-line-interactive px-3 text-sm font-medium text-foreground-secondary hover:border-line-strong disabled:opacity-60"
+                >
+                  Word
+                </button>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-foreground-muted">
+              {doc.frozen === false ? "Prepared for this application (current saved copy)" : "Prepared for this application"}
+              {" · "}
+              {doc.attached_by_extension
+                ? "XpertApply reported attaching it on the employer’s form (not confirmed by the employer)"
+                : "Not confirmed as uploaded to the employer"}
+            </p>
+            {errors[kind] && (
+              <p role="alert" className="mt-1 text-xs font-medium text-status-danger">
+                {errors[kind]}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const STATUS_OPTIONS: { value: TrackerStatus; label: string }[] = [
   { value: "applied", label: "Applied" },
@@ -434,16 +541,6 @@ function ApplicationCard({
               {application.applied_source && (
                 <span>{APPLIED_SOURCE_LABEL[application.applied_source]}</span>
               )}
-              {application.documents?.resume && (
-                <span className="inline-flex items-center gap-1">
-                  <FileText aria-hidden className="h-3 w-3" /> Tailored resume
-                </span>
-              )}
-              {application.documents?.cover_letter && (
-                <span className="inline-flex items-center gap-1">
-                  <Mail aria-hidden className="h-3 w-3" /> Cover letter
-                </span>
-              )}
               {application.application_url && (
                 <a
                   className="ds-focus-ring inline-flex items-center gap-1 rounded-control font-medium text-foreground-link underline"
@@ -455,6 +552,7 @@ function ApplicationCard({
                 </a>
               )}
             </div>
+            <TrackerDocuments application={application} />
           </div>
         </div>
 

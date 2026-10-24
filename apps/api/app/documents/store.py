@@ -82,6 +82,38 @@ def serialize_document(
     }
 
 
+def render_document_bytes(
+    content: dict[str, Any], *, is_resume: bool, fmt: DocumentFormat, plain_text: str | None = None
+) -> bytes:
+    """Render stored document content to a file's bytes without leaving anything behind on disk.
+
+    Used for application snapshots: nothing is cached under a document id, no storage path exists to leak, and a later retention
+    sweep has nothing to miss. Raises ``ValueError`` when the content cannot be rendered (empty or corrupt)."""
+    if fmt not in (DocumentFormat.pdf, DocumentFormat.docx):
+        raise ValueError("Unsupported format")
+    if not isinstance(content, dict) or not content:
+        raise ValueError("Stored document has no content")
+    prepared = _normalize_resume_content(content) if is_resume else content
+    out_dir = generated_root()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".snapshot-", suffix=".tmp", dir=out_dir)
+    os.close(fd)
+    temp_path = Path(temporary)
+    try:
+        if fmt == DocumentFormat.docx:
+            _render_docx(prepared, is_resume, temp_path)
+        else:
+            _render_pdf(prepared, is_resume, temp_path)
+        data = temp_path.read_bytes()
+    except Exception as exc:  # a renderer failure on stored content is a data problem, not a server fault
+        raise ValueError("Stored document could not be rendered") from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+    if not data:
+        raise ValueError("Stored document rendered empty")
+    return data
+
+
 def export_document(record: GeneratedDocument, fmt: DocumentFormat) -> str:
     out_dir = generated_root()
     out_dir.mkdir(parents=True, exist_ok=True)

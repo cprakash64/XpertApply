@@ -904,6 +904,33 @@ class ApplicationTracker(Base):
     )
 
 
+class ApplicationDocumentSnapshot(Base):
+    """The exact resume / cover-letter text that was prepared for ONE application, kept as it was when the user applied.
+
+    ``GeneratedDocument`` rows are edited in place (``PUT /jobs/documents/{id}``) and a newer tailoring creates a newer row, so a
+    reference to one is not a promise about what was sent. This copy is written once, the first time the application becomes
+    ``applied``, and never updated, so the Tracker can offer the version that belongs to that application whatever the user does
+    to their profile or documents afterwards. No file path is stored: files are rendered from this content on demand.
+    ``attached_by_extension`` records only that the extension REPORTED attaching the file to the employer's form. It is not proof
+    that the employer received it, and ``applied`` does not imply it.
+    """
+
+    __tablename__ = "application_document_snapshots"
+    __table_args__ = (UniqueConstraint("tracker_id", "kind", name="uq_doc_snapshot_tracker_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tracker_id: Mapped[int] = mapped_column(ForeignKey("application_tracker.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # "resume" | "cover_letter"
+    source_document_id: Mapped[int | None] = mapped_column(ForeignKey("generated_documents.id", ondelete="SET NULL"))
+    title: Mapped[str | None] = mapped_column(String(300))
+    content: Mapped[dict] = mapped_column(JsonType, default=dict)
+    plain_text: Mapped[str | None] = mapped_column(Text)
+    format_version: Mapped[str] = mapped_column(String(20), default="v1")
+    attached_by_extension: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

@@ -246,6 +246,17 @@ def mark_application_applied(
 
     db.flush()
 
+    if not already_applied:
+        # Keep an immutable copy of the documents prepared for this application. Best effort in a savepoint: failing to copy them
+        # must never cost the user the confirmation itself (the Tracker then falls back to the session's documents, unfrozen).
+        try:
+            with db.begin_nested():
+                from app.applications.document_association import freeze_application_documents
+
+                freeze_application_documents(db, tracker)
+        except Exception:  # noqa: BLE001
+            logger.warning("application.document_snapshot_failed user=%s job=%s", user_id, job_id, exc_info=True)
+
     _write_audit(
         db,
         user_id=user_id,
