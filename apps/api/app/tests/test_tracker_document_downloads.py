@@ -47,10 +47,15 @@ def _prepare(client: TestClient, headers: dict[str, str], job_id: int, *, resume
             doc = db.get(E.GeneratedDocument, row.tailored_cover_letter_id)
             doc.content = {"greeting": "Dear team,", "paragraphs": [COVER_MARKER], "closing": "Sincerely", "signature": "Chandra Pandey"}
             doc.plain_text = COVER_MARKER
-        if not resume:
-            row.tailored_resume_id = None
-        if not cover:
-            row.tailored_cover_letter_id = None
+        # "No such document was prepared" means no row either: a leftover row for the same job would (correctly) be picked up at confirmation.
+        if not resume and row.tailored_resume_id:
+            doc_id, row.tailored_resume_id = row.tailored_resume_id, None
+            db.flush()
+            db.execute(delete(E.GeneratedDocument).where(E.GeneratedDocument.id == doc_id))
+        if not cover and row.tailored_cover_letter_id:
+            doc_id, row.tailored_cover_letter_id = row.tailored_cover_letter_id, None
+            db.flush()
+            db.execute(delete(E.GeneratedDocument).where(E.GeneratedDocument.id == doc_id))
         db.commit()
     finally:
         db.close()

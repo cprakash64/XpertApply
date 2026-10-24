@@ -629,6 +629,8 @@ def _tracker_payload(
                 },
                 # "frozen" | "historical" | "unknown_association" | "none": why the documents above are what they are.
                 "documents_availability": resolved[tracker.id].state,
+                # When nothing is available and the reason is known from stored facts (no content is read to decide it).
+                "documents_unavailable_reason": resolved[tracker.id].reason,
                 "job": _tracker_job_payload(
                     job,
                     matches.get(job.id),

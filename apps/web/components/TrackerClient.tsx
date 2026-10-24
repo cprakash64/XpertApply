@@ -52,6 +52,20 @@ export type TrackerDocument = {
 /** Why the documents are what they are: an immutable copy, an older record's saved copy, an ambiguous history, or nothing. */
 export type TrackerDocumentsAvailability = "frozen" | "historical" | "unknown_association" | "none";
 
+/** Why nothing is available, when the server knows from stored facts. Never a guess: absent means "no reason recorded". */
+export type TrackerDocumentsUnavailableReason =
+  | "no_session"
+  | "documents_not_prepared"
+  | "job_documents_not_linked"
+  | "unknown_association";
+
+const UNAVAILABLE_REASON: Record<TrackerDocumentsUnavailableReason, string> = {
+  no_session: "This application was recorded without an XpertApply session, so no documents were prepared for it.",
+  documents_not_prepared: "XpertApply didn’t prepare a resume or cover letter for this application.",
+  job_documents_not_linked: "Documents exist for this job, but nothing links them to this application.",
+  unknown_association: "We can’t tell which saved documents were used for this application."
+};
+
 export type TrackerApplication = {
   id: number;
   job_id: number;
@@ -66,6 +80,7 @@ export type TrackerApplication = {
   /** The tailored documents that were prepared for this application, if any. */
   documents?: { resume: TrackerDocument | null; cover_letter: TrackerDocument | null };
   documents_availability?: TrackerDocumentsAvailability;
+  documents_unavailable_reason?: TrackerDocumentsUnavailableReason | null;
   created_at?: string | null;
   updated_at?: string | null;
   job: Pick<
@@ -132,8 +147,8 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
           return (
             <div key={kind} className="rounded-control border border-line-default px-3 py-2 text-xs text-foreground-muted">
               <span className="font-medium capitalize text-foreground-secondary">{label}</span>: Not available
-              {application.documents_availability === "unknown_association" && (
-                <span className="block">We can’t tell which saved documents were used for this application.</span>
+              {application.documents_unavailable_reason && UNAVAILABLE_REASON[application.documents_unavailable_reason] && (
+                <span className="block">{UNAVAILABLE_REASON[application.documents_unavailable_reason]}</span>
               )}
             </div>
           );

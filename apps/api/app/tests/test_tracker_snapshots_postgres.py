@@ -160,6 +160,30 @@ def _counts(url: str) -> dict[str, int]:
         engine.dispose()
 
 
+def test_0037_adds_the_basis_column_to_snapshots_already_on_staging_and_reverses(scratch_database: str) -> None:
+    """Staging is already at 0036. 0037 must keep its rows and give them the 0036-era basis, and must reverse without loss elsewhere."""
+    _migrate(scratch_database, "0036_application_doc_snapshots")
+    _populate_at_0035(scratch_database)
+    engine = create_engine(scratch_database)
+    with engine.begin() as conn:
+        assert "association_basis" not in {r.column_name for r in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'application_document_snapshots'"))}
+        conn.execute(text("INSERT INTO application_document_snapshots (user_id, tracker_id, kind, content) VALUES (1, 1, 'resume', '{\"summary\": \"S\"}')"))
+    before = _counts(scratch_database)
+    _migrate(scratch_database, "0037_snapshot_association_basis")
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT kind, association_basis, content->>'summary' AS s FROM application_document_snapshots")).one()
+        assert (row.kind, row.association_basis, row.s) == ("resume", "sole_session", "S")           # the row survived, with the 0036-era basis
+        assert conn.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name = 'application_document_snapshots' AND column_name = 'association_basis'")).scalar_one() == "NO"
+    assert _counts(scratch_database) == before
+    engine.dispose()
+    _downgrade(scratch_database, "0036_application_doc_snapshots")
+    engine = create_engine(scratch_database)
+    with engine.connect() as conn:
+        assert "association_basis" not in {r.column_name for r in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'application_document_snapshots'"))}
+        assert conn.execute(text("SELECT count(*) FROM application_document_snapshots")).scalar_one() == 1          # the archive itself is kept
+    engine.dispose()
+
+
 def test_upgrade_from_a_populated_0035_schema_keeps_every_row_and_creates_a_correct_table(scratch_database: str) -> None:
     _migrate(scratch_database, "0035_extension_auth")
     _populate_at_0035(scratch_database)
@@ -170,11 +194,12 @@ def test_upgrade_from_a_populated_0035_schema_keeps_every_row_and_creates_a_corr
         assert conn.execute(text("SELECT to_regclass('public.application_document_snapshots')")).scalar_one() is None
 
     _migrate(scratch_database, "0036_application_doc_snapshots")
+    _migrate(scratch_database, "0037_snapshot_association_basis")
 
     assert _counts(scratch_database) == before                                    # nothing lost, nothing added
     with engine.connect() as conn:
         assert conn.execute(text("SELECT id, user_id, job_id, status, applied_at FROM application_tracker ORDER BY id")).all() == before_rows
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0036_application_doc_snapshots"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0037_snapshot_association_basis"
         assert conn.execute(text("SELECT count(*) FROM application_document_snapshots")).scalar_one() == 0   # no invented associations
         cols = {r.column_name: r for r in conn.execute(text(
             "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = 'application_document_snapshots'"))}
@@ -195,7 +220,7 @@ def test_upgrade_from_a_populated_0035_schema_keeps_every_row_and_creates_a_corr
 
 
 def test_constraints_hold_on_postgres(scratch_database: str) -> None:
-    _migrate(scratch_database, "0036_application_doc_snapshots")
+    _migrate(scratch_database, "0037_snapshot_association_basis")
     _populate_at_0035(scratch_database)
     engine = create_engine(scratch_database)
     insert = text("INSERT INTO application_document_snapshots (user_id, tracker_id, kind, content) VALUES (:u, :t, :k, '{\"summary\": \"S\"}')")
@@ -217,7 +242,7 @@ def test_constraints_hold_on_postgres(scratch_database: str) -> None:
 
 
 def test_delete_rules_cascade_and_set_null_on_postgres(scratch_database: str) -> None:
-    _migrate(scratch_database, "0036_application_doc_snapshots")
+    _migrate(scratch_database, "0037_snapshot_association_basis")
     _populate_at_0035(scratch_database)
     engine = create_engine(scratch_database)
     with engine.begin() as conn:
@@ -238,7 +263,7 @@ def test_delete_rules_cascade_and_set_null_on_postgres(scratch_database: str) ->
 
 
 def test_downgrade_on_a_disposable_copy_preserves_other_data_and_roundtrips(scratch_database: str) -> None:
-    _migrate(scratch_database, "0036_application_doc_snapshots")
+    _migrate(scratch_database, "0037_snapshot_association_basis")
     _populate_at_0035(scratch_database)
     engine = create_engine(scratch_database)
     with engine.begin() as conn:
@@ -260,7 +285,7 @@ def test_downgrade_on_a_disposable_copy_preserves_other_data_and_roundtrips(scra
             assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0035_extension_auth"
         assert _counts(copy_url) == base                                               # every other table is exactly as it was
         copy.dispose()
-        _migrate(copy_url, "0036_application_doc_snapshots")                           # and it can go forward again
+        _migrate(copy_url, "0037_snapshot_association_basis")                           # and it can go forward again
         copy = create_engine(copy_url)
         with copy.connect() as conn:
             assert conn.execute(text("SELECT count(*) FROM application_document_snapshots")).scalar_one() == 0   # the archive is the one thing a downgrade discards
@@ -273,7 +298,7 @@ def test_downgrade_on_a_disposable_copy_preserves_other_data_and_roundtrips(scra
     # the source database was never downgraded
     engine = create_engine(scratch_database)
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0036_application_doc_snapshots"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0037_snapshot_association_basis"
         assert conn.execute(text("SELECT count(*) FROM application_document_snapshots")).scalar_one() == 1
     engine.dispose()
 
@@ -283,10 +308,10 @@ def test_the_full_chain_reaches_0036_as_the_single_head(scratch_database: str) -
 
     _migrate(scratch_database, "head")
     script = ScriptDirectory.from_config(_alembic_config(scratch_database))
-    assert script.get_heads() == ["0036_application_doc_snapshots"]
+    assert script.get_heads() == ["0037_snapshot_association_basis"]
     engine = create_engine(scratch_database)
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0036_application_doc_snapshots"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0037_snapshot_association_basis"
     engine.dispose()
 
 

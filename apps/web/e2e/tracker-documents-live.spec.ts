@@ -92,3 +92,36 @@ test("another real account cannot download that application's documents", async 
   expect(ok.status()).toBe(200);
   expect(ok.headers()["cache-control"]).toBe("private, no-store");
 });
+
+test("an application recorded with no XpertApply session says so in the browser and offers no download", async ({ page, request }) => {
+  const jobId = seedJob(`live-nosession-${Date.now()}`);
+  const token = await signup(request, `nosession-${Date.now()}@mailbox.test-domain.co`);
+  const headers = { Authorization: `Bearer ${token}` };
+  expect((await request.put(`${API}/profile`, { headers, data: profile })).ok()).toBeTruthy();
+  expect((await request.post(`${API}/jobs/${jobId}/applications/confirm-applied`, { headers, data: { confirmed: true } })).ok()).toBeTruthy();
+  const entry = (await (await request.get(`${API}/jobs/tracker/all`, { headers })).json()).applications[0];
+  expect(entry.documents).toEqual({ resume: null, cover_letter: null });
+  expect(entry.documents_unavailable_reason).toBe("no_session");
+
+  await page.addInitScript((value) => localStorage.setItem("jobpilot_token", value), token);
+  await page.goto("/tracker");
+  await expect(page.getByRole("heading", { name: "Senior Machine Learning Engineer" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Download/i })).toHaveCount(0);
+  await expect(page.getByText(/recorded without an XpertApply session/i).first()).toBeVisible();
+  await expect(page.getByText(/resume: Not available/i)).toBeVisible();
+  expect((await request.get(`${API}/jobs/tracker/${entry.id}/documents/resume`, { headers })).status()).toBe(404);
+});
+
+test("several saved documents for a job and no session are not guessed, and the browser says why", async ({ page, request }) => {
+  const jobId = seedJob(`live-several-${Date.now()}`);
+  const token = await signup(request, `several-${Date.now()}@mailbox.test-domain.co`);
+  const headers = { Authorization: `Bearer ${token}` };
+  expect((await request.put(`${API}/profile`, { headers, data: profile })).ok()).toBeTruthy();
+  expect((await request.put(`${API}/profile/career`, { headers, data: career })).ok()).toBeTruthy();
+  for (let i = 0; i < 2; i++) expect((await request.post(`${API}/jobs/${jobId}/documents/resume`, { headers })).ok()).toBeTruthy();
+  expect((await request.post(`${API}/jobs/${jobId}/applications/confirm-applied`, { headers, data: { confirmed: true } })).ok()).toBeTruthy();
+  await page.addInitScript((value) => localStorage.setItem("jobpilot_token", value), token);
+  await page.goto("/tracker");
+  await expect(page.getByRole("button", { name: /^Download/i })).toHaveCount(0);
+  await expect(page.getByText(/nothing links them to this application/i).first()).toBeVisible();
+});

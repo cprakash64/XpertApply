@@ -44,3 +44,45 @@ Defects found and fixed here:
 `0036_application_doc_snapshots` was edited in place to add `association_basis`: it has never been applied outside disposable databases (staging is at 0035).
 
 Document states a user can tell apart: `frozen` (immutable copy), `historical` (older record, saved copy as it is now), `unknown_association`, `none`.
+
+## R2: provenance and linkage (XA-RC-06-B-R2)
+
+### Staging report: "Resume / Cover letter: Not available"
+Reconstructed from the code and reproduced on PostgreSQL 16 over real HTTP (a real `uvicorn`, no OpenAI key, synthetic users):
+
+| Question | Finding | Class |
+| --- | --- | --- |
+| Does "AI disabled" explain it? | No. `generate_resume` / `generate_cover_letter` fall back to a deterministic template when there is no key, so both a website-launched session and a direct-entry draft end up with a prepared resume and cover letter (scenarios A, B). | Hypothesis rejected |
+| Does autofill imply a document was prepared or attached? | No. Filling employer fields records nothing about documents; only `documents_uploaded` on an extension `autofill-results` report marks a file as attached (scenario R). | Expected behaviour |
+| Direct-entry drafts | Documents are prepared by a background task after the response, once per draft, and a failure is recorded and not retried. A draft whose preparation failed has none. | Expected missing-data behaviour |
+| Is the Applied transition archived? | Yes: `complete_session`, `submission-confirmed`, the Tracker dropdown and `confirm-applied` all reach `mark_application_applied`, which snapshots (A, B, E, F, P). | Verified |
+| A document the user made in the Jobs workspace (no session) | Was unreachable after R1: nothing linked it. Now kept at confirmation when it is the unique document of its type for that exact job (`job_document`); several of them are not guessed (P, Q). | Confirmed defect, fixed |
+| Sessions pointing at the same documents (a draft reopened after its TTL) | R1 called two sessions ambiguous. They name one set of documents, so they are one answer (E2). | Confirmed defect, fixed |
+| A session that raised the confirmation (`tracker_id` set by `confirmation-required`) | R1 ignored it unless completed. It is evidence (E3). | Confirmed defect, fixed |
+| The submission date a client claims | R1 used it to exclude sessions "created after" it. A claimed or skewed date must never choose a session (E4). | Latent defect, fixed |
+| The actual cause on the user's staging application | **Not determinable from here.** No staging data was accessed. The user's flow matches several of the above; the Tracker now states which one applies (`documents_unavailable_reason`). | Unverified |
+
+### Migration correction
+R1 edited `0036_application_doc_snapshots` in place to add `association_basis`, on the stated belief that 0036 had not been applied outside disposable databases. Staging **is** at 0036, so that edit would have left staging without the column (the API would fail to read snapshots). 0036 is restored byte-for-byte to the deployed revision and the column now arrives in `0037_snapshot_association_basis` (additive, reversible; existing rows read `sole_session`).
+
+### Contract changes
+* Tracker rows: `documents_availability` (`frozen | historical | unknown_association | none`) and `documents_unavailable_reason` (`no_session | documents_not_prepared | job_documents_not_linked | unknown_association | null`). Document `association`: `confirming_session | linked_session | sole_session | job_document`.
+* The UI shows the reason beside "Not available".
+
+### Not changed, and why
+* **Original files.** Uploaded resumes are read for profile import and discarded (`/profile/import/file`); XpertApply holds no copy of an original file, so there is nothing authorised to associate. A download is always the saved content re-rendered, and the API and UI say so. Nothing from the employer page or the user's disk is ever captured.
+* **Letting the user attach a saved document to an application** is not supported by the product today. Minimal safe design, as a separate follow-up: an explicit "Attach saved document" action on a Tracker row, owner-scoped, offering only that user's own `GeneratedDocument` rows for that job, snapshotting at the moment of the click with basis `user_selected`, never claiming the file was submitted. Not implemented here.
+* The extension needed no change: both flows already name the confirming session.
+
+### Staging acceptance procedure (real staging, no data inserted by us, AI settings untouched)
+1. Use a dedicated staging test account. Do not use a production-like account.
+2. **Website-launched**: Jobs → pick a job → *Apply with XpertApply*. In the dialog the resume and cover letter should read "ready" (template mode is fine). Let the extension fill the employer page, then mark it applied. Tracker → Applied: expect **Saved document prepared for this application**, both downloads, and PDF/Word files that open.
+3. **Direct entry**: open an employer application page with the extension connected. Wait for the assistant's document line to settle (a minute at most), submit or confirm "I applied". Expect the same.
+4. Edit the resume in the Jobs workspace afterwards: the Tracker download must not change.
+5. If a document shows "Not available", the reason beside it names the cause. Report that text. To see the facts behind it, an operator with staging access can run read-only (no PII selected):
+   `SELECT t.id, t.status, t.applied_source, (SELECT count(*) FROM application_sessions s WHERE s.user_id=t.user_id AND s.job_id=t.job_id) AS sessions, (SELECT count(*) FROM application_sessions s WHERE s.user_id=t.user_id AND s.job_id=t.job_id AND (s.tailored_resume_id IS NOT NULL OR s.tailored_cover_letter_id IS NOT NULL)) AS sessions_with_docs, (SELECT count(*) FROM generated_documents d WHERE d.user_id=t.user_id AND d.job_id=t.job_id) AS job_docs, (SELECT string_agg(kind||':'||association_basis, ',') FROM application_document_snapshots x WHERE x.tracker_id=t.id) AS snapshots FROM application_tracker t WHERE t.id = <tracker id>;`
+   and `SELECT created_at FROM audit_logs WHERE action = 'document_snapshot_failed' AND user_id = <user id>;`
+6. If no legitimate document source exists on staging (no profile, or generation disabled in a way that raises), say so; do not seed documents into a live account.
+
+### Rollout
+Run `alembic upgrade head` (0037) on staging **before** deploying this API; the new code reads the `association_basis` column. Then the web.

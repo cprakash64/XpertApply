@@ -88,12 +88,25 @@ describe("Tracker document downloads", () => {
     expect(screen.getAllByText(/Not available/i).length).toBe(4);
   });
 
-  it("says when the history is ambiguous instead of offering a guess", async () => {
-    applications = [{ ...app(11, { resume: null, cover_letter: null }), documents_availability: "unknown_association" }];
+  it.each([
+    ["unknown_association", /can.t tell which saved documents were used/i],
+    ["no_session", /recorded without an XpertApply session/i],
+    ["documents_not_prepared", /didn.t prepare a resume or cover letter/i],
+    ["job_documents_not_linked", /nothing links them to this application/i]
+  ])("explains why nothing is available (%s) instead of offering a guess", async (reason, wording) => {
+    applications = [{ ...app(11, { resume: null, cover_letter: null }), documents_availability: "none", documents_unavailable_reason: reason }];
     render(React.createElement(TrackerClient));
     await screen.findByText("Engineer 11");
     expect(screen.queryByRole("button", { name: /^Download/i })).not.toBeInTheDocument();
-    expect(screen.getAllByText(/can.t tell which saved documents were used/i).length).toBe(2);
+    expect(screen.getAllByText(wording).length).toBe(2);
+  });
+
+  it("gives no reason when the server recorded none", async () => {
+    applications = [app(11, { resume: null, cover_letter: null })];
+    render(React.createElement(TrackerClient));
+    await screen.findByText("Engineer 11");
+    expect(screen.getAllByText(/Not available/i).length).toBe(2);
+    expect(screen.queryByText(/XpertApply session|didn.t prepare|can.t tell|nothing links/i)).not.toBeInTheDocument();
   });
 
   it("keeps applications of the same company apart", async () => {

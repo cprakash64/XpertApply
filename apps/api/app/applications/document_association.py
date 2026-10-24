@@ -11,13 +11,17 @@ Where the documents come from, in order:
 
 1. The snapshot written when the application first became ``applied`` (state ``frozen``): an immutable copy of the stored content,
    so later edits, regenerated tailoring or profile changes cannot alter what the user downloads for that application.
-2. For applications with no snapshot (confirmed before snapshots existed, or archival failed), the documents of the ONE session that
-   can be tied to the application with evidence (state ``historical``, not frozen): the session whose completion made it applied
-   (``tracker_id`` plus ``completed_at``), or the only prepared session for that user and job. These are the saved copies as they are
-   now, and the API says so.
-3. When several sessions could have supplied them and nothing says which, no association is made (state ``unknown_association``).
-   Choosing the newest would be a guess, and a wrong one is worse than none.
-4. Otherwise nothing (state ``none``). There is never a "latest document for the job" substitution.
+2. For applications with no snapshot (confirmed before snapshots existed, or archival failed), the saved documents of the sessions
+   that can be tied to the application with evidence (state ``historical``, not frozen). Evidence is the session named by the
+   confirmation, a session that raised or completed the confirmation for this application (``tracker_id``), or the fact that every
+   prepared session for this user and job points at one and the same set of documents. Sessions that point at DIFFERENT documents
+   with nothing to say which was used give no association (state ``unknown_association``): choosing the newest is a guess, and a
+   wrong document is worse than none. The date the user or a client claims for the submission is never used to pick a session.
+3. At the moment of confirmation only (never when reading later), a kind with no session evidence may take the single document of
+   that type that exists for this user and this exact job (basis ``job_document``): it is what the user had prepared for the job.
+   Several such documents and no evidence means nothing is taken.
+4. Otherwise nothing (state ``none``), with the reason that is known from the stored facts. There is never a "latest document for
+   the job" substitution and nothing is generated after the fact.
 
 A "snapshot" is the saved CONTENT, re-rendered to PDF or DOCX on download. It is not the byte stream that was once attached to an
 employer's form: rendering is not byte-reproducible (PDF metadata carries a creation time), and the original file is not kept.
@@ -68,6 +72,9 @@ class Resolution:
     documents: dict[str, ResolvedDocument | None]
     #: "frozen" | "historical" | "unknown_association" | "none"
     state: str
+    #: Why nothing is available, when that is known from stored facts: "no_session" | "documents_not_prepared" |
+    #: "job_documents_not_linked" | "unknown_association"; None when documents are available.
+    reason: str | None = None
 
 
 def _session_doc_ids(session: ApplicationSession) -> dict[str, int | None]:
@@ -77,11 +84,7 @@ def _session_doc_ids(session: ApplicationSession) -> dict[str, int | None]:
 def _associated_sessions(
     db: Session, trackers: list[ApplicationTracker], explicit: dict[int, int] | None = None
 ) -> tuple[dict[int, tuple[ApplicationSession, str]], set[int]]:
-    """``({tracker_id: (session, basis)}, {tracker_ids that are ambiguous})``, in one pass.
-
-    Only evidence associates a session with an application: the session that is named by the caller (the one whose completion is
-    being recorded), the one whose completion already made this application applied (``tracker_id`` and ``completed_at``), or the
-    only prepared session for the user and job up to the application date. Several candidates and no evidence means ambiguous."""
+    """``({tracker_id: (session, basis)}, {tracker_ids that are ambiguous})``, in one pass. Evidence only; see the module docstring."""
     if not trackers:
         return {}, set()
     explicit = explicit or {}
@@ -103,16 +106,13 @@ def _associated_sessions(
         if named is not None:
             chosen[tracker.id] = (named, "confirming_session")
             continue
-        upto = [
-            s for s in mine
-            if tracker.applied_at is None or s.created_at is None or _naive(s.created_at) <= _naive(tracker.applied_at)
-        ]
-        linked = [s for s in upto if s.tracker_id == tracker.id and s.completed_at is not None]
-        if len(linked) == 1:
-            chosen[tracker.id] = (linked[0], "confirming_session")
-        elif not linked and len(upto) == 1:
-            chosen[tracker.id] = (upto[0], "sole_session")
-        elif len(linked) > 1 or len(upto) > 1:
+        linked = [s for s in mine if s.tracker_id == tracker.id]
+        pool, basis = (linked, "linked_session") if linked else (mine, "sole_session")
+        distinct = {(s.tailored_resume_id, s.tailored_cover_letter_id) for s in pool}
+        if len(distinct) == 1:
+            newest = pool[0]                                    # newest id first; every candidate points at the same documents
+            chosen[tracker.id] = (newest, "confirming_session" if linked and newest.completed_at is not None else basis)
+        elif len(distinct) > 1:
             ambiguous.add(tracker.id)
     return chosen, ambiguous
 
@@ -179,7 +179,43 @@ def resolve_documents(
                 )
             if any(docs_by_tracker[tracker.id].values()):
                 states[tracker.id] = "historical"
-    return {t.id: Resolution(docs_by_tracker[t.id], states[t.id]) for t in trackers}
+    reasons = _unavailable_reasons(db, [t for t in trackers if states[t.id] in ("none", "unknown_association")], states)
+    return {t.id: Resolution(docs_by_tracker[t.id], states[t.id], reasons.get(t.id)) for t in trackers}
+
+
+def _unavailable_reasons(db: Session, trackers: list[ApplicationTracker], states: dict[int, str]) -> dict[int, str]:
+    """Why an application has no documents, from persisted facts only (counts per user and job; no content is read)."""
+    if not trackers:
+        return {}
+    pairs = {(t.user_id, t.job_id) for t in trackers}
+    session_counts: dict[tuple[int, int], int] = {}
+    for user_id, job_id in db.execute(
+        select(ApplicationSession.user_id, ApplicationSession.job_id).where(
+            ApplicationSession.user_id.in_({p[0] for p in pairs}), ApplicationSession.job_id.in_({p[1] for p in pairs})
+        )
+    ):
+        session_counts[(user_id, job_id)] = session_counts.get((user_id, job_id), 0) + 1
+    document_counts: dict[tuple[int, int], int] = {}
+    for user_id, job_id in db.execute(
+        select(GeneratedDocument.user_id, GeneratedDocument.job_id).where(
+            GeneratedDocument.user_id.in_({p[0] for p in pairs}),
+            GeneratedDocument.job_id.in_({p[1] for p in pairs}),
+            GeneratedDocument.type.in_((DocumentType.resume, DocumentType.cover_letter)),
+        )
+    ):
+        document_counts[(user_id, job_id)] = document_counts.get((user_id, job_id), 0) + 1
+    reasons: dict[int, str] = {}
+    for tracker in trackers:
+        key = (tracker.user_id, tracker.job_id)
+        if states[tracker.id] == "unknown_association":
+            reasons[tracker.id] = "unknown_association"
+        elif document_counts.get(key):
+            reasons[tracker.id] = "job_documents_not_linked"
+        elif session_counts.get(key):
+            reasons[tracker.id] = "documents_not_prepared"
+        else:
+            reasons[tracker.id] = "no_session"
+    return reasons
 
 
 def freeze_application_documents(db: Session, tracker: ApplicationTracker, session_id: int | None = None) -> int:
@@ -192,7 +228,21 @@ def freeze_application_documents(db: Session, tracker: ApplicationTracker, sessi
     existing = {s.kind for s in db.scalars(select(ApplicationDocumentSnapshot).where(ApplicationDocumentSnapshot.tracker_id == tracker.id)).all()}
     if set(KINDS) <= existing:
         return 0
-    live = resolve_documents(db, [tracker], {tracker.id: session_id} if session_id is not None else None)[tracker.id].documents
+    resolution = resolve_documents(db, [tracker], {tracker.id: session_id} if session_id is not None else None)[tracker.id]
+    live = dict(resolution.documents)
+    if resolution.state != "unknown_association":
+        # Only now, at the confirmation, and only a unique document of that type for this user and this exact job.
+        for kind, doc_type in (("resume", DocumentType.resume), ("cover_letter", DocumentType.cover_letter)):
+            if live[kind] is not None:
+                continue
+            candidates = db.scalars(
+                select(GeneratedDocument).where(
+                    GeneratedDocument.user_id == tracker.user_id, GeneratedDocument.job_id == tracker.job_id, GeneratedDocument.type == doc_type
+                )
+            ).all()
+            if len(candidates) == 1:
+                only = candidates[0]
+                live[kind] = ResolvedDocument(kind, only.title, only.content or {}, only.plain_text, only.created_at, False, False, only.id, "job_document")
     written = 0
     for kind in KINDS:
         doc = live[kind]

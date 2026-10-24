@@ -32,7 +32,6 @@ def upgrade() -> None:
         sa.Column("plain_text", sa.Text(), nullable=True),
         sa.Column("format_version", sa.String(length=20), nullable=False, server_default="v1"),
         sa.Column("attached_by_extension", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("association_basis", sa.String(length=24), nullable=False, server_default="sole_session"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tracker_id"], ["application_tracker.id"], ondelete="CASCADE"),
