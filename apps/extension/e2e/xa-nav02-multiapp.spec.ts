@@ -217,3 +217,52 @@ test("open-ended questions: drafts are inserted for review, empty ones stay empt
     expect(await a.inputValue("#q1")).toBe("My own words.");
   } finally { await h.close().catch(() => undefined); s.close(); }
 });
+
+test("the user's off switch for an origin keeps the assistant from opening by itself on a website launch, and only that origin", async () => {
+  test.setTimeout(180_000);
+  const { s, h, payloadB } = await twoJobs(8901, 8902);
+  try {
+    await h.worker.evaluate(async () => chrome.storage.local.set({ xaAutoOpenDisabledOrigins: ["https://job-boards.greenhouse.io"] }));
+    const { empPage: a } = await h.start();
+    await expect(a.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 45_000 });   // another origin: unaffected
+    const b = await startPayload(h, payloadB);
+    await b.waitForTimeout(12_000);
+    expect(await b.locator("#xpertapply-assistant-overlay-v1").count()).toBe(0);                           // switched-off origin: no automatic assistant
+    expect((await noSubmit(b))).toEqual({ submits: 0, clicks: 0 });
+  } finally { await h.close().catch(() => undefined); s.close(); }
+});
+
+test("closing the earlier application's tab leaves the other application, and a later launch, working", async () => {
+  test.setTimeout(180_000);
+  const { s, h, payloadB } = await twoJobs(9001, 9002);
+  try {
+    const { empPage: a } = await h.start();
+    await expect.poll(() => a.inputValue("#email").catch(() => ""), { timeout: 45_000 }).toBe("riley@example.test");
+    const b = await startPayload(h, payloadB);
+    await expect.poll(() => b.inputValue("#email").catch(() => ""), { timeout: 45_000 }).toBe("riley@example.test");
+    await b.fill("#first_name", "Edited");
+    await a.close();
+    await b.bringToFront();
+    await b.waitForTimeout(3000);
+    expect(await b.inputValue("#first_name")).toBe("Edited");
+    expect(await b.locator("#xpertapply-assistant-overlay-v1").count()).toBe(1);
+    const sessions = await h.worker.evaluate(async () => Object.values((await chrome.storage.session.get("pendingLaunches")).pendingLaunches ?? {}).map((v: any) => v.sessionId));
+    expect(sessions).toContain(9002);                                                                       // B's record survived A's tab closing
+  } finally { await h.close().catch(() => undefined); s.close(); }
+});
+
+test("SoFi first, then ElevenLabs: the reverse order also gives each its own assistant and fill", async () => {
+  test.setTimeout(180_000);
+  const { s, h } = await twoJobs(9101, 9102);
+  try {
+    // launch B's payload first, then A's, through the same page
+    const payloadA = h.payload as Record<string, unknown>;
+    const payloadB = { requestId: "req-9102", launchToken: "synthetic-launch-b", sessionId: 9102, jobId: 9102, officialUrl: B_URL, atsType: "greenhouse", webApiBase: h.employer.origin, webAuthenticatedUserId: 1 };
+    const first = await startPayload(h, payloadB);
+    await expect.poll(() => first.inputValue("#email").catch(() => ""), { timeout: 45_000 }).toBe("riley@example.test");
+    const second = await startPayload(h, payloadA);
+    await expect.poll(() => second.inputValue("#email").catch(() => ""), { timeout: 45_000 }).toBe("riley@example.test");
+    for (const p of [first, second]) await expect(p.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1);
+    expect(second.url()).toContain("elevenlabs"); expect(first.url()).toContain("sofi");
+  } finally { await h.close().catch(() => undefined); s.close(); }
+});

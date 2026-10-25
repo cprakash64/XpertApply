@@ -1709,6 +1709,13 @@ async function autoShowOverlay(tabId: number, documentId: string, generation: Au
   if (autoShownDocuments.size > 200) autoShownDocuments.delete(autoShownDocuments.values().next().value as string);
   try {
     if (generation !== captureAuthorityGeneration()) return;
+    // The user's per-origin off switch outranks an authorized launch: the assistant is then only ever opened from the toolbar.
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const tabOrigin = tab?.url ? new URL(tab.url).origin : null;
+    if (tabOrigin && await isAutoOpenDisabled(tabOrigin)) {
+      log.info("automatic assistant skipped", { reason: "auto_open_disabled" });
+      return;
+    }
     await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [TOOLBAR_OVERLAY_BUNDLE] });
     await chrome.tabs.sendMessage(tabId, { type: MSG.SHOW_APPLICATION_OVERLAY, automatic: true }, { frameId: 0 });
   } catch (error) {
