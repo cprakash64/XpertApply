@@ -10,6 +10,7 @@ import type { ReviewCategory, ReviewItem } from "./widget";
 
 const REASON_TEXT: Partial<Record<string, string>> = {
   NO_VERIFIED_ANSWER: "XpertApply doesn't have a confirmed answer for this question.",
+  AI_DRAFT_REVIEW: "XpertApply drafted this answer from your saved experience. It is NOT verified — read it, correct anything that is not accurate, and make it your own.",
   LOW_CONFIDENCE: "XpertApply found this field but isn't confident enough to fill it automatically.",
   SENSITIVE_FIELD: "This is a sensitive/voluntary question — please choose an answer yourself.",
   VALUE_DID_NOT_STICK: "XpertApply tried to fill this field, but the page didn't accept the value.",

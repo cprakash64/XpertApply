@@ -27,6 +27,7 @@ import {
   fetchApplicationOverrides,
   fetchSessionData,
   resolveQuestions,
+  draftAnswers,
   postEvent,
   reportAutofillResult,
   requireSubmissionConfirmation,
@@ -79,6 +80,9 @@ import {
   patchView,
   putPackage,
   putActive,
+  putUnbound,
+  listUnbound,
+  claimTabForLaunch,
   putPending,
   putView,
   STORAGE_KEYS,
@@ -1281,6 +1285,25 @@ function routeRuntimeMessage(
       return true;
     }
 
+    case MSG.DRAFT_ANSWERS: {
+      const tabId = sender.tab?.id;
+      void (async () => {
+        const pkg = tabId != null ? await getPackage(tabId) : null;
+        // The drafts are for THIS tab's application only: the session the page names must be the one the tab's package belongs to.
+        if (!pkg || pkg.session.sessionId !== message.sessionId) {
+          sendResponse({ ok: false, error: "SESSION_PACKAGE_FAILED" });
+          return;
+        }
+        try {
+          sendResponse({ ok: true, drafts: await draftAnswers(pkg.sessionToken, message.sessionId, message.questions) });
+        } catch (err) {
+          log.info("answer drafting failed", { reason: classifyPackageError(err) });
+          sendResponse({ ok: false, error: classifyPackageError(err) });
+        }
+      })();
+      return true;
+    }
+
     case MSG.GET_VIEW_STATE:
       void resolveViewTab(message.tabId)
         .then((id) => getView(id ?? -1))
@@ -1497,7 +1520,7 @@ async function directSessionStillOwned(tabId: number): Promise<boolean> {
 /** Messages that read, write or act on an application session. A direct draft must still be owned to receive them. */
 const DIRECT_OWNER_GUARDED = new Set<string>([
   MSG.OVERLAY_START_AUTOFILL, MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION, MSG.OVERLAY_GET_VIEW,
-  MSG.RESOLVE_QUESTIONS, MSG.REQUEST_DOCUMENT, MSG.SAVE_ANSWER, MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES,
+  MSG.RESOLVE_QUESTIONS, MSG.DRAFT_ANSWERS, MSG.REQUEST_DOCUMENT, MSG.SAVE_ANSWER, MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES,
   MSG.CONFIRM_NAME, MSG.AUDIT_EVENT, MSG.REQUEST_FILL_LEASE, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT
 ]);
 
@@ -1508,6 +1531,27 @@ type DirectBind = { ok: true; pending: PendingLaunch } | { ok: false; reason: st
 const directBinds = new Map<number, Promise<DirectBind>>();
 
 /** The launch's own tab, or the tab it handed the workflow to. */
+/**
+ * Which prepared website launch, if any, does this unclaimed document belong to?
+ *
+ * Only launches that no tab has claimed are candidates, and only those whose application URL this document corresponds to (or whose
+ * workflow origin graph this tab already belongs to). Exactly one candidate binds; several fail closed. Never "the latest launch".
+ */
+async function resolveUnboundLaunch(context: SenderContext): Promise<PendingLaunch | "ambiguous" | null> {
+  const unbound = await listUnbound();
+  if (unbound.length === 0) return null;
+  const matching: PendingLaunch[] = [];
+  for (const launch of unbound) {
+    if (launch.targetTabId !== undefined && launch.targetTabId !== context.tabId) continue;
+    if (senderCanBindTab(context, launch)
+      || (await tabBelongsToLaunch(context.tabId, launch)
+        && context.frameOrigin !== null
+        && originJoinsLaunchWorkflow(launch, context.frameOrigin))) matching.push(launch);
+  }
+  if (matching.length === 0) return null;
+  return matching.length === 1 ? matching[0] : "ambiguous";
+}
+
 async function tabBelongsToLaunch(tabId: number, active: PendingLaunch): Promise<boolean> {
   if (active.targetTabId === tabId) return true;
   const activation = await readPendingActivation();
@@ -1825,8 +1869,8 @@ function handleLaunchRequest(
       if (tabId == null) throw new Error("no tab id");
 
       const bound = { ...pending, userStarted: true as const, targetTabId: tabId, status: "opening" as const, state: "waiting_for_tab" as const };
-      await putPending(tabId, bound, generation);
-      await putView(tabId, initialView(tabId, bound, null, null), generation);
+      // The tab's first document may already have reported in and bound itself from the registry: keep that binding and its progress.
+      await claimTabForLaunch(tabId, bound, initialView(tabId, bound, null, null), generation);
       // The employer origin is only knowable now, and a service worker cannot
       // ask Chrome for it. Record what the workflow needs; the side panel —
       // opened by this same user gesture — presents the request.
@@ -1862,9 +1906,14 @@ async function stageHandoff(
   const launch: PendingLaunch = {
     ...handoffFields(payload), createdAt, expiresAt: Date.now() + LAUNCH_TTL_MS,
     targetTabId: sameWorkflow ? previous.targetTabId : undefined,
-    status, state: status === "prepared" ? "package_ready" : "opening_tab"
+    status, state: status === "prepared" ? "package_ready" : "opening_tab",
+    // "opening" is only ever staged from the user's own Apply click; a merely prepared handoff stays silent.
+    ...(status === "opening" ? { userStarted: true as const } : {})
   };
   await putActive(launch, generation);
+  // ACTIVE is only the newest launch. The registry keeps every launch whose tab has not yet been claimed, so a second launch started
+  // moments later cannot erase the first one's only record.
+  if (!launch.targetTabId) await putUnbound(launch, generation);
   log.info("handoff saved", { requestId: payload.requestId, sessionId: payload.sessionId, state: status });
   return launch;
 }
@@ -2027,7 +2076,14 @@ async function handleContentReady(
 
   if (!pending) {
     boundVia = "active_self_bind";
-    const active = await getActive();
+    const resolved = await resolveUnboundLaunch(context);
+    if (resolved === "ambiguous") {
+      // Two prepared applications could both claim this document and nothing Chrome reports tells them apart: no binding, no fill.
+      log.info("destination session resolution", { stage: "origin_validation", reason: "launch_ambiguous" });
+      sendResponse({ ok: true, matched: false, error: "HANDOFF_URL_MISMATCH", launch: null });
+      return;
+    }
+    const active = resolved ?? (await getActive());
     const activeLive = active !== null && Date.now() <= active.expiresAt;
     // A website launch claims this page only on evidence Chrome supplies: the page
     // IS the prepared application, or it is the tab the launch opened and is still

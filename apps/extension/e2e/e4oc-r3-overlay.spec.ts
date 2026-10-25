@@ -59,7 +59,7 @@ test("E4O-C-R3 first-party Web bridge replies to replayable correlated presence 
   await employerFixture.route("**/application-sessions/token",r=>r.fulfill({status:200,contentType:"application/json",body:JSON.stringify({session_token:employerFixture.sessionToken,session})}));
   await employerFixture.route("**/application-sessions/3001",r=>r.fulfill({status:200,contentType:"application/json",body:JSON.stringify(session)}));
   await employerFixture.route("**/application-sessions/3001/answers",r=>r.fulfill({status:200,contentType:"application/json",body:JSON.stringify({answers:[],unresolved_questions:[],refreshed:false})}));
-  for(const endpoint of ["answers/override","resolve-questions","events","autofill-results"])await employerFixture.route("**/application-sessions/3001/"+endpoint,r=>r.fulfill({status:200,contentType:"application/json",body:JSON.stringify(endpoint==="answers/override"?{overrides:[]}:endpoint==="resolve-questions"?{request_schema_version:3,answer_contract_version:3,registry_version:"fixture",results:[]}:{})}));
+  for(const endpoint of ["answers/override","resolve-questions","events","autofill-results","draft-answers"])await employerFixture.route("**/application-sessions/3001/"+endpoint,r=>r.fulfill({status:200,contentType:"application/json",body:JSON.stringify(endpoint==="answers/override"?{overrides:[]}:endpoint==="resolve-questions"?{request_schema_version:3,answer_contract_version:3,registry_version:"fixture",results:[]}:{})}));
   let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
   try {
     await new Promise<void>((resolve,reject) => {
@@ -153,7 +153,7 @@ test("E4O-C-R3 canonical toolbar overlay discovers then explicitly fills the rea
 
     let worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 15_000 });
     await worker.evaluate(async base => chrome.storage.local.set({apiBase:base}), apiFixture.origin);
-    for (const endpoint of ["answers/override", "resolve-questions", "events", "autofill-results"]) {
+    for (const endpoint of ["answers/override", "resolve-questions", "events", "autofill-results", "draft-answers"]) {
       await apiFixture.route("**/application-sessions/3003/" + endpoint, route => route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(endpoint === "answers/override" ? {overrides:[]} : endpoint === "resolve-questions" ? {request_schema_version:3,answer_contract_version:3,registry_version:"fixture",results:[]} : {})}));
     }
 

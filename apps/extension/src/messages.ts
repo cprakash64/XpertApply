@@ -82,6 +82,8 @@ export type FieldFillStatus =
 export type ReasonCode =
   | "NO_VERIFIED_ANSWER"
   | "LOW_CONFIDENCE"
+  // The value is an AI-drafted answer the applicant has not reviewed yet.
+  | "AI_DRAFT_REVIEW"
   | "USER_VALUE_PRESENT"
   | "UNSUPPORTED_CONTROL"
   | "HIDDEN_FIELD"
@@ -318,6 +320,9 @@ export const MSG = {
   /** Content script asks the worker to resolve a batch of employer questions.
    * The worker holds the session token; the page never sees it. */
   RESOLVE_QUESTIONS: "JOBPILOT_RESOLVE_QUESTIONS",
+  /** Content script asks the worker to have the backend DRAFT grounded, editable answers for open-ended questions. The worker holds
+   * the session token; the drafts come back unverified and must be reviewed by the applicant. */
+  DRAFT_ANSWERS: "XPERTAPPLY_DRAFT_ANSWERS",
   /** Which build the service worker is, and which backend it would talk to.
    * Asked BEFORE autofill: a content script talking to a worker from a
    * different build is the most common reason a live page disagrees with a
@@ -455,6 +460,11 @@ export type RuntimeMessage =
   | { type: typeof MSG.DIRECT_AUTH_STATE }
   | {
       type: typeof MSG.RESOLVE_QUESTIONS;
+      sessionId: number;
+      questions: unknown[];
+    }
+  | {
+      type: typeof MSG.DRAFT_ANSWERS;
       sessionId: number;
       questions: unknown[];
     }
@@ -627,7 +637,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION, MSG.SESSION_DETACH,
-  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
+  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.DRAFT_ANSWERS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
   MSG.SUBMISSION_CONFIRMED, MSG.SUBMISSION_GESTURE_CANDIDATE,
   MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED, MSG.MANUAL_CONFIRMATION_REQUIRED,
@@ -815,6 +825,10 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.RESOLVE_QUESTIONS]: {
     sessionId: SESSION_ID,
     questions: { kind: "array", maxItems: LIMIT.questions, required: true }
+  },
+  [MSG.DRAFT_ANSWERS]: {
+    sessionId: SESSION_ID,
+    questions: { kind: "array", maxItems: 8, required: true }
   },
   [MSG.RECONNECT_APPLICATION_WORKFLOW]: {
     origin: { kind: "string", max: LIMIT.url, required: true },

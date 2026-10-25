@@ -100,7 +100,7 @@ export function statusFromResult(field: DiscoveredField, result: FieldFillResult
   switch (result.status) {
     case "filled":
     case "already_filled":
-      if (reason === "LOW_CONFIDENCE") {
+      if (reason === "LOW_CONFIDENCE" || reason === "AI_DRAFT_REVIEW") {
         return { status: "filled_needs_review", reasonCode: reason, verified: false };
       }
       return { status: "filled_verified", reasonCode: "", verified: true };

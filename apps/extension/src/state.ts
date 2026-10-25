@@ -122,6 +122,9 @@ async function getPackageMap(): Promise<Map<SessionPackage>> {
 }
 
 const ACTIVE_KEY = "activeAssistedApplyHandoffV1";
+/** Launches the website has started whose browser tab has not yet been claimed, keyed by their immutable requestId. ACTIVE holds only the
+ * newest launch, so two launches in quick succession would otherwise let the second erase the first's only record. */
+const UNBOUND_KEY = "unboundLaunchesV1";
 
 /** A handoff persisted by an older/incompatible build of the extension can be
  * missing fields the current code assumes are always present (this key
@@ -149,6 +152,55 @@ export async function putActive(launch: PendingLaunch, generation = captureAutho
   });
 }
 
+export async function putUnbound(launch: PendingLaunch, generation = captureAuthorityGeneration()): Promise<void> {
+  await withAuthorityMutation(generation, async () => {
+    assertSessionAuthority(launch.sessionId);
+    const map = await getMap<PendingLaunch>(UNBOUND_KEY);
+    // A newer launch of the same application supersedes an older unclaimed one; different applications are left alone.
+    for (const [requestId, other] of Object.entries(map)) if (other.sessionId === launch.sessionId && requestId !== launch.requestId) delete map[requestId];
+    map[launch.requestId] = launch;
+    await workflowStorage().set({ [UNBOUND_KEY]: map });
+  });
+}
+
+/** Live launches that have no browser tab yet. Never includes a launch that a tab has claimed. */
+export async function listUnbound(now = Date.now()): Promise<PendingLaunch[]> {
+  const map = await getMap<PendingLaunch>(UNBOUND_KEY);
+  return Object.values(map).filter((launch) => isValidHandoffShape(launch) && launch.expiresAt > now && isSessionAuthorityActive(launch.sessionId));
+}
+
+/**
+ * Claim `tabId` for a website launch in ONE serialized mutation.
+ *
+ * The new tab's first document can report in before the worker has recorded the tab it just created. If that report already bound the tab
+ * (from the unbound registry), this keeps that binding and its progress instead of replacing it with a fresh, empty one, and it marks the
+ * launch as user-started so the assistant opens.
+ */
+export async function claimTabForLaunch(
+  tabId: number,
+  launch: PendingLaunch,
+  view: LaunchViewState,
+  generation = captureAuthorityGeneration()
+): Promise<void> {
+  await withAuthorityMutation(generation, async () => {
+    assertSessionAuthority(launch.sessionId);
+    const [pending, views, unbound, active] = await Promise.all([
+      getMap<PendingLaunch>(PENDING_KEY), getMap<LaunchViewState>(VIEW_KEY), getMap<PendingLaunch>(UNBOUND_KEY), getActive()
+    ]);
+    const existing = pending[String(tabId)];
+    const sameRequest = existing !== undefined && existing.requestId === launch.requestId;
+    const next: PendingLaunch = sameRequest
+      ? { ...existing, userStarted: true, targetTabId: tabId }
+      : { ...launch, targetTabId: tabId };
+    pending[String(tabId)] = next;
+    if (!(sameRequest && views[String(tabId)])) views[String(tabId)] = { ...view, tabId, updatedAt: Date.now() };
+    delete unbound[launch.requestId];
+    const update: Record<string, unknown> = { [PENDING_KEY]: pending, [VIEW_KEY]: views, [UNBOUND_KEY]: unbound };
+    if (launch.source !== "direct" && (!active || active.requestId === launch.requestId)) update[ACTIVE_KEY] = next;
+    await workflowStorage().set(update);
+  });
+}
+
 export async function getActive(): Promise<PendingLaunch | null> {
   const store = await workflowStorage().get(ACTIVE_KEY);
   const value = store[ACTIVE_KEY];
@@ -172,6 +224,8 @@ export async function putPending(tabId: number, launch: PendingLaunch, generatio
     map[String(tabId)] = next;
     const active = await getActive();
     const update: Record<string, unknown> = { [PENDING_KEY]: map };
+    const unbound = await getMap<PendingLaunch>(UNBOUND_KEY);
+    if (launch.requestId in unbound) { delete unbound[launch.requestId]; update[UNBOUND_KEY] = unbound; }
     // A direct draft is bound to its one tab and one account. It is never the website launch
     // other tabs may claim, so it must not become the global active handoff.
     if (launch.source !== "direct" && (!active || active.requestId === launch.requestId)) update[ACTIVE_KEY] = next;
@@ -348,6 +402,7 @@ export async function clearAllWorkflowState(generation = captureAuthorityGenerat
   await withAuthorityMutation(generation, async () => {
     const workflow = workflowStorage();
     await workflow.remove(ACTIVE_KEY);
+    await workflow.remove(UNBOUND_KEY);
     await workflow.remove(PENDING_KEY);
     await workflow.remove(VIEW_KEY);
     if (packageStorage() !== workflow) await packageStorage().remove(PACKAGE_KEY);
@@ -383,6 +438,9 @@ export async function clearWorkflowSession(sessionId: number, generation = captu
     await workflowStorage().set({ [PENDING_KEY]: pending, [VIEW_KEY]: views });
     await packageStorage().set({ [PACKAGE_KEY]: packages });
     if (active?.sessionId === sessionId) await workflowStorage().remove(ACTIVE_KEY);
+    const unbound = await getMap<PendingLaunch>(UNBOUND_KEY);
+    const stillUnbound = Object.fromEntries(Object.entries(unbound).filter(([, launch]) => launch.sessionId !== sessionId));
+    if (Object.keys(stillUnbound).length !== Object.keys(unbound).length) await workflowStorage().set({ [UNBOUND_KEY]: stillUnbound });
     return [...tabIds].filter((tabId) => Number.isInteger(tabId) && tabId >= 0);
   });
 }
@@ -421,7 +479,10 @@ export async function cleanupExpired(now = Date.now()): Promise<void> {
     }
     const active = await getActive();
     if (active && active.expiresAt <= now) await workflowStorage().remove(ACTIVE_KEY);
+    const unbound = await getMap<PendingLaunch>(UNBOUND_KEY);
+    const live = Object.fromEntries(Object.entries(unbound).filter(([, launch]) => launch.expiresAt > now));
+    if (Object.keys(live).length !== Object.keys(unbound).length) await workflowStorage().set({ [UNBOUND_KEY]: live });
   });
 }
 
-export const STORAGE_KEYS = { PENDING_KEY, PACKAGE_KEY, VIEW_KEY, ACTIVE_KEY };
+export const STORAGE_KEYS = { PENDING_KEY, PACKAGE_KEY, VIEW_KEY, ACTIVE_KEY, UNBOUND_KEY };

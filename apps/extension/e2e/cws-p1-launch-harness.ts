@@ -35,6 +35,8 @@ export type LaunchOptions = {
   /** Shown as the job in the assistant (default "Software Engineer" at "Acme"). */
   jobTitle?: string;
   company?: string;
+  /** Drafts the owned backend returns for open-ended questions (default: none). */
+  drafts?: (questions: any[]) => unknown[];
 };
 
 /** The deployed website's protocol, driven against a real unpacked extension. */
@@ -43,27 +45,43 @@ export async function launchFromWebsite(opts: LaunchOptions) {
   const web = await webServer();
   const applicationUrl = opts.officialUrl ?? `${employer.origin}/jobs/${opts.sessionId}`;
   const sid = opts.sessionId;
-  const session = { session_id: sid, ats_type: opts.atsType, official_application_url: applicationUrl, job: { title: opts.jobTitle ?? "Software Engineer", company: opts.company ?? "Acme" },
-    resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: opts.profile };
   const json = (b: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
   const apiLog: string[] = [];
   const tap = (h: (r: any) => unknown) => (r: any) => { apiLog.push(`${r.request().method()} ${new URL(r.request().url()).pathname}`); return h(r); };
-  await employer.route("**/application-sessions/token", tap(r => r.fulfill(json({ session_token: employer.sessionToken, session }))));
-  await employer.route(`**/application-sessions/${sid}`, tap(r => r.fulfill(json(session))));
-  await employer.route(`**/application-sessions/${sid}/answers`, tap(r => r.fulfill(json({ answers: opts.answers, unresolved_questions: [], refreshed: false, profile_revision: "r" }))));
-  await employer.route(`**/application-sessions/${sid}/answers/override`, tap(r => r.fulfill(json({ overrides: [] }))));
-  await employer.route(`**/application-sessions/${sid}/resolve-questions`, tap(r => {
+  // The token exchange is answered per launch token so several website launches can share one owned backend.
+  const sessionsByLaunchToken = new Map<string, unknown>();
+  await employer.route("**/application-sessions/token", tap(r => {
     const body = JSON.parse(r.request().postData() ?? "{}");
-    const values = new Map(opts.answers.map(x => [x.canonical_key, x.value]));
-    const results = (body.questions ?? []).map((q: any) => {
-      const k = opts.keyFor(String(q.question ?? ""));
-      const v = k ? values.get(k) : undefined;
-      return k && v ? { field_ref: q.field_ref, status: "resolved", canonical_key: k, answer_type: "text", selected_option_ref: null, safe_source: "saved_profile", confidence: 1, reason_code: "exact", typed_answer: v, display_answer: v, source_values: [v], sensitivity: null }
-        : { field_ref: q.field_ref, status: "missing", canonical_key: null, answer_type: null, selected_option_ref: null, safe_source: "none", confidence: 0, reason_code: "answer_missing", typed_answer: null, display_answer: null, source_values: [] };
-    });
-    return r.fulfill(json({ request_schema_version: 3, answer_contract_version: 3, registry_version: "x", results }));
+    const found = sessionsByLaunchToken.get(String(body.launch_token));
+    return found ? r.fulfill(json({ session_token: employer.sessionToken, session: found })) : r.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "unknown_launch_token" }) });
   }));
-  for (const e of ["events", "autofill-results", "complete"]) await employer.route(`**/application-sessions/${sid}/${e}`, tap(r => r.fulfill(json({}))));
+  const addJob = async (job: { sessionId: number; atsType: string; officialUrl: string; jobTitle?: string; company?: string; profile: Record<string, string>; answers: ReturnType<typeof answer>[]; keyFor: (label: string) => string | null; launchToken: string; drafts?: (questions: any[]) => unknown[] }) => {
+    const sid = job.sessionId;
+    const session = { session_id: sid, ats_type: job.atsType, official_application_url: job.officialUrl, job: { title: job.jobTitle ?? "Software Engineer", company: job.company ?? "Acme" },
+      resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: job.profile };
+    sessionsByLaunchToken.set(job.launchToken, session);
+    await employer.route(`**/application-sessions/${sid}`, tap(r => r.fulfill(json(session))));
+    await employer.route(`**/application-sessions/${sid}/answers`, tap(r => r.fulfill(json({ answers: job.answers, unresolved_questions: [], refreshed: false, profile_revision: "r" }))));
+    await employer.route(`**/application-sessions/${sid}/answers/override`, tap(r => r.fulfill(json({ overrides: [] }))));
+    await employer.route(`**/application-sessions/${sid}/resolve-questions`, tap(r => {
+      const body = JSON.parse(r.request().postData() ?? "{}");
+      const values = new Map(job.answers.map(x => [x.canonical_key, x.value]));
+      const results = (body.questions ?? []).map((q: any) => {
+        const k = job.keyFor(String(q.question ?? ""));
+        const v = k ? values.get(k) : undefined;
+        return k && v ? { field_ref: q.field_ref, status: "resolved", canonical_key: k, answer_type: "text", selected_option_ref: null, safe_source: "saved_profile", confidence: 1, reason_code: "exact", typed_answer: v, display_answer: v, source_values: [v], sensitivity: null }
+          : { field_ref: q.field_ref, status: "missing", canonical_key: null, answer_type: null, selected_option_ref: null, safe_source: "none", confidence: 0, reason_code: "answer_missing", typed_answer: null, display_answer: null, source_values: [] };
+      });
+      return r.fulfill(json({ request_schema_version: 3, answer_contract_version: 3, registry_version: "x", results }));
+    }));
+    for (const e of ["events", "autofill-results", "complete"]) await employer.route(`**/application-sessions/${sid}/${e}`, tap(r => r.fulfill(json({}))));
+    // Open-ended drafting: no drafts unless the spec supplies them (the backend's own tests cover how drafts are produced).
+    await employer.route(`**/application-sessions/${sid}/draft-answers`, tap(r => {
+      const body = JSON.parse(r.request().postData() ?? "{}");
+      return r.fulfill(json({ drafts: job.drafts ? job.drafts(body.questions ?? []) : [], drafted: 0 }));
+    }));
+  };
+  await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts });
   const dist = process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.launchArgs ?? [])] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 15_000 });
@@ -72,7 +90,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
   await site.goto(web.origin);
   const payload = { requestId: `req-${sid}`, launchToken: "synthetic-launch", sessionId: sid, jobId: sid, officialUrl: applicationUrl, atsType: opts.atsType, webApiBase: employer.origin, webAuthenticatedUserId: 1 };
   return {
-    employer, web, ctx, worker, site, apiLog, applicationUrl, payload,
+    employer, web, ctx, worker, site, apiLog, applicationUrl, payload, addJob,
     presence: () => site.evaluate(deployedPresence) as Promise<{ installed: boolean; version: string; protocolVersion: number } | null>,
     async start(): Promise<{ empPage: Page; ack: any }> {
       await site.evaluate(p => window.postMessage({ source: "jobpilot-web", type: "JOBPILOT_STAGE_LAUNCH", payload: p }, location.origin), payload);

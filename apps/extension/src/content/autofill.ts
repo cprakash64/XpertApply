@@ -13,7 +13,7 @@ import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
 import { deepClosest, deepTextContent } from "../dom/deepDom";
 import { applyFill, scan, type FillSummary } from "../fields/runner";
-import { highlight, isJobPilotFilled } from "../fields/fill";
+import { fillField, highlight, isJobPilotFilled } from "../fields/fill";
 import { uploadFileToInput } from "../fields/upload";
 import { buildLedger, computeCounts, type LedgerCounts, type LedgerEntry } from "../fields/ledger";
 import { COMPANY_SCOPED_FIELDS, CUSTOM_RESPONSE_FIELDS, UPLOAD_FIELDS, type CanonicalField } from "../fields/taxonomy";
@@ -37,6 +37,22 @@ export interface AutofillDeps {
   /** Documents prepared before ATS parsing. Supplying this prevents a second
    * upload during the authoritative post-parse fill. */
   preparedDocuments?: PreparedDocumentUploads;
+  /** Ask the backend for grounded, editable drafts of open-ended questions. Absent or failing: those fields stay with the applicant. */
+  draftAnswers?: (questions: DraftQuestionPayload[]) => Promise<DraftedAnswer[] | null>;
+}
+
+export interface DraftQuestionPayload {
+  field_identifier: string;
+  question: string;
+  control_type: "textarea" | "text";
+  max_length: number | null;
+  required: boolean;
+}
+export interface DraftedAnswer {
+  field_identifier: string;
+  proposed_answer: string;
+  generation_status: string;
+  missing_information: string[];
 }
 
 export interface PreparedDocumentUploads {
@@ -81,6 +97,7 @@ export async function runAutofill(
   });
   const summary = await applyFill(scanned.fields, takeoverMappings, session);
   const fieldResults = buildFieldResults(scanned.fields, scanned.mappings, session, summary);
+  await draftOpenEndedAnswers(scanned.fields, scanned.mappings, fieldResults, deps);
   fieldResults.push(...documents.fieldResults);
   const { uploaded, reviewDocs } = documents;
 
@@ -123,6 +140,80 @@ export async function runAutofill(
       .map((item) => ({ field_key: item.fieldKey, reason_code: item.reasonCode as string }))
   };
   return { progress, result, fieldResults, fields: scanned.fields, ledger, counts };
+}
+
+/** The longest question label worth sending; the backend bounds it again. */
+const MAX_DRAFT_QUESTION = 600;
+const MIN_DRAFT_QUESTION = 25;
+/** Questions only the applicant may answer. The backend refuses them too; they are not even sent. */
+const APPLICANT_ONLY_QUESTION = /sponsor|visa|authori[sz]|salary|compensation|relocat|notice period|start date|availab|gender|race|ethnic|veteran|disabilit|pronoun|criminal|convict|background check|consent|\bagree|acknowledg|certify|attest|declar|citizen|date of birth/i;
+
+/**
+ * Open-ended employer questions (textareas with a real question as their label) that nothing else answered.
+ *
+ * Never a field that already holds a value (the employer's, the browser's or the applicant's), a hidden or disabled control, a sensitive
+ * or upload field, or anything the deterministic mapping owns. Whether a question is one the model may touch at all is decided again
+ * by the backend; this only decides what is worth asking.
+ */
+export function openEndedCandidates(fields: DiscoveredField[], mappings: FieldMapping[]): DiscoveredField[] {
+  const mapByUid = new Map(mappings.map((m) => [m.uid, m]));
+  const out: DiscoveredField[] = [];
+  for (const field of fields) {
+    const el = field.element as HTMLTextAreaElement | undefined;
+    if (!el || field.control !== "textarea" || !field.visible || field.disabled || field.custom) continue;
+    if (field.existingValue.trim() || (el.value ?? "").trim()) continue;
+    const mapping = mapByUid.get(field.uid);
+    if (mapping && (mapping.sensitive || UPLOAD_FIELDS.has(mapping.canonicalKey) || (mapping.canonicalKey !== "unknown" && mapping.safeToAutoFill))) continue;
+    const question = (field.label || field.ariaLabel || "").replace(/\s+/g, " ").trim();
+    if (question.length < MIN_DRAFT_QUESTION || APPLICANT_ONLY_QUESTION.test(question)) continue;
+    out.push(field);
+  }
+  return out.slice(0, 8);
+}
+
+async function draftOpenEndedAnswers(
+  fields: DiscoveredField[],
+  mappings: FieldMapping[],
+  results: FieldFillResult[],
+  deps: Pick<AutofillDeps, "draftAnswers">
+): Promise<void> {
+  if (!deps.draftAnswers) return;
+  const candidates = openEndedCandidates(fields, mappings);
+  if (candidates.length === 0) return;
+  const byIdentifier = new Map(candidates.map((field) => [field.uid, field]));
+  let drafts: DraftedAnswer[] | null = null;
+  try {
+    drafts = await deps.draftAnswers(candidates.map((field) => {
+      const max = Number((field.element as HTMLTextAreaElement).maxLength);
+      return {
+        field_identifier: field.uid,
+        question: (field.label || field.ariaLabel).replace(/\s+/g, " ").trim().slice(0, MAX_DRAFT_QUESTION),
+        control_type: "textarea" as const,
+        max_length: Number.isFinite(max) && max > 0 ? max : null,
+        required: field.required
+      };
+    }));
+  } catch {
+    drafts = null;
+  }
+  if (!drafts) return;
+  for (const draft of drafts) {
+    const field = byIdentifier.get(draft.field_identifier);
+    const el = field?.element as HTMLTextAreaElement | undefined;
+    if (!field || !el || !draft.proposed_answer) continue;
+    if (draft.generation_status !== "drafted" && draft.generation_status !== "partial") continue;
+    // The applicant may have started typing while the draft was being written: their text always wins.
+    if ((el.value ?? "").trim()) continue;
+    const outcome = await fillField(field, draft.proposed_answer, { status: "generated" });
+    if (outcome.status !== "filled") continue;
+    const index = results.findIndex((item) => item.uid === field.uid);
+    const next: FieldFillResult = {
+      uid: field.uid, fieldKey: index >= 0 ? results[index].fieldKey : "unknown",
+      question: field.label || field.ariaLabel, status: "filled", reasonCode: "AI_DRAFT_REVIEW",
+      confidence: 0.5, required: field.required, control: field.control
+    };
+    if (index >= 0) results[index] = { ...results[index], ...next }; else results.push(next);
+  }
 }
 
 /** Upload documents as a separate lifecycle phase before any authoritative DOM
@@ -366,7 +457,7 @@ function applyLedgerHighlights(fields: DiscoveredField[], entries: LedgerEntry[]
     if (!field.element) continue;
     const status = byUid.get(field.uid)?.status;
     if (status === "filled_verified") highlight(field.element, "verified");
-    else if (status === "filled_needs_review") highlight(field.element, "review");
+    else if (status === "filled_needs_review") highlight(field.element, byUid.get(field.uid)?.reasonCode === "AI_DRAFT_REVIEW" ? "generated" : "review");
   }
 }
 

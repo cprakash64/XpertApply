@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { overlayCdp } from "./overlay-cdp";
 import { answer, launchFromWebsite } from "./cws-p1-launch-harness";
+import { site, type Site } from "./employer-site";
 
 /**
  * XA-EXT-NAV-01: a website launch to an employer JOB-DETAILS page whose "Apply now" leads to the real application form.
@@ -17,7 +18,6 @@ import { answer, launchFromWebsite } from "./cws-p1-launch-harness";
 const JOB_PATH = "/jobs/machine-learning-engineer-scenes";
 const JOB_URL = `https://careers.withwaymo.com${JOB_PATH}?gh_jid=5357`;
 
-export type Site = { hits: string[]; clicks: { apply: number; submit: number }; close(): void; args: string[] };
 
 export const formHtml = (extra = "") => `<!doctype html><meta charset="utf-8"><title>Apply - Machine Learning Engineer, Scenes</title>
 <main><h1>Machine Learning Engineer, Scenes</h1>
@@ -37,27 +37,6 @@ export const jobHtml = (applyControl: string, extraHead = "") => `<!doctype html
 ${applyControl}<p>Waymo is an equal opportunity employer.</p></main>
 <script>window.__job={apply:0};document.addEventListener('click',e=>{if(e.target&&e.target.closest&&e.target.closest('[data-apply]'))window.__job.apply++},true);</script>`;
 
-/** Serve fixture pages over TLS under real hostnames (resolved to loopback by the spec's host-resolver rules). */
-export async function site(routes: Record<string, (url: URL) => { status?: number; body: string; headers?: Record<string, string> }>, hosts = ["careers.withwaymo.com", "job-boards.greenhouse.io"]): Promise<Site> {
-  const dir = mkdtempSync(path.join(tmpdir(), "xa-nav-tls-"));
-  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", "/CN=employer.test"], { stdio: "ignore" });
-  const state: Site = { hits: [], clicks: { apply: 0, submit: 0 }, close: () => undefined, args: [] };
-  const server: Server = createHttps({ key: readFileSync(`${dir}/k.pem`), cert: readFileSync(`${dir}/c.pem`) }, (rq, rs) => {
-    const host = String(rq.headers.host ?? "").split(":")[0];
-    const url = new URL(rq.url ?? "/", `https://${host}`);
-    state.hits.push(`${host}${url.pathname}`);
-    const route = routes[`${host}${url.pathname}`] ?? routes[url.pathname];
-    if (!route) { rs.writeHead(404, { "Content-Type": "text/plain" }); rs.end("not found"); return; }
-    const out = route(url);
-    rs.writeHead(out.status ?? 200, { "Content-Type": "text/html; charset=utf-8", ...(out.headers ?? {}) });
-    rs.end(out.body);
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const port = (server.address() as { port: number }).port;
-  state.args = [`--host-resolver-rules=${hosts.map((h) => `MAP ${h} 127.0.0.1:${port}`).join(",")}`, "--ignore-certificate-errors"];
-  state.close = () => { server.closeAllConnections(); server.close(); };
-  return state;
-}
 
 const labelKey = (t: string) => /first name/i.test(t) ? "first_name" : /last name/i.test(t) ? "last_name" : /^e-?mail/i.test(t) ? "email" : /^phone/i.test(t) ? "phone" : null;
 const PROFILE = { first_name: "Riley", last_name: "Candidate", email: "riley@example.test", phone: "+16025550199" };

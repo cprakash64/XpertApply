@@ -369,3 +369,36 @@ export async function resolveQuestions(
   );
   return parseResolveQuestionsResponse(response);
 }
+
+export interface DraftedAnswerResponse {
+  field_identifier: string;
+  proposed_answer: string;
+  generation_status: string;
+  missing_information: string[];
+  evidence_count: number;
+}
+
+/** Ask the backend for grounded, editable drafts. The reply is parsed down to the fields the page may use; evidence stays server-side. */
+export async function draftAnswers(token: string, sessionId: number, questions: unknown[]): Promise<DraftedAnswerResponse[]> {
+  const body = (await request<unknown>(
+    `/application-sessions/${sessionId}/draft-answers`,
+    token,
+    { method: "POST", body: JSON.stringify({ questions }) }
+  )) as { drafts?: unknown };
+  if (!Array.isArray(body?.drafts)) return [];
+  const out: DraftedAnswerResponse[] = [];
+  for (const raw of body.drafts) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.field_identifier !== "string") continue;
+    out.push({
+      field_identifier: item.field_identifier,
+      proposed_answer: typeof item.proposed_answer === "string" ? item.proposed_answer.slice(0, 4000) : "",
+      generation_status: typeof item.generation_status === "string" ? item.generation_status.slice(0, 40) : "invalid_response",
+      missing_information: Array.isArray(item.missing_information)
+        ? item.missing_information.filter((m): m is string => typeof m === "string").slice(0, 6).map((m) => m.slice(0, 200)) : [],
+      evidence_count: Array.isArray(item.evidence_references) ? item.evidence_references.length : 0
+    });
+  }
+  return out;
+}

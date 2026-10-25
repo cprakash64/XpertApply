@@ -51,7 +51,7 @@ import {
   type LedgerCounts,
   type LedgerEntry
 } from "../fields/ledger";
-import { prepareDocumentUploads, runAutofill, type PreparedDocumentUploads } from "./autofill";
+import { prepareDocumentUploads, runAutofill, type DraftedAnswer, type PreparedDocumentUploads } from "./autofill";
 import { buildDiagnostics, type QuestionExecutionTrace } from "./diagnostics";
 import { buildReviewModel } from "./review";
 import {
@@ -2078,6 +2078,15 @@ async function fill(reason: AutofillReason): Promise<void> {
   try {
     const res = await runAutofill(session, outcome, {
       fetchDocument,
+      draftAnswers: async (questions) => {
+        const draftSessionId = session?.sessionId;
+        if (draftSessionId == null) return null;
+        const response = (await sendRuntime({ type: MSG.DRAFT_ANSWERS, sessionId: draftSessionId, questions })) as
+          { ok?: boolean; drafts?: DraftedAnswer[] } | undefined;
+        // A late reply for an application this document no longer belongs to is dropped, never applied.
+        if (!isCurrentInstance() || session?.sessionId !== draftSessionId || !response?.ok || !Array.isArray(response.drafts)) return null;
+        return response.drafts;
+      },
       preparedDocuments: documentsForRun,
       onUploadStart: (kind) => widget?.update({
         stage: "uploading",
