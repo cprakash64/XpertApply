@@ -42,3 +42,9 @@ After the deterministic fill, empty visible textareas whose label is a real ques
 
 ## Validation, rollout, rollback
 See the handoff for results. Extension rollback: ship the previous build (new registry key is ignored by old builds). Backend rollback: remove the route; no data is stored.
+
+## XA-EXT-NAV-02-V1 verification (final gate)
+* Extension `cbe3b14` (on `22c9c80`), backend `acf8d8b` (on `0f9c8ef`, base `6640e0b`). Full Playwright, one worker, zero retries: **263 passed, 0 failed, 0 skipped**, exit 0 (includes the real-FastAPI/PostgreSQL 16 spec and the compatibility test against the current staging backend code). Vitest 1553. Backend 2156 passed, 0 skipped with a disposable local PostgreSQL 16 (the 82 earlier skips were all missing-Postgres/env guards).
+* Defects found and fixed by the real-backend run: drafting was accepted on an expired session (now 410); multi-paragraph answers were flattened (paragraphs kept); the user's per-origin auto-open off switch was ignored on website launches (now honoured).
+* Findings, not changed: names/email/links are filled only when verified in the answer vault; the real backend publishes email, GitHub and LinkedIn as unverified, so they stay for the applicant. Live OpenAI and native Chrome acceptance remain NOT VERIFIED.
+* Deployment order: review backend, back up staging, deploy backend, verify the endpoint, load the staging extension, native Chrome acceptance. The new extension also works against the current staging backend (drafting simply unavailable), so installing it first is safe.
