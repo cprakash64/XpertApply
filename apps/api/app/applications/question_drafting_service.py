@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Draft grounded, editable answers to open-ended employer questions.
 
 The extension sends only what it can see (a question, its input kind and length
@@ -102,7 +103,9 @@ def grounding_sources(profile_payload: dict[str, Any], job_payload: dict[str, An
         add(f"resume.education.{index}", "resume", " ".join(p for p in parts if p))
     add("company_context.company", "company_context", _text(job_payload.get("company")))
     add("job_description.title", "job_description", _text(job_payload.get("title")))
-    for index, claim in enumerate((_string_list(job_payload.get("responsibilities")) + _string_list(job_payload.get("required_skills")))[:12]):
+    for index, claim in enumerate(
+        (_string_list(job_payload.get("responsibilities")) + _string_list(job_payload.get("required_skills")))[:12]
+    ):
         add(f"job_description.requirement.{index}", "job_description", claim)
     return sources
 
@@ -145,12 +148,18 @@ def _validate(
             return _result(question, "invalid_response")
         known = index.get(_text(ref.get("sourceId")))
         if not known or _normalize_claim(_text(ref.get("claim"))) != _normalize_claim(known["claim"]):
-            return _result(question, "invalid_response")      # an invented or altered source invalidates the whole draft
+            return _result(question, "invalid_response")  # an invented or altered source invalidates the whole draft
         refs.append({"sourceId": known["sourceId"], "claim": known["claim"], "source": known["source"]})
-    missing = [_text(m)[:200] for m in record.get("missing_information", []) if _text(m)][:6] \
-        if isinstance(record.get("missing_information"), list) else []
+    missing = (
+        [_text(m)[:200] for m in record.get("missing_information", []) if _text(m)][:6]
+        if isinstance(record.get("missing_information"), list)
+        else []
+    )
     status = _text(record.get("generation_status"))
-    answer = re.sub(r"\s+", " ", _text(record.get("proposed_answer"))).strip()
+    # Paragraph breaks are kept (a technical answer is often two or three paragraphs); runs of spaces and 3+ newlines are normalised.
+    answer = re.sub(
+        r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", re.sub(r"[ \t]*\n[ \t]*", "\n", _text(record.get("proposed_answer"))))
+    ).strip()
     if status == "insufficient_evidence" or not answer:
         return _result(question, "insufficient_evidence", missing_information=missing or ["evidence for this question"])
     if status not in {"drafted", "partial"}:
@@ -164,10 +173,16 @@ def _validate(
         return _result(question, "invalid_response")
     fitted = _fit(answer, _limit(question))
     if not fitted:
-        return _result(question, "invalid_response", missing_information=["a shorter answer for this field's length limit"])
+        return _result(
+            question, "invalid_response", missing_information=["a shorter answer for this field's length limit"]
+        )
     return _result(
-        question, "partial" if (status == "partial" or missing) else "drafted",
-        proposed_answer=fitted, evidence_references=refs, missing_information=missing, source=f"openai:{model}",
+        question,
+        "partial" if (status == "partial" or missing) else "drafted",
+        proposed_answer=fitted,
+        evidence_references=refs,
+        missing_information=missing,
+        source=f"openai:{model}",
     )
 
 
@@ -200,7 +215,9 @@ async def draft_answers(
             "grounding_sources": sources,
         }
         try:
-            outcome = await asyncio.wait_for(ai_provider.json_task("question_answers.md", payload, smart=True), MODEL_TIMEOUT_SECONDS)
+            outcome = await asyncio.wait_for(
+                ai_provider.json_task("question_answers.md", payload, smart=True), MODEL_TIMEOUT_SECONDS
+            )
         except Exception as exc:  # noqa: BLE001 - sanitized, never logs inputs or outputs
             logger.warning("question drafting failed reason=%s", type(exc).__name__)
             outcome = None

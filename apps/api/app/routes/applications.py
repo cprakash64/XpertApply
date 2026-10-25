@@ -63,7 +63,6 @@ from app.core.security import decode_access_token
 from app.core.session_tokens import decode_scoped_token
 from app.db.session import get_db
 from app.documents.filenames import build_document_filename
-from app.services.documents import profile_payload, public_dict
 from app.documents.store import export_document as render_document_file
 from app.models.entities import (
     ApplicationActionType,
@@ -78,12 +77,12 @@ from app.models.entities import (
     UserProfile,
 )
 from app.schemas.applications import (
-    DraftAnswersIn,
     AnswerUpsertIn,
     ApplicationOverrideIn,
     AutofillResultIn,
     CompleteSessionIn,
     CreateSessionIn,
+    DraftAnswersIn,
     ExchangeTokenIn,
     MapOptionIn,
     ResolveQuestionsIn,
@@ -93,6 +92,7 @@ from app.schemas.applications import (
     StatusPatchIn,
     SubmissionConfirmedIn,
 )
+from app.services.documents import profile_payload, public_dict
 
 logger = logging.getLogger("jobpilot.applications")
 
@@ -615,6 +615,14 @@ async def draft_application_answers(
     server, and neither the questions nor the drafts are logged.
     """
     _rate_limit(f"draft:{session.user_id}", limit=12, window_seconds=60)
+    # session_access lazily EXPIRES an out-of-date session but still returns it.
+    # Drafting draws on the applicant's saved facts, so it needs a live session.
+    if session.status in {
+        ApplicationSessionStatus.expired,
+        ApplicationSessionStatus.cancelled,
+        ApplicationSessionStatus.completed,
+    }:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Application session is no longer active")
     job = db.get(JobPosting, session.job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application job not found")
