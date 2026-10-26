@@ -26,6 +26,7 @@ from app.applications.generated_answer_service import (
     _string_list,
     _text,
 )
+from app.core.config import settings
 
 logger = logging.getLogger("jobpilot.question_drafting")
 
@@ -48,6 +49,14 @@ _USER_ONLY = re.compile(
 )
 _LINK_FIELD = re.compile(r"\b(?:github|linkedin|portfolio|website|personal\s+site|url|link|twitter|x\.com)\b", re.I)
 _URL_OR_CONTACT = re.compile(r"https?://|www\.|[\w.+-]+@[\w-]+\.[\w.-]+|\+?\d[\d\s().-]{8,}\d", re.I)
+
+
+class DraftingDisabledError(RuntimeError):
+    """Raised when answer drafting is invoked while APPLICATION_ANSWER_DRAFTING_ENABLED is off."""
+
+
+def drafting_enabled() -> bool:
+    return settings.application_answer_drafting_enabled is True
 
 
 @dataclass(frozen=True)
@@ -189,6 +198,9 @@ def _validate(
 async def draft_answers(
     *, questions: list[DraftQuestion], profile_payload: dict[str, Any], job_payload: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    # Defense in depth: the route gates first, but a direct caller must not reach the provider either.
+    if not drafting_enabled():
+        raise DraftingDisabledError("application answer drafting is disabled")
     results: dict[str, dict[str, Any]] = {}
     eligible: list[DraftQuestion] = []
     for question in questions[:MAX_QUESTIONS]:

@@ -19,6 +19,7 @@ from sqlalchemy.pool import StaticPool
 from app.ai.provider import AIResult
 from app.applications import question_drafting_service as service
 from app.applications.question_drafting_service import DraftQuestion
+from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -30,6 +31,13 @@ from app.models.entities import (
     User,
 )
 from app.models.entities import ApplicationSessionStatus as SessStatus
+
+
+@pytest.fixture(autouse=True)
+def _drafting_enabled(monkeypatch) -> None:
+    """These tests exercise the enabled flow; the gate itself is covered in test_answer_drafting_gate.py."""
+    monkeypatch.setattr(settings, "application_answer_drafting_enabled", True)
+
 
 PROFILE = {
     "profile": {"skills": ["Python", "Retrieval evaluation"]},

@@ -614,6 +614,12 @@ async def draft_application_answers(
     validated in code against the facts supplied. The OpenAI key never leaves the
     server, and neither the questions nor the drafts are logged.
     """
+    # Fail closed, after authentication/authorization and before any rate-limit, DB or provider work.
+    if not question_drafting_service.drafting_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "answer_drafting_disabled", "message": "Answer drafting is not available."},
+        )
     _rate_limit(f"draft:{session.user_id}", limit=12, window_seconds=60)
     # session_access lazily EXPIRES an out-of-date session but still returns it.
     # Drafting draws on the applicant's saved facts, so it needs a live session.
