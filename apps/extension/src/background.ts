@@ -21,6 +21,7 @@ import {
   exchangeLaunchToken,
   fetchApplicationOverrides,
   fetchSessionData,
+  draftAnswers,
   resolveQuestions,
   postEvent,
   reportAutofillResult,
@@ -718,6 +719,33 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
         } catch (err) {
           log.info("question resolution failed", { reason: classifyPackageError(err) });
           sendResponse({ ok: false, error: classifyPackageError(err) });
+        }
+      })();
+      return true;
+    }
+
+    case MSG.DRAFT_ANSWERS: {
+      const tabId = sender.tab?.id;
+      void (async () => {
+        const id = tabId != null ? tabId : await resolveViewTab(undefined);
+        const pkg = id != null ? await getPackage(id) : null;
+        if (!pkg) {
+          sendResponse({ ok: false, error: "SESSION_PACKAGE_FAILED" });
+          return;
+        }
+        try {
+          sendResponse({ ok: true, body: await draftAnswers(pkg.sessionToken, message.sessionId, message.questions) });
+        } catch (err) {
+          // Status only; the questions and drafts never reach a log.
+          const code = err instanceof ApiError && err.status === 503
+            ? "DRAFTING_DISABLED"
+            : err instanceof ApiError && err.status === 429
+              ? "RATE_LIMITED"
+              : err instanceof ApiError && err.status === 410
+                ? "HANDOFF_EXPIRED"
+                : classifyPackageError(err);
+          log.info("answer drafting failed", { reason: code });
+          sendResponse({ ok: false, error: code });
         }
       })();
       return true;

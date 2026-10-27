@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -226,6 +227,7 @@ async def draft_answers(
             # Career facts only: contact details, authorization, demographics and credentials are never included.
             "grounding_sources": sources,
         }
+        started = time.monotonic()
         try:
             outcome = await asyncio.wait_for(
                 ai_provider.json_task("question_answers.md", payload, smart=True), MODEL_TIMEOUT_SECONDS
@@ -233,6 +235,16 @@ async def draft_answers(
         except Exception as exc:  # noqa: BLE001 - sanitized, never logs inputs or outputs
             logger.warning("question drafting failed reason=%s", type(exc).__name__)
             outcome = None
+        # Cost and latency only: counts, model and elapsed time. Never the questions, the facts or the drafts.
+        logger.info(
+            "question drafting questions=%d sources=%d model=%s ai_used=%s reason=%s elapsed_ms=%d",
+            len(eligible),
+            len(sources),
+            getattr(outcome, "model_used", "none"),
+            bool(outcome and outcome.ai_used),
+            getattr(outcome, "error_reason", None) or ("exception" if outcome is None else "none"),
+            int((time.monotonic() - started) * 1000),
+        )
         if outcome is None or not outcome.ai_used:
             for question in eligible:
                 results[question.field_identifier] = _result(question, "unavailable")

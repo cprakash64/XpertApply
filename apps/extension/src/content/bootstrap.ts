@@ -83,7 +83,18 @@ import {
   type RuntimeIdentity
 } from "../runtimeIdentity";
 import {
+  applyBlockedReason,
+  buildDraftRequest,
+  collectDraftCandidates,
+  describeDraftError,
+  describeNoDraft,
+  parseDraftResponse,
+  type DraftCandidate
+} from "./draftAssistant";
+import {
   createWidget,
+  type DraftPanelHandlers,
+  type DraftPanelItem,
   type ReviewActionHandlers,
   type ReviewHandlers,
   type ReviewItem,
@@ -2810,6 +2821,102 @@ function publishStage(): void {
     ...authoritativeTotals()
   });
   publishTransactionPanel();
+  scheduleDraftOffer();
+}
+
+// --------------------------------------------------------------------------- //
+// Suggested answers for open-ended questions. Proposals only: the applicant
+// reviews and edits each one, and only "Use this answer" writes to the page.
+// --------------------------------------------------------------------------- //
+let draftOfferTimer: number | null = null;
+let draftInFlight = false;
+let draftCandidates: DraftCandidate[] = [];
+let draftShowingResults = false;
+
+function scheduleDraftOffer(): void {
+  if (!isTopFrame || !session || draftInFlight || draftShowingResults || draftOfferTimer !== null) return;
+  draftOfferTimer = window.setTimeout(() => {
+    draftOfferTimer = null;
+    if (draftInFlight || draftShowingResults || !session) return;
+    draftCandidates = collectDraftCandidates(discoverFields(document));
+    // No offer when the page has no open-ended box to draft for.
+    if (draftCandidates.length > 0) widget?.showDrafts({ state: "idle", items: [] }, draftHandlers);
+  }, 1500);
+}
+
+const draftHandlers: DraftPanelHandlers = {
+  onRequest() {
+    void requestDrafts();
+  },
+  async onApply(fieldKey, text) {
+    // Rediscover: the page may have re-rendered since the suggestion was made.
+    const field = discoverFields(document).find((candidate) => candidate.uid === fieldKey);
+    const element = field?.element;
+    if (!field || !element || !(element instanceof HTMLTextAreaElement)) {
+      return { ok: false, message: "That box is no longer on the page. Paste the text in yourself if you still need it." };
+    }
+    const blocked = applyBlockedReason(element.value);
+    if (blocked) return { ok: false, message: blocked };
+    const limit = element.maxLength > 0 ? element.maxLength : null;
+    if (text.trim() === "") return { ok: false, message: "The answer is empty." };
+    if (limit !== null && text.length > limit) {
+      return { ok: false, message: `This box allows ${limit} characters; your answer is ${text.length}. Shorten it first.` };
+    }
+    // Not forced: a box the applicant typed in is never overwritten. "generated" marks it as a suggestion.
+    const outcome = await fillField(field, text, { status: "generated" });
+    return outcome.status === "filled"
+      ? { ok: true, message: "Added to the form. Review it, then submit the application yourself." }
+      : { ok: false, message: "Couldn’t fill that box. You can paste the text in yourself." };
+  }
+};
+
+async function requestDrafts(): Promise<void> {
+  if (!session || draftInFlight) return;
+  draftCandidates = collectDraftCandidates(discoverFields(document));
+  if (draftCandidates.length === 0) {
+    widget?.showDrafts({ state: "error", message: "No empty open-ended questions found on this page.", items: [] }, draftHandlers);
+    return;
+  }
+  draftInFlight = true;
+  widget?.showDrafts({ state: "loading", items: [] }, draftHandlers);
+  const asked = draftCandidates;
+  try {
+    const response = (await sendRuntime({
+      type: MSG.DRAFT_ANSWERS,
+      sessionId: session.sessionId,
+      questions: buildDraftRequest(asked)
+    })) as { ok?: boolean; body?: unknown; error?: string } | undefined;
+    if (!response?.ok) {
+      draftShowingResults = false;
+      widget?.showDrafts({ state: "error", message: describeDraftError(response?.error), items: [] }, draftHandlers);
+      return;
+    }
+    const suggestions = parseDraftResponse(response.body, asked);
+    const byKey = new Map(asked.map((candidate) => [candidate.fieldKey, candidate]));
+    const items: DraftPanelItem[] = suggestions.map((suggestion) => ({
+      fieldKey: suggestion.fieldKey,
+      question: byKey.get(suggestion.fieldKey)?.question ?? "Question",
+      text: suggestion.text,
+      note: suggestion.text !== ""
+        ? suggestion.status === "partial" && suggestion.missing.length > 0
+          ? `Draft from your saved profile. Add: ${suggestion.missing.join("; ")}. Check every statement before using it.`
+          : "Draft from your saved profile. Check every statement is true before using it."
+        : suggestion.missing.length > 0
+          ? `${describeNoDraft(suggestion.status)} Needed: ${suggestion.missing.join("; ")}.`
+          : describeNoDraft(suggestion.status)
+    }));
+    draftShowingResults = items.length > 0;
+    widget?.showDrafts(
+      {
+        state: items.length > 0 ? "ready" : "error",
+        message: items.length > 0 ? "Review and edit each suggestion. Nothing is filled until you choose." : describeDraftError(undefined),
+        items
+      },
+      draftHandlers
+    );
+  } finally {
+    draftInFlight = false;
+  }
 }
 
 function publishTransactionPanel(): void {

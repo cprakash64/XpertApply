@@ -105,6 +105,10 @@ _bearer = HTTPBearer(auto_error=False)
 _RATE_BUCKETS: dict[str, deque[float]] = {}
 
 
+#: Draft requests one user may make in 24 hours (each can call the paid provider with up to eight questions).
+DRAFT_DAILY_LIMIT = 150
+
+
 def _rate_limit(key: str, *, limit: int, window_seconds: int) -> None:
     now = time.monotonic()
     bucket = _RATE_BUCKETS.setdefault(key, deque())
@@ -621,6 +625,8 @@ async def draft_application_answers(
             detail={"code": "answer_drafting_disabled", "message": "Answer drafting is not available."},
         )
     _rate_limit(f"draft:{session.user_id}", limit=12, window_seconds=60)
+    # Cost guard: every request can reach a paid provider, so a per-user ceiling also bounds a day of use.
+    _rate_limit(f"draft-day:{session.user_id}", limit=DRAFT_DAILY_LIMIT, window_seconds=86400)
     # session_access lazily EXPIRES an out-of-date session but still returns it.
     # Drafting draws on the applicant's saved facts, so it needs a live session.
     if session.status in {

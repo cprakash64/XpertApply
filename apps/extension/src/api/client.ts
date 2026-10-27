@@ -338,3 +338,22 @@ export async function resolveQuestions(
   );
   return parseResolveQuestionsResponse(response);
 }
+
+/**
+ * Ask the backend for DRAFT answers to open-ended questions.
+ *
+ * Who the candidate is and which job this is come from the session token, never
+ * from this body. The server answers 503 while the feature is off. The result is
+ * returned untouched: the content script validates it before anything is shown.
+ */
+export async function draftAnswers(
+  token: string,
+  sessionId: number,
+  questions: unknown[]
+): Promise<unknown> {
+  return request<unknown>(
+    `/application-sessions/${sessionId}/draft-answers`,
+    token,
+    { method: "POST", body: JSON.stringify({ questions }) }
+  );
+}

@@ -246,6 +246,10 @@ export const MSG = {
   /** Content script asks the worker to resolve a batch of employer questions.
    * The worker holds the session token; the page never sees it. */
   RESOLVE_QUESTIONS: "JOBPILOT_RESOLVE_QUESTIONS",
+  /** Content script asks the worker for DRAFT answers to open-ended questions the
+   * applicant then reviews. The worker holds the session token and the server
+   * holds the OpenAI key; neither reaches the page. Gated server-side. */
+  DRAFT_ANSWERS: "JOBPILOT_DRAFT_ANSWERS",
   /** Which build the service worker is, and which backend it would talk to.
    * Asked BEFORE autofill: a content script talking to a worker from a
    * different build is the most common reason a live page disagrees with a
@@ -342,6 +346,7 @@ export type RuntimeMessage =
       sessionId: number;
       questions: unknown[];
     }
+  | { type: typeof MSG.DRAFT_ANSWERS; sessionId: number; questions: unknown[] }
   | {
       type: typeof MSG.RECONNECT_APPLICATION_WORKFLOW;
       /** Current page origin, so the worker can validate the transition. The
@@ -468,7 +473,7 @@ const RUNTIME_TYPES = new Set<string>([
   MSG.LAUNCH_REQUEST, MSG.HANDSHAKE, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
-  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
+  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.DRAFT_ANSWERS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
   MSG.SUBMISSION_CONFIRMED, MSG.MANUAL_CONFIRMATION_REQUIRED, MSG.EMPLOYER_AUTH_REQUIRED,
   MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION

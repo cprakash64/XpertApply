@@ -136,6 +136,28 @@ export interface RememberPrompt {
   onDecision: (scope: "application" | "global" | "company" | "sensitive" | "none") => void;
 }
 
+/** One suggestion shown for the applicant's review. */
+export interface DraftPanelItem {
+  fieldKey: string;
+  question: string;
+  /** Present only when there is something to review; otherwise `note` says why not. */
+  text: string;
+  note: string;
+}
+
+export interface DraftPanelView {
+  /** idle: offer the button; loading: request in flight; ready/error: show results or the message. */
+  state: "idle" | "loading" | "ready" | "error";
+  message?: string;
+  items: DraftPanelItem[];
+}
+
+export interface DraftPanelHandlers {
+  onRequest: () => void;
+  /** Write the (possibly edited) text into the employer's box. Never submits. */
+  onApply: (fieldKey: string, text: string) => Promise<{ ok: boolean; message: string }>;
+}
+
 export interface TransactionPanelItem {
   category: "eligibility" | "consent";
   fieldLabel: string;
@@ -201,6 +223,8 @@ export function createWidget(actions: {
     confirmed?: AuthoritativeReviewItem[]
   ) => void;
   refreshCounts: (counts: LedgerCounts) => void;
+  /** The "Suggest answers" panel: drafts are proposals the applicant edits and applies. */
+  showDrafts: (view: DraftPanelView, handlers: DraftPanelHandlers) => void;
   showTransactions: (items: TransactionPanelItem[]) => void;
   /** Step the widget out of the way while a dropdown menu is being driven, so
    * its overlay can never intercept an option click (section L). */
@@ -307,6 +331,13 @@ export function createWidget(actions: {
       .transaction-panel{grid-column:1/-1;margin-top:7px;font-size:10px;color:#526058}
       .transaction-panel summary{cursor:pointer;font-weight:650}
       .transaction-row{margin-top:6px;padding:7px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+      .draft-panel{margin-top:12px}
+      .draft-offer{width:100%;text-align:left;border-color:rgba(35,105,69,.20);background:rgba(235,246,239,.72);font-weight:650}
+      .draft-note{margin-top:8px;font-size:11px;line-height:1.42;color:#5c675f}
+      .draft-note.error{color:#8f3b25}
+      .draft-item textarea{width:100%;min-height:120px;margin-top:10px;padding:9px 10px;border:1px solid rgba(57,93,70,.24);border-radius:11px;background:rgba(255,255,255,.88);color:var(--ink);font:inherit;font-size:13px;line-height:1.45;resize:vertical}
+      .draft-item textarea:focus-visible{outline:3px solid rgba(30,116,76,.22);outline-offset:2px}
+      .draft-item .review-note{margin-top:7px;font-size:11px;line-height:1.42;color:#3d4c44}
       .interacting{opacity:.25}
       .interacting .body{display:none}
       @media(max-width:520px){.box{right:12px;bottom:12px}.counts-row{grid-template-columns:1fr}}
@@ -323,6 +354,7 @@ export function createWidget(actions: {
         <div class="action-panel"></div>
         <div class="review-panel"></div>
         <div class="teach-panel"></div>
+        <div class="draft-panel"></div>
         <div class="actions">
           <!-- Shown only when automatic activation of an already-validated
                Apply control failed. Hidden by default; the user's click is
@@ -942,7 +974,95 @@ export function createWidget(actions: {
     renderReview();
   }
 
+  const draftPanel = root.querySelector<HTMLElement>(".draft-panel")!;
+  function renderDrafts(view: DraftPanelView, handlers: DraftPanelHandlers): void {
+    draftPanel.textContent = "";
+    if (view.state === "idle" && view.items.length === 0) {
+      const offer = document.createElement("button");
+      offer.type = "button";
+      offer.className = "draft-offer";
+      offer.textContent = "Suggest answers for open-ended questions";
+      offer.setAttribute("aria-label", "Suggest draft answers for the open-ended questions on this page");
+      offer.addEventListener("click", () => handlers.onRequest());
+      draftPanel.appendChild(offer);
+      const hint = document.createElement("div");
+      hint.className = "draft-note";
+      hint.textContent = "Drafts come from your saved profile. You review and edit each one before it is used. Nothing is submitted.";
+      draftPanel.appendChild(hint);
+      return;
+    }
+    if (view.state === "loading") {
+      const loading = document.createElement("div");
+      loading.className = "draft-note";
+      loading.setAttribute("role", "status");
+      loading.textContent = view.message ?? "Drafting suggestions from your profile…";
+      draftPanel.appendChild(loading);
+      return;
+    }
+    if (view.message) {
+      const note = document.createElement("div");
+      note.className = view.state === "error" ? "draft-note error" : "draft-note";
+      note.setAttribute("role", view.state === "error" ? "alert" : "status");
+      note.textContent = view.message;
+      draftPanel.appendChild(note);
+    }
+    for (const item of view.items) {
+      const card = document.createElement("div");
+      card.className = "item draft-item";
+      const q = document.createElement("div");
+      q.className = "q";
+      q.textContent = item.question;
+      card.appendChild(q);
+      if (item.text === "") {
+        const why = document.createElement("div");
+        why.className = "why";
+        why.textContent = item.note;
+        card.appendChild(why);
+        draftPanel.appendChild(card);
+        continue;
+      }
+      const area = document.createElement("textarea");
+      area.value = item.text;
+      area.setAttribute("aria-label", `Suggested answer for: ${item.question}`);
+      card.appendChild(area);
+      const review = document.createElement("div");
+      review.className = "review-note";
+      review.textContent = item.note;
+      card.appendChild(review);
+      const status = document.createElement("div");
+      status.className = "status";
+      status.setAttribute("role", "status");
+      const row = document.createElement("div");
+      row.className = "row";
+      const apply = document.createElement("button");
+      apply.type = "button";
+      apply.textContent = "Use this answer";
+      apply.setAttribute("aria-label", `Use this answer for: ${item.question}`);
+      apply.addEventListener("click", () => {
+        apply.disabled = true;
+        status.className = "status";
+        status.textContent = "Filling…";
+        void handlers.onApply(item.fieldKey, area.value).then((result) => {
+          status.className = result.ok ? "status" : "status error";
+          status.textContent = result.message;
+          apply.disabled = result.ok;
+        }, () => {
+          status.className = "status error";
+          status.textContent = "Couldn’t fill that box. You can paste the text in yourself.";
+          apply.disabled = false;
+        });
+      });
+      row.appendChild(apply);
+      card.appendChild(row);
+      card.appendChild(status);
+      draftPanel.appendChild(card);
+    }
+  }
+
   return {
+    showDrafts(view, handlers) {
+      renderDrafts(view, handlers);
+    },
     update(value) {
       const labels: Record<WidgetStage, string> = { preparing:"Preparing", opening:"Opening application", detecting:"Detecting fields", filling:"Filling", uploading:"Uploading resume", review:"Needs review", ready:"Ready for review", failed:"Failed" };
       const title = value.stageLabel ?? labels[value.stage];

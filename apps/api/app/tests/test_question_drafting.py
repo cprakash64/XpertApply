@@ -456,3 +456,44 @@ async def test_multi_paragraph_answers_keep_their_paragraphs_and_stay_within_the
         monkeypatch, _record(proposed_answer=two), question=DraftQuestion("q1", Q_AGENT.question, "textarea", 90)
     )
     assert len(tight["proposed_answer"]) <= 90 and tight["proposed_answer"].endswith(".")
+
+
+def test_endpoint_has_a_per_user_daily_ceiling_that_stops_before_the_provider(client, monkeypatch) -> None:
+    from app.routes import applications as routes
+
+    a = _signup(client, "d@example.com")
+    sid = _seed("d@example.com", "Co", "fact")
+    calls = {"n": 0}
+
+    async def spy(name, payload, smart=True):
+        calls["n"] += 1
+        return AIResult(data={"answers": []}, model_used="m", ai_used=True)
+
+    monkeypatch.setattr(service.ai_provider, "json_task", spy)
+    monkeypatch.setattr(routes, "DRAFT_DAILY_LIMIT", 2)
+    routes._RATE_BUCKETS.clear()
+    body = {"questions": [{"field_identifier": "q1", "question": Q_AGENT.question, "control_type": "textarea"}]}
+    assert client.post(f"/application-sessions/{sid}/draft-answers", headers=a, json=body).status_code == 200
+    assert client.post(f"/application-sessions/{sid}/draft-answers", headers=a, json=body).status_code == 200
+    before = calls["n"]
+    assert client.post(f"/application-sessions/{sid}/draft-answers", headers=a, json=body).status_code == 429
+    assert calls["n"] == before
+    routes._RATE_BUCKETS.clear()
+
+
+def test_usage_log_records_cost_signals_but_never_questions_or_drafts(client, monkeypatch, caplog) -> None:
+    import logging
+
+    a = _signup(client, "e@example.com")
+    sid = _seed("e@example.com", "SecretCo", "A very private project fact")
+
+    async def spy(name, payload, smart=True):
+        return AIResult(data={"answers": []}, model_used="m-test", ai_used=True)
+
+    monkeypatch.setattr(service.ai_provider, "json_task", spy)
+    body = {"questions": [{"field_identifier": "q1", "question": Q_AGENT.question, "control_type": "textarea"}]}
+    with caplog.at_level(logging.INFO, logger="jobpilot.question_drafting"):
+        assert client.post(f"/application-sessions/{sid}/draft-answers", headers=a, json=body).status_code == 200
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "model=m-test" in text and "elapsed_ms=" in text
+    assert "private project" not in text and Q_AGENT.question not in text and "SecretCo" not in text
