@@ -539,3 +539,58 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+
+
+export type TrackerDocumentKind = "resume" | "cover_letter";
+export type TrackerDocumentFormat = "pdf" | "docx";
+
+export type TrackerDownloadErrorCode = "not_available" | "unreadable" | "signed_out" | "unavailable";
+
+export class TrackerDownloadError extends Error {
+  constructor(readonly code: TrackerDownloadErrorCode) {
+    super(code);
+  }
+}
+
+/**
+ * Download the resume or cover letter prepared for one tracked application, as an authenticated request.
+ *
+ * The file is whatever the server stored for that application; nothing here regenerates it. The browser is handed a Blob made from
+ * the response, so no storage path, token or file URL ever appears in the page or in history. The suggested filename comes from
+ * the server's Content-Disposition (company, document type, date) with a safe fallback.
+ */
+export async function downloadTrackerDocument(
+  applicationId: number,
+  kind: TrackerDocumentKind,
+  format: TrackerDocumentFormat = "pdf"
+): Promise<{ filename: string; bytes: number }> {
+  const slug = kind === "cover_letter" ? "cover-letter" : "resume";
+  let response: Response;
+  try {
+    response = await apiResponse(`/jobs/tracker/${applicationId}/documents/${slug}?fmt=${format}`, {
+      headers: { Accept: format === "pdf" ? "application/pdf" : "*/*" }
+    });
+  } catch {
+    throw new TrackerDownloadError("unavailable");
+  }
+  if (response.status === 401) throw new TrackerDownloadError("signed_out");
+  if (response.status === 404) throw new TrackerDownloadError("not_available");
+  if (response.status === 409) throw new TrackerDownloadError("unreadable");
+  if (!response.ok) throw new TrackerDownloadError("unavailable");
+  const blob = await response.blob();
+  const match = /filename="([A-Za-z0-9_.-]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+  const filename = match?.[1] ?? `${kind === "cover_letter" ? "Cover_Letter" : "Resume"}.${format}`;
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return { filename, bytes: blob.size };
+}
