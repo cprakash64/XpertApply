@@ -15,8 +15,10 @@ from app.applications.eligibility_service import (
     set_eligibility_answer,
 )
 from app.core.audit import record_audit
+from app.core.config import settings
 from app.db.session import get_db
 from app.documents.resume_compaction_service import looks_like_fragment
+from app.jobs.durable_producer import begin_user_update, finish_user_update, receipt_payload
 from app.models.entities import (
     Award,
     Certification,
@@ -304,6 +306,7 @@ def upsert_profile(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    scoring_update = begin_user_update(db, user.id)
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
     values = payload.model_dump(mode="json")
     # Re-derive the structured phone columns from whatever the user typed, so
@@ -316,10 +319,13 @@ def upsert_profile(
     else:
         for key, value in values.items():
             setattr(profile, key, value)
+    scoring_receipt = finish_user_update(scoring_update)
     db.commit()
     db.refresh(profile)
-    _enqueue_profile_rescore(user.id)
-    return {"profile": serialize_profile(profile)}
+    if not settings.durable_scoring_enabled:
+        _enqueue_profile_rescore(user.id)
+    return {"profile": serialize_profile(profile),
+            **({"processing": receipt_payload(scoring_receipt)} if scoring_receipt else {})}
 
 
 @router.patch("")
@@ -334,6 +340,7 @@ def patch_profile(
     omitted legacy URL or nullable sponsorship value is never loaded into the
     input schema and cannot block an unrelated update.
     """
+    scoring_update = begin_user_update(db, user.id)
 
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
     values = payload.model_dump(mode="json", exclude_unset=True)
@@ -355,10 +362,13 @@ def patch_profile(
     else:
         for key, value in values.items():
             setattr(profile, key, value)
+    scoring_receipt = finish_user_update(scoring_update)
     db.commit()
     db.refresh(profile)
-    _enqueue_profile_rescore(user.id)
-    return {"profile": serialize_profile(profile)}
+    if not settings.durable_scoring_enabled:
+        _enqueue_profile_rescore(user.id)
+    return {"profile": serialize_profile(profile),
+            **({"processing": receipt_payload(scoring_receipt)} if scoring_receipt else {})}
 
 
 @router.put("/workday-credentials")
@@ -425,6 +435,8 @@ def _enqueue_profile_rescore(user_id: int) -> None:
     jobs in the background. Best-effort: if the broker is down the next page load
     / "Refresh matches" still rescores on demand (the scoring service's change
     detection makes this idempotent)."""
+    if settings.durable_scoring_enabled:
+        raise RuntimeError("Legacy publication disabled in durable mode")
     from app.jobs.job_ingestion_service import broker_reachable
 
     if not broker_reachable():
@@ -448,6 +460,7 @@ def replace_career(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    scoring_update = begin_user_update(db, user.id)
     for model in [Education, Experience, Project, Certification, Award, Publication]:
         db.execute(delete(model).where(model.user_id == user.id))
     db.add_all([Education(user_id=user.id, **item.model_dump()) for item in payload.education])
@@ -461,9 +474,14 @@ def replace_career(
             for item in payload.publications
         ]
     )
+    scoring_receipt = finish_user_update(scoring_update)
     db.commit()
-    _enqueue_profile_rescore(user.id)  # experience/education/projects affect scoring
-    return career_payload(user.id, db)
+    if not settings.durable_scoring_enabled:
+        _enqueue_profile_rescore(user.id)  # experience/education/projects affect scoring
+    result = career_payload(user.id, db)
+    if scoring_receipt:
+        result["processing"] = receipt_payload(scoring_receipt)
+    return result
 
 
 @router.post("/import")
@@ -511,6 +529,7 @@ def apply_profile_import(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    scoring_update = begin_user_update(db, user.id)
     sections = set(payload.sections) & PROFILE_IMPORT_SECTIONS
     draft = payload.draft
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
@@ -636,9 +655,11 @@ def apply_profile_import(
         },
     )
 
+    scoring_receipt = finish_user_update(scoring_update)
     db.commit()
     db.refresh(profile)
-    return {"profile": serialize_profile(profile), "career": career_payload(user.id, db)}
+    return {"profile": serialize_profile(profile), "career": career_payload(user.id, db),
+            **({"processing": receipt_payload(scoring_receipt)} if scoring_receipt else {})}
 
 
 async def parse_import_text(text: str, source_type: str) -> tuple[ImportProfileDraft, str]:

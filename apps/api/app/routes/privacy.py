@@ -7,6 +7,7 @@ from app.core.audit import record_audit
 from app.db.session import get_db
 from app.documents.materialized_files import MaterializedFileError, remove_document_exports
 from app.documents.store import serialize_document
+from app.jobs.durable_producer import INTERNAL_EXPORT_COLUMNS, service
 from app.models.entities import (
     ApplicationTracker,
     Award,
@@ -19,6 +20,8 @@ from app.models.entities import (
     PeopleDiscoveryRun,
     PeopleRecommendationFeedback,
     Project,
+    ScoringIntent,
+    ScoringJob,
     SensitiveDemographics,
     User,
     UserJobPeopleRecommendation,
@@ -28,7 +31,7 @@ from app.services.documents import public_dict
 
 router = APIRouter(prefix="/privacy", tags=["privacy"])
 
-EXPORT_EXCLUDED_COLUMNS = frozenset({"workday_password_ciphertext"})
+EXPORT_EXCLUDED_COLUMNS = frozenset({"workday_password_ciphertext"}) | INTERNAL_EXPORT_COLUMNS
 
 
 def _export_dict(row: object) -> dict:
@@ -97,6 +100,12 @@ def export_user_data(user: User = Depends(get_current_user), db: Session = Depen
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
 def delete_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    # Cleanup also runs with the flag OFF after a future rollback, preserving privacy.
+    if db.bind.dialect.name == "postgresql":
+        service(db).delete_user_work(user.id)
+    elif (db.scalar(select(ScoringIntent.id).where(ScoringIntent.user_id == user.id).limit(1)) is not None
+          or db.scalar(select(ScoringJob.id).where(ScoringJob.user_id == user.id).limit(1)) is not None):
+        raise HTTPException(status_code=503, detail="Durable cleanup requires PostgreSQL")
     # Keep document associations until controlled generated-file cleanup has
     # succeeded. If a later DB commit fails, the retained row can regenerate
     # an export; the reverse ordering would forget files permanently.

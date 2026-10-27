@@ -17,7 +17,7 @@ It is also invoked by Alembic migration ``0003_remove_demo_jobs`` so a normal
 
 from __future__ import annotations
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, inspect, or_, select
 from sqlalchemy.orm import Session
 
 from app.jobs.job_normalization_service import DEMO_COMPANIES, PLACEHOLDER_HOSTS
@@ -26,11 +26,19 @@ from app.models.entities import (
     JobMatch,
     JobPosting,
     JobSource,
+    ScoringIntent,
+    ScoringJob,
 )
 
 
 def cleanup_demo_jobs(db: Session) -> dict[str, int]:
     """Delete demo/placeholder postings and sources. Returns counts removed."""
+    # Migration 0003 runs before durable tables exist. On the new schema, use
+    # the same capacity-first lock as writers so a concurrent claim cannot race deletion.
+    durable_schema = inspect(db.get_bind()).has_table("scoring_capacity")
+    if durable_schema and db.get_bind().dialect.name == "postgresql":
+        from app.jobs.durable_producer import service
+        service(db).lock_intake()
     demo_source_ids = [
         source.id
         for source in db.scalars(select(JobSource)).all()
@@ -56,6 +64,12 @@ def cleanup_demo_jobs(db: Session) -> dict[str, int]:
     removed_matches = 0
     removed_tracker = 0
     if posting_ids:
+        if durable_schema and (
+            db.scalar(select(ScoringIntent.id).where(ScoringIntent.job_id.in_(posting_ids)).limit(1)) is not None
+            or db.scalar(select(ScoringJob.id).where(ScoringJob.job_id.in_(posting_ids)).limit(1)) is not None
+        ):
+            raise RuntimeError("Durable scoring references protect these postings. Cancel work and run the bounded "
+                               "terminal-retention operator after its retention window before cleanup.")
         removed_matches = db.execute(
             delete(JobMatch).where(JobMatch.job_id.in_(posting_ids))
         ).rowcount or 0

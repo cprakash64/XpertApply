@@ -75,15 +75,21 @@ def match_jobs_for_user_task(user_id: int) -> int:
     max_retries=3,
     acks_late=True,
 )
-def score_jobs_for_users_task(
-    self, job_ids: list[int], exclude_user_ids: list[int] | None = None
-) -> dict:
+def score_jobs_for_users_task(self, job_ids: list[int], exclude_user_ids: list[int] | None = None) -> dict:
     """Score a batch of newly ingested/changed jobs for all active users.
 
     Idempotent: the scoring service only writes when something changed, so a
     retry after a partial failure never double-writes or clobbers newer scores.
     A failure on one (user, job) pair is captured on the row and never aborts the
     batch."""
+    # Compatibility delivery can only reconcile PG intent identity. No transport
+    # retry may govern durable compute; atomic producers already own acceptance.
+    if settings.durable_scoring_enabled:
+        from app.jobs.job_ingestion_service import enqueue_scoring_for_jobs
+
+        with SessionLocal() as db:
+            enqueue_scoring_for_jobs(db, job_ids)
+        return {"scored": 0, "skipped": 0, "failed": 0, "profile_incomplete": 0, "accepted": len(job_ids)}
     exclude = set(exclude_user_ids or [])
     db = SessionLocal()
     totals = {"scored": 0, "skipped": 0, "failed": 0, "profile_incomplete": 0}

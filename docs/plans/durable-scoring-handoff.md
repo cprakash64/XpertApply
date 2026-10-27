@@ -98,3 +98,183 @@ window without rewriting this migration once applied outside disposable tests.
 The dispatcher must discover pending parent rows as well as pair recovery work.
 No R3 code, upload parser, abuse control, paid-call behavior or release activation
 is included. Owner review/new authorization is required to begin R3.
+
+## R3 partial integration checkpoint (blocked; no commit)
+
+R3 began from exact clean 2267bbc8d0ee6ae52b35d4d4e65c47dcc5e2d1df. All88
+R2 evidence artifacts and42 R1 artifacts verify; original22-file proposal hashes,
+HEAD and dirty status remain preserved. Fresh real PostgreSQL foundation preflight:
+53 passed, no failures/skips. Temporary native Python package metadata repaired
+from existing pinned requirements, without repository dependency changes.
+
+Preimplementation scope34 files was frozen externally in prod-ready-04b-r3.
+Synthetic scale:10000 users,200 postings,20000 durable children. R2 combined
+recovery scanned19000 terminal rows; proposed explicit active predicate/index
+scanned100 active rows and no terminal rows. Other queue/expiry/user queries use
+indexes; expansion uses primary key. Production capacity remains PROVISIONAL.
+Single supervised worker-container/two compute-child contract remains required;
+30s wall/20s CPU/256MiB compute,90s lease,5s polling, no horizontal scaling claim.
+These are design decisions, not implemented/qualified runner behavior.
+
+Partial uncommitted code adds caller-owned transactions, canonical comparison/
+generation helpers, selected producer/save/import/backfill/task routing and
+privacy cleanup, plus unapplied reversible0035 indexes. Migration0034 unchanged.
+Default flag remains OFF. This partial candidate MUST NOT be treated as ready:
+runner, route status integration, Web UI, focused fault tests, full suites, Docker
+runtime and postcommit gates remain unfinished. No R3 commit was created.
+
+BLOCKED — R3 REQUIRES SCOPE EXPANSION. The existing authenticated
+GET /debug/scoring-status reader in apps/api/app/routes/debug.py exposes global
+JobMatch state counts and oldest-pending time without an actor ownership filter.
+The scope omitted this reader. A two-user synthetic route-function reproduction
+shows user1 (no matches) observing pending_backlog change0->1 when only user2
+receives a pending match. This proves aggregate other-user counts, not disclosure
+of individual row IDs/content. R3 status privacy requires reviewing this reader
+and adding that exact file to authorized scope; OFF behavior must be preserved.
+The explicit user scope-expansion STOP rule prevents adding it silently. No
+further runtime implementation/qualification proceeded after discovery.
+
+External evidence records partial source diff, hashes, scope, query plans and
+blocker. Owned PostgreSQL container/scratch DBs removed. No push/deploy/production
+mutation, qualification execution, dependency edits, classifier edits, upload or
+general abuse-control work. RB01/RB03 retained; RB02/RB07 UNRESOLVED; release
+NO_GO, historical qualification BLOCKED; fresh qualification remains required.
+
+Resume requires owner authorization to add apps/api/app/routes/debug.py to R3
+scope and continue the existing partial patch from verified2267 base. Do not
+commit until all R3 gates pass; do not advance to R4 while R3 is incomplete.
+
+
+## R3-R1 authorized integration (in progress; no checkpoint yet)
+
+Owner amendment adds only `apps/api/app/routes/debug.py` to the recorded 34-file
+scope. All 42 preserved R3 artifacts, 13 source hashes, saved diff, detached HEAD,
+clean index and unchanged refs were verified before editing. Evidence lives in
+`prod-ready-04b-r3-r1`; preserved R3/R2/R1 evidence and the original 22-file 04B
+proposal remain untouched. The debug endpoint has no privileged-role authorization
+or client caller. Its contract is now authenticated actor-owned diagnostics in
+both modes: at most 100 own match rows, with no global backlog or internal fields.
+
+Architecture: default `durable_scoring_enabled=False`. ON-mode profile, career,
+import, job canonical writers and refresh/discovery/task/backfill producers use
+caller-owned transactions with capacity locked before roots/canonical rows. A
+relevant mutation, generation and accepted intent commit together; capacity or
+input validation errors roll the whole transaction back. Unchanged input recovers
+an own existing receipt without bumping generation, admitting another root or
+resetting retry budgets. Generations cover exact deterministic ProfileView plus
+SearchCriteria and JobView plus active/freshness selection. Criteria use a frozen
+PostgreSQL UTC reference date. No scoring algorithm or paid-provider behavior is
+changed. All legacy score entry points refuse execution under ON mode; OFF retains
+its Celery publication and inline fallback. Notifications are unnecessary for
+correctness. Scheduled outcome tallies and canonical job roots share the final
+transaction; a separately committed running marker is recovered as failed after
+one hour only while the ingestion advisory lock is unowned. No success is inferred.
+
+Process contract: exactly one Linux worker container with init enabled and 40s
+stop grace. Supervisor uses a local flock and PostgreSQL advisory leader lock;
+logical leases permit two claimed pairs globally and one per actor. Independent
+physical slots stay occupied through kill and reap. Two compute children maximum,
+30s wall limit, 20s CPU and 256 MiB address-space limits. Pure compute children have
+no DB/broker/provider credentials and invoke the existing deterministic scorer.
+PDEATHSIG also terminates compute and ingestion consumers after supervisor death.
+The ingestion-only Celery consumer retains recurring ingestion; it never executes
+fit computation in ON mode. This is a one-container drain-and-replace contract,
+not a claim of physical fencing across arbitrary network partitions or overlapping
+hosts. SQL byte preflight covers scoring-consumed fields before materialization;
+career queries defer unrelated text and document fields. Upload/parser bounding
+remains R4 work and RB02 remains UNRESOLVED.
+
+Each expansion page is at most 100 pairs with persisted numeric cursor and frozen
+upper bound. One actor's invalid scoring input terminalizes only their pair, so it
+cannot cancel another actor's shared fanout. Pair leases remain 90s with no renewal;
+compute starts only with at least 35s remaining. Resource bounds constrain even
+pathological input independently of representative runtime. Ordinary retries are
+allowlisted, share the existing three-attempt operation ledger and never grant a
+new recovery cycle. Nonretryable errors and exhausted budgets are terminal.
+
+User GET `/jobs/scoring-status` is authenticated, actor-owned, bounded to 100 rows
+per page, and returns identical 404s for absent and foreign intent IDs. No public
+retry/cancel/operator endpoint exists. Pending parents are visible before children
+exist; list projections hide stale scores and internal error categories. Historical
+legacy results at untouched generation zero remain valid without automatic enqueue.
+Never-admitted jobs show Not scored. UI separates saved/accepted from scoring;
+status polling uses actor-local GETs, 5s interval plus bounded jitter, exponential
+network backoff capped at 30s, hidden-tab pause, terminal/auth stop and abort on
+unmount. It never repeats mutation POSTs or depends on visible-card count. Legacy
+responses without the additive processing field retain existing behavior.
+
+Privacy deletion locks capacity first, fences/releases work before deleting the
+user in the same caller transaction, and works after rollback to OFF. File-cleanup
+failure rolls back metadata/counters. Exports omit durable metadata, leases,
+digests, generations, attempt ledgers and internal errors; existing own result
+fields remain exported. Manual terminal retention is 30 days, at most 100 total
+child/root deletions per call; active rows are excluded. FK SET NULL removes only
+the terminal child pointer, preserving current result identity and shared budget.
+Manual demo cleanup refuses durable-referenced postings and explains operator
+cancel/retention prerequisites. Host-authorized internal CLI supports only inspect,
+recover, cancel and retire. It cannot reset attempts or grant retry cycles.
+
+Health is internal PID/DB/loop freshness plus bounded aggregate backlog age and
+process-local transition counters. No actor/job/intent/email metric labels. API
+readiness does not depend on the runner. Admission defaults remain provisional:
+1000 live roots, 10000 live children, 100000 reserved units, 2 roots/100 children
+per actor, 1000 global roots and 100000 units/day, 20 actor roots/day. Config may
+lower approved global ceilings; no automatic production activation occurs.
+
+0035 is additive only: active recovery ID, actor recent history, actor current
+ generation recent history, actor root recent history, terminal retention age,
+and reconciliation eligibility indexes. Nonconcurrent CREATE INDEX takes write
+locks; lock timeout 2s and statement timeout 15s bound release-window attempts.
+This is not zero-downtime migration. No historical mutation/enqueue; downgrade
+removes only new indexes. Accepted work still prevents 0034 removal. Mixed ON/OFF
+scoring workers are unsafe: drain and stop all old workers before isolated ON
+activation, stop/reap the old supervisor before replacement, and drain accepted
+intents before returning the worker flag OFF. Keep schema/receipts on rollback;
+never remove accepted durable work to force an empty downgrade.
+
+Validation progress: first full backend run 2019 passed / 0 failed. Expanded
+security/privacy/retention tests and final full suite remain required. Disposable
+Linux evaluation passed actual profile after_commit process exit, restarted actual
+runner with Redis unavailable, one result effect per pair, duplicate supervisor
+rejection, graceful stop, timeout kill/reap, crash retry budget, both physical slots,
+production child limits/credential isolation, forced supervisor descendant death,
+and persisted-lease recovery. Nine polling tests and Web typecheck passed. Full Web,
+extension, four clean images, six-service OFF/ON stacks, scale plans, fresh advisory
+checks, R13 replay, complete source review and final checkpoint remain pending.
+
+RB01/RB03 resolved posture must be reverified. RB02/RB07 remain UNRESOLVED. R13
+classifier must remain byte-identical, qualification BLOCKED, fresh qualification
+required YES. No actual qualification, production mutation, deployment or push.
+Only after every gate passes: one local commit from 2267bbc8d0ee6ae52b35d4d4e65c47dcc5e2d1df,
+then required postcommit gates and clean worktree. Do not proceed to R4 in this stage.
+
+
+## R3-R3 isolated reconstruction (in progress)
+
+Reconstructed 33 keep candidates from the hash-frozen R3-R2 manifest into a clean detached 2267 worktree. Original dirty/proposal worktrees remain preservation sources only. Scope remains 35 files. Runner DB retries now require SQLSTATE or disconnect/pool signals; unknown, integrity, programming and data failures are terminal internal defects. Computed output is retained for at most three transaction-only retries without another claim/compute attempt. Durable compatibility acceptance executes outside legacy Celery catch/retry; PostgreSQL remains sole logical scoring retry authority. Default activation stays OFF. Full acceptance/migration/Linux faults/privacy/security/builds/R13 remain pending; no commit is permitted until all gates pass. Rollout remains single-container drain-and-replace; RB05/platform and production sizing remain pre-production limitations.
+
+
+### R3-R3 acceptance interruption and preserved recovery state
+
+BLOCKED: host storage exhaustion caused Docker content/package I/O errors and the
+engine socket remained unavailable after task-owned scanner cache removal and
+reopening Docker Desktop. No global cache prune, Docker factory reset, production
+mutation, push, or commit was performed. Web Node 24 tests passed 1,044/1,044 with
+lint/typecheck/production build passing. Extension passed 809 tests with the same
+10 existing skips and typecheck/build passing. Retry-policy unit tests passed 35.
+Full PostgreSQL/migration, Linux process faults, final clean images, both six-service
+stacks, and current advisory regression are not accepted. Backend rerun results
+are recorded in the external evidence; database-dependent skips are not passes.
+Offline R13 remains 25/25 and 27/27, known-failure false negatives zero, classifier
+byte-identical. Historical qualification remains BLOCKED and fresh qualification
+is required but was not executed.
+
+Recovery: restore sufficient host/Docker storage and a healthy engine, inspect the
+failed disposable build state, then rerun every unaccepted gate against the exact
+preserved source. Only this run's PostgreSQL container `xpertapply-r3r3-test-pg`
+and network `xpertapply-r3r3-validation` require deferred Docker cleanup if still
+present; no six-service stack was started. Do not adopt partial diagnostics as
+acceptance. R4 is not unlocked. Default activation remains OFF; RB02/RB07 and
+production architecture/sizing constraints remain unresolved. Rollback is to keep
+the committed R2 foundation active with durable runtime OFF and preserve this
+uncommitted reconstruction for continued validation.

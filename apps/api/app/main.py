@@ -3,14 +3,19 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.provider import ai_provider
 from app.core.config import settings
 from app.core.config_validation import enforce as enforce_production_config
 from app.core.log_redaction import install as install_log_redaction
 from app.db.session import SessionLocal
+from app.jobs.durable_producer import CanonicalInputInvalid
+from app.jobs.scoring_intents import CapacityUnavailable
 from app.people.feature_flags import configuration_summary as people_configuration_summary
 from app.routes import (
     applications,
@@ -92,6 +97,31 @@ app = FastAPI(
     openapi_url="/openapi.json" if _docs_on else None,
 )
 
+@app.exception_handler(StarletteHTTPException)
+async def safe_database_http_error(request: Request, exc: StarletteHTTPException):
+    if (settings.durable_scoring_enabled and exc.status_code == 503
+            and exc.detail == "Database unavailable or not migrated. Run alembic upgrade head."):
+        return JSONResponse(status_code=503, content={
+            "detail": "Database unavailable. Check scoring status before resubmitting.",
+            "error": {"code": "ACCEPTANCE_UNCERTAIN", "retryable": True},
+        }, headers={"Retry-After": "30"})
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(CapacityUnavailable)
+async def capacity_error(_request: Request, exc: CapacityUnavailable):
+    user_limit = str(exc) == "USER_SCORING_CAPACITY"
+    return JSONResponse(status_code=429 if user_limit else 503,
+                        content={"detail": "Scoring capacity is temporarily unavailable.",
+                                 "error": {"code": "USER_SCORING_CAPACITY" if user_limit else "SCORING_BACKLOG_FULL",
+                                           "retryable": True}}, headers={"Retry-After": "30"})
+
+
+@app.exception_handler(CanonicalInputInvalid)
+async def canonical_input_error(_request: Request, _exc: CanonicalInputInvalid):
+    return JSONResponse(status_code=422, content={"detail": "Scoring input exceeds the supported size."})
+
+
 # IMPORTANT: middleware order. `add_middleware` makes the LAST-added middleware
 # the OUTERMOST. We add the unhandled-error catcher FIRST and CORS LAST so CORS
 # is outermost and wraps the catcher's 500 response.
@@ -111,7 +141,13 @@ async def catch_unhandled_errors(request: Request, call_next):
     request.state.request_id = request_id
     try:
         response = await call_next(request)
-    except Exception:  # noqa: BLE001 - last-resort catch so CORS headers are attached
+    except Exception as exc:  # noqa: BLE001 - last-resort catch so CORS headers are attached
+        if settings.durable_scoring_enabled and isinstance(exc, SQLAlchemyError):
+            logger.warning("Durable database unavailable rid=%s", request_id)
+            return JSONResponse(status_code=503, content={
+                "detail": "Database unavailable. Check scoring status before resubmitting.",
+                "error": {"code": "ACCEPTANCE_UNCERTAIN", "retryable": True, "request_id": request_id},
+            }, headers={"X-Request-ID": request_id, "Retry-After": "30"})
         logger.exception("Unhandled error on %s %s rid=%s", request.method, request.url.path, request_id)
         return JSONResponse(
             status_code=500,

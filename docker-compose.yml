@@ -96,15 +96,17 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.workers.tasks.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      test: ["CMD", "python", "/app/scripts/start-worker.py", "--health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
     # SIGTERM lets Celery finish the in-flight task before exiting; the default
     # 10s grace is too short for a scoring batch.
-    stop_grace_period: 30s
-    command: celery -A app.workers.tasks.celery_app worker --loglevel=info --concurrency=2
+    # Durable mode requires exactly one worker container; stop/reap before replacement.
+    stop_grace_period: 40s
+    init: true
+    command: python /app/scripts/start-worker.py
 
   # Beat scheduler: a SINGLE service that triggers recurring ingestion on the
   # configured cron. Never run inside the API (multiple replicas would duplicate

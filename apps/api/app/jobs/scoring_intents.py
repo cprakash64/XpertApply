@@ -1,7 +1,7 @@
-"""Dormant PostgreSQL durability primitives. No routes, tasks or startup callers.
+"""PostgreSQL durability primitives with caller-owned atomic intake transactions.
 
-Each public mutation owns a short transaction, serializing capacity first. There
-is deliberately no runner, Redis transport, scoring call or operator retry grant.
+Capacity locks precede roots, users, postings, and pairs. Compute runs outside
+transactions; transport notifications never determine acceptance or recovery.
 """
 
 from __future__ import annotations
@@ -12,18 +12,21 @@ import math
 import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, load_only, sessionmaker
 
 from app.jobs.scoring_service import (
     SCORE_VERSION,
     build_profile_view,
+    compute_job_content_hash,
+    compute_profile_version,
     compute_scoring_input_digest,
     has_scorable_profile,
     job_view,
+    preflight_scoring_input,
 )
 from app.models.entities import (
     DURABLE_TERMINAL,
@@ -158,11 +161,15 @@ def transition(job: ScoringJob, state: str, now: datetime) -> None:
 class DurableScoring:
     def __init__(
         self,
-        sessions: sessionmaker,
+        sessions: sessionmaker | None,
         *,
         limits: Limits | None = None,
         clock: Callable[[Session], datetime] | None = None,
+        session: Session | None = None,
     ):
+        if sessions is None and session is None:
+            raise ValueError("Session ownership required")
+        self.session = session
         self.sessions = sessions
         self.limits = limits or Limits()
         self.clock = clock
@@ -173,25 +180,44 @@ class DurableScoring:
             raise ValueError("Clock must be timezone-aware")
         return now.astimezone(UTC)
 
-    @contextmanager
-    def _tx(self):
-        with self.sessions() as db, db.begin():
-            if db.bind.dialect.name != "postgresql":
-                raise RuntimeError("Durable scoring requires PostgreSQL")
+    def _capacity(self, db):
+        if db.bind.dialect.name != "postgresql":
+            raise RuntimeError("Durable scoring requires PostgreSQL")
+        with db.no_autoflush:
             db.execute(text("SET LOCAL lock_timeout = '250ms'"))
             db.execute(text("SET LOCAL statement_timeout = '2s'"))
             cap = db.scalar(select(ScoringCapacity).where(ScoringCapacity.id == 1).with_for_update())
-            if cap is None:
-                raise RuntimeError("Missing migrated capacity singleton")
-            yield db, cap, self._now(db)
+        if cap is None:
+            raise RuntimeError("Missing migrated capacity singleton")
+        return cap
+
+    def lock_intake(self):
+        """Acquire capacity before canonical mutations; caller retains its transaction."""
+        if self.session is None:
+            raise RuntimeError("Intake requires caller-owned transaction")
+        self._capacity(self.session)
+        return self._now(self.session)
+
+    @contextmanager
+    def _tx(self):
+        if self.session is not None:
+            db = self.session
+            yield db, self._capacity(db), self._now(db)
             db.flush()
+            # Never commit, rollback or close a caller's acceptance transaction.
+        else:
+            with self.sessions() as db, db.begin():
+                yield db, self._capacity(db), self._now(db)
+                db.flush()
 
     def _root(self, db, intent_id):
         return db.scalar(select(ScoringIntent).where(ScoringIntent.id == intent_id).with_for_update())
 
     def _canonical(self, db, user_id, job_id):
         user = db.scalar(select(User).where(User.id == user_id).with_for_update()) if user_id else None
-        job = db.scalar(select(JobPosting).where(JobPosting.id == job_id).with_for_update()) if job_id else None
+        job = db.scalar(select(JobPosting).where(JobPosting.id == job_id).options(load_only(
+            JobPosting.scoring_generation, JobPosting.is_active, JobPosting.posted_at
+        )).with_for_update()) if job_id else None
         return user, job
 
     def _reserve(self, db, cap, now, user, units):
@@ -348,6 +374,7 @@ class DurableScoring:
             return root.lease_token
 
     def _inputs(self, db, uid, posting, root):
+        preflight_scoring_input(db, uid, posting.id)
         built = build_profile_view(db, uid, reference_date=root.reference_date)
         view, criteria = built if built else (None, None)
         digest = compute_scoring_input_digest(
@@ -407,7 +434,15 @@ class DurableScoring:
                     if cap.live_children >= self.limits.children or count >= self.limits.user_children:
                         blocked = True
                         break
-                    digest = self._inputs(db, uid, job, root)
+                    input_error = None
+                    try:
+                        digest = self._inputs(db, uid, job, root)
+                    except ValueError as exc:
+                        # A malformed actor input must never cancel other actors' fanout.
+                        input_error = "INPUT_TOO_LARGE" if str(exc) == "INPUT_TOO_LARGE" else "INPUT_INVALID"
+                        digest = identity({"invalid": input_error, "user": uid, "job": jid,
+                                           "ug": user.scoring_generation, "jg": job.scoring_generation,
+                                           "reference": root.reference_date.isoformat()})
                     op = identity(
                         {
                             "user": uid,
@@ -440,6 +475,8 @@ class DurableScoring:
                     created.append(pair.id)
                     cap.live_children += 1
                     root.unfinished_children += 1
+                    if input_error:
+                        self._terminal(cap, root, pair, now, "TERMINAL_FAILED", error=input_error)
                 width = target_id - cursor
                 released = width - (1 if eligible else 0)
                 root.remaining_units -= released
@@ -575,7 +612,12 @@ class DurableScoring:
                     .limit(1)
                 ):
                     continue
-                actual = self._inputs(db, user.id, job, root)
+                try:
+                    actual = self._inputs(db, user.id, job, root)
+                except ValueError as exc:
+                    self._terminal(cap, root, pair, now, "TERMINAL_FAILED",
+                        error="INPUT_TOO_LARGE" if str(exc) == "INPUT_TOO_LARGE" else "INPUT_INVALID")
+                    continue
                 if actual != pair.input_digest:
                     self._terminal(cap, root, pair, now, "SUPERSEDED")
                     continue
@@ -623,6 +665,7 @@ class DurableScoring:
                     self._terminal(cap, root, pair, now, "TERMINAL_FAILED", error="DEADLINE_EXCEEDED")
                     continue
                 match.operation_attempt_count += 1
+                match.scoring_attempts = (match.scoring_attempts or 0) + 1
                 pair.attempt_count += 1
                 transition(pair, "CLAIMED", now)
                 pair.lease_token = str(uuid.uuid4())
@@ -666,6 +709,9 @@ class DurableScoring:
             actual_digest = self._inputs(db, user.id, job, root)
             profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id)) if user else None
             match = self._match(db, pair)
+            built = build_profile_view(db, user.id, reference_date=root.reference_date)
+            job_hash = compute_job_content_hash(job)
+            profile_hash = compute_profile_version(built[0]) if built else None
             # Refresh database time after every input/row lookup, immediately before the write decision.
             now = self._now(db)
             if (
@@ -688,6 +734,8 @@ class DurableScoring:
             match.score_version = pair.score_version
             match.scoring_error_code = None
             match.scored_at = now
+            match.job_content_hash = job_hash
+            match.profile_version = profile_hash
             match.scoring_job_id = pair.id
             match.completed_user_generation = pair.user_generation
             match.completed_job_generation = pair.job_generation
@@ -779,6 +827,7 @@ class DurableScoring:
                     select(ScoringJob.id)
                     .where(
                         ScoringJob.id > after_id,
+                        ScoringJob.status.in_(ACTIVE),
                         ((ScoringJob.status.in_(("PENDING", "RETRY_WAIT"))) & (ScoringJob.next_attempt_at <= now))
                         | ((ScoringJob.status == "CLAIMED") & (ScoringJob.lease_expires_at <= now)),
                     )
@@ -873,3 +922,135 @@ class DurableScoring:
             db.flush()
             db.execute(delete(ScoringJob).where(ScoringJob.user_id == user_id))
             db.execute(delete(ScoringIntent).where(ScoringIntent.user_id == user_id))
+
+
+    def pending_roots(self, *, batch_size=100):
+        if not 1 <= batch_size <= 100:
+            raise ValueError("Bounded discovery required")
+        with self.sessions() as db:
+            now = self._now(db)
+            return tuple(db.scalars(select(ScoringIntent.id).where(
+                ScoringIntent.status == "PENDING", ScoringIntent.next_attempt_at <= now
+            ).order_by(ScoringIntent.next_attempt_at, ScoringIntent.id).limit(batch_size)))
+
+    def reconcile(self, *, batch_size=100):
+        """Bounded invalid-parent/deadline cleanup, including unexpanded reservations."""
+        if not 1 <= batch_size <= 100:
+            raise ValueError("Bounded reconciliation required")
+        with self._tx() as (db, cap, now):
+            roots = db.scalars(select(ScoringIntent).outerjoin(User, User.id == ScoringIntent.user_id)
+                .outerjoin(JobPosting, JobPosting.id == ScoringIntent.job_id).where(
+                    (ScoringIntent.status.not_in(DURABLE_TERMINAL)) | (ScoringIntent.unfinished_children > 0),
+                    ((ScoringIntent.status.in_(DURABLE_TERMINAL)) & (ScoringIntent.unfinished_children > 0))
+                    | ((ScoringIntent.status.not_in(DURABLE_TERMINAL)) & (
+                        (ScoringIntent.deadline_at <= now)
+                        | ((ScoringIntent.user_id.is_not(None))
+                           & (ScoringIntent.user_generation != User.scoring_generation))
+                        | ((ScoringIntent.job_id.is_not(None)) & (
+                            (ScoringIntent.job_generation != JobPosting.scoring_generation)
+                            | (JobPosting.is_active.is_(False))))
+                    ))
+                ).order_by(ScoringIntent.id).limit(batch_size).with_for_update(of=ScoringIntent)).all()
+            changed = 0
+            for root in roots:
+                user, job = self._canonical(db, root.user_id, root.job_id)
+                if root.status not in DURABLE_TERMINAL:
+                    invalid = not self._valid(root, user, job) or job and not job.is_active
+                    state = "SUPERSEDED" if invalid else "TERMINAL_FAILED"
+                    self._invalidate_root(cap, root, now, state)
+                ids = tuple(db.scalars(select(ScoringJob.id).where(
+                    ScoringJob.intent_id == root.id, ScoringJob.status.in_(ACTIVE)
+                ).order_by(ScoringJob.id).limit(batch_size - changed)))
+                state = root.status if root.status in ("CANCELED", "SUPERSEDED") else "TERMINAL_FAILED"
+                for jid in ids:
+                    _, _, _, pair = self._locked_pair(db, jid)
+                    self._terminal(cap, root, pair, now, state,
+                                   error="DEADLINE_EXCEEDED" if state == "TERMINAL_FAILED" else None)
+                    changed += 1
+                if changed >= batch_size:
+                    break
+            return changed
+
+    def load_claim(self, claim):
+        """Freeze the exact verified scorer inputs in memory, outside compute transactions."""
+        with self._tx() as (db, _cap, _now):
+            rows = self._locked_pair(db, claim.id)
+            if rows is None:
+                return None
+            root, user, job, pair = rows
+            if not self._owned(root, user, job, pair, claim, self._now(db)):
+                return None
+            built = build_profile_view(db, user.id, reference_date=root.reference_date)
+            profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+            view, criteria = built if built else (None, None)
+            digest = compute_scoring_input_digest(view, job_view(job), criteria,
+                reference_date=root.reference_date, score_version=pair.score_version)
+            payload = {"profile": asdict(view) if view else None, "job": asdict(job_view(job)),
+                       "criteria": criteria.model_dump(mode="json") if criteria else None,
+                       "profile_incomplete": not has_scorable_profile(profile)}
+            if len(json.dumps(payload).encode()) > 262144:
+                raise ValueError("INPUT_TOO_LARGE")
+            now = self._now(db)
+            if not self._owned(root, user, job, pair, claim, now) or digest != claim.input_digest:
+                return None
+            if (pair.lease_expires_at - now).total_seconds() < 35:
+                raise TimeoutError("Insufficient compute lease")
+            return payload
+
+    def current_claim(self, claim):
+        with self.sessions() as db:
+            pair = db.get(ScoringJob, claim.id)
+            if pair is None:
+                return False
+            root = db.get(ScoringIntent, pair.intent_id)
+            user = db.get(User, pair.user_id)
+            job = db.get(JobPosting, pair.job_id)
+            return self._owned(root, user, job, pair, claim, self._now(db))
+
+    def telemetry(self):
+        """Internal aggregate metrics, never used as an authenticated user's status."""
+        with self.sessions() as db:
+            now = self._now(db)
+            cap = db.get(ScoringCapacity, 1)
+            states = dict(db.execute(select(ScoringJob.status, func.count()).where(
+                ScoringJob.status.in_(ACTIVE)
+            ).group_by(ScoringJob.status)).all())
+            oldest = db.scalar(select(func.min(ScoringJob.created_at)).where(ScoringJob.status.in_(ACTIVE)))
+            lag = db.scalar(select(func.min(ScoringIntent.created_at)).where(
+                ScoringIntent.status.in_(("PENDING", "EXPANDING"))))
+            return {"pending": states.get("PENDING", 0), "claimed": states.get("CLAIMED", 0),
+                "retry": states.get("RETRY_WAIT", 0), "live_intents": cap.live_intents,
+                "admitted_roots_today": cap.admitted_roots_today,
+                "oldest_pending_seconds": max(0, (now-oldest).total_seconds()) if oldest else 0,
+                "expansion_lag_seconds": max(0, (now-lag).total_seconds()) if lag else 0}
+
+    def retire_terminal(self, *, batch_size=100):
+        """Explicit operator retention; current result identity/ledger survives SET NULL."""
+        if not 1 <= batch_size <= 100:
+            raise ValueError("Bounded retention required")
+        with self._tx() as (db, _cap, now):
+            roots = tuple(db.scalars(select(ScoringIntent).where(
+                ScoringIntent.status.in_(DURABLE_TERMINAL),
+                ScoringIntent.completed_at < now-timedelta(days=30),
+                ScoringIntent.unfinished_children == 0, ScoringIntent.remaining_units == 0,
+                ~select(ScoringJob.id).where(ScoringJob.intent_id == ScoringIntent.id,
+                                           ScoringJob.status.in_(ACTIVE)).exists()
+            ).order_by(ScoringIntent.completed_at, ScoringIntent.id).limit(batch_size).with_for_update()))
+            # Child deletion is separately bounded; a large parent retires across calls.
+            budget = batch_size
+            removed = 0
+            for root in roots:
+                ids = tuple(db.scalars(select(ScoringJob.id).where(
+                    ScoringJob.intent_id == root.id, ScoringJob.status.in_(DURABLE_TERMINAL)
+                ).order_by(ScoringJob.id).limit(budget)))
+                if ids:
+                    db.execute(delete(ScoringJob).where(ScoringJob.id.in_(ids)))
+                    budget -= len(ids)
+                if (budget > 0 and db.scalar(select(ScoringJob.id).where(
+                        ScoringJob.intent_id == root.id).limit(1)) is None):
+                    db.delete(root)
+                    budget -= 1
+                    removed += 1
+                if budget == 0:
+                    break
+            return removed

@@ -40,6 +40,25 @@ def run_backfill(
     db = SessionLocal()
     totals = ScoringStats()
     try:
+        if settings.durable_scoring_enabled:
+            from sqlalchemy import select
+
+            from app.jobs.durable_producer import accept_user
+            from app.models.entities import User, UserProfile
+            cursor = 0
+            while True:
+                query = select(User.id).join(UserProfile, UserProfile.user_id == User.id).where(User.id > cursor)
+                if user_id is not None:
+                    query = query.where(User.id == user_id)
+                ids = tuple(db.scalars(query.order_by(User.id).limit(min(batch_size, 100))))
+                if not ids:
+                    break
+                for uid in ids:
+                    accept_user(db, uid, days=posted_within_days, include_unknown=include_unknown_dates)
+                    db.rollback() if dry_run else db.commit()
+                    totals.selected += 1
+                cursor = ids[-1]
+            return totals
         user_ids = [user_id] if user_id is not None else active_user_ids(db)
         logger.info(
             "Backfill starting: users=%d posted_within_days=%d only_missing=%s force=%s dry_run=%s",
