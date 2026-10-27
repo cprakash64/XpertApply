@@ -32,3 +32,23 @@ Rollback image: `xpertapply-staging-web:nav02-downloads-1516f23` (`sha256:4dfcee
 (kept as rollback). Recreate only `xpertapply-web-1`; keep the corrected API release override (in the nav02-final backup controls dir; the checkout's
 `compose.nav02-api.release.yml` names the older `nav02-acf8d8b` and must not be used), the Redis preserve file, and the corrected `DATABASE_URL`.
 The dry run must propose only the web recreation and effective config must differ only in `web.image`.
+
+## Stage 50E: final staging acceptance (2026-10-27, live) and production web preparation
+- Deployed staging web: container `xpertapply-staging-web` on `sha256:30651fdd…62ca`, label revision `cb76c3d159519d…`; server source tarball
+  sha256 `e3eea112…44ad` is byte-identical to `git archive cb76c3d apps/web` (197 files). Staging API `436c05e7…` unchanged; schema `0036`; drafting off.
+- Live downloads over HTTPS (disposable users 12/13): resume and cover letter PDF+DOCX, correct magic/MIME/filenames, `private, no-store`;
+  frozen snapshot ignores post-freeze edits; legacy association served; ambiguous/none/missing cover = 404 + accurate UI copy; 401 unauth; cross-account 404.
+- Browser (Playwright, real staging): login, nav (dashboard/jobs/profile/tracker/pricing), 5 PDF + 5 DOCX UI downloads, filters/search, status change persisted,
+  keyboard Tab/Enter/Space, loading (`Preparing…`, disabled), 500/404/409/401 states, logout clears storage, 375px no overflow. axe: only pre-existing brand
+  colour-contrast findings, identical on production.
+- Security parity: container CSP Report-Only header byte-identical staging vs production; no X-Powered-By; HSTS/nosniff/Referrer/Permissions/XFO come from the
+  production nginx vhost (staging vhost lacks them; unaffected by a web image swap). Landing links and disabled "Add to Chrome" CTA identical to production.
+  Bundle: staging API only; Store ID present; no Store URL; no secret patterns.
+- Cleanup: all 34 staging tables hash-identical to pre-test. `remove_users.py` left orphan `user_profiles` (User.profile has no ORM delete cascade);
+  this run's two were removed and the script now deletes profiles first. Four older orphans (ids 8–11, synthetic "Xa Fifty Cee", user_id NULL) predate 50E.
+- Production candidate: `xpertapply-web:stage50d-cb76c3d-prod` = `sha256:3c1639711470ed4ab00899e3fa8e44e98d1e5a786d2b640ea8a239c0fdb315a8`
+  (same tarball, production args, base layers identical to the staging candidate). Loopback smoke (throwaway container, removed): 200s, CSP identical to live
+  production, production API only. Rollback tag `xpertapply-web:rollback-pre-50d` = `6b299869…`.
+- Preflight/release: `scripts/production-web-release-50e.py plan|apply|rollback` (root). Uses `/home/xpertapply/apps/production` base files + Redis preserve +
+  NAV02 `controls/release.yml`, env-clean with `NAV02_PROD_DATABASE_URL` from the live API (never the stale checkout override or /etc/environment).
+  The old `/home/luna/apps/XpertApply` checkout that last created the web container no longer exists.
