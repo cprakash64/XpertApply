@@ -78,7 +78,9 @@ export type ScoreStateValue =
   | "scoring"
   | "scored"
   | "failed"
-  | "profile_incomplete";
+  | "profile_incomplete"
+  | "terminal_failed"
+  | "not_scored";
 
 export type ScoreDisplay = {
   /** How to render the card body. */
@@ -111,6 +113,10 @@ export function getScoreDisplay(
         helper: "We need your target roles or skills to score this role.",
         pending: false
       };
+    case "not_scored":
+      return { kind: "failed", label: "Not scored", helper: "Refresh matches to request a fit score.", pending: false };
+    case "terminal_failed":
+      return { kind: "failed", label: "Score unavailable", helper: "Scoring did not complete. Your profile is saved.", pending: false };
     case "failed":
       return {
         kind: "failed",

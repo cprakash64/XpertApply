@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.jobs.durable_producer import begin_job_update, finish_job_update
 from app.jobs.job_ingestion_service import (
     _fetch_all,
     _persist_job,
@@ -96,6 +97,18 @@ def _pg_advisory_lock(db: Session):
         return
     from sqlalchemy import text
 
+    if settings.durable_scoring_enabled:
+        # Keep the session-level lock on one dedicated connection across intake commits.
+        with db.get_bind().connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            key = 0x0B_C0_FF_EE
+            got = connection.scalar(text("SELECT pg_try_advisory_lock(:id)"), {"id": key})
+            try:
+                yield bool(got)
+            finally:
+                if got:
+                    connection.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": key})
+        return
+
     lock_id = 0x0B_C0_FF_EE  # stable app-specific advisory lock id
     got = db.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": lock_id}).scalar()
     try:
@@ -166,11 +179,15 @@ def _run_locked(
             updated += 1
         if is_new or content_changed:
             changed_ids.append(record.id)
-    db.commit()
+    if not settings.durable_scoring_enabled:
+        db.commit()
 
-    expired = _expire_stale_jobs(db)
+    expired = _expire_stale_jobs(db, commit=not settings.durable_scoring_enabled)
 
-    queued = enqueue_scoring_for_jobs(db, changed_ids) if changed_ids else 0
+    # ON mode's canonical writers already accepted their job roots in this transaction.
+    queued = len(changed_ids) if settings.durable_scoring_enabled else (
+        enqueue_scoring_for_jobs(db, changed_ids) if changed_ids else 0
+    )
 
     succeeded = int(stats.get("sources_succeeded", 0))
     failed = int(stats.get("sources_failed", 0))
@@ -186,6 +203,9 @@ def _run_locked(
     run.scoring_tasks_queued = queued
     run.errors = warnings[:50]
     run.detail = {"by_provider": stats.get("by_provider", {})}
+    if settings.durable_scoring_enabled:
+        run.detail.update({"score_status": "pending" if queued else "complete",
+                           "scoring_intents_created": queued})
     if failed and succeeded:
         run.status = IngestionStatus.partial.value
     elif failed and not succeeded:
@@ -220,7 +240,7 @@ async def _fetch_all_with_timeout(adapters, days: int, timeout: float):
         settings.job_discovery_timeout_seconds = original
 
 
-def _expire_stale_jobs(db: Session) -> int:
+def _expire_stale_jobs(db: Session, *, commit: bool = True) -> int:
     """Mark active jobs that have not been seen on their source within the grace
     period as inactive. Never deletes rows; saved/tracked jobs keep their data."""
     cutoff = datetime.now(UTC) - timedelta(days=settings.job_expiry_grace_days)
@@ -230,9 +250,11 @@ def _expire_stale_jobs(db: Session) -> int:
         if last_seen is not None and last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=UTC)
         if last_seen is not None and last_seen < cutoff:
+            scoring_update = begin_job_update(db, job)
             job.is_active = False
+            finish_job_update(scoring_update, job)
             expired += 1
-    if expired:
+    if expired and commit:
         db.commit()
     return expired
 
@@ -259,3 +281,32 @@ def recent_runs(db: Session, limit: int = 20) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def recover_abandoned_runs(sessions, *, batch_size=100):
+    """Mark old orphan run markers failed only while the ingestion lock is unowned.
+
+    No success tallies are fabricated and no canonical job is enqueued. Committed
+    job intents recover independently through the durable runner.
+    """
+    from sqlalchemy import func
+    if not 1 <= batch_size <= 100:
+        raise ValueError("Bounded recovery required")
+    with sessions() as db:
+        if db.get_bind().dialect.name != "postgresql":
+            raise RuntimeError("Durable run recovery requires PostgreSQL")
+        with _pg_advisory_lock(db) as got:
+            if not got:
+                return 0
+            now = db.scalar(select(func.clock_timestamp()))
+            cutoff = now - timedelta(seconds=max(3600, settings.job_ingestion_lock_ttl_seconds))
+            rows = db.scalars(select(IngestionRun).where(
+                IngestionRun.status == "running", IngestionRun.started_at < cutoff
+            ).order_by(IngestionRun.started_at, IngestionRun.id).limit(batch_size).with_for_update()).all()
+            for run in rows:
+                run.status = "failed"
+                run.completed_at = now
+                run.errors = ["Worker stopped before the ingestion outcome was recorded."]
+                run.detail = {**(run.detail or {}), "recovery": "orphaned_run"}
+            db.commit()
+            return len(rows)

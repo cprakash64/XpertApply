@@ -25,8 +25,8 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session, load_only
 
 from app.jobs.job_eligibility_service import evaluate_eligibility
 from app.jobs.job_matching_service import JobView, MatchResult, ProfileView, score_job
@@ -138,15 +138,66 @@ def has_scorable_profile(profile: UserProfile | None) -> bool:
     return bool((profile.target_roles or []) or (profile.skills or []))
 
 
+class CanonicalInputInvalid(ValueError):
+    """Only scoring-consumed canonical input is rejected; never provider/parser data."""
+
+
+def preflight_scoring_input(db: Session, user_id: int, job_id: int | None = None):
+    """SQL byte/count preflight before materializing potentially large scorer inputs."""
+    if db.get_bind().dialect.name != "postgresql":
+        raise RuntimeError("Durable scoring requires PostgreSQL")
+    statements = (
+        "SELECT coalesce(octet_length(target_roles::text),0)+coalesce(octet_length(skills::text),0)"
+        "+coalesce(octet_length(preferred_locations::text),0)+coalesce(octet_length(target_levels::text),0)"
+        "+coalesce(octet_length(remote_preference),0)+coalesce(octet_length(location_country),0) "
+        "FROM user_profiles WHERE user_id=:uid",
+        "SELECT coalesce(sum(coalesce(octet_length(title),0)+32),0) FROM experience WHERE user_id=:uid",
+        "SELECT coalesce(sum(coalesce(octet_length(name),0)+coalesce(octet_length(technologies::text),0)+8),0) "
+        "FROM projects WHERE user_id=:uid",
+    )
+    total = 0
+    for query in statements:
+        total += db.execute(text(query), {"uid": user_id}).scalar() or 0
+        if total > 262144:
+            raise CanonicalInputInvalid("INPUT_TOO_LARGE")
+    if job_id is not None:
+        size = db.execute(text(
+            "SELECT coalesce(octet_length(title),0)+coalesce(octet_length(description_clean),0)"
+            "+coalesce(octet_length(required_skills::text),0)+coalesce(octet_length(preferred_skills::text),0)"
+            "+coalesce(octet_length(location),0)+coalesce(octet_length(remote_type),0)"
+            "+coalesce(octet_length(seniority_level),0)+coalesce(octet_length(work_authorization_notes),0) "
+            "FROM job_postings WHERE id=:jid"
+        ), {"jid": job_id}).scalar() or 0
+        if total + size > 262144:
+            raise CanonicalInputInvalid("INPUT_TOO_LARGE")
+
+
 def build_profile_view(
     db: Session, user_id: int, *, reference_date: date | None = None
 ) -> tuple[ProfileView, SearchCriteria] | None:
-    profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
+    from app.core.config import settings
+    if settings.durable_scoring_enabled:
+        preflight_scoring_input(db, user_id)
+    profile_query = select(UserProfile).where(UserProfile.user_id == user_id)
+    if settings.durable_scoring_enabled:
+        profile_query = profile_query.options(load_only(
+            UserProfile.target_roles, UserProfile.skills, UserProfile.preferred_locations, UserProfile.target_levels,
+            UserProfile.remote_preference, UserProfile.requires_sponsorship, UserProfile.open_to_relocation,
+            UserProfile.location_country))
+    profile = db.scalar(profile_query)
     if profile is None:
         return None
-    experiences = list(db.scalars(select(Experience).where(Experience.user_id == user_id)).all())
-    projects = list(db.scalars(select(Project).where(Project.user_id == user_id)).all())
-    education = list(db.scalars(select(Education).where(Education.user_id == user_id)).all())
+    experience_query = select(Experience).where(Experience.user_id == user_id)
+    project_query = select(Project).where(Project.user_id == user_id)
+    if settings.durable_scoring_enabled:
+        experience_query = experience_query.options(
+            load_only(Experience.title, Experience.start_date, Experience.end_date))
+        project_query = project_query.options(load_only(Project.name, Project.technologies))
+    experiences = list(db.scalars(experience_query).all())
+    projects = list(db.scalars(project_query).all())
+    education = (db.scalar(select(Education.id).where(Education.user_id == user_id).limit(1)) is not None
+                 if settings.durable_scoring_enabled else
+                 bool(db.scalars(select(Education).where(Education.user_id == user_id)).all()))
     criteria = build_search_criteria(profile, experiences, reference_date=reference_date)
     view = ProfileView(
         target_roles=profile.target_roles or [],
@@ -158,7 +209,7 @@ def build_profile_view(
         remote_preference=profile.remote_preference or "everything",
         seniority_targets=criteria.seniority_targets,
         target_levels=profile.target_levels or [],
-        has_degree=bool(education),
+        has_degree=education,
         requires_sponsorship=profile.requires_sponsorship,
         open_to_relocation=profile.open_to_relocation,
         location_country=profile.location_country or "",
@@ -231,6 +282,10 @@ def score_pair(
 
     Never raises for a scoring error — failures are captured on the row so the
     surrounding batch keeps going. Caller owns the transaction/commit."""
+    from app.core.config import settings
+    if settings.durable_scoring_enabled:
+        raise RuntimeError("Legacy score writer disabled in durable mode")
+
     job_hash = compute_job_content_hash(job)
     match = db.scalar(
         select(JobMatch).where((JobMatch.user_id == user_id) & (JobMatch.job_id == job.id))
@@ -329,6 +384,10 @@ def score_jobs_for_user(
 
     ``only_missing`` restricts work to pairs that have no scored row yet (used by
     backfill). ``force`` ignores change-detection and rescores everything."""
+    from app.core.config import settings
+    if settings.durable_scoring_enabled:
+        raise RuntimeError("Legacy score writer disabled in durable mode")
+
     stats = ScoringStats()
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))
     built = build_profile_view(db, user_id)
@@ -407,6 +466,10 @@ def score_users_for_job(
     commit: bool = True,
 ) -> ScoringStats:
     """Score one freshly ingested job for a set of users."""
+    from app.core.config import settings
+    if settings.durable_scoring_enabled:
+        raise RuntimeError("Legacy score writer disabled in durable mode")
+
     stats = ScoringStats()
     job = db.get(JobPosting, job_id)
     if job is None:

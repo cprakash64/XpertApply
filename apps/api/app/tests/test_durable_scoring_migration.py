@@ -29,6 +29,7 @@ def test_upgrade_preserves_existing_rows_and_empty_downgrade(scratch_database): 
                 "VALUES(1,1,73,'legacy synthetic score','scored',2)"
             )
         )
+    command.upgrade(cfg, "0034_durable_scoring")
     command.upgrade(cfg, "head")
     command.upgrade(cfg, "head")
     with engine.connect() as db:
@@ -68,5 +69,5 @@ def test_fresh_head_and_downgrade_refuses_accepted_work(scratch_database):  # no
         command.downgrade(cfg, "0033_prod_auth_identities")
     with engine.connect() as db:
         assert db.execute(text("SELECT count(*) FROM scoring_intents")).scalar() == 1
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0034_durable_scoring"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0035_durable_runtime_indexes"
     engine.dispose()

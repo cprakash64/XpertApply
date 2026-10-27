@@ -10,8 +10,10 @@ import {
   type GeneratedDocument,
   type Job,
   type JobsResponse,
+  type ScoringStatus,
   type RefreshSummary
 } from "@/lib/api";
+import { useScoringStatus } from "@/lib/useScoringStatus";
 import { useJobsQuery, type JobsQuery } from "@/lib/jobsQuery";
 import { Alert, Button } from "@/components/ui";
 import { useAppShell } from "@/components/AppShell";
@@ -43,6 +45,7 @@ export function JobDiscovery() {
   const shell = useAppShell();
 
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [processing, setProcessing] = useState<ScoringStatus>();
   const [listLoaded, setListLoaded] = useState(false);
   // The FIRST jobs request is a distinct state from "the list is empty".
   //
@@ -104,6 +107,7 @@ export function JobDiscovery() {
         const result = await api<JobsResponse>(`/jobs?posted_within_days=${requestedWindow}`);
         if (!active) return;
         setJobs(result.jobs);
+      setProcessing(result.processing);
         setProfileComplete(result.profile_complete);
         setListError("");
       } catch (loadError) {
@@ -136,6 +140,7 @@ export function JobDiscovery() {
     try {
       const result = await api<JobsResponse>(`/jobs?posted_within_days=${query.postedWithin}`);
       setJobs(result.jobs);
+      setProcessing(result.processing);
       setProfileComplete(result.profile_complete);
       setListError("");
       return true;
@@ -147,6 +152,8 @@ export function JobDiscovery() {
       return false;
     }
   }, [query.postedWithin]);
+
+  const scoring = useScoringStatus(processing, refreshJobs);
 
   // Saved/applied state comes from the user's own ledger, so a card can show it
   // without every card asking for it.
@@ -183,7 +190,7 @@ export function JobDiscovery() {
   );
 
   useEffect(() => {
-    if (!hasPendingScores) {
+    if (processing?.enabled || !hasPendingScores) {
       return;
     }
     let active = true;
@@ -192,6 +199,7 @@ export function JobDiscovery() {
         const result = await api<JobsResponse>(`/jobs?posted_within_days=${query.postedWithin}`);
         if (active) {
           setJobs(result.jobs);
+      setProcessing(result.processing);
         }
       } catch {
         // Transient; the next tick (or a manual action) will retry.
@@ -201,7 +209,7 @@ export function JobDiscovery() {
       active = false;
       clearTimeout(timer);
     };
-  }, [hasPendingScores, query.postedWithin, jobs]);
+  }, [hasPendingScores, query.postedWithin, jobs, processing?.enabled]);
 
   /**
    * The one explicit state the workspace is in. Every branch below renders from
@@ -337,9 +345,11 @@ export function JobDiscovery() {
         body: JSON.stringify({ posted_within_days: query.postedWithin })
       });
       setJobs(result.jobs);
+      setProcessing(result.processing);
       setProfileComplete(result.profile_complete);
       setHasDiscovered(true);
       applyDiscoverySummary(result.discovery);
+      if (result.processing?.enabled) setMessage("Discovery accepted. Jobs are saved; fit scoring is processing.");
     } catch (discoverError) {
       setError(discoverError instanceof Error ? discoverError.message : "Job discovery failed.");
       setMessage("");
@@ -363,14 +373,15 @@ export function JobDiscovery() {
     setError("");
     setMessage("Re-scoring jobs against your profile…");
     try {
-      const result = await api<{ jobs: Job[]; summary: RefreshSummary; profile_complete: boolean }>(
+      const result = await api<{ jobs: Job[]; summary: RefreshSummary; profile_complete: boolean; processing?: ScoringStatus }>(
         `/jobs/refresh-matches?posted_within_days=${query.postedWithin}`,
         { method: "POST" }
       );
       setJobs(result.jobs);
+      setProcessing(result.processing);
       setProfileComplete(result.profile_complete);
       setWarnings(summarizeSourceWarnings(result.summary.source_warnings ?? []));
-      setMessage(`Re-scored ${result.summary.rescored_count} jobs · ${result.summary.matched_count} match your profile.`);
+      setMessage(result.processing?.enabled ? "Refresh accepted." : `Re-scored ${result.summary.rescored_count} jobs · ${result.summary.matched_count} match your profile.`);
     } catch (refreshError) {
       if (process.env.NODE_ENV === "development") {
         console.error("refresh-matches failed", refreshError);
@@ -561,6 +572,7 @@ export function JobDiscovery() {
 
   const modals = (
     <>
+      {scoring.message && <p role="status" className="px-4 py-2 text-sm text-foreground-muted">{scoring.message}</p>}
       {generating && (
         <DocumentGenerationModal type={generating.type} job={jobById(generating.jobId)} />
       )}

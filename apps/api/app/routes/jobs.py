@@ -36,6 +36,7 @@ from app.jobs.company_logo_service import (
     normalize_company_key,
     resolve_company_logo,
 )
+from app.jobs.durable_producer import accept_user, receipt_payload, score_projections, service, user_status
 from app.jobs.job_eligibility_service import evaluate_eligibility
 from app.jobs.job_ingestion_service import (
     _job_view,  # noqa: PLC2701 - internal shared mapper
@@ -142,8 +143,23 @@ def _find_cached_logo(normalized_key: str, logo_url: str) -> tuple[Path, str] | 
     return None
 
 
+@router.get("/scoring-status")
+def scoring_status(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+    intent_id: int | None = Query(default=None, ge=1),
+    after_id: int = Query(default=0, ge=0), page_size: int = Query(default=100, ge=1, le=100),
+) -> dict:
+    if not settings.durable_scoring_enabled:
+        return {"enabled": False, "status": "complete", "jobs": [], "next_cursor": None}
+    try:
+        return user_status(db, user.id, intent_id=intent_id, after_id=after_id, page_size=page_size)
+    except PermissionError as exc:
+        raise HTTPException(status_code=404, detail="Status unavailable") from exc
+
+
 @router.post("/discover")
 async def discover(
+    response: Response,
     payload: DiscoverJobsIn | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -191,6 +207,10 @@ async def discover(
         "packs": result.packs,
         **listing.get("counts", {}),
     }
+    if result.processing is not None:
+        listing["processing"] = result.processing
+        if result.processing["status"] in ("pending", "processing"):
+            response.status_code = 202
     return listing
 
 
@@ -271,6 +291,7 @@ def _list_payload(
         ).all()
     )
 
+    projections = score_projections(db, user, jobs, matches) if settings.durable_scoring_enabled else {}
     cards: list[dict] = []
     # Debug counts of why fresh jobs were excluded (shown only in dev on the UI).
     counts = {
@@ -317,9 +338,10 @@ def _list_payload(
         match = matches.get(job.id)
         if min_fit_score is not None and (
             match is None or match.fit_score is None or match.fit_score < min_fit_score
+            or settings.durable_scoring_enabled and projections.get(job.id) != "scored"
         ):
             continue
-        cards.append(_serialize_card(job, match, sources.get(job.source_id), eligibility))
+        cards.append(_serialize_card(job, match, sources.get(job.source_id), eligibility, projections.get(job.id)))
 
     cards.sort(
         key=lambda card: (
@@ -342,6 +364,7 @@ def _list_payload(
         "counts": counts,
         "profile_filters": _profile_filter_payload(profile),
         "jobs": cards,
+        **({"processing": user_status(db, user.id)} if settings.durable_scoring_enabled else {}),
     }
 
 
@@ -401,6 +424,7 @@ def _serialize_card(
     match: JobMatch | None,
     source: JobSource | None,
     eligibility=None,
+    scoring_state=None,
 ) -> dict:
     posted_key = job.posted_at or job.discovered_at
     if posted_key and posted_key.tzinfo is None:
@@ -457,7 +481,7 @@ def _serialize_card(
         "salary_min": job.salary_min,
         "salary_max": job.salary_max,
         "salary_currency": job.currency,
-        "match": _serialize_match(match),
+        "match": _serialize_match(match, scoring_state),
         "eligibility": (
             {
                 "eligible": eligibility.eligible,
@@ -471,7 +495,12 @@ def _serialize_card(
     }
 
 
-def _serialize_match(match: JobMatch | None) -> dict | None:
+def _serialize_match(match: JobMatch | None, scoring_state=None) -> dict | None:
+    if scoring_state is not None and scoring_state != "scored":
+        return {"fit_score": None, "fit_label": None, "score_state": scoring_state,
+                "scoring_error_code": None, "match_reasons": [], "missing_skills": [],
+                "risk_factors": [], "recommended_resume_angle": None, "confidence": None,
+                "explanation_source": None, "fit_summary": None}
     if match is None:
         return None
     return {
@@ -480,7 +509,7 @@ def _serialize_match(match: JobMatch | None) -> dict | None:
         # Lifecycle so the UI can render "Calculating fit…", a retry, or a prompt
         # to finish the profile instead of a permanent "Not scored".
         "score_state": match.score_state,
-        "scoring_error_code": match.scoring_error_code,
+        "scoring_error_code": None if settings.durable_scoring_enabled else match.scoring_error_code,
         "match_reasons": match.strengths or [],
         "missing_skills": match.gaps or [],
         "risk_factors": match.risks or [],
@@ -603,6 +632,8 @@ def _tracker_payload(
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
     documents = _tracker_documents(db, user_id, [tracker.job_id for tracker, _ in rows])
+    projections = score_projections(db, db.get(User, user_id), [job for _, job in rows], matches) \
+        if settings.durable_scoring_enabled else {}
     return {
         "applications": [
             {
@@ -625,6 +656,7 @@ def _tracker_payload(
                     job,
                     matches.get(job.id),
                     sources.get(job.source_id),
+                    scoring_state=projections.get(job.id),
                 ),
             }
             for tracker, job in rows
@@ -688,8 +720,9 @@ def _tracker_job_payload(
     job: JobPosting,
     match: JobMatch | None,
     source: JobSource | None,
+    scoring_state=None,
 ) -> dict:
-    card = _serialize_card(job, match, source)
+    card = _serialize_card(job, match, source, scoring_state=scoring_state)
     card.pop("_posted_key", None)
     return {
         key: card.get(key)
@@ -717,7 +750,8 @@ def get_job(job_id: int, user: User = Depends(get_current_user), db: Session = D
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     match = db.scalar(select(JobMatch).where((JobMatch.user_id == user.id) & (JobMatch.job_id == job_id)))
     source = db.get(JobSource, job.source_id) if job.source_id else None
-    card = _serialize_card(job, match, source)
+    projection = score_projections(db, user, [job], {job.id: match}) if settings.durable_scoring_enabled else {}
+    card = _serialize_card(job, match, source, scoring_state=projection.get(job.id))
     card.pop("_posted_key", None)
     card["description_raw"] = job.description_raw
     card["degree_requirement"] = job.degree_requirement
@@ -727,9 +761,17 @@ def get_job(job_id: int, user: User = Depends(get_current_user), db: Session = D
 
 
 @router.post("/{job_id}/match")
-def refresh_match(job_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+def refresh_match(
+    job_id: int, response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db),
+) -> dict:
     if db.get(JobPosting, job_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if settings.durable_scoring_enabled:
+        receipt = service(db).accept("PAIR_REFRESH", user_id=user.id, job_id=job_id, actor_user_id=user.id)
+        db.commit()
+        processing = receipt_payload(receipt)
+        response.status_code = 202 if processing["status"] in ("pending", "processing") else 200
+        return {"match": None, "processing": processing}
     rematch_user(db, user.id)
     match = db.scalar(select(JobMatch).where((JobMatch.user_id == user.id) & (JobMatch.job_id == job_id)))
     return {"match": _serialize_match(match)}
@@ -737,6 +779,7 @@ def refresh_match(job_id: int, user: User = Depends(get_current_user), db: Sessi
 
 @router.post("/refresh-matches")
 def refresh_matches(
+    response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     posted_within_days: int = Query(default=7, ge=1, le=60),
@@ -753,9 +796,17 @@ def refresh_matches(
             detail="Complete your profile to refresh job matches.",
         )
 
-    rescored = rematch_user(
-        db, user.id, days=posted_within_days, include_unknown=include_unknown_dates
-    )
+    processing = None
+    if settings.durable_scoring_enabled:
+        receipt = accept_user(db, user.id, days=posted_within_days, include_unknown=include_unknown_dates)
+        db.commit()
+        processing = receipt_payload(receipt)
+        response.status_code = 202 if processing["status"] in ("pending", "processing") else 200
+        rescored = 0
+    else:
+        rescored = rematch_user(
+            db, user.id, days=posted_within_days, include_unknown=include_unknown_dates
+        )
     listing = _list_payload(
         db,
         user,
@@ -765,6 +816,7 @@ def refresh_matches(
     )
     counts = listing.get("counts", {})
     return {
+        **({"processing": processing} if processing is not None else {}),
         "jobs": listing["jobs"],
         "profile_complete": listing["profile_complete"],
         "criteria": listing["criteria"],

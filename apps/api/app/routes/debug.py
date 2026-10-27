@@ -1,7 +1,7 @@
 """Authenticated, secret-free diagnostics endpoints."""
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.provider import ai_provider
@@ -36,24 +36,28 @@ def ingestion_runs(
 
 @router.get("/scoring-status")
 def scoring_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    """Observability snapshot: score-state backlog and oldest pending score."""
-    by_state = {
-        state: int(
-            db.scalar(select(func.count(JobMatch.id)).where(JobMatch.score_state == state)) or 0
-        )
-        for state in (s.value for s in ScoreState)
-    }
-    oldest_pending = db.scalar(
-        select(func.min(JobMatch.updated_at)).where(
-            JobMatch.score_state.in_([ScoreState.pending.value, ScoreState.scoring.value])
-        )
-    )
-    active_jobs = int(db.scalar(select(func.count(JobPosting.id)).where(JobPosting.is_active.is_(True))) or 0)
+    """Authenticated user diagnostics over at most100 actor-owned matches.
+
+    No operator role exists. Global counters are not authorized by a user JWT.
+    This security correction applies in both scoring modes.
+    """
+    rows = db.execute(
+        select(JobMatch.score_state, JobMatch.updated_at, JobPosting.is_active)
+        .join(JobPosting, JobPosting.id == JobMatch.job_id)
+        .where(JobMatch.user_id == user.id)
+        .order_by(JobMatch.id.desc()).limit(101)
+    ).all()
+    page = rows[:100]
+    by_state = {s.value: 0 for s in ScoreState}
+    for row in page:
+        by_state[row.score_state] = by_state.get(row.score_state, 0) + 1
+    pending = [r.updated_at for r in page if r.score_state in ("pending", "scoring")]
     return {
         "score_version": SCORE_VERSION,
         "by_state": by_state,
-        "pending_backlog": by_state.get(ScoreState.pending.value, 0)
-        + by_state.get(ScoreState.scoring.value, 0),
-        "oldest_pending_at": oldest_pending,
-        "active_jobs": active_jobs,
+        "pending_backlog": len(pending),
+        "oldest_pending_at": min(pending) if pending else None,
+        "active_jobs": sum(bool(r.is_active) for r in page),
+        "window_size": len(page),
+        "has_more": len(rows) > 100,
     }

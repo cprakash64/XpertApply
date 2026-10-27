@@ -88,6 +88,10 @@ def score_jobs_for_users_task(
     db = SessionLocal()
     totals = {"scored": 0, "skipped": 0, "failed": 0, "profile_incomplete": 0}
     try:
+        if settings.durable_scoring_enabled:
+            from app.jobs.job_ingestion_service import enqueue_scoring_for_jobs
+            enqueue_scoring_for_jobs(db, job_ids)
+            return {**totals, "accepted": len(job_ids)}
         targets = [uid for uid in active_user_ids(db) if uid not in exclude]
         for job_id in job_ids:
             stats = score_users_for_job(db, job_id, targets)

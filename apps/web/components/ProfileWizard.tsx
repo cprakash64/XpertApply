@@ -17,7 +17,8 @@ import {
   type ImportApplyMode,
   type ImportSection
 } from "@/components/ImportProfilePreview";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type ScoringStatus } from "@/lib/api";
+import { useScoringStatus } from "@/lib/useScoringStatus";
 import { validateApplicationEmail } from "@/lib/emailValidation";
 import { composeFullName } from "@/lib/names";
 import {
@@ -68,6 +69,7 @@ const steps = [
 
 
 type ImportApplyResponse = {
+  processing?: ScoringStatus;
   profile: (Partial<ProfileForm> & {
     work_authorization_status?: string | null;
     work_authorization?: string | null;
@@ -111,6 +113,8 @@ export function ProfileWizard({
   initialStep?: number;
 } = {}) {
   const [step, setStep] = useState(initialStep);
+  const [processing, setProcessing] = useState<ScoringStatus>();
+  const scoring = useScoringStatus(processing);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -259,10 +263,11 @@ export function ProfileWizard({
     try {
       // profileToWire() is the counterpart of normalizeProfile(): one place
       // that knows the wire shape, so form state and payload cannot drift.
-      let profileResult = await api<{ profile: ProfileWire | null }>("/profile", {
+      let profileResult = await api<{ profile: ProfileWire | null; processing?: ScoringStatus }>("/profile", {
         method: "PUT",
         body: JSON.stringify(profileToWire(form))
       });
+      let acceptedScoring = profileResult.processing;
       // The structured name goes through its own endpoint: PUT /profile is a
       // full overwrite that deliberately does not carry the name parts or the
       // confirmation flag. Editing the name here IS an explicit confirmation of
@@ -278,7 +283,7 @@ export function ProfileWizard({
           preferred_last_name: form.preferred_last_name.trim() || null
         })
       });
-      await api("/profile/career", {
+      const careerResult = await api<{ processing?: ScoringStatus }>("/profile/career", {
         method: "PUT",
         body: JSON.stringify({
           education: career.education.map(cleanEducation),
@@ -289,6 +294,8 @@ export function ProfileWizard({
           publications: career.publications
         })
       });
+      acceptedScoring = careerResult?.processing ?? acceptedScoring;
+      setProcessing(acceptedScoring);
       if (profileResult.profile) {
         setForm(normalizeProfile(profileResult.profile, form.email));
       }
@@ -371,6 +378,7 @@ export function ProfileWizard({
       if (result.profile) {
         setForm(normalizeProfile(result.profile as ProfileWire, form.email));
       }
+      setProcessing(result.processing);
       setCareer(careerFromResponse(result.career));
       setImportOpen(false);
       setImportDraft(null);
@@ -429,7 +437,7 @@ export function ProfileWizard({
         </div>
 
         {message && (
-          <p className="mt-4 rounded-control border border-status-success-border bg-status-success-surface px-3 py-2 text-sm text-status-success">{message}</p>
+          <p className="mt-4 rounded-control border border-status-success-border bg-status-success-surface px-3 py-2 text-sm text-status-success">{message}{scoring.message && <span className="block">{scoring.message}</span>}</p>
         )}
         {error && (
           <p className="mt-4 rounded-control border border-status-danger-border bg-status-danger-surface px-3 py-2 text-sm text-status-danger">{error}</p>

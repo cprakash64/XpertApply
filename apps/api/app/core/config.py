@@ -67,6 +67,13 @@ def _tolerate_csv(source):
 
 class Settings(BaseSettings):
     durable_scoring_enabled: bool = False
+    durable_scoring_concurrency: int = Field(default=2, ge=1, le=2)
+    durable_scoring_poll_seconds: float = Field(default=5, ge=4, le=30)
+    durable_scoring_max_intents: int = Field(default=1000, ge=1, le=1000)
+    durable_scoring_max_children: int = Field(default=10000, ge=1, le=10000)
+    durable_scoring_max_units: int = Field(default=100000, ge=1, le=100000)
+    durable_scoring_daily_roots: int = Field(default=1000, ge=1, le=1000)
+    durable_scoring_daily_units: int = Field(default=100000, ge=1, le=100000)
 
     # How long an explicitly confirmed legal application answer stays
     # trustworthy before the user is asked to reconfirm it. Circumstances

@@ -66,7 +66,7 @@ export type RefreshSummary = {
   source_warnings: string[];
 };
 
-export type ScoreState = "pending" | "scoring" | "scored" | "failed" | "profile_incomplete";
+export type ScoreState = "pending" | "scoring" | "scored" | "failed" | "profile_incomplete" | "terminal_failed" | "not_scored";
 
 export type JobMatchInfo = {
   fit_score: number | null;
@@ -286,7 +286,18 @@ export type JobEligibility = {
   flags: Record<string, boolean | null>;
 };
 
+export type ScoringStatus = {
+  enabled: boolean;
+  status: "pending" | "processing" | "complete" | "failed" | "superseded" | "canceled";
+  jobs?: { job_id: number; status: ScoringStatus["status"] }[];
+  next_cursor?: number | null;
+  accepted?: boolean;
+  intent_id?: number;
+  status_url?: string;
+};
+
 export type JobsResponse = {
+  processing?: ScoringStatus;
   profile_complete: boolean;
   criteria: { role_queries: string[]; skills: string[]; seniority_targets: string[] };
   profile_filters: ProfileFilters;

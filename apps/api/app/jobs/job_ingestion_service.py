@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.job_sources.base import JobSourceAdapter, NormalizedJob
 from app.jobs.company_logo_service import get_or_create_company_branding
+from app.jobs.durable_producer import accept_user, begin_job_update, finish_job_update, receipt_payload, service
 from app.jobs.job_normalization_service import is_fresh, normalize_jobs
 from app.jobs.job_search_criteria_service import SearchCriteria, build_search_criteria
 from app.jobs.scoring_service import (
@@ -69,6 +70,7 @@ class DiscoveryResult:
     by_provider: dict[str, int] = field(default_factory=dict)
     packs: list[str] = field(default_factory=list)
     scoring_tasks_queued: int = 0
+    processing: dict | None = None
     # Postings that could not be saved. Reported rather than silently dropped,
     # so a recurring source defect is visible instead of looking like the
     # source simply has fewer jobs.
@@ -133,7 +135,12 @@ async def discover_jobs(
                 "No job sources are configured. Add real public ATS boards in "
                 "app/jobs/sources_config.json or the JOB_SOURCE_COMPANIES env var."
             )
-            result.matched = rematch_user(db, user_id, days=days, include_unknown=include_unknown)
+            if settings.durable_scoring_enabled:
+                result.processing = receipt_payload(
+                    accept_user(db, user_id, days=days, include_unknown=include_unknown))
+                db.commit()
+            else:
+                result.matched = rematch_user(db, user_id, days=days, include_unknown=include_unknown)
             return result
     else:
         adapters = sources
@@ -182,6 +189,11 @@ async def discover_jobs(
             f"{result.skipped} job(s) could not be saved and were skipped; "
             "the rest of the run was unaffected."
         )
+    if settings.durable_scoring_enabled:
+        result.processing = receipt_payload(accept_user(db, user_id, days=days, include_unknown=include_unknown))
+        result.scoring_tasks_queued = len(changed_job_ids)
+        db.commit()
+        return result
     # Commit BEFORE any scoring so we never score an uncommitted job, and a
     # scoring failure can never roll back a successfully ingested job.
     db.commit()
@@ -208,6 +220,13 @@ def enqueue_scoring_for_jobs(
     number of jobs handed off (queued or scored inline)."""
     if not job_ids:
         return 0
+    if settings.durable_scoring_enabled:
+        durable = service(db)
+        durable.lock_intake()
+        for job_id in job_ids:
+            durable.accept("JOB_FANOUT", job_id=job_id)
+        db.commit()
+        return len(job_ids)
     exclude = exclude_user_ids or []
     if _try_enqueue(job_ids, exclude):
         return len(job_ids)
@@ -415,6 +434,7 @@ def _persist_job(db: Session, job: NormalizedJob) -> tuple[JobPosting, bool, boo
         "raw_json": job.raw or {},
         "hash_for_deduplication": job.dedupe_hash,
     }
+    scoring_update = begin_job_update(db, existing)
     now = datetime.now(UTC)
     if existing is None:
         record = JobPosting(
@@ -422,6 +442,7 @@ def _persist_job(db: Session, job: NormalizedJob) -> tuple[JobPosting, bool, boo
         )
         db.add(record)
         db.flush()
+        finish_job_update(scoring_update, record)
         return record, True, True
     # Re-seen on the official source: refresh presence + reactivate if it had
     # previously expired, and detect whether score-relevant content changed.
@@ -431,7 +452,9 @@ def _persist_job(db: Session, job: NormalizedJob) -> tuple[JobPosting, bool, boo
     existing.last_seen_at = now
     existing.is_active = True
     db.flush()
-    content_changed = compute_job_content_hash(existing) != before_hash
+    receipt = finish_job_update(scoring_update, existing)
+    content_changed = ((receipt is not None) if settings.durable_scoring_enabled
+                       else compute_job_content_hash(existing) != before_hash)
     return existing, False, content_changed
 
 
@@ -465,6 +488,10 @@ def rematch_user(db: Session, user_id: int, *, days: int = 7, include_unknown: b
     profile. This is the on-demand path (discovery + "Refresh matches"); it
     forces a rescore so the user always sees fresh numbers. Returns the number of
     match rows that ended up scored."""
+    if settings.durable_scoring_enabled:
+        accept_user(db, user_id, days=days, include_unknown=include_unknown)
+        db.commit()
+        return 0  # Accepted work is not a completed score count.
     stats = score_jobs_for_user(
         db, user_id, days=days, include_unknown=include_unknown, force=True
     )

@@ -1237,3 +1237,21 @@ ScoringIntent.__table__.append_constraint(
         name="ck_intent_identity",
     )
 )
+
+# Runtime discovery indexes; mirrored by additive frozen migration 0035.
+ScoringJob.__table__.append_constraint(
+    Index("ix_scoring_recovery_active", "id", postgresql_where=text("status IN ('PENDING','RETRY_WAIT','CLAIMED')"))
+)
+ScoringJob.__table__.append_constraint(Index("ix_scoring_user_recent", "user_id", "id"))
+ScoringIntent.__table__.append_constraint(Index("ix_intent_user_recent", "user_id", "id"))
+ScoringIntent.__table__.append_constraint(
+    Index("ix_intent_retention", "completed_at", "id", postgresql_where=text("completed_at IS NOT NULL"))
+)
+
+ScoringIntent.__table__.append_constraint(
+    Index("ix_intent_reconcile", "id", postgresql_where=text(
+        "status NOT IN ('SUCCEEDED','TERMINAL_FAILED','SUPERSEDED','CANCELED') "
+        "OR unfinished_children > 0"))
+)
+
+ScoringJob.__table__.append_constraint(Index("ix_scoring_user_generation_recent", "user_id", "user_generation", "id"))
