@@ -81,9 +81,7 @@ class DiscoveryResult:
 _SOURCE_CACHE: dict[tuple[str, str], tuple[datetime, list[NormalizedJob]]] = {}
 
 
-def _cache_get(
-    adapter: JobSourceAdapter, *, allow_expired: bool = False
-) -> list[NormalizedJob] | None:
+def _cache_get(adapter: JobSourceAdapter, *, allow_expired: bool = False) -> list[NormalizedJob] | None:
     ttl = settings.job_discovery_cache_ttl_minutes
     if ttl <= 0:
         return None
@@ -179,8 +177,7 @@ async def discover_jobs(
             changed_job_ids.append(record.id)
     if result.skipped:
         result.source_warnings.append(
-            f"{result.skipped} job(s) could not be saved and were skipped; "
-            "the rest of the run was unaffected."
+            f"{result.skipped} job(s) could not be saved and were skipped; " "the rest of the run was unaffected."
         )
     # Commit BEFORE any scoring so we never score an uncommitted job, and a
     # scoring failure can never roll back a successfully ingested job.
@@ -193,15 +190,11 @@ async def discover_jobs(
     # Automatic background scoring for every other active user, limited to the
     # jobs that were newly inserted or materially changed in this run.
     if changed_job_ids:
-        result.scoring_tasks_queued = enqueue_scoring_for_jobs(
-            db, changed_job_ids, exclude_user_ids=[user_id]
-        )
+        result.scoring_tasks_queued = enqueue_scoring_for_jobs(db, changed_job_ids, exclude_user_ids=[user_id])
     return result
 
 
-def enqueue_scoring_for_jobs(
-    db: Session, job_ids: list[int], *, exclude_user_ids: list[int] | None = None
-) -> int:
+def enqueue_scoring_for_jobs(db: Session, job_ids: list[int], *, exclude_user_ids: list[int] | None = None) -> int:
     """Hand newly changed jobs to the background worker for scoring across all
     active users. Falls back to inline scoring **on the provided session** if the
     broker is unavailable, so scores are never silently dropped. Returns the
@@ -211,6 +204,13 @@ def enqueue_scoring_for_jobs(
     exclude = exclude_user_ids or []
     if _try_enqueue(job_ids, exclude):
         return len(job_ids)
+
+    from app.core.config_validation import is_production
+
+    if is_production(settings.app_env):
+        from app.core.resource_controls import limit_error
+
+        raise limit_error("QUEUE_CAPACITY_UNAVAILABLE", 503)
 
     # Broker unavailable → degrade to synchronous inline scoring using the caller's
     # session so the work still happens (and, in tests, hits the same database).
@@ -237,9 +237,7 @@ def _try_enqueue(job_ids: list[int], exclude: list[int]) -> bool:
         score_jobs_for_users_task.apply_async(args=[job_ids, exclude], retry=False)
         return True
     except Exception as exc:  # noqa: BLE001 - broker down / not configured
-        logging.getLogger("jobpilot.scoring").info(
-            "Could not enqueue scoring task (%s).", type(exc).__name__
-        )
+        logging.getLogger("jobpilot.scoring").info("Could not enqueue scoring task (%s).", type(exc).__name__)
         return False
 
 
@@ -365,15 +363,11 @@ def _persist_job(db: Session, job: NormalizedJob) -> tuple[JobPosting, bool, boo
     actually changed (avoids an uncontrolled rescore on irrelevant churn)."""
     source = _upsert_source(db, job)
     existing = db.scalar(
-        select(JobPosting).where(
-            (JobPosting.source_id == source.id) & (JobPosting.external_id == job.external_id)
-        )
+        select(JobPosting).where((JobPosting.source_id == source.id) & (JobPosting.external_id == job.external_id))
     )
     # Cross-source dedupe against already-persisted postings.
     if existing is None:
-        existing = db.scalar(
-            select(JobPosting).where(JobPosting.hash_for_deduplication == job.dedupe_hash)
-        )
+        existing = db.scalar(select(JobPosting).where(JobPosting.hash_for_deduplication == job.dedupe_hash))
     # Resolve (or reuse) this employer's branding ONCE, persisted separately
     # from job rows — every posting from the same company reuses the same
     # CompanyBranding row instead of re-resolving per job (see Part 8).
@@ -417,9 +411,7 @@ def _persist_job(db: Session, job: NormalizedJob) -> tuple[JobPosting, bool, boo
     }
     now = datetime.now(UTC)
     if existing is None:
-        record = JobPosting(
-            discovered_at=now, last_seen_at=now, is_active=True, **values
-        )
+        record = JobPosting(discovered_at=now, last_seen_at=now, is_active=True, **values)
         db.add(record)
         db.flush()
         return record, True, True
@@ -465,9 +457,7 @@ def rematch_user(db: Session, user_id: int, *, days: int = 7, include_unknown: b
     profile. This is the on-demand path (discovery + "Refresh matches"); it
     forces a rescore so the user always sees fresh numbers. Returns the number of
     match rows that ended up scored."""
-    stats = score_jobs_for_user(
-        db, user_id, days=days, include_unknown=include_unknown, force=True
-    )
+    stats = score_jobs_for_user(db, user_id, days=days, include_unknown=include_unknown, force=True)
     return stats.scored + stats.profile_incomplete
 
 

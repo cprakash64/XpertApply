@@ -1,18 +1,20 @@
 import re
+import stat
 import zipfile
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from docx import Document
 from fastapi import UploadFile
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from app.core.config import settings
+
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MIN_EXTRACTED_TEXT_CHARS = 100
 NO_TEXT_ERROR = (
-    "We could not extract text from this file. Please upload a text-based PDF/DOCX "
-    "or paste your resume text."
+    "We could not extract text from this file. Please upload a text-based PDF/DOCX " "or paste your resume text."
 )
 
 ALLOWED_CONTENT_TYPES = {
@@ -27,6 +29,73 @@ class DocumentParserError(ValueError):
     pass
 
 
+class DocumentLimitError(DocumentParserError):
+    pass
+
+
+def bounded_text(parts) -> str:
+    result = []
+    total = 0
+    for part in parts:
+        total += len(part) + (1 if result else 0)
+        if total > settings.document_max_chars:
+            raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: extracted text is too large.")
+        result.append(part)
+    return normalize_extracted_text("\n".join(result))
+
+
+def validate_docx_container(content: bytes) -> None:
+    try:
+        with zipfile.ZipFile(BytesIO(content)) as archive:
+            entries = archive.infolist()
+            if len(entries) > 256:
+                raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: too many document parts.")
+            total = 0
+            names = set()
+            for entry in entries:
+                name = entry.filename
+                parts = PurePosixPath(name).parts
+                if (
+                    not name
+                    or name.startswith("/")
+                    or "\\" in name
+                    or ".." in parts
+                    or ":" in name
+                    or name in names
+                    or stat.S_ISLNK(entry.external_attr >> 16)
+                ):
+                    raise DocumentParserError("Unsafe document container.")
+                names.add(name)
+                if entry.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+                    raise DocumentParserError("Unsupported document compression.")
+                if entry.flag_bits & 1:
+                    raise DocumentParserError("Encrypted document containers are unsupported.")
+                if entry.file_size > 4 * 1024 * 1024 or entry.file_size > 200 * max(1, entry.compress_size):
+                    raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: document expansion is too large.")
+                total += entry.file_size
+                if total > 20 * 1024 * 1024:
+                    raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: document expansion is too large.")
+                actual = 0
+                carry = b""
+                with archive.open(entry) as part:
+                    while chunk := part.read(65536):
+                        actual += len(chunk)
+                        if actual > min(entry.file_size, 4 * 1024 * 1024):
+                            raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: document expansion is too large.")
+                        if name.endswith(".xml") and (
+                            b"<!DOCTYPE" in (carry + chunk).replace(b"\x00", b"")
+                            or b"<!ENTITY" in (carry + chunk).replace(b"\x00", b"")
+                        ):
+                            raise DocumentParserError("Unsafe document XML.")
+                        carry = chunk[-64:]
+                if actual != entry.file_size:
+                    raise DocumentParserError("Malformed document container.")
+            if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
+                raise DocumentParserError("This file is not a DOCX document.")
+    except (zipfile.BadZipFile, RuntimeError, OSError, KeyError) as exc:
+        raise DocumentParserError(NO_TEXT_ERROR) from exc
+
+
 def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> None:
     filename = file.filename or ""
     extension = Path(filename).suffix.lower()
@@ -39,33 +108,48 @@ def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> No
     if content is not None:
         if not content:
             raise DocumentParserError("Uploaded file is empty.")
-        if len(content) > MAX_UPLOAD_BYTES:
-            raise DocumentParserError("Uploaded file is too large. The limit is 5MB.")
+        if len(content) > settings.upload_max_bytes:
+            raise DocumentLimitError("Uploaded file is too large. The limit is 5MB.")
+        expected = {
+            ".pdf": "application/pdf",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".txt": "text/plain",
+        }[extension]
+        if content_type and content_type != expected:
+            raise DocumentParserError("File extension and type do not match.")
+        if extension == ".pdf" and not content.startswith(b"%PDF-"):
+            raise DocumentParserError(NO_TEXT_ERROR)
+        if extension == ".docx" and not content.startswith(b"PK\x03\x04"):
+            raise DocumentParserError(NO_TEXT_ERROR)
+        if extension == ".txt" and (content.startswith((b"%PDF-", b"PK\x03\x04")) or b"\x00" in content):
+            raise DocumentParserError("File content and extension do not match.")
 
 
 def extract_text_from_pdf(content: bytes) -> str:
     try:
         reader = PdfReader(BytesIO(content))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    except (PdfReadError, OSError, ValueError) as exc:
+        objects = sum(len(v) for v in reader.xref.values()) + len(reader.xref_objStm)
+        if objects > settings.document_max_objects:
+            raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: too many PDF objects.")
+        if len(reader.pages) > settings.document_max_pages:
+            raise DocumentLimitError("DOCUMENT_LIMIT_EXCEEDED: too many PDF pages.")
+        text = bounded_text(page.extract_text() or "" for page in reader.pages)
+    except DocumentLimitError:
+        raise
+    except (PdfReadError, OSError, ValueError, RecursionError) as exc:
         raise DocumentParserError(NO_TEXT_ERROR) from exc
     return normalize_extracted_text(text)
 
 
 def extract_text_from_docx(content: bytes) -> str:
+    validate_docx_container(content)
     try:
         document = Document(BytesIO(content))
         paragraphs = [paragraph.text for paragraph in document.paragraphs]
-        table_cells = [
-            cell.text
-            for table in document.tables
-            for row in table.rows
-            for cell in row.cells
-            if cell.text
-        ]
+        table_cells = [cell.text for table in document.tables for row in table.rows for cell in row.cells if cell.text]
     except (ValueError, zipfile.BadZipFile, KeyError) as exc:
         raise DocumentParserError(NO_TEXT_ERROR) from exc
-    return normalize_extracted_text("\n".join([*paragraphs, *table_cells]))
+    return bounded_text([*paragraphs, *table_cells])
 
 
 # Characters that PDF extraction commonly mangles, mapped to clean equivalents.
@@ -137,7 +221,7 @@ def extract_uploaded_file_text(file: UploadFile, content: bytes) -> str:
         text = extract_text_from_docx(content)
     elif extension == ".txt":
         try:
-            text = normalize_extracted_text(content.decode("utf-8"))
+            text = bounded_text([content.decode("utf-8")])
         except UnicodeDecodeError as exc:
             raise DocumentParserError("Text files must use UTF-8 encoding.") from exc
     else:

@@ -59,6 +59,7 @@ from app.applications.tracker_lifecycle import (
     dismiss_submission_confirmation,
     require_submission_confirmation,
 )
+from app.core.resource_controls import authorize
 from app.core.security import decode_access_token
 from app.core.session_tokens import decode_scoped_token
 from app.db.session import get_db
@@ -160,7 +161,9 @@ def session_access(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> ApplicationSession:
-    return _resolve_session(session_id, credentials, db)
+    session = _resolve_session(session_id, credentials, db)
+    authorize(session.user_id)
+    return session
 
 
 # --------------------------------------------------------------------------- #
@@ -196,7 +199,11 @@ async def create_session(
     except PreparationError as exc:
         logger.info(
             "apply.session.request prep_failed user=%s job=%s stage=%s code=%s rid=%s",
-            user.id, payload.job_id, exc.stage.value, exc.code, request_id,
+            user.id,
+            payload.job_id,
+            exc.stage.value,
+            exc.code,
+            request_id,
         )
         return _preparation_error_response(exc, request_id)
     except OperationalError:
@@ -269,9 +276,7 @@ def get_session_answers(
         from app.profile.credentials import decrypt_workday_password
 
         profile = db.scalar(select(UserProfile).where(UserProfile.user_id == session.user_id))
-        password = decrypt_workday_password(
-            profile.workday_password_ciphertext if profile else None
-        )
+        password = decrypt_workday_password(profile.workday_password_ciphertext if profile else None)
         if password:
             for key in ("application_account_password", "application_account_password_confirm"):
                 answers.append(
@@ -351,8 +356,14 @@ def save_session_answer(
     )
     db.commit()
     db.refresh(row)
-    log_action(db, session.id, ApplicationActionType.status_changed, field_key=canonical_key,
-               source="extension", status="answer_saved")
+    log_action(
+        db,
+        session.id,
+        ApplicationActionType.status_changed,
+        field_key=canonical_key,
+        source="extension",
+        status="answer_saved",
+    )
     db.commit()
     return {"ok": True, "answer": _serialize_answer(row)}
 
@@ -447,9 +458,18 @@ async def regenerate_resume(
 
     job = db.get(JobPosting, session.job_id)
     result = await generate_resume(db, user.id, job)
-    record = persist_document(db, user.id, job, DocumentType.resume, title=result.title, content=result.content,
-                              markdown=result.markdown, plain_text=result.plain_text, quality=result.quality,
-                              model_used=result.model_used)
+    record = persist_document(
+        db,
+        user.id,
+        job,
+        DocumentType.resume,
+        title=result.title,
+        content=result.content,
+        markdown=result.markdown,
+        plain_text=result.plain_text,
+        quality=result.quality,
+        model_used=result.model_used,
+    )
     session.tailored_resume_id = record.id
     log_action(
         db, session.id, ApplicationActionType.resume_generated, source="user", metadata={"document_id": record.id}
@@ -471,12 +491,22 @@ async def regenerate_cover_letter(
 
     job = db.get(JobPosting, session.job_id)
     result = await generate_cover_letter(db, user.id, job)
-    record = persist_document(db, user.id, job, DocumentType.cover_letter, title=result.title, content=result.content,
-                              markdown=result.markdown, plain_text=result.plain_text, quality=result.quality,
-                              model_used=result.model_used)
+    record = persist_document(
+        db,
+        user.id,
+        job,
+        DocumentType.cover_letter,
+        title=result.title,
+        content=result.content,
+        markdown=result.markdown,
+        plain_text=result.plain_text,
+        quality=result.quality,
+        model_used=result.model_used,
+    )
     session.tailored_cover_letter_id = record.id
-    log_action(db, session.id, ApplicationActionType.cover_letter_generated, source="user",
-               metadata={"document_id": record.id})
+    log_action(
+        db, session.id, ApplicationActionType.cover_letter_generated, source="user", metadata={"document_id": record.id}
+    )
     db.commit()
     return _serialize_session(db, session)
 
@@ -491,8 +521,14 @@ def post_event(
     db: Session = Depends(get_db),
 ) -> dict:
     log_action(
-        db, session.id, payload.action_type, field_key=payload.field_key, source=payload.source or "extension",
-        status=payload.status, confidence=payload.confidence, metadata=payload.metadata or {},
+        db,
+        session.id,
+        payload.action_type,
+        field_key=payload.field_key,
+        source=payload.source or "extension",
+        status=payload.status,
+        confidence=payload.confidence,
+        metadata=payload.metadata or {},
     )
     db.commit()
     return {"ok": True}
@@ -519,13 +555,15 @@ def set_application_override(
     try:
         result = set_override(session, canonical_key, payload.value)
     except OverrideRejected as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.reason
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.reason) from exc
 
     log_action(
-        db, session.id, "application_answer_override", field_key=canonical_key,
-        source="user", status="confirmed_for_application",
+        db,
+        session.id,
+        "application_answer_override",
+        field_key=canonical_key,
+        source="user",
+        status="confirmed_for_application",
     )
     db.commit()
     return result
@@ -616,8 +654,11 @@ async def map_dropdown_option(
         # Look for a verified vault answer for this key before giving up, so the
         # extension does not have to send profile data it may not hold.
         row = next(
-            (r for r in vault.list_answers(db, session.user_id)
-             if r.canonical_key == payload.canonical_key and r.is_user_verified),
+            (
+                r
+                for r in vault.list_answers(db, session.user_id)
+                if r.canonical_key == payload.canonical_key and r.is_user_verified
+            ),
             None,
         )
         confirmed = (row.value or "").strip() if row else ""
@@ -630,7 +671,10 @@ async def map_dropdown_option(
         help_text=payload.help_text or "",
     )
     log_action(
-        db, session.id, "option_mapping", field_key=payload.canonical_key,
+        db,
+        session.id,
+        "option_mapping",
+        field_key=payload.canonical_key,
         source="extension",
         status="mapped" if mapping.usable else "needs_user",
         confidence=mapping.confidence,
@@ -670,9 +714,7 @@ def record_autofill_results(
     """
     status_value = payload.status if payload.status in _ALLOWED_AUTOFILL_STATUS else "unknown"
     uploaded = [k for k in payload.documents_uploaded if k in _ALLOWED_UPLOAD_KINDS][:10]
-    failures = [
-        {"field_key": f.field_key[:120], "reason_code": f.reason_code[:60]} for f in payload.failures[:100]
-    ]
+    failures = [{"field_key": f.field_key[:120], "reason_code": f.reason_code[:60]} for f in payload.failures[:100]]
     summary = {
         "status": status_value,
         "ats": (payload.ats or None),
@@ -685,11 +727,23 @@ def record_autofill_results(
     logger.info(
         "apply.session.autofill_results session=%s user=%s ats=%s status=%s "
         "discovered=%s filled=%s uploaded=%s review=%s failures=%s",
-        session.id, session.user_id, summary["ats"], status_value,
-        payload.fields_discovered, payload.fields_filled, len(uploaded), payload.review_items, len(failures),
+        session.id,
+        session.user_id,
+        summary["ats"],
+        status_value,
+        payload.fields_discovered,
+        payload.fields_filled,
+        len(uploaded),
+        payload.review_items,
+        len(failures),
     )
     log_action(
-        db, session.id, "autofill_summary", source="extension", status=status_value, metadata=summary,
+        db,
+        session.id,
+        "autofill_summary",
+        source="extension",
+        status=status_value,
+        metadata=summary,
     )
     db.commit()
     return {"ok": True, "summary": summary}
@@ -814,7 +868,8 @@ def confirm_submission(
         )
         logger.info(
             "apply.session.submission_rejected session=%s user=%s reason=insufficient_evidence",
-            session.id, session.user_id,
+            session.id,
+            session.user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -997,9 +1052,7 @@ def _serialize_session(db: Session, session: ApplicationSession) -> dict[str, An
         "expires_at": session.expires_at,
         "completed_at": session.completed_at,
         "confirmation_required_at": tracker.confirmation_required_at if tracker else None,
-        "confirmation_prompt_dismissed_at": (
-            tracker.confirmation_prompt_dismissed_at if tracker else None
-        ),
+        "confirmation_prompt_dismissed_at": (tracker.confirmation_prompt_dismissed_at if tracker else None),
     }
 
 

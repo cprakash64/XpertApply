@@ -3,11 +3,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
 import openai
+from fastapi import HTTPException
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
+from app.core.resource_controls import ai_call, limit_error
 from app.services.profile_projection import scrub_credential_keys
 
 logger = logging.getLogger("jobpilot.ai")
@@ -38,7 +41,15 @@ class AIResult(BaseModel):
 class AIProvider:
     def __init__(self) -> None:
         self._api_key = settings.openai_api_key
-        self.client = AsyncOpenAI(api_key=self._api_key) if self._api_key else None
+        self.client = (
+            AsyncOpenAI(
+                api_key=self._api_key,
+                max_retries=0,
+                timeout=httpx.Timeout(settings.ai_timeout_seconds, connect=5.0, write=5.0, pool=5.0),
+            )
+            if self._api_key
+            else None
+        )
         self.last_error: str | None = None
 
     # --- diagnostics (never expose the key itself) ------------------------- #
@@ -99,6 +110,9 @@ class AIProvider:
                 prompt_name,
             )
 
+        if len(json.dumps(payload, default=str)) > settings.ai_max_input_chars:
+            raise limit_error("AI_INPUT_LIMIT_EXCEEDED", 413)
+
         if self.client is None:
             return AIResult(
                 data=self._fallback(prompt_name, payload),
@@ -119,12 +133,19 @@ class AIProvider:
                 data = await self._call(prompt_name, payload, model)
                 self.last_error = None
                 return AIResult(data=data, model_used=model, ai_used=True)
+            except HTTPException:
+                raise
             except Exception as exc:  # noqa: BLE001 - classified below, never re-raised
                 reason, sanitized = self._classify(exc)
                 last_reason = reason
                 # Log the sanitized reason only. Never log payload or the key.
                 self.last_error = f"{model}: {sanitized}"
                 logger.warning("OpenAI call failed (model=%s, reason=%s)", model, reason)
+                # A missing configured model permits one explicit alternate.
+                # Auth, quota, deterministic 400 and transport failures do not
+                # launch a second billable attempt. SDK retries are disabled.
+                if reason != "model_not_found":
+                    break
 
         return AIResult(
             data=self._fallback(prompt_name, payload),
@@ -135,15 +156,19 @@ class AIProvider:
         )
 
     async def _call(self, prompt_name: str, payload: dict[str, Any], model: str) -> dict[str, Any]:
-        response = await self.client.chat.completions.create(
-            model=model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": self.prompt(prompt_name)},
-                {"role": "user", "content": json.dumps(payload, default=str)},
-            ],
-        )
+        async with ai_call(len(json.dumps(payload, default=str))):
+            response = await self.client.chat.completions.create(
+                model=model,
+                max_tokens=settings.ai_max_output_tokens,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": self.prompt(prompt_name)},
+                    {"role": "user", "content": json.dumps(payload, default=str)},
+                ],
+            )
         content = response.choices[0].message.content or "{}"
+        if len(content) > settings.document_max_chars:
+            raise limit_error("AI_OUTPUT_LIMIT_EXCEEDED", 413)
         return self._parse_json(content)
 
     @staticmethod

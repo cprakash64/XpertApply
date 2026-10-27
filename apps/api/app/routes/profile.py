@@ -2,10 +2,11 @@ import logging
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from app.ai.provider import ai_provider
 from app.api.deps import get_current_user
@@ -32,7 +33,6 @@ from app.profile.completeness import build_completeness
 from app.profile.names import compose_full_name
 from app.profile.phone import parse_phone
 from app.schemas.import_profile import (
-    FileSourceType,
     ImportProfileApplyRequest,
     ImportProfileDraft,
     ImportProfileResponse,
@@ -50,11 +50,12 @@ from app.schemas.profile import (
     WorkdayCredentialsIn,
 )
 from app.services.document_parser import (
+    DocumentLimitError,
     DocumentParserError,
     detect_document_kind,
-    extract_uploaded_file_text,
 )
 from app.services.profile_import import normalize_import_draft
+from app.services.upload_processing import parse_upload
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -180,9 +181,7 @@ def career_payload(user_id: int, db: Session) -> dict[str, list[dict[str, Any]]]
             db.scalars(select(Certification).where(Certification.user_id == user_id)).all()
         ),
         "awards": serialize_records(db.scalars(select(Award).where(Award.user_id == user_id)).all()),
-        "publications": serialize_records(
-            db.scalars(select(Publication).where(Publication.user_id == user_id)).all()
-        ),
+        "publications": serialize_records(db.scalars(select(Publication).where(Publication.user_id == user_id)).all()),
     }
 
 
@@ -193,9 +192,7 @@ def get_profile(user: User = Depends(get_current_user), db: Session = Depends(ge
 
 
 @router.get("/completeness")
-def get_profile_completeness(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> dict:
+def get_profile_completeness(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     """Profile completion and autofill readiness for the signed-in user.
 
     A separate endpoint rather than extra keys on ``GET /profile`` because the
@@ -236,9 +233,7 @@ def _apply_imported_phone(profile: UserProfile) -> None:
         setattr(profile, key, value)
 
 
-def _application_email_columns(
-    profile: UserProfile | None, submitted: Any
-) -> dict[str, Any]:
+def _application_email_columns(profile: UserProfile | None, submitted: Any) -> dict[str, Any]:
     """Columns for an explicit application-email save.
 
     Saving the field IS the confirmation — the user typed an address into a
@@ -288,9 +283,15 @@ def _phone_columns(raw_phone: Any, location_country: Any) -> dict[str, str | Non
 
 
 _COUNTRY_TO_REGION = {
-    "united states": "US", "usa": "US", "us": "US",
-    "canada": "CA", "united kingdom": "GB", "uk": "GB",
-    "india": "IN", "australia": "AU", "germany": "DE",
+    "united states": "US",
+    "usa": "US",
+    "us": "US",
+    "canada": "CA",
+    "united kingdom": "GB",
+    "uk": "GB",
+    "india": "IN",
+    "australia": "AU",
+    "germany": "DE",
 }
 
 
@@ -455,12 +456,7 @@ def replace_career(
     db.add_all([Project(user_id=user.id, **item.model_dump()) for item in payload.projects])
     db.add_all([Certification(user_id=user.id, **item.model_dump()) for item in payload.certifications])
     db.add_all([Award(user_id=user.id, **item.model_dump()) for item in payload.awards])
-    db.add_all(
-        [
-            Publication(user_id=user.id, **_publication_columns(item))
-            for item in payload.publications
-        ]
-    )
+    db.add_all([Publication(user_id=user.id, **_publication_columns(item)) for item in payload.publications])
     db.commit()
     _enqueue_profile_rescore(user.id)  # experience/education/projects affect scoring
     return career_payload(user.id, db)
@@ -485,18 +481,56 @@ async def import_profile_text(
     return import_response(draft, model_used)
 
 
-@router.post("/import/file")
+@router.post(
+    "/import/file",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {
+                            "file": {"type": "string", "format": "binary"},
+                            "source_type": {
+                                "type": "string",
+                                "enum": ["auto", "resume", "linkedin_pdf"],
+                                "default": "auto",
+                            },
+                        },
+                    }
+                }
+            },
+        }
+    },
+)
 async def import_profile_file(
-    source_type: FileSourceType = Form("auto"),
-    file: UploadFile = File(...),
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> ImportProfileResponse:
-    try:
-        content = await file.read()
-        text = extract_uploaded_file_text(file, content)
-    except DocumentParserError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    detected_kind = detect_document_kind(text, file.filename)
+    # Manual multipart parsing starts only after authentication/admission. The
+    # ASGI middleware counts bytes before Starlette's 1MiB memory/disk spool.
+    async with request.form(max_files=1, max_fields=1, max_part_size=1024) as form:
+        if (
+            set(form.keys()) - {"file", "source_type"}
+            or len(form.getlist("file")) != 1
+            or len(form.getlist("source_type")) > 1
+        ):
+            raise HTTPException(status_code=422, detail="Provide exactly one file and one optional source type.")
+        file = form.get("file")
+        source_type = form.get("source_type", "auto")
+        if not isinstance(file, UploadFile) or source_type not in {"auto", "resume", "linkedin_pdf"}:
+            raise HTTPException(status_code=422, detail="Provide one document and a supported source type.")
+        try:
+            text = await parse_upload(file)
+        except DocumentLimitError as exc:
+            raise HTTPException(
+                status_code=413, detail=str(exc), headers={"X-Error-Code": "DOCUMENT_LIMIT_EXCEEDED"}
+            ) from exc
+        except DocumentParserError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        detected_kind = detect_document_kind(text, file.filename)
     draft_source = detected_kind if source_type == "auto" else source_type
     if draft_source == "auto":
         draft_source = "unknown"
@@ -823,11 +857,7 @@ def _valid_projects(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _non_empty_experience(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep an experience only if it has a company or a title. This prevents
     empty/fake experience rows from being saved."""
-    return [
-        record
-        for record in records
-        if clean_string(record.get("company")) or clean_string(record.get("title"))
-    ]
+    return [record for record in records if clean_string(record.get("company")) or clean_string(record.get("title"))]
 
 
 def education_values(item: dict[str, Any]) -> dict[str, Any]:
@@ -911,9 +941,7 @@ def _serialize_demographics(record: SensitiveDemographics | None) -> dict | None
 
 @router.get("/demographics")
 def get_demographics(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    demographics = db.scalar(
-        select(SensitiveDemographics).where(SensitiveDemographics.user_id == user.id)
-    )
+    demographics = db.scalar(select(SensitiveDemographics).where(SensitiveDemographics.user_id == user.id))
     return {"demographics": _serialize_demographics(demographics)}
 
 
@@ -949,9 +977,7 @@ def upsert_demographics(
         db.commit()
         return {"demographics": None}
 
-    demographics = db.scalar(
-        select(SensitiveDemographics).where(SensitiveDemographics.user_id == user.id)
-    )
+    demographics = db.scalar(select(SensitiveDemographics).where(SensitiveDemographics.user_id == user.id))
     # Free-text self-descriptions are kept only while their trigger option is
     # selected — deselecting "Self-describe" must not leave the text behind.
     if values.get("gender_identity") != "self_describe":
@@ -997,9 +1023,7 @@ class EligibilityAnswerIn(BaseModel):
 
 
 @router.get("/application-eligibility")
-def get_application_eligibility(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
-) -> dict:
+def get_application_eligibility(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     """Display-safe state of the three legal answers for the SIGNED-IN user.
 
     The user id comes from the token, never from the request, so there is no
@@ -1015,15 +1039,11 @@ def put_application_eligibility(
     db: Session = Depends(get_db),
 ) -> dict:
     if payload.field not in FIELD_TO_CANONICAL:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown eligibility field"
-        )
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown eligibility field")
     try:
         result = set_eligibility_answer(db, user.id, payload.field, payload.answer)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     # Audited as an event; the answer VALUE is never recorded in the audit trail.
     record_audit(db, user.id, "application_eligibility_updated", {"field": payload.field})
     db.commit()

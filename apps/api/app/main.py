@@ -10,6 +10,7 @@ from app.ai.provider import ai_provider
 from app.core.config import settings
 from app.core.config_validation import enforce as enforce_production_config
 from app.core.log_redaction import install as install_log_redaction
+from app.core.resource_middleware import ResourceMiddleware
 from app.db.session import SessionLocal
 from app.people.feature_flags import configuration_summary as people_configuration_summary
 from app.routes import (
@@ -92,6 +93,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if _docs_on else None,
 )
 
+
 # IMPORTANT: middleware order. `add_middleware` makes the LAST-added middleware
 # the OUTERMOST. We add the unhandled-error catcher FIRST and CORS LAST so CORS
 # is outermost and wraps the catcher's 500 response.
@@ -130,6 +132,8 @@ async def catch_unhandled_errors(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
+
+app.add_middleware(ResourceMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

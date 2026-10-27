@@ -71,3 +71,17 @@ def _reset_people_circuits() -> None:
 
     clear_local_circuits()
     provider_search_coalescer.clear()
+
+
+@pytest.fixture(autouse=True)
+def _resource_test_store(monkeypatch):
+    # Explicit store injection keeps the suite deterministic and cannot select
+    # a production fallback. Real Redis semantics have their own integration suite.
+    from app.core import resource_controls as controls
+
+    monkeypatch.setattr(controls, "store", controls.MemoryStore())
+    token = controls.budget.set(controls.Budget(principal="user:synthetic-test"))
+    try:
+        yield
+    finally:
+        controls.budget.reset(token)

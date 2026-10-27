@@ -165,7 +165,7 @@ def test_oversized_file_is_rejected(client: TestClient) -> None:
         files={"file": ("resume.pdf", b"x" * (MAX_UPLOAD_BYTES + 1), "application/pdf")},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 413
     assert "too large" in response.json()["detail"]
 
 

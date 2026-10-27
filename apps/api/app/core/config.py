@@ -15,9 +15,7 @@ except ModuleNotFoundError:
     class BaseSettings(BaseModel):
         def __init__(self, **data):
             env_values = {
-                name: os.environ[name.upper()]
-                for name in self.__class__.model_fields
-                if name.upper() in os.environ
+                name: os.environ[name.upper()] for name in self.__class__.model_fields if name.upper() in os.environ
             }
             env_values.update(data)
             super().__init__(**env_values)
@@ -88,6 +86,30 @@ class Settings(BaseSettings):
             file_secret_settings,
         )
 
+    # RB02/RB07: finite defaults; deployment cannot configure unlimited work.
+    api_max_concurrency: int = Field(default=64, ge=8, le=128)
+    upload_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=5 * 1024 * 1024)
+    upload_receive_timeout_seconds: float = Field(default=60, ge=5, le=120)
+    document_max_pages: int = Field(default=50, ge=1, le=200)
+    document_max_objects: int = Field(default=20000, ge=100, le=50000)
+    document_max_chars: int = Field(default=100000, ge=100, le=200000)
+    document_timeout_seconds: float = Field(default=15, ge=1, le=30)
+    document_memory_mb: int = Field(default=384, ge=128, le=512)
+    parser_global_concurrency: int = Field(default=2, ge=1, le=4)
+    auth_login_per_minute: int = Field(default=20, ge=1, le=60)
+    auth_signup_per_hour: int = Field(default=10, ge=1, le=30)
+    upload_per_minute: int = Field(default=6, ge=1, le=20)
+    ai_per_minute: int = Field(default=6, ge=1, le=20)
+    ai_global_concurrency: int = Field(default=8, ge=1, le=16)
+    ai_user_concurrency: int = Field(default=2, ge=1, le=4)
+    ai_daily_user_calls: int = Field(default=50, ge=1, le=100)
+    ai_daily_global_calls: int = Field(default=500, ge=1, le=2000)
+    ai_max_input_chars: int = Field(default=150000, ge=1000, le=200000)
+    ai_max_output_tokens: int = Field(default=4096, ge=256, le=8192)
+    ai_max_calls_per_request: int = Field(default=8, ge=1, le=12)
+    ai_timeout_seconds: float = Field(default=30, ge=1, le=45)
+    task_queue_max_depth: int = Field(default=100, ge=1, le=500)
+
     database_url: str = "sqlite:///./jobpilot.db"
     redis_url: str = "redis://localhost:6379/0"
     google_oauth_enabled: bool = False
@@ -130,10 +152,10 @@ class Settings(BaseSettings):
     # default registry. Only public/allowed endpoints are ever queried.
     job_source_companies: list[str] = []
     job_sources_file: str | None = None
-    job_discovery_max_companies: int = 200
-    job_discovery_max_jobs_per_source: int = 100
-    job_discovery_concurrency: int = 10
-    job_discovery_timeout_seconds: float = 12.0
+    job_discovery_max_companies: int = Field(default=200, ge=1, le=200)
+    job_discovery_max_jobs_per_source: int = Field(default=100, ge=1, le=100)
+    job_discovery_concurrency: int = Field(default=10, ge=1, le=10)
+    job_discovery_timeout_seconds: float = Field(default=12.0, ge=1, le=30)
     job_discovery_source_packs: list[str] = []
     job_discovery_include_unknown_dates: bool = False
     # Keep back-to-back searches efficient without hiding newly opened roles for
@@ -398,13 +420,10 @@ class Settings(BaseSettings):
         order = normalize_provider_order(value)
         # app_env is declared before this field, so the already-validated value
         # is available here; the environment is only a fallback.
-        app_env = str(
-            (info.data or {}).get("app_env") or os.getenv("APP_ENV", "development")
-        ).strip().lower()
+        app_env = str((info.data or {}).get("app_env") or os.getenv("APP_ENV", "development")).strip().lower()
         if "mock" in order and app_env not in {"test", "development"}:
             raise ValueError(
-                "PEOPLE_PROVIDER_ORDER may not include the mock provider outside "
-                "test and development environments."
+                "PEOPLE_PROVIDER_ORDER may not include the mock provider outside " "test and development environments."
             )
         return order
 
@@ -425,7 +444,6 @@ class Settings(BaseSettings):
                     return [str(item).strip() for item in parsed if str(item).strip()]
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
-
 
     def docs_are_enabled(self) -> bool:
         """Serve /docs, /redoc and the OpenAPI schema?

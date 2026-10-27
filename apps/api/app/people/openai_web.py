@@ -150,10 +150,7 @@ def safe_public_linkedin_url(value: object) -> str | None:
     if parsed.scheme != "https" or parsed.username or parsed.password:
         return None
     host = (parsed.hostname or "").lower().rstrip(".")
-    if not any(
-        host == candidate or host.endswith(f".{candidate}")
-        for candidate in _LINKEDIN_HOSTS
-    ):
+    if not any(host == candidate or host.endswith(f".{candidate}") for candidate in _LINKEDIN_HOSTS):
         return None
     path = parsed.path.rstrip("/")
     if not path.lower().startswith("/in/") or len(path) <= len("/in/"):
@@ -257,12 +254,9 @@ def build_search_plan(
     plan: list[str] = []
     for category in categories:
         if category == "likely_recruiter":
-            plan.append(f"site:linkedin.com/in {quoted} recruiter OR \"talent acquisition\"")
+            plan.append(f'site:linkedin.com/in {quoted} recruiter OR "talent acquisition"')
         elif category == "potential_hiring_manager":
-            plan.append(
-                f"site:linkedin.com/in {quoted} "
-                '"engineering manager" OR "director of engineering"'
-            )
+            plan.append(f"site:linkedin.com/in {quoted} " '"engineering manager" OR "director of engineering"')
         else:
             plan.append(f"site:linkedin.com/in {quoted} engineer OR scientist")
     return plan[: max(0, max_searches)]
@@ -309,10 +303,7 @@ class OpenAIWebPeopleProvider:
 
     @staticmethod
     def configured() -> bool:
-        return bool(
-            settings.people_openai_web_discovery_enabled
-            and (settings.openai_api_key or "").strip()
-        )
+        return bool(settings.people_openai_web_discovery_enabled and (settings.openai_api_key or "").strip())
 
     async def _respond(self, prompt: str) -> str:
         """One Responses API call with the hosted web-search tool.
@@ -327,14 +318,20 @@ class OpenAIWebPeopleProvider:
 
             client = AsyncOpenAI(
                 api_key=settings.openai_api_key,
-                timeout=settings.people_openai_web_timeout_seconds,
+                timeout=min(settings.people_openai_web_timeout_seconds, settings.ai_timeout_seconds),
+                max_retries=0,
             )
-        response = await client.responses.create(  # type: ignore[union-attr]
-            model=settings.people_openai_web_model,
-            tools=[{"type": "web_search"}],
-            instructions=_INSTRUCTIONS,
-            input=prompt,
-        )
+        from app.core.resource_controls import ai_call
+
+        async with ai_call(len(prompt)):
+            response = await client.responses.create(  # type: ignore[union-attr]
+                model=settings.people_openai_web_model,
+                max_output_tokens=settings.ai_max_output_tokens,
+                max_tool_calls=1,
+                tools=[{"type": "web_search"}],
+                instructions=_INSTRUCTIONS,
+                input=prompt,
+            )
         return _response_text(response)
 
     async def discover(
@@ -373,9 +370,7 @@ class OpenAIWebPeopleProvider:
             raw = await self._respond(prompt)
         except Exception as exc:  # noqa: BLE001 - classified, never re-raised
             # The message may echo request content, so only the type is logged.
-            logger.warning(
-                "people_openai_web call failed error_type=%s", type(exc).__name__
-            )
+            logger.warning("people_openai_web call failed error_type=%s", type(exc).__name__)
             outcome.failure_reason = "provider_unavailable"
             return outcome
 
@@ -406,11 +401,7 @@ class OpenAIWebPeopleProvider:
         outcome: WebDiscoveryOutcome,
     ) -> list[ProviderPerson]:
         accepted: list[ProviderPerson] = []
-        citations = {
-            _normalized(row.get("source_url"))
-            for row in rows
-            if is_public_source_url(row.get("source_url"))
-        }
+        citations = {_normalized(row.get("source_url")) for row in rows if is_public_source_url(row.get("source_url"))}
         seen: set[str] = set()
         threshold = float(settings.people_openai_web_min_confidence)
 
@@ -488,8 +479,7 @@ class OpenAIWebPeopleProvider:
             same_name = sum(
                 1
                 for other in rows
-                if _slugified_name(_normalized(other.get("full_name")))
-                == _slugified_name(full_name)
+                if _slugified_name(_normalized(other.get("full_name"))) == _slugified_name(full_name)
             )
             if same_name > 1:
                 outcome.reject("ambiguous_identity")
