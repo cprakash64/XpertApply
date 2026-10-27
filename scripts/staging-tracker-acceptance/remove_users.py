@@ -1,0 +1,20 @@
+"""Delete the disposable 50C/50D staging test users (and, by cascade, their rows). Runs inside the staging API container:
+   docker exec -i xpertapply-staging-api python - <user_id> [<user_id>...] < remove_users.py
+Refuses any user whose email does not start with xa-50c-."""
+import sys
+
+from sqlalchemy import func, select
+
+from app.db.session import SessionLocal
+from app.models import entities as E
+
+IDS = [int(a) for a in sys.argv[1:]]
+with SessionLocal() as db:
+    users = db.scalars(select(E.User).where(E.User.id.in_(IDS), E.User.email.like("xa-50c-%"))).all()
+    print("deleting", [u.id for u in users])
+    for user in users:
+        db.delete(user)
+    db.commit()
+    print("remaining xa-50c users:", db.scalar(select(func.count()).select_from(E.User).where(E.User.email.like("xa-50c-%"))))
+    for model in (E.ApplicationTracker, E.GeneratedDocument, E.ApplicationSession, E.ApplicationDocumentSnapshot):
+        print(model.__tablename__, "rows for those users:", db.scalar(select(func.count()).select_from(model).where(model.user_id.in_(IDS))))
