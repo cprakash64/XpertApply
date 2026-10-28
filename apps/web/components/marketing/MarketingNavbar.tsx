@@ -37,6 +37,7 @@ export function MarketingNavbar() {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const [scrolled, setScrolled] = useState(false);
+  const [overDark, setOverDark] = useState(false);
   const sentinel = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -44,6 +45,28 @@ export function MarketingNavbar() {
     if (!node || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(([entry]) => setScrolled(!entry.isIntersecting));
     observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // Frosted white over a navy section reads muddy grey, so the bar becomes more
+  // opaque while any section marked data-nav-tone="dark" sits under it. Another
+  // observer, not a scroll handler: it watches the band the bar occupies.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const nodes = Array.from(document.querySelectorAll('[data-nav-tone="dark"]'));
+    if (nodes.length === 0) return;
+    const under = new Set<Element>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) under.add(entry.target);
+          else under.delete(entry.target);
+        }
+        setOverDark(under.size > 0);
+      },
+      { rootMargin: "0px 0px -88% 0px" },
+    );
+    nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
   }, []);
 
@@ -59,7 +82,11 @@ export function MarketingNavbar() {
   return (
     <>
       <div ref={sentinel} aria-hidden className="xa-nav-sentinel" />
-      <div className="xa-navwrap" data-scrolled={scrolled ? "true" : "false"}>
+      <div
+        className="xa-navwrap"
+        data-scrolled={scrolled ? "true" : "false"}
+        data-tone={overDark ? "dark" : "light"}
+      >
         <div className="xa-shell">
           <header className="xa-nav">
             <Link href="/" aria-label={`${PRODUCT_NAME} home`}>

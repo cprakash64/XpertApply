@@ -28,11 +28,10 @@ const CARDS = [
 
 export function TrustSection() {
   return (
-    <section id="security" className="xa-trust" aria-labelledby="xa-trust-title">
+    <section id="security" className="xa-trust" data-nav-tone="dark" aria-labelledby="xa-trust-title">
       <div className="xa-shell">
         <div className="xa-trust__grid">
           <div className="xa-section-head">
-            <span className="xa-eyebrow">Designed around trust</span>
             <h2 id="xa-trust-title">Automation without losing control.</h2>
             <p>
               Move faster without giving up control. XpertApply helps with repetitive work while

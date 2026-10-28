@@ -34,7 +34,6 @@ export function ExtensionShowcase() {
         <div className="xa-ext__grid">
           <div>
             <div className="xa-section-head">
-              <span className="xa-eyebrow">XpertApply for Chrome</span>
               <h2 id="xa-ext-title">
                 <span>Stop filling out</span>
                 <span>the same</span>

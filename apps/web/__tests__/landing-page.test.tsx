@@ -300,6 +300,31 @@ describe("marketing homepage", () => {
     });
   });
 
+  describe("no eyebrow labels", () => {
+    it("opens every section with its heading and carries no pre-heading label", () => {
+      const { container } = renderLanding();
+      expect(container.querySelector(".xa-eyebrow")).toBeNull();
+      for (const copy of [
+        "Built for the whole job search",
+        "Designed around trust",
+        "XpertApply for Chrome",
+        "XpertApply in action"
+      ]) {
+        // "See XpertApply in action" is a link, not a label: match whole text nodes only.
+        expect(screen.queryByText(new RegExp(`^${copy}$`, "i"))).toBeNull();
+      }
+      for (const name of [
+        "Find the right job. Apply with confidence.",
+        "From discovery to follow-up, it all stays connected.",
+        "Stop filling out the same application over and over.",
+        "Automation without losing control.",
+        /Your next opportunity/
+      ]) {
+        expect(screen.getByRole("heading", { name })).toBeInTheDocument();
+      }
+    });
+  });
+
   describe("pricing is not in the navigation", () => {
     it("has no Pricing entry in the header navigation, desktop or mobile", async () => {
       const { container } = renderLanding();
@@ -346,7 +371,7 @@ describe("marketing homepage", () => {
    */
   function renderDialog() {
     return render(
-      React.createElement(PricingProvider, null, React.createElement(PricingTrigger, { className: "x", children: "Pricing" }))
+      React.createElement(PricingProvider, null, React.createElement(PricingTrigger as React.ComponentType<{ className: string; children?: React.ReactNode }>, { className: "x" }, "Pricing"))
     );
   }
 

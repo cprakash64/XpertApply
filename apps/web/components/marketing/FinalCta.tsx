@@ -12,7 +12,6 @@ export function FinalCta() {
       <div className="xa-shell">
         <div className="xa-final__card">
           <div className="xa-final__copy">
-            <span className="xa-eyebrow">Get started</span>
             <h2 id="xa-final-title">
               Your next opportunity shouldn&rsquo;t get lost in{" "}
               <span className="xa-final__last-line">busywork.</span>

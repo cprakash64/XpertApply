@@ -19,8 +19,6 @@ export function Hero() {
     <section className="xa-hero">
       <div className="xa-shell">
         <div className="xa-hero__inner">
-          <span className="xa-eyebrow xa-eyebrow--dot">Built for the whole job search</span>
-
           <h1>
             <span>Find the right job.</span>
             <span className="xa-hero__line-2">Apply with confidence.</span>

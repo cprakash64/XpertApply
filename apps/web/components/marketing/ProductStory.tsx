@@ -175,7 +175,6 @@ export function ProductStory() {
     >
       <div className="xa-shell">
         <div className="xa-story__intro xa-section-head">
-          <span className="xa-eyebrow">XpertApply in action</span>
           <h2
             id="xa-story-title"
             aria-label="From discovery to follow-up, it all stays connected."

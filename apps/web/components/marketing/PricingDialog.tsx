@@ -148,7 +148,6 @@ function PricingModal({ onClose }: { onClose: () => void }) {
         </button>
 
         <div className="xa-pricing__head">
-          <span className="xa-eyebrow">Pricing</span>
           <h2 id="xa-pricing-title">Pricing is not finalized yet.</h2>
           <p>
             The open-source MVP is free to run locally. Hosted pricing is intentionally a
