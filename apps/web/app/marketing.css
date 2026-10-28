@@ -14,7 +14,7 @@
  *
  * WHY THE PALETTE IS SCOPED
  * The application's tokens are a warm-neutral, pine-green system that follows
- * `prefers-color-scheme`. The marketing design is a fixed light navy/cyan one.
+ * `prefers-color-scheme`. The marketing design is a fixed light navy/glacier one.
  * Redefining the global tokens would repaint the whole product; these variables
  * are declared on `.xa-page` instead and shadow nothing outside it.
  * ========================================================================== */
@@ -33,8 +33,8 @@
   /* --- Brand ------------------------------------------------------------ */
   --xa-navy: #25364b;
   --xa-navy-2: #1d2c3d;
-  --xa-cyan: #6888ad;
-  --xa-cyan-soft: #9bb3cf;
+  --xa-glacier: #6888ad;
+  --xa-glacier-soft: #9bb3cf;
   --xa-accent-text: #405f80;
 
   /* --- Text ------------------------------------------------------------- */
@@ -75,7 +75,7 @@
    * by the rail and its markers. Declared here so the section renders
    * correctly on the server, before any script runs. --------------------- */
   --xa-progress: 0;
-  --rail-progress-color: var(--xa-cyan);
+  --rail-progress-color: var(--xa-glacier);
   --rail-glow-color: transparent;
 
   font-family: var(--xa-font);
@@ -165,7 +165,7 @@ html:has(.xa-page) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--xa-cyan);
+  background: var(--xa-glacier);
   box-shadow: 0 0 0 4px rgb(104 136 173 / 9%);
 }
 
@@ -245,7 +245,7 @@ html:has(.xa-page) {
 }
 
 .xa-btn--onnavy:hover {
-  background: var(--xa-cyan-soft);
+  background: var(--xa-glacier-soft);
   color: var(--xa-navy);
 }
 
@@ -376,8 +376,11 @@ html:has(.xa-page) {
 .xa-nav__toggle {
   display: grid;
   place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  /* Pushed to the bar's right edge: a later `.xa-nav` override sets
+   * justify-content: flex-start, which would otherwise park it beside the logo. */
+  margin-left: auto;
+  width: 2.75rem;
+  height: 2.75rem;
   border: 1px solid var(--xa-line-strong);
   border-radius: 10px;
   background: #fff;
@@ -510,7 +513,7 @@ html:has(.xa-page) {
 .xa-hero__trust svg {
   width: 1rem;
   height: 1rem;
-  color: var(--xa-cyan);
+  color: var(--xa-glacier);
   flex: none;
 }
 
@@ -654,16 +657,16 @@ html:has(.xa-page) {
   height: 1.0625rem;
   margin-top: 0.0625rem;
   flex: none;
-  color: var(--xa-cyan);
+  color: var(--xa-glacier);
 }
 
 /* --- Rail ----------------------------------------------------------------
  * ONE continuous journey, not two stacked bars.
  *
  * `track` is the uncompleted remainder — a neutral hairline. `fill` is the
- * completed portion, and its gradient runs from cyan at the origin to
+ * completed portion, and it runs from glacier at the origin to
  * `--rail-progress-color` at its own moving end. Because that end colour is
- * interpolated from cyan toward navy by the same progress value that sets the
+ * interpolated from glacier toward slate by the same progress value that sets the
  * height, the bar reads as one line maturing rather than as a second colour
  * drawn over a first.
  * ------------------------------------------------------------------------- */
@@ -1071,7 +1074,7 @@ html:has(.xa-page) {
   height: 0.8125rem;
   margin-top: 0.125rem;
   flex: none;
-  color: var(--xa-cyan);
+  color: var(--xa-glacier);
 }
 
 /* Wraps to a second row rather than truncating: in the narrowest desktop
@@ -1424,7 +1427,7 @@ html:has(.xa-page) {
 .xa-ext__progress-head strong {
   font-size: 0.875rem;
   font-weight: 700;
-  color: var(--xa-cyan);
+  color: var(--xa-glacier);
 }
 
 .xa-ext__progress {
@@ -1440,7 +1443,7 @@ html:has(.xa-page) {
   width: 84%;
   height: 100%;
   border-radius: inherit;
-  background: var(--xa-cyan);
+  background: var(--xa-glacier);
 }
 
 .xa-ext__panel-list {
@@ -1465,7 +1468,7 @@ html:has(.xa-page) {
   width: 0.8125rem;
   height: 0.8125rem;
   flex: none;
-  color: var(--xa-cyan);
+  color: var(--xa-glacier);
 }
 
 .xa-ext__panel-foot {
@@ -1514,7 +1517,7 @@ html:has(.xa-page) {
 }
 
 .xa-trust .xa-eyebrow {
-  color: var(--xa-cyan-soft);
+  color: var(--xa-glacier-soft);
 }
 
 .xa-trust .xa-section-head p {
@@ -1565,7 +1568,7 @@ html:has(.xa-page) {
 .xa-trust__icon svg {
   width: 1.1rem;
   height: 1.1rem;
-  color: var(--xa-cyan-soft);
+  color: var(--xa-glacier-soft);
 }
 
 .xa-trust__card h3 {
@@ -1746,20 +1749,6 @@ html:has(.xa-page) {
   animation: xa-dialog-in 240ms cubic-bezier(0.2, 0.78, 0.2, 1) both;
 }
 
-/* One faint cyan illumination, top-left, well under the copy. */
-.xa-pricing__dialog::before {
-  content: "";
-  position: absolute;
-  top: -40%;
-  left: -15%;
-  z-index: -1;
-  width: 34rem;
-  height: 26rem;
-  border-radius: 50%;
-  background: var(--xa-surface-sunken);
-  pointer-events: none;
-}
-
 @keyframes xa-fade {
   from {
     opacity: 0;
@@ -1818,111 +1807,6 @@ html:has(.xa-page) {
   font-size: 0.9375rem;
   line-height: 1.65;
   color: var(--xa-body);
-}
-
-.xa-pricing__plans {
-  display: grid;
-  gap: 1rem;
-  margin: 2rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-@media (min-width: 768px) {
-  .xa-pricing__plans {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-.xa-pricing__plan {
-  display: flex;
-  flex-direction: column;
-  padding: 1.375rem;
-  border: 1px solid var(--xa-line);
-  border-radius: 16px;
-  background: #fff;
-}
-
-.xa-pricing__plan[data-featured="true"] {
-  border-color: rgb(37 54 75 / 22%);
-  box-shadow: 0 1px 2px rgb(29 44 61 / 4%), 0 16px 36px rgb(37 54 75 / 8%);
-}
-
-.xa-pricing__plan-name {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--xa-ink);
-}
-
-.xa-pricing__tag {
-  padding: 0.125rem 0.4375rem;
-  border-radius: 999px;
-  background: rgb(104 136 173 / 12%);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #405f80;
-}
-
-.xa-pricing__price {
-  display: flex;
-  align-items: baseline;
-  gap: 0.25rem;
-  margin-top: 0.875rem;
-}
-
-.xa-pricing__price strong {
-  font-size: 2rem;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: var(--xa-navy);
-}
-
-.xa-pricing__price span {
-  font-size: 0.8125rem;
-  color: var(--xa-muted);
-}
-
-.xa-pricing__features {
-  display: grid;
-  gap: 0.5625rem;
-  margin: 1.25rem 0 1.5rem;
-  padding: 0;
-  list-style: none;
-}
-
-.xa-pricing__features li {
-  display: flex;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--xa-body);
-}
-
-.xa-pricing__features svg {
-  width: 0.9375rem;
-  height: 0.9375rem;
-  margin-top: 0.125rem;
-  flex: none;
-  color: var(--xa-cyan);
-}
-
-.xa-pricing__plan .xa-btn {
-  margin-top: auto;
-  width: 100%;
-}
-
-.xa-pricing__note {
-  margin-top: 1.5rem;
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  color: var(--xa-muted);
 }
 
 /* --------------------------------------------------------------------------
@@ -2139,26 +2023,12 @@ html:has(.xa-page) {
 .xa-footer__bottom { margin-top: 38px; padding-top: 22px; font-size: 12px; color: #5d6c81; }
 
 .xa-pricing__backdrop { padding: 28px; background: rgb(29 44 61 / 28%); }
-.xa-pricing__dialog { width: min(1040px,100%); max-height: min(780px,calc(100vh - 48px)); padding: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; background: rgb(250 252 254 / 94%); box-shadow: 0 34px 110px rgb(29 44 61 / 22%); }
+.xa-pricing__dialog { width: min(1040px,100%); max-height: min(780px,calc(100vh - 48px)); padding: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; background: #fcfdfe; box-shadow: 0 34px 110px rgb(29 44 61 / 22%); }
 .xa-pricing__dialog::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.xa-pricing__dialog::before { inset: 0; width: auto; height: auto; border-radius: inherit; background: var(--xa-surface-sunken); }
 .xa-pricing__close { top: 18px; right: 18px; width: 38px; height: 38px; }
 .xa-pricing__head { max-width: 660px; padding-right: 50px; }
 .xa-pricing__head h2 { margin-top: 10px; font-size: 36px; line-height: 1.04; letter-spacing: -.045em; }
 .xa-pricing__head p { margin-top: 12px; font-size: 15px; line-height: 1.6; }
-.xa-pricing__plans { grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 26px; }
-.xa-pricing__plan { min-height: 400px; padding: 22px; border-color: #dfe5ec; border-radius: 16px; background: #fff; }
-.xa-pricing__plan[data-featured="true"] { border-color: rgb(104 136 173 / 48%); background: var(--xa-surface-sunken); box-shadow: 0 16px 42px rgb(16 24 40 / 8%); }
-.xa-pricing__plan-name { font-size: 14px; font-weight: 800; color: #344054; }
-.xa-pricing__tag { padding: 5px 8px; font-size: 10px; font-weight: 850; letter-spacing: .04em; }
-.xa-pricing__price { margin-top: 14px; }
-.xa-pricing__price strong { font-size: 38px; }
-.xa-pricing__price span { margin-bottom: 5px; font-size: 12px; }
-.xa-pricing__description { min-height: 44px; margin: 12px 0 18px; color: #5d6c81; font-size: 13px; line-height: 1.55; }
-.xa-pricing__features { gap: 11px; margin: 0 0 22px; }
-.xa-pricing__features li { gap: 9px; font-size: 12px; line-height: 1.45; }
-.xa-pricing__features svg { width: 17px; height: 17px; padding: 4px; border-radius: 50%; background: #eaf0f7; color: #25364b; stroke-width: 3; }
-.xa-pricing__note { margin: 18px 2px 0; font-size: 11px; line-height: 1.55; text-align: center; }
 
 @media (min-width: 1440px) {
   .xa-story > .xa-shell { width: min(calc(100% - 56px),1560px); }
@@ -2199,8 +2069,6 @@ html:has(.xa-page) {
   .xa-mock__body { min-height: 0; }
   .xa-ext { padding: 92px 0; }
   .xa-ext__grid { grid-template-columns: 1fr; gap: 54px; }
-  .xa-pricing__plans { grid-template-columns: 1fr; }
-  .xa-pricing__plan, .xa-pricing__description { min-height: 0; }
 }
 @media (max-width: 767px) {
   .xa-footer__top { grid-template-columns: 1fr; }

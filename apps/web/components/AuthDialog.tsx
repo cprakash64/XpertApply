@@ -130,10 +130,10 @@ export function AuthDialog({
     >
       <div className="px-7 pb-5 pt-7 sm:px-9 sm:pt-9">
         <div className="flex items-start justify-between gap-5">
-          <Link href="/" className="ds-focus-ring -m-1 inline-flex items-center gap-2.5 rounded-control p-1 text-base font-semibold tracking-tight text-foreground">
+          <Link href="/" prefetch={false} className="ds-focus-ring -m-1 inline-flex items-center gap-2.5 rounded-control p-1 text-base font-semibold tracking-tight text-foreground">
             {/* A plain <img>: next/image added ~9 KB gzip to the auth routes for a 32px static mark. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img aria-hidden src="/brand/xpertapply-logo.png" alt="" width={32} height={32} />
+            <img aria-hidden src="/brand/xpertapply-logo-256.png" alt="" width={32} height={32} />
             XpertApply
           </Link>
           {presentation === "modal" && (
@@ -141,7 +141,7 @@ export function AuthDialog({
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="ds-focus-ring ds-touch-target grid h-10 w-10 shrink-0 place-items-center rounded-pill border border-line-default bg-surface-card/50 text-foreground-secondary transition duration-fast ease-standard hover:bg-surface-subtle"
+              className="ds-focus-ring ds-touch-target grid h-10 w-10 shrink-0 place-items-center rounded-pill border border-line-default bg-surface-card text-foreground-secondary transition duration-fast ease-standard hover:bg-surface-subtle"
               aria-label="Close authentication"
             >
               <X className="h-[18px] w-[18px]" />

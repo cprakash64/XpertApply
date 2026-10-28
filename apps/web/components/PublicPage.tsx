@@ -29,7 +29,7 @@ export function PublicPage({
     <div className="flex min-h-screen flex-col bg-surface-page text-foreground">
       <header className="border-b border-line-subtle bg-surface-card">
         <div className={`mx-auto flex ${width} items-center justify-between px-6 py-4`}>
-          <Link href="/" className="ds-focus-ring rounded-control text-base font-semibold tracking-tight text-foreground">
+          <Link href="/" prefetch={false} className="ds-focus-ring rounded-control text-base font-semibold tracking-tight text-foreground">
             {PRODUCT_NAME}
           </Link>
           <Link href="/signup" className="ds-focus-ring rounded-control bg-action-primary px-4 py-2 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover">

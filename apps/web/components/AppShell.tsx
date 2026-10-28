@@ -491,7 +491,7 @@ function Brand({ compact, onNavigate }: { compact: boolean; onNavigate?: () => v
     >
       <span aria-hidden className="app-brand-mark">
         <Image
-          src="/brand/xpertapply-logo.png"
+          src="/brand/xpertapply-logo-256.png"
           alt=""
           width={116}
           height={87}

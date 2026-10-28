@@ -24,7 +24,7 @@ export function BrandWordmark({
       {/* One accessible string, two visual halves: a screen reader hears
         * "XpertApply", never "Xpert Apply". */}
       <span className="sr-only">{PRODUCT_NAME}</span>
-      <Image aria-hidden src="/brand/xpertapply-logo.png" alt="" width={34} height={34} unoptimized />
+      <Image aria-hidden src="/brand/xpertapply-logo-256.png" alt="" width={34} height={34} unoptimized />
       <span aria-hidden>
         <span className="xa-wordmark__xpert">Xpert</span>
         <span className="xa-wordmark__apply">Apply</span>

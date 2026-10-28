@@ -34,9 +34,9 @@
    * ------------------------------------------------------------------ */
   --xa-navy: #25364b;
   --xa-navy-hover: #1d2c3d;
-  --xa-cyan: #6888ad;
-  --xa-cyan-highlight: #9bb3cf;
-  --xa-cyan-dark: #405f80;
+  --xa-glacier: #6888ad;
+  --xa-glacier-light: #9bb3cf;
+  --xa-glacier-deep: #405f80;
   --xa-ink: #20242b;
   --xa-neutral-secondary: #596779;
   --xa-neutral-muted: #5d6c81;
@@ -46,13 +46,13 @@
   --xa-light-border: #dce3eb;
   --xa-light-border-strong: #c9d3df;
 
-  /* Brand and actions. Canonical cyan is an accent, not a white-text fill. */
+  /* Brand and actions. Canonical glacier is an accent, not a white-text fill. */
   --color-brand-primary: var(--xa-navy);
   --color-brand-primary-hover: var(--xa-navy-hover);
-  --color-brand-accent: var(--xa-cyan);
-  --color-brand-accent-highlight: var(--xa-cyan-highlight);
+  --color-brand-accent: var(--xa-glacier);
+  --color-brand-accent-highlight: var(--xa-glacier-light);
   --color-brand-accent-foreground: #0f1925;
-  --color-brand-accent-text: var(--xa-cyan-dark);
+  --color-brand-accent-text: var(--xa-glacier-deep);
   --color-action-primary-background: var(--xa-navy);
   --color-action-primary-foreground: var(--xa-light-card);
   --color-action-primary-hover: var(--xa-navy-hover);
@@ -79,7 +79,7 @@
   --color-text-muted: var(--xa-neutral-muted);
   --color-text-disabled: #5d675f;
   --color-text-inverse: var(--xa-light-card);
-  --color-text-link: var(--xa-cyan-dark);
+  --color-text-link: var(--xa-glacier-deep);
 
   /* Border and focus hierarchy. Default card lines remain intentionally
    * subtle; controls and selected states use stronger dedicated roles. */
@@ -87,9 +87,9 @@
   --color-border-default: var(--xa-light-border);
   --color-border-strong: var(--xa-light-border-strong);
   --color-border-interactive: #7d90a8;
-  --color-border-selected: var(--xa-cyan-dark);
+  --color-border-selected: var(--xa-glacier-deep);
   --color-border-error: #f4c7c3;
-  --color-focus-ring: var(--xa-cyan-dark);
+  --color-focus-ring: var(--xa-glacier-deep);
   --color-focus-ring-offset: var(--xa-light-card);
   --color-focus-ring-error: #b42318;
 
@@ -220,15 +220,15 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* Canonical primitives keep the proven charcoal product surfaces. Navy is
-     * not placed on charcoal: cyan with dark ink becomes the dark primary
-     * action, while lighter cyan is reserved for links and focus. */
-    --color-brand-primary: var(--xa-cyan-highlight);
+     * not placed on charcoal: light glacier with dark ink becomes the dark primary
+     * action, while the lighter glacier is reserved for links and focus. */
+    --color-brand-primary: var(--xa-glacier-light);
     --color-brand-primary-hover: #b4c6dc;
-    --color-brand-accent: var(--xa-cyan);
-    --color-brand-accent-highlight: var(--xa-cyan-highlight);
+    --color-brand-accent: var(--xa-glacier);
+    --color-brand-accent-highlight: var(--xa-glacier-light);
     --color-brand-accent-foreground: #0f1925;
-    --color-brand-accent-text: var(--xa-cyan-highlight);
-    --color-action-primary-background: var(--xa-cyan-highlight);
+    --color-brand-accent-text: var(--xa-glacier-light);
+    --color-action-primary-background: var(--xa-glacier-light);
     --color-action-primary-foreground: #1d2c3d;
     --color-action-primary-hover: #b4c6dc;
     --color-action-secondary-background: #23282c;
@@ -449,7 +449,7 @@ textarea::placeholder {
 }
 
 /* Native checkboxes and radios are "selected" states, not success states. They
- * follow the canonical primary role — navy in light, cyan in dark — so no form
+ * follow the canonical primary role — slate in light, light glacier in dark — so no form
  * control in the product is still tinted with the legacy pine green. */
 input[type="checkbox"],
 input[type="radio"] {
@@ -567,9 +567,9 @@ input[type="radio"] {
 
 /* Selection marker. In the collapsed rail the label — and with it the weight
  * cue — is hidden, so this edge is the only non-colour indicator of the current
- * page and has to clear the 3:1 non-text contrast bar on its own. Raw cyan is
+ * page and has to clear the 3:1 non-text contrast bar on its own. Raw glacier is
  * 2.2:1 on the light selected surface, so the canonical selected-border role is
- * used instead: it is the darker cyan in light mode and stays cyan in dark. */
+ * used instead: it is the deeper glacier in light mode and stays glacier in dark. */
 .app-nav-link[aria-current="page"]::before {
   position: absolute;
   left: 0.25rem;

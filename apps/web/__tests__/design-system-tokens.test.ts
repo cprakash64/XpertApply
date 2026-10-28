@@ -13,9 +13,9 @@ const darkBlock = css.slice(darkStart, css.indexOf("\n  }\n}", darkStart));
 const RAW_TOKENS = [
   "--xa-navy",
   "--xa-navy-hover",
-  "--xa-cyan",
-  "--xa-cyan-highlight",
-  "--xa-cyan-dark",
+  "--xa-glacier",
+  "--xa-glacier-light",
+  "--xa-glacier-deep",
   "--xa-ink",
   "--xa-neutral-secondary",
   "--xa-neutral-muted",
@@ -117,9 +117,9 @@ describe("canonical design tokens", () => {
     const expected = {
       "--xa-navy": "#25364b",
       "--xa-navy-hover": "#1d2c3d",
-      "--xa-cyan": "#6888ad",
-      "--xa-cyan-highlight": "#9bb3cf",
-      "--xa-cyan-dark": "#405f80",
+      "--xa-glacier": "#6888ad",
+      "--xa-glacier-light": "#9bb3cf",
+      "--xa-glacier-deep": "#405f80",
       "--xa-ink": "#20242b",
       "--xa-neutral-secondary": "#596779",
       "--xa-neutral-muted": "#5d6c81",
@@ -145,7 +145,7 @@ describe("canonical design tokens", () => {
   it("keeps the retired legacy accent slate, never green, and independent from canonical cyan", () => {
     expect(declaration(rootBlock, "--accent")).toBe("#25364b");
     expect(declaration(darkBlock, "--accent")).toBe("#9bb3cf");
-    expect(css).not.toMatch(/--accent:\s*var\(--xa-cyan/);
+    expect(css).not.toMatch(/--accent:\s*var\(--xa-glacier/);
   });
 
   it("maps Tailwind semantic aliases to variables, never duplicated hex values", () => {
@@ -198,7 +198,7 @@ describe("canonical contrast contracts", () => {
   });
 
   it("forbids white text on canonical cyan and permits the dedicated accent foreground instead", () => {
-    expect(contrast("#ffffff", resolveHex("--xa-cyan", "light"))).toBeLessThan(4.5);
-    expect(contrast(resolveHex("--color-brand-accent-foreground", "light"), resolveHex("--xa-cyan", "light"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast("#ffffff", resolveHex("--xa-glacier", "light"))).toBeLessThan(4.5);
+    expect(contrast(resolveHex("--color-brand-accent-foreground", "light"), resolveHex("--xa-glacier", "light"))).toBeGreaterThanOrEqual(4.5);
   });
 });
