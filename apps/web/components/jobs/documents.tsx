@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, Loader2, Save, X } from "lucide-react";
 import {
   api,
@@ -11,6 +11,7 @@ import {
   type ResumeContent
 } from "@/lib/api";
 import { Button } from "@/components/ui";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 import { GeneratedResumePreview } from "@/components/GeneratedResumePreview";
 import { GeneratedCoverLetterPreview } from "@/components/GeneratedCoverLetterPreview";
 
@@ -119,6 +120,9 @@ export function DocumentModal({
   onClose: () => void;
 }) {
   const isResume = doc.document_type === "resume";
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, onClose);
   const [mode, setMode] = useState<"preview" | "edit">("preview");
   const [resume, setResume] = useState<ResumeContent>(() => normalizeResume(doc.content));
   const [cover, setCover] = useState<CoverLetterContent>(() => normalizeCover(doc.content));
@@ -180,14 +184,18 @@ export function DocumentModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-surface-overlay p-4" onClick={onClose}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="mx-auto mt-4 flex max-h-[92vh] w-full max-w-[1000px] flex-col overflow-hidden rounded-control bg-surface-card shadow-overlay"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-line-default px-6 py-4">
           <div className="min-w-0">
-            <h3 className="text-xl font-semibold">{isResume ? "Tailored Resume" : "Cover Letter"}</h3>
+            <h3 id={titleId} className="text-xl font-semibold">{isResume ? "Tailored Resume" : "Cover Letter"}</h3>
             <p className="mt-0.5 text-sm text-foreground-secondary">{subtitle}</p>
             <p className="text-xs text-foreground-muted">Generated from your saved profile and this job description.</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -215,7 +223,7 @@ export function DocumentModal({
                 Edit
               </button>
             </div>
-            <button className="ds-focus-ring rounded-control p-2" type="button" onClick={onClose} aria-label="Close document">
+            <button data-autofocus className="ds-focus-ring rounded-control p-2" type="button" onClick={onClose} aria-label="Close document">
               <X className="h-5 w-5" />
             </button>
           </div>

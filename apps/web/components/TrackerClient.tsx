@@ -139,7 +139,7 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
 
   const kinds: TrackerDocumentKind[] = ["resume", "cover_letter"];
   return (
-    <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-label={`Documents for ${application.job.title}`}>
+    <div className="mt-3 grid gap-2 xl:grid-cols-2" aria-label={`Documents for ${application.job.title}`}>
       {kinds.map((kind) => {
         const doc = application.documents?.[kind] ?? null;
         const label = DOCUMENT_LABEL[kind];
@@ -177,7 +177,7 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
                   onClick={() => void download(kind, "docx")}
                   disabled={busy !== null}
                   aria-label={`Download ${label} as Word document`}
-                  className="ds-focus-ring inline-flex min-h-10 items-center rounded-control border border-line-interactive px-3 text-sm font-medium text-foreground-secondary hover:border-line-strong disabled:opacity-60"
+                  className="ds-focus-ring inline-flex min-h-10 items-center whitespace-nowrap rounded-control border border-line-interactive px-3 text-sm font-medium text-foreground-secondary hover:border-line-strong disabled:opacity-60"
                 >
                   Word
                 </button>

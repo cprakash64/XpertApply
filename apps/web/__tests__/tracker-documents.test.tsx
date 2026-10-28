@@ -192,7 +192,7 @@ describe("Tracker document downloads", () => {
     const button = await screen.findByRole("button", { name: /Download resume for/i });
     expect(button.className).toMatch(/min-h-10/);
     expect(screen.getByLabelText(/Documents for Engineer 11/i).className).toMatch(/grid-cols-2/);
-    expect(screen.getByLabelText(/Documents for Engineer 11/i).className).toMatch(/sm:grid-cols-2/);     // one column below sm
+    expect(screen.getByLabelText(/Documents for Engineer 11/i).className).toMatch(/xl:grid-cols-2/);     // one column below xl, so "Download resume" and "Word" never wrap in a squeezed cell
   });
 
   it("changing the status still works with documents present", async () => {

@@ -84,16 +84,16 @@ export function FitBadge({
       <div
         data-fit-tone="none"
         data-score-state={scoreState ?? "pending"}
-        className="w-24 shrink-0 rounded-card border border-line-default bg-surface-subtle px-2 py-2 text-center text-foreground-muted"
+        className="flex w-fit shrink-0 items-center gap-2 rounded-card border border-line-default bg-surface-subtle px-3 py-1.5 text-foreground-muted sm:block sm:w-24 sm:px-2 sm:py-2 sm:text-center"
         title={display.helper}
       >
         <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-secondary">Fit score</p>
         {display.kind === "calculating" ? (
-          <p className="flex h-8 items-center justify-center" aria-label="Calculating fit">
+          <p role="img" className="flex h-6 items-center justify-center sm:h-8" aria-label="Calculating fit">
             <Loader2 className="h-5 w-5 animate-spin" />
           </p>
         ) : (
-          <p className="text-2xl font-bold leading-tight">—</p>
+          <p className="text-xl font-bold leading-tight sm:text-2xl">—</p>
         )}
         <p className="mt-0.5 text-[10px] font-semibold leading-tight">{display.label}</p>
       </div>
@@ -105,11 +105,11 @@ export function FitBadge({
     <div
       data-fit-tone={tone.key}
       data-score-state="scored"
-      className={`w-24 shrink-0 rounded-card border px-2 py-2 text-center ${tone.container}`}
+      className={`flex w-fit shrink-0 items-baseline gap-2 rounded-card border px-3 py-1.5 sm:block sm:w-24 sm:px-2 sm:py-2 sm:text-center ${tone.container}`}
       title={tone.description}
     >
       <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-secondary">Fit score</p>
-      <p className={`text-2xl font-bold leading-tight ${tone.number}`}>{score !== null ? Math.round(score) : "—"}</p>
+      <p className={`text-xl font-bold leading-tight sm:text-2xl ${tone.number}`}>{score !== null ? Math.round(score) : "—"}</p>
       <p className="text-[11px] font-semibold">{label ?? tone.label}</p>
     </div>
   );

@@ -185,7 +185,8 @@ export const JobCard = memo(function JobCard({
         </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line-subtle pt-4">
+      {/* Two even columns on a phone (Apply spans both), a single wrapping row from `sm`. */}
+      <div className="mt-4 grid grid-cols-2 items-center gap-2 border-t border-line-subtle pt-3 sm:mt-5 sm:flex sm:flex-wrap sm:pt-4 [&>*:first-child]:col-span-2 sm:[&>*:first-child]:col-auto">
         <AssistedApplyButton url={job.application_url} onApply={() => actions.onApply(job.id)} />
         <CardAction
           label={trackerStatus ? "Saved" : "Save"}
@@ -230,7 +231,7 @@ function CardAction({
         event.stopPropagation();
         onClick();
       }}
-      className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover disabled:cursor-not-allowed disabled:opacity-50"
+      className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover disabled:cursor-not-allowed disabled:opacity-50"
     >
       {icon}
       {label}
@@ -264,7 +265,7 @@ function PeopleAction({ jobId, onOpen }: { jobId: number; onOpen: () => void }) 
         onOpen();
       }}
       data-people-state={summary.state}
-      className="ds-focus-ring inline-flex h-10 items-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
+      className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
     >
       {summary.state === "loading" ? (
         <Loader2 className="h-4 w-4 animate-spin" />

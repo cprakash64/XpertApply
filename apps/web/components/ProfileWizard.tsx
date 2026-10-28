@@ -38,6 +38,7 @@ import {
 } from "@/lib/careerRecords";
 import { isValidOptionalUrl } from "@/lib/profileUrls";
 import { WIZARD_STEPS } from "@/lib/profileSections";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 import {
   locationQuickOptions,
   roleGroups,
@@ -397,7 +398,7 @@ export function ProfileWizard({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
       <ol className="rounded-control border border-line-default bg-surface-card p-3">
         {steps.map((label, index) => (
           <li key={label}>
@@ -414,7 +415,7 @@ export function ProfileWizard({
         ))}
       </ol>
 
-      <section className="rounded-control border border-line-default bg-surface-card p-5">
+      <section className="min-w-0 rounded-control border border-line-default bg-surface-card p-5">
         <div className="flex flex-col gap-3 border-b border-line-default pb-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-xl font-semibold">{steps[step]}</h2>
@@ -781,6 +782,8 @@ function ImportProfileModal({
 }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, onClose);
 
   async function extract() {
     setLoading(true);
@@ -799,13 +802,19 @@ function ImportProfileModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 p-4">
-      <div className="mx-auto mt-4 flex max-h-[92vh] max-w-[1100px] flex-col overflow-hidden rounded-control bg-surface-card shadow-overlay">
+    <div className="fixed inset-0 z-50 bg-surface-overlay p-4">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import profile from resume"
+        className="mx-auto mt-4 flex max-h-[92vh] max-w-[1100px] flex-col overflow-hidden rounded-control bg-surface-card shadow-overlay"
+      >
         <div className="flex items-start justify-between gap-4 border-b border-line-default bg-surface-card px-5 py-3">
           <p className="text-xs text-foreground-muted">
             We do not log into LinkedIn or scrape your account. You control what you upload or paste.
           </p>
-          <button className="ds-focus-ring rounded-control p-1.5" type="button" onClick={onClose} aria-label="Close import modal">
+          <button data-autofocus className="ds-focus-ring rounded-control p-1.5" type="button" onClick={onClose} aria-label="Close import modal">
             <X className="h-5 w-5" />
           </button>
         </div>

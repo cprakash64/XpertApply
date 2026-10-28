@@ -32,7 +32,7 @@ export function AssistedApplyButton({
         event.stopPropagation();
         onApply();
       }}
-      className={`ds-focus-ring inline-flex ${height} shrink-0 items-center gap-2 rounded-control bg-action-primary text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px`}
+      className={`ds-focus-ring inline-flex ${height} shrink-0 items-center justify-center gap-2 rounded-control bg-action-primary text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px`}
     >
       Apply on official site <ExternalLink aria-hidden className="h-4 w-4" />
     </button>

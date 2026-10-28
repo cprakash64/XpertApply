@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { completeGoogleAuth, finishGoogleLogin } from "@/lib/googleAuth";
@@ -69,10 +70,11 @@ export default function GoogleCallbackPage() {
   }
 
   return <main className="mx-auto flex min-h-screen max-w-lg items-center px-5 py-12">
-    <section className="w-full rounded-[28px] border border-line-default bg-surface-card p-8" aria-labelledby="google-auth-title">
+    <section className="w-full rounded-panel border border-line-default bg-surface-card p-8" aria-labelledby="google-auth-title">
       <h1 id="google-auth-title" className="text-2xl font-semibold">Google sign-in</h1>
       {!error && !linkTicket && <p className="mt-3 text-sm text-foreground-muted" role="status">Finishing your secure sign-in…</p>}
       {error && <p id="google-link-error" ref={errorRef} tabIndex={-1} className="mt-4 break-words rounded-field border border-status-danger-border bg-status-danger-surface p-3 text-sm text-status-danger" role="alert">{error}</p>}
+      {error && !linkTicket && <p className="mt-5 text-sm"><Link href="/login" prefetch={false} className="ds-focus-ring rounded-control font-semibold text-foreground-link underline underline-offset-4">Back to sign in</Link></p>}
       {linkTicket && <form onSubmit={link} noValidate className="mt-5">
         <p className="text-sm text-foreground-muted">This Google sign-in can’t be connected automatically. Enter your existing XpertApply password to connect Google.</p>
         <label htmlFor="google-link-password" className="mt-5 block text-sm font-medium">Password</label>
