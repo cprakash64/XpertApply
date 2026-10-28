@@ -1,14 +1,48 @@
 /**
  * Theme preference: "light", "dark" or "system" (follow the OS).
  *
- * The stored choice lives in localStorage under one key. `public/theme-init.js`
- * resolves it to `data-theme` ("light" | "dark") on <html> before first paint;
- * this module does the same thing after that, for changes made while the page is
- * open. Every read and write is guarded: storage can throw in a private window.
+ * The stored choice lives in localStorage under one key and belongs to the
+ * signed-in application. The public website (homepage, pricing, login, signup,
+ * info and auth pages) is ALWAYS light: `data-theme` on <html> is resolved from
+ * the route first and the preference second, and the stored choice is never
+ * rewritten by visiting a public page.
+ *
+ * `public/theme-init.js` does this resolution before first paint; this module
+ * does the same after that, on route changes and on OS or cross-tab changes. The
+ * two share one rule (the list below), kept in step by a unit test. Every read
+ * and write is guarded: storage can throw in a private window.
  */
 export type ThemePreference = "light" | "dark" | "system";
 
 export const THEME_STORAGE_KEY = "xa-theme";
+
+/**
+ * The signed-in application. Only these routes follow the saved theme; every
+ * other path is public and light. A new top-level app route must be added here
+ * AND to public/theme-init.js (a test compares them).
+ */
+export const THEMED_ROUTE_PREFIXES = [
+  "/dashboard",
+  "/jobs",
+  "/matches",
+  "/tracker",
+  "/profile",
+  "/resume",
+  "/cover-letter",
+  "/application-answers",
+  "/demographics",
+  "/settings",
+  "/design-system-specimen"
+] as const;
+
+export function isThemedPath(pathname: string): boolean {
+  return THEMED_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+/** The theme a path renders in: light on public routes, the preference in the app. */
+export function themeForPath(pathname: string, preference: ThemePreference): "light" | "dark" {
+  return isThemedPath(pathname) ? resolveTheme(preference) : "light";
+}
 const QUERY = "(prefers-color-scheme: dark)";
 
 export function readThemePreference(): ThemePreference {
@@ -30,9 +64,12 @@ export function resolveTheme(preference: ThemePreference): "light" | "dark" {
   }
 }
 
-export function applyThemePreference(preference: ThemePreference): void {
+export function applyThemePreference(
+  preference: ThemePreference,
+  pathname: string = window.location.pathname
+): void {
   const root = document.documentElement;
-  root.setAttribute("data-theme", resolveTheme(preference));
+  root.setAttribute("data-theme", themeForPath(pathname, preference));
   root.setAttribute("data-theme-pref", preference);
 }
 

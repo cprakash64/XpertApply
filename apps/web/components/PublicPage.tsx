@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ThemeControl } from "@/components/ThemeControl";
 import { PRODUCT_NAME } from "@/lib/siteConfig";
 
 /**
@@ -34,12 +33,9 @@ export function PublicPage({
           <Link href="/" prefetch={false} aria-label={`${PRODUCT_NAME} home`} className="ds-focus-ring rounded-control">
             <BrandLogo size={36} />
           </Link>
-          <div className="flex items-center gap-3">
-            <ThemeControl />
-            <Link href="/signup" className="ds-focus-ring rounded-control bg-action-primary px-4 py-2 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover">
-              Get started
-            </Link>
-          </div>
+          <Link href="/signup" className="ds-focus-ring rounded-control bg-action-primary px-4 py-2 text-sm font-semibold text-action-primary-foreground hover:bg-action-primary-hover">
+            Get started
+          </Link>
         </div>
       </header>
 

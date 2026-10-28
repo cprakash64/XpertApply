@@ -334,6 +334,16 @@ describe("marketing homepage", () => {
     });
   });
 
+  describe("no theme switcher on the public website", () => {
+    it("has no theme control in the navbar or the mobile menu", async () => {
+      const { container } = renderLanding();
+      expect(screen.queryByRole("radiogroup", { name: "Theme" })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      expect(container.querySelector("#xa-mobile-menu [role=radiogroup]")).toBeNull();
+      expect(container.querySelector(".theme-ctl")).toBeNull();
+    });
+  });
+
   describe("pricing is not in the navigation", () => {
     it("has no Pricing entry in the header navigation, desktop or mobile", async () => {
       const { container } = renderLanding();

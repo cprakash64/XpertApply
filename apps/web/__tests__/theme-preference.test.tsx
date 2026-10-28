@@ -12,8 +12,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ThemeControl } from "../components/ThemeControl";
-import { applyThemePreference, readThemePreference, resolveTheme } from "../lib/theme";
+import { ThemeControl, ThemeSync } from "../components/ThemeControl";
+import {
+  THEMED_ROUTE_PREFIXES,
+  applyThemePreference,
+  isThemedPath,
+  readThemePreference,
+  resolveTheme,
+  themeForPath
+} from "../lib/theme";
+
+let mockPathname = "/dashboard";
+vi.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
 
 const initScript = readFileSync(join(__dirname, "../public/theme-init.js"), "utf8");
 const root = () => document.documentElement;
@@ -29,6 +39,8 @@ function stubOsDark(dark: boolean) {
 
 beforeEach(() => {
   localStorage.clear();
+  mockPathname = "/dashboard";
+  window.history.pushState({}, "", "/dashboard"); // the signed-in app, where the preference applies
   root().removeAttribute("data-theme");
   root().removeAttribute("data-theme-pref");
   stubOsDark(false);
@@ -127,5 +139,84 @@ describe("theme control", () => {
     render(React.createElement("div", null, React.createElement(ThemeControl), React.createElement(ThemeControl)));
     await userEvent.click(screen.getAllByRole("radio", { name: "Light theme" })[0]);
     for (const radio of screen.getAllByRole("radio", { name: "Light theme" })) expect(radio).toBeChecked();
+  });
+});
+
+const PUBLIC_PATHS = ["/", "/login", "/signup", "/pricing", "/privacy", "/opensource", "/auth/google/callback", "/not-a-page"];
+const APP_PATHS = ["/dashboard", "/jobs", "/jobs/12", "/tracker", "/profile/personal", "/settings", "/resume", "/cover-letter"];
+
+describe("the public website is always light", () => {
+  it("classifies routes: only the signed-in application is themed", () => {
+    for (const path of PUBLIC_PATHS) expect(isThemedPath(path), path).toBe(false);
+    for (const path of APP_PATHS) expect(isThemedPath(path), path).toBe(true);
+    // A prefix must not match a longer public path ("/jobsearch" is not "/jobs").
+    expect(isThemedPath("/jobsearch")).toBe(false);
+  });
+
+  it("renders light on every public path for every saved choice and OS setting", () => {
+    for (const path of PUBLIC_PATHS)
+      for (const pref of ["light", "dark", "system"] as const)
+        for (const osDark of [true, false]) {
+          stubOsDark(osDark);
+          expect(themeForPath(path, pref), `${path} ${pref} os-dark=${osDark}`).toBe("light");
+        }
+  });
+
+  it("applies the saved choice inside the app", () => {
+    stubOsDark(true);
+    expect(themeForPath("/dashboard", "dark")).toBe("dark");
+    expect(themeForPath("/dashboard", "light")).toBe("light");
+    expect(themeForPath("/dashboard", "system")).toBe("dark");
+    stubOsDark(false);
+    expect(themeForPath("/dashboard", "system")).toBe("light");
+  });
+
+  it("theme-init.js agrees with lib/theme on every route, choice and OS setting", () => {
+    for (const path of [...PUBLIC_PATHS, ...APP_PATHS])
+      for (const stored of [null, "light", "dark"] as const)
+        for (const osDark of [true, false]) {
+          localStorage.clear();
+          if (stored) localStorage.setItem("xa-theme", stored);
+          window.history.pushState({}, "", path);
+          stubOsDark(osDark);
+          new Function(initScript)();
+          expect(root().getAttribute("data-theme"), `${path} stored=${stored} os-dark=${osDark}`).toBe(
+            themeForPath(path, stored ?? "system")
+          );
+        }
+  });
+
+  it("keeps the init script's route list identical to THEMED_ROUTE_PREFIXES", () => {
+    const listed = /var themed = (\[[^\]]*\]);/.exec(initScript)?.[1];
+    expect(JSON.parse(listed ?? "[]")).toEqual([...THEMED_ROUTE_PREFIXES]);
+  });
+
+  it("never rewrites the saved choice by visiting a public page", () => {
+    localStorage.setItem("xa-theme", "dark");
+    window.history.pushState({}, "", "/");
+    new Function(initScript)();
+    applyThemePreference(readThemePreference());
+    expect(localStorage.getItem("xa-theme")).toBe("dark");
+    expect(root().getAttribute("data-theme")).toBe("light");
+    expect(root().getAttribute("data-theme-pref")).toBe("dark");
+  });
+
+  it("ThemeSync re-resolves on client navigation between public and app routes", () => {
+    localStorage.setItem("xa-theme", "dark");
+    mockPathname = "/dashboard";
+    window.history.pushState({}, "", "/dashboard");
+    const view = render(React.createElement(ThemeSync));
+    expect(root().getAttribute("data-theme")).toBe("dark");
+
+    mockPathname = "/login"; // log out
+    window.history.pushState({}, "", "/login");
+    view.rerender(React.createElement(ThemeSync));
+    expect(root().getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("xa-theme")).toBe("dark");
+
+    mockPathname = "/jobs"; // log back in
+    window.history.pushState({}, "", "/jobs");
+    view.rerender(React.createElement(ThemeSync));
+    expect(root().getAttribute("data-theme")).toBe("dark");
   });
 });

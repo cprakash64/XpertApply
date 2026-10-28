@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { PRODUCT_NAME } from "@/lib/siteConfig";
 import { BrandWordmark } from "@/components/marketing/BrandWordmark";
-import { ThemeControl } from "@/components/ThemeControl";
 
 /**
  * The floating navigation bar.
@@ -103,7 +102,6 @@ export function MarketingNavbar() {
             </nav>
 
             <div className="xa-nav__actions">
-            <ThemeControl className="xa-nav__theme" />
               <Link href="/login" className="xa-nav__link">
                 Sign in
               </Link>
@@ -146,8 +144,7 @@ export function MarketingNavbar() {
                   </a>
                 ))}
               </nav>
-              <ThemeControl className="xa-nav__panel-theme" />
-            <div className="xa-nav__panel-actions">
+              <div className="xa-nav__panel-actions">
                 <Link href="/login" onClick={close} className="xa-btn xa-btn--ghost">
                   Sign in
                 </Link>

@@ -10,7 +10,6 @@ import { beginGoogleAuth } from "@/lib/googleAuth";
 import { mapAuthError, validatePasswordAuth } from "@/lib/authErrors";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ThemeControl } from "@/components/ThemeControl";
 
 export type AuthMode = "login" | "signup";
 
@@ -269,8 +268,7 @@ export function AuthDialog({
 
   if (presentation === "page") {
     return (
-      <main className="relative grid min-h-screen place-items-center px-4 py-10">
-        <ThemeControl className="absolute right-4 top-4" />
+      <main className="grid min-h-screen place-items-center px-4 py-10">
         {card}
       </main>
     );

@@ -2102,7 +2102,6 @@ html:has(.xa-page) {
 .xa-story,
 .xa-hero::before { background: var(--xa-page); }
 html:has(.xa-page) { background: #ffffff; }
-:root[data-theme="dark"]:has(.xa-page) { background: #101a28; }
 
 /* --- Navigation: a floating bar that frosts once the page scrolls ---------- */
 .xa-nav-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 24px; pointer-events: none; }
@@ -2337,8 +2336,9 @@ html:has(.xa-page) { background: #ffffff; }
 .xa-hero { overflow: visible; }
 
 /* ==========================================================================
- * Theme (PUI-THEME-01): the page's own roles, light and dark.
- * Light is the default; dark applies under data-theme="dark" on <html>.
+ * Page roles (PUI-LIGHT-01). The public website is always light, so there is no
+ * dark value set here; the roles exist so every surface, border and text colour
+ * is named once.
  * ========================================================================== */
 .xa-theme {
   --xa-page: #ffffff;
@@ -2358,51 +2358,3 @@ html:has(.xa-page) { background: #ffffff; }
   --xa-halo-3: rgb(234 242 250 / 16%);
   color-scheme: light;
 }
-:root[data-theme="dark"] .xa-theme {
-  --xa-navy: #edf3fa;
-  --xa-navy-2: #ffffff;
-  --xa-ink: #edf3fa;
-  --xa-body: #aabbd0;
-  --xa-muted: #91a5bd;
-  --xa-glacier: #8db6d8;
-  --xa-accent-text: #8db6d8;
-  --xa-glacier-soft: #8db6d8;
-  --xa-page: #101a28;
-  --xa-surface: #1a2839;
-  --xa-surface-sunken: #162233;
-  --xa-tint: rgb(141 182 216 / 14%);
-  --xa-line: rgb(237 243 250 / 12%);
-  --xa-line-soft: rgb(237 243 250 / 8%);
-  --xa-line-strong: #40536a;
-  --xa-line-solid: #2d3f55;
-  --xa-glass: #1a2839;
-  --xa-glass-border: #33465d;
-  --xa-on-navy: #101a28;
-  --xa-btn-bg: #8db6d8;
-  --xa-btn-bg-hover: #a6c7e2;
-  --xa-section-dark: #0b1422;
-  --xa-nav-bg: rgb(26 40 57 / 96%);
-  --xa-nav-bg-scrolled: rgb(26 40 57 / 76%);
-  --xa-nav-bg-over-dark: rgb(26 40 57 / 90%);
-  --xa-halo-1: rgb(141 182 216 / 15%);
-  --xa-halo-2: rgb(141 182 216 / 8%);
-  --xa-halo-3: rgb(141 182 216 / 3%);
-  --xa-shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
-  --xa-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 28%);
-  --xa-shadow-lg: 0 2px 6px rgb(0 0 0 / 30%), 0 28px 70px rgb(0 0 0 / 35%);
-  color-scheme: dark;
-}
-:root[data-theme="dark"] .xa-btn--onnavy { background: #8db6d8; color: #101a28; }
-:root[data-theme="dark"] .xa-btn--onnavy:hover { background: #a6c7e2; color: #101a28; }
-:root[data-theme="dark"] .xa-nav { box-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 28%); }
-:root[data-theme="dark"] .xa-nav__link:hover { background: none; }
-:root[data-theme="dark"] .xa-vis__mat img { filter: drop-shadow(0 12px 24px rgb(0 0 0 / 35%)); }
-
-/* Theme control placement inside the marketing bar. */
-.xa-nav__theme { margin-right: 6px; }
-.xa-nav__panel-theme { margin: 4px 0 12px; align-self: flex-start; }
-
-/* Story screenshots: the theme picks the light or the dark capture. */
-.xa-vis__img-dark { display: none !important; }
-:root[data-theme="dark"] .xa-vis__img-light { display: none !important; }
-:root[data-theme="dark"] .xa-vis__img-dark { display: block !important; }

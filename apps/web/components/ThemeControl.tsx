@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { Monitor, Moon, Sun } from "lucide-react";
-import { readThemePreference, setThemePreference, watchTheme, type ThemePreference } from "@/lib/theme";
+import {
+  applyThemePreference,
+  readThemePreference,
+  setThemePreference,
+  watchTheme,
+  type ThemePreference
+} from "@/lib/theme";
 
 const OPTIONS: { value: ThemePreference; label: string; Icon: typeof Sun }[] = [
   { value: "light", label: "Light theme", Icon: Sun },
@@ -58,8 +65,21 @@ export function ThemeControl({ className = "" }: { className?: string }) {
   );
 }
 
-/** Keeps the page in step with OS and cross-tab changes when no control is mounted. */
+// useLayoutEffect on the client so a route change is themed before it paints;
+// on the server there is nothing to do, so the effect variant avoids the warning.
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * Keeps data-theme correct across client-side navigation and OS or cross-tab
+ * changes. The public website is always light and the signed-in app follows the
+ * saved choice, so moving between them (log in, log out) must re-resolve the
+ * theme; the saved choice itself is only read, never rewritten.
+ */
 export function ThemeSync() {
+  const pathname = usePathname();
+  useIsomorphicLayoutEffect(() => {
+    applyThemePreference(readThemePreference(), pathname);
+  }, [pathname]);
   useEffect(() => watchTheme(), []);
   return null;
 }

@@ -9,6 +9,10 @@ import { FinalCta } from "@/components/marketing/FinalCta";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { PricingProvider } from "@/components/marketing/PricingDialog";
 import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
+import { publicViewport } from "@/lib/publicViewport";
+
+/** The public website is always light. */
+export const viewport = publicViewport;
 
 /**
  * The public marketing homepage.

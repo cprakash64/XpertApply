@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { PublicPage } from "@/components/PublicPage";
+import { publicViewport } from "@/lib/publicViewport";
+
+/** The public website is always light. */
+export const viewport = publicViewport;
 
 export const metadata: Metadata = {
   title: "Open source",
