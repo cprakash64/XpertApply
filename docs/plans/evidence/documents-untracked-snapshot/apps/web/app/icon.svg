@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="XpertApply">
+  <!--
+    The XpertApply mark as a browser-tab icon.
+
+    A filled indigo tile with a knocked-out glyph, because a favicon is rendered
+    at 16px against a tab strip of unknown colour: an outline mark on a
+    transparent background disappears there, while a solid tile holds its shape.
+    The colour is the light-theme --accent literal — an SVG favicon cannot read a
+    CSS variable, and the tile must look identical in both browser themes.
+  -->
+  <rect width="32" height="32" rx="7.5" fill="#4338ca"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.5 9.5 22.5 22.5" opacity=".4"/>
+    <path d="M9.5 22.5 22.5 9.5"/>
+    <path d="M16.5 9.5H22.5V15.5"/>
+  </g>
+</svg>
