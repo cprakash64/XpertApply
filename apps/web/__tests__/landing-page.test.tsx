@@ -14,13 +14,14 @@
  *      six-stage workflow are product claims, not decoration.
  *   4. The pricing overlay behaves like a dialog.
  */
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage, { metadata as landingMetadata } from "../app/page";
 import { metadata as rootMetadata } from "../app/layout";
 import { WORKFLOW_STAGES } from "../components/marketing/workflowStages";
+import { PricingProvider, PricingTrigger } from "../components/marketing/PricingDialog";
 
 const STORE_URL = "https://chromewebstore.google.com/detail/xpertapply/abcdefghijklmnopabcdefghijklmnop";
 
@@ -299,9 +300,59 @@ describe("marketing homepage", () => {
     });
   });
 
+  describe("pricing is not in the navigation", () => {
+    it("has no Pricing entry in the header navigation, desktop or mobile", async () => {
+      const { container } = renderLanding();
+      const header = container.querySelector(".xa-navwrap") as HTMLElement;
+      expect(within(header).queryByText("Pricing")).toBeNull();
+      expect(within(header).queryByRole("button", { name: "Pricing" })).toBeNull();
+      expect(within(header).queryByRole("link", { name: "Pricing" })).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const panel = container.querySelector("#xa-mobile-menu") as HTMLElement;
+      expect(within(panel).queryByText("Pricing")).toBeNull();
+      // The three remaining destinations and both account actions survive.
+      expect(within(panel).getAllByRole("link").map((l) => l.textContent)).toEqual([
+        "Product", "Extension", "Security", "Sign in", "Get started →"
+      ]);
+    });
+
+    it("marks the bar scrolled when the top sentinel leaves the viewport", () => {
+      // The story also observes elements; pick the observer attached to the sentinel.
+      let callback: IntersectionObserverCallback = () => undefined;
+      vi.stubGlobal("IntersectionObserver", class {
+        private cb: IntersectionObserverCallback;
+        constructor(cb: IntersectionObserverCallback) { this.cb = cb; }
+        observe(target: Element) {
+          if (target.classList.contains("xa-nav-sentinel")) callback = this.cb;
+        }
+        unobserve() {}
+        disconnect() {}
+        takeRecords() { return []; }
+      });
+      const { container } = renderLanding();
+      const bar = container.querySelector(".xa-navwrap") as HTMLElement;
+      expect(bar).toHaveAttribute("data-scrolled", "false");
+      act(() => callback([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
+      expect(bar).toHaveAttribute("data-scrolled", "true");
+      act(() => callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+      expect(bar).toHaveAttribute("data-scrolled", "false");
+    });
+  });
+
+  /*
+   * The dialog and its /pricing page remain (pricing is undecided, not deleted),
+   * but the header no longer opens it. It is exercised through its own trigger.
+   */
+  function renderDialog() {
+    return render(
+      React.createElement(PricingProvider, null, React.createElement(PricingTrigger, { className: "x", children: "Pricing" }))
+    );
+  }
+
   describe("pricing dialog", () => {
-    it("opens from the navigation as a modal dialog and closes on Escape", async () => {
-      renderLanding();
+    it("opens from its trigger as a modal dialog and closes on Escape", async () => {
+      renderDialog();
 
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
@@ -331,14 +382,14 @@ describe("marketing homepage", () => {
      * in review.
      */
     it("carries the brand token scope on its own root", async () => {
-      renderLanding();
+      renderDialog();
 
       await userEvent.click(screen.getAllByRole("button", { name: "Pricing" })[0]);
       expect(document.querySelector(".xa-pricing__backdrop")).toHaveClass("xa-theme");
     });
 
     it("closes from its own close button", async () => {
-      renderLanding();
+      renderDialog();
 
       await userEvent.click(screen.getAllByRole("button", { name: "Pricing" })[0]);
       await userEvent.click(screen.getByRole("button", { name: "Close pricing" }));
@@ -347,7 +398,7 @@ describe("marketing homepage", () => {
     });
 
     it("links only to real routes: signup and the pricing page", async () => {
-      renderLanding();
+      renderDialog();
 
       await userEvent.click(screen.getAllByRole("button", { name: "Pricing" })[0]);
       const dialog = screen.getByRole("dialog");

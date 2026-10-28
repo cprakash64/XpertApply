@@ -2135,23 +2135,50 @@ html:has(.xa-page) {
 .xa-hero::before { background: #fff; }
 html:has(.xa-page) { background: #fff; }
 
-/* --- Navigation: one flat bar with a hairline, no floating shell ---------- */
+/* --- Navigation: a floating bar that frosts once the page scrolls ---------- */
+.xa-nav-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 24px; pointer-events: none; }
 .xa-navwrap {
-  top: 0;
-  margin-top: 0;
-  padding: 0;
-  pointer-events: auto;
-  border-bottom: 1px solid #dfe5ed;
-  background: #fff;
-}
-.xa-nav {
-  width: 100%;
-  min-height: 72px;
+  top: max(14px, env(safe-area-inset-top));
+  margin-top: max(14px, env(safe-area-inset-top));
   padding: 0;
   border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  background: none;
+  pointer-events: none;
+}
+.xa-nav {
+  pointer-events: auto;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 10px 0 20px;
+  border: 1px solid #dfe5ed;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 1px 2px rgb(23 40 63 / 4%), 0 10px 28px rgb(23 40 63 / 6%);
+  transition: background-color 220ms ease, border-color 220ms ease, box-shadow 220ms ease,
+    backdrop-filter 220ms ease;
+}
+/* Scrolled: translucent, frosted, quieter elevation. Opacity stays high enough that
+ * Midnight Ink text keeps at least 7:1 over any section, including the navy one. */
+.xa-navwrap[data-scrolled="true"] .xa-nav {
+  background: rgb(255 255 255 / 90%);
+  border-color: rgb(223 229 237 / 80%);
+  box-shadow: 0 1px 2px rgb(23 40 63 / 3%), 0 6px 20px rgb(23 40 63 / 5%);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
+}
+/* No backdrop-filter support, or the user asked for less transparency: solid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .xa-navwrap[data-scrolled="true"] .xa-nav { background: rgb(255 255 255 / 98%); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .xa-navwrap[data-scrolled="true"] .xa-nav {
+    background: #fff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xa-nav { transition: none; }
 }
 .xa-wordmark { font-size: 1.3rem; gap: 10px; }
 .xa-wordmark > img { width: 40px; height: 40px; }
@@ -2164,7 +2191,15 @@ html:has(.xa-page) { background: #fff; }
 .xa-btn--ghost { border-color: #dfe5ed; color: var(--xa-navy); }
 .xa-btn--ghost:hover { border-color: var(--xa-glacier); color: var(--xa-glacier); transform: none; }
 .xa-nav__actions .xa-btn { padding-inline: 20px; }
-.xa-nav__panel { border-radius: 0 0 16px 16px; box-shadow: none; border-color: #dfe5ed; }
+/* The expanded mobile menu is always solid, whatever the bar behind it is doing. */
+.xa-nav__panel {
+  margin-top: 8px;
+  border: 1px solid #dfe5ed;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(23 40 63 / 10%);
+  pointer-events: auto;
+}
 
 /* --- Hero: centred, dominant type ----------------------------------------- */
 .xa-hero {
@@ -2201,7 +2236,8 @@ html:has(.xa-page) { background: #fff; }
   .xa-hero__lede { font-size: 19px; }
 }
 @media (max-width: 680px) {
-  .xa-nav { min-height: 64px; padding: 0; }
+  .xa-navwrap > .xa-shell { width: min(calc(100% - 24px), 1220px); }
+  .xa-nav { min-height: 58px; padding: 0 8px 0 14px; border-radius: 14px; }
   .xa-wordmark > img { width: 36px; height: 36px; }
   .xa-hero { padding-top: 48px; min-height: 0; }
   .xa-hero .xa-cta-row .xa-btn { width: 100%; }
@@ -2287,3 +2323,28 @@ html:has(.xa-page) { background: #fff; }
 .xa-stage__index, .xa-stage__index em { color: var(--xa-glacier); }
 /* Sapphire on the tinted step badge is 4.08:1; Midnight Ink clears AA. */
 .xa-ext__step-n { color: var(--xa-navy); }
+
+/* Hero light: one broad, diffused ice-blue halo behind the headline. A single
+ * radial layer, no blur filter and no animation; it sits below all content and
+ * fades to fully transparent well inside the hero, so it has no edge. */
+.xa-hero::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 46%;
+  width: min(1320px, 160%);
+  height: 640px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    rgb(200 219 236 / 55%) 0%,
+    rgb(221 234 245 / 36%) 40%,
+    rgb(234 242 250 / 16%) 70%,
+    rgb(234 242 250 / 0%) 100%
+  );
+}
+@media (max-width: 680px) {
+  .xa-hero::after { top: 40%; width: 170%; height: 420px; }
+}
