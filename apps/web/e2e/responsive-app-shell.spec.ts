@@ -327,19 +327,16 @@ test("XpertApply shell visuals stay semantic across themes and responsive modes"
       return {
         foreground: getComputedStyle(element).color,
         expectedForeground: root.getPropertyValue("--color-brand-primary").trim(),
-        surface: getComputedStyle(element).backgroundColor,
-        expectedSurface: root.getPropertyValue("--color-surface-selected").trim()
+        surface: getComputedStyle(element).backgroundColor
       };
     })).toEqual(colorScheme === "light" ? {
-      foreground: "rgb(6, 36, 92)",
-      expectedForeground: "#06245c",
-      surface: "rgba(20, 184, 196, 0.1)",
-      expectedSurface: "rgb(20 184 196/10%)"
+      foreground: "rgb(37, 54, 75)",
+      expectedForeground: "#25364b",
+      surface: "rgb(234, 240, 247)"
     } : {
-      foreground: "rgb(20, 184, 196)",
-      expectedForeground: "#14b8c4",
-      surface: "rgba(20, 184, 196, 0.14)",
-      expectedSurface: "rgb(20 184 196/14%)"
+      foreground: "rgb(155, 179, 207)",
+      expectedForeground: "#9bb3cf",
+      surface: "rgba(104, 136, 173, 0.18)"
     });
     await capture(page, `${colorScheme}-desktop-expanded`);
 

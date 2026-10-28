@@ -79,7 +79,7 @@ describe("retired pine brand utilities", () => {
    *
    * So the rule is about USE, not existence, and it has no exemptions: after
    * the public entry surfaces were migrated, zero call sites remain anywhere in
-   * the runtime. Green still means success, the emerald fit bands are
+   * the runtime. Green still means success, the fit bands were
    * untouched, and vendor colours are unaffected — this forbids exactly one
    * thing, the old brand green standing in for XpertApply.
    */

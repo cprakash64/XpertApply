@@ -179,18 +179,14 @@ describe("no hard-coded colours in components", () => {
 describe("fit-score colours", () => {
   const fitScore = readFileSync(join(ROOT, "lib/fitScore.ts"), "utf8");
 
-  it("keeps the same hue per band in both themes", () => {
-    // The colour carries the score's meaning; only lightness may change.
-    expect(fitScore).toMatch(/border-emerald-300[^"]*dark:border-emerald-\d+/);
-    expect(fitScore).toMatch(/border-lime-300[^"]*dark:border-lime-\d+/);
-    expect(fitScore).toMatch(/border-orange-300[^"]*dark:border-orange-\d+/);
-    expect(fitScore).toMatch(/border-red-300[^"]*dark:border-red-\d+/);
+  it("resolves every band through semantic tokens, with no dark: overrides", () => {
+    expect(fitScore).not.toMatch(/dark:[a-z]/);
+    expect(fitScore).not.toMatch(/(?:bg|text|border)-(?:emerald|lime|orange|red|green|amber)-\d/);
   });
 
-  it("still maps the documented score bands to the documented hues", () => {
-    expect(fitScore).toMatch(/strong:\s*\{[\s\S]*?emerald/);
-    expect(fitScore).toMatch(/good:\s*\{[\s\S]*?lime/);
-    expect(fitScore).toMatch(/stretch:\s*\{[\s\S]*?orange/);
-    expect(fitScore).toMatch(/low:\s*\{[\s\S]*?red/);
+  it("still defines all four scored bands and the unscored tone", () => {
+    for (const key of ["strong", "good", "stretch", "low", "none"]) {
+      expect(fitScore).toMatch(new RegExp(`${key}:\\s*\\{`));
+    }
   });
 });

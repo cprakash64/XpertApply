@@ -1,22 +1,19 @@
 /**
  * Fit-score visual tone.
  *
- * Maps a 0–100 fit score to a color theme + label so the score card instantly
- * communicates likelihood:
+ * Maps a 0–100 fit score to a tone + label. The band is carried by the LABEL
+ * and the number, never by hue alone: the scale is a single slate/glacier
+ * family that steps from emphasised (strong) to quiet (low), so no band reads
+ * as traffic-light green, amber or red, and a colour-blind user loses nothing.
  *
- *   >= 80  green        "Strong fit"
- *   60–79  lime         "Good fit"    (yellow-green — decent, not as strong as green)
- *   45–59  orange       "Stretch"     (warning — noticeably weaker than 60–79)
- *   < 45   red          "Low fit"
+ *   >= 80  "Strong fit"   selected surface, brand border, brand number
+ *   60–79  "Good fit"     subtle surface, interactive border, link-coloured number
+ *   45–59  "Stretch"      subtle surface, default border, secondary number
+ *   < 45   "Low fit"      subtle surface, default border, muted number
  *
- * Dark mode keeps the SAME HUE per band — the colour carries the score's
- * meaning and must not change between themes. Only lightness is adjusted, so
- * the label stays readable on a dark surface (WCAG AA).
- *
- * IMPORTANT: the class strings below are STATIC and use standard Tailwind
- * palette utilities. They must never be built dynamically (e.g. `bg-${c}-50`)
- * or Tailwind's compiler cannot see them and the colors get purged. This file
- * is included in tailwind.config `content` so these literals are compiled.
+ * Every class resolves through a semantic token that already has a light and a
+ * dark value, so no `dark:` variants are needed. The class strings are STATIC
+ * so Tailwind's compiler can see them; never build them dynamically.
  */
 
 export type FitToneKey = "strong" | "good" | "stretch" | "low" | "none";
@@ -34,30 +31,26 @@ export type FitScoreTone = {
 export const FIT_SCORE_STYLES: Record<FitToneKey, Omit<FitScoreTone, "key">> = {
   strong: {
     label: "Strong fit",
-    container:
-      "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-50",
-    number: "text-emerald-700 dark:text-emerald-300",
+    container: "border-line-selected bg-surface-selected text-foreground",
+    number: "text-brand-primary",
     description: "Your profile strongly matches this role."
   },
   good: {
     label: "Good fit",
-    container:
-      "border-lime-300 bg-lime-50 text-lime-950 dark:border-lime-700 dark:bg-lime-950 dark:text-lime-50",
-    number: "text-lime-700 dark:text-lime-300",
+    container: "border-line-interactive bg-surface-subtle text-foreground",
+    number: "text-foreground-link",
     description: "A decent chance with a few gaps to address."
   },
   stretch: {
     label: "Stretch",
-    container:
-      "border-orange-300 bg-orange-50 text-orange-950 dark:border-orange-700 dark:bg-orange-950 dark:text-orange-50",
-    number: "text-orange-700 dark:text-orange-300",
+    container: "border-line-default bg-surface-subtle text-foreground",
+    number: "text-foreground-secondary",
     description: "A stretch — expect notable skill gaps."
   },
   low: {
     label: "Low fit",
-    container:
-      "border-red-300 bg-red-50 text-red-950 dark:border-red-700 dark:bg-red-950 dark:text-red-50",
-    number: "text-red-700 dark:text-red-300",
+    container: "border-line-default bg-surface-subtle text-foreground-secondary",
+    number: "text-foreground-muted",
     description: "This role is far from your current profile."
   },
   none: {

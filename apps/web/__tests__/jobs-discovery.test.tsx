@@ -643,12 +643,15 @@ describe("JobDiscovery", () => {
     };
     const strong = await badge("Strong Role");
     expect(strong).toHaveAttribute("data-fit-tone", "strong");
-    expect(strong.className).toContain("bg-emerald-50");
+    expect(strong.className).toContain("bg-surface-selected");
     const good = await badge("Good Role");
-    expect(good.className).toContain("bg-lime-50"); // yellow-green, not red-leaning
-    expect(good.className).not.toContain("red");
-    expect((await badge("Stretch Role")).className).toContain("bg-orange-50");
-    expect((await badge("Low Role")).className).toContain("bg-red-50");
+    expect(good).toHaveAttribute("data-fit-tone", "good");
+    expect((await badge("Stretch Role"))).toHaveAttribute("data-fit-tone", "stretch");
+    expect((await badge("Low Role"))).toHaveAttribute("data-fit-tone", "low");
+    // The band is carried by the label and number, never a traffic-light hue.
+    for (const el of [strong, good]) {
+      expect(el.className).not.toMatch(/emerald|lime|orange|red|green|amber/);
+    }
     expect(within(strong).getByText("88")).toBeInTheDocument();
     // No colored top strip element inside any badge.
     expect(strong.querySelector("[class*='h-1.5']")).toBeNull();

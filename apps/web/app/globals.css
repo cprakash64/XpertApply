@@ -61,9 +61,9 @@
   --color-action-secondary-border: var(--xa-light-border-strong);
   --color-action-ghost-foreground: var(--xa-neutral-secondary);
   --color-action-ghost-hover: var(--xa-light-page);
-  --color-action-destructive-background: #9f3d28;
+  --color-action-destructive-background: #b42318;
   --color-action-destructive-foreground: #ffffff;
-  --color-action-destructive-hover: #7f2f1e;
+  --color-action-destructive-hover: #912018;
 
   /* Product surfaces and text. */
   --color-surface-page: var(--xa-light-page);
@@ -88,10 +88,10 @@
   --color-border-strong: var(--xa-light-border-strong);
   --color-border-interactive: #7d90a8;
   --color-border-selected: var(--xa-cyan-dark);
-  --color-border-error: #f0b4a4;
+  --color-border-error: #f4c7c3;
   --color-focus-ring: var(--xa-cyan-dark);
   --color-focus-ring-offset: var(--xa-light-card);
-  --color-focus-ring-error: #9f3d28;
+  --color-focus-ring-error: #b42318;
 
   /* Status is independent from brand. Existing accessible product families
    * are retained, with an explicit cool-blue information family. */
@@ -107,10 +107,10 @@
   --color-status-warning: #7a5d12;
   --color-status-warning-surface: #fff9e8;
   --color-status-warning-border: #ead191;
-  --color-status-danger: #9f3d28;
-  --color-status-danger-strong: #7f2f1e;
-  --color-status-danger-surface: #fff3ef;
-  --color-status-danger-border: #f0b4a4;
+  --color-status-danger: #b42318;
+  --color-status-danger-strong: #912018;
+  --color-status-danger-surface: #fef3f2;
+  --color-status-danger-border: #f4c7c3;
 
   /* Loading placeholders. A dedicated role rather than a border colour: a
    * skeleton has to stay perceivable on the page, on a card, and on a tinted
@@ -181,20 +181,11 @@
   --border: var(--color-border-default);
   --border-strong: var(--color-border-interactive);
 
-  /* The pre-migration brand green.
-   *
-   * It is NOT the brand any more — brand is navy in light and cyan in dark,
-   * and nothing in the runtime references `--accent` or `--accent-hover`; the
-   * `pine` Tailwind alias likewise has zero call sites. Both names stay
-   * defined deliberately: `--accent-foreground` is still the paired foreground
-   * for the green *success* fill behind "Mark as applied", and deleting the
-   * palette name would turn a stray `bg-pine` into a class that silently does
-   * nothing instead of a test failure.
-   *
-   * `design-system-contracts.test.ts` forbids using any of them. Green in this
-   * product now means success, a fit band, or a vendor — never XpertApply. */
-  --accent: #1f5e45;
-  --accent-hover: #174935;
+  /* Legacy accent aliases. Retired: nothing in the runtime references them, and
+   * `design-system-contracts.test.ts` forbids using them. They are kept as
+   * slate (never green) so a stray `bg-accent` cannot reintroduce a green. */
+  --accent: #25364b;
+  --accent-hover: #1d2c3d;
   --accent-foreground: #ffffff;
 
   /* Focus. One ring for the whole product: the legacy `.focus-ring` helper and
@@ -245,9 +236,9 @@
     --color-action-secondary-border: #4a5357;
     --color-action-ghost-foreground: #c3cbc5;
     --color-action-ghost-hover: #21262a;
-    --color-action-destructive-background: #f08a70;
+    --color-action-destructive-background: #f2877f;
     --color-action-destructive-foreground: #08182f;
-    --color-action-destructive-hover: #f5a692;
+    --color-action-destructive-hover: #f6a39d;
 
     --color-surface-page: #14171a;
     --color-surface-shell: #1b1f22;
@@ -269,10 +260,10 @@
     --color-border-strong: #4a5357;
     --color-border-interactive: #647075;
     --color-border-selected: #6888ad;
-    --color-border-error: #6b3527;
+    --color-border-error: #6b2b27;
     --color-focus-ring: #9bb3cf;
     --color-focus-ring-offset: #1b1f22;
-    --color-focus-ring-error: #f08a70;
+    --color-focus-ring-error: #f2877f;
 
     --color-status-neutral: #c3cbc5;
     --color-status-neutral-surface: #21262a;
@@ -286,10 +277,10 @@
     --color-status-warning: #e0b95f;
     --color-status-warning-surface: #2b2415;
     --color-status-warning-border: #5c4a1f;
-    --color-status-danger: #f08a70;
-    --color-status-danger-strong: #f5a692;
-    --color-status-danger-surface: #2e1a15;
-    --color-status-danger-border: #6b3527;
+    --color-status-danger: #f2877f;
+    --color-status-danger-strong: #f6a39d;
+    --color-status-danger-surface: #2e1a19;
+    --color-status-danger-border: #6b2b27;
 
     /* Lifted off the dark page/card rather than darkened, so a placeholder is
      * a soft grey block and never a hole punched in the surface. Document
@@ -311,9 +302,9 @@
     --email-action-surface: rgba(244, 121, 107, 0.14);
 
     /* Retained only so the pair above stays complete in both schemes. */
-    --accent: #4c9e7a;
-    --accent-hover: #5fb28d;
-    --accent-foreground: #0d1310;
+    --accent: #9bb3cf;
+    --accent-hover: #b4c6dc;
+    --accent-foreground: #1d2c3d;
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
     --glass-surface: rgb(27 31 34 / 88%);

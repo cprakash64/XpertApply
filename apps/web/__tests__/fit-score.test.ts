@@ -2,38 +2,41 @@ import { describe, expect, it } from "vitest";
 import { FIT_SCORE_STYLES, getFitScoreTone, getScoreDisplay } from "../lib/fitScore";
 
 describe("getFitScoreTone", () => {
-  it("returns green emerald Strong fit for >= 80", () => {
+  it("returns the emphasised slate tone for Strong fit (>= 80)", () => {
     const tone = getFitScoreTone(88);
     expect(tone.key).toBe("strong");
     expect(tone.label).toBe("Strong fit");
-    expect(tone.container).toContain("bg-emerald-50");
-    expect(tone.number).toContain("text-emerald-700");
+    expect(tone.container).toContain("bg-surface-selected");
+    expect(tone.number).toContain("text-brand-primary");
   });
 
-  it("returns lime / yellow-green Good fit for 60–79", () => {
+  it("returns the link-toned Good fit for 60–79", () => {
     const tone = getFitScoreTone(79);
     expect(tone.key).toBe("good");
     expect(tone.label).toBe("Good fit");
-    expect(tone.container).toContain("bg-lime-50");
-    expect(tone.number).toContain("text-lime-700");
-    // Yellow-green, not a red-leaning palette.
-    expect(tone.container).not.toContain("red");
+    expect(tone.number).toContain("text-foreground-link");
   });
 
-  it("returns warning orange Stretch for 45–59", () => {
+  it("returns the quiet Stretch tone for 45–59", () => {
     const tone = getFitScoreTone(55);
     expect(tone.key).toBe("stretch");
     expect(tone.label).toBe("Stretch");
-    expect(tone.container).toContain("bg-orange-50");
-    expect(tone.number).toContain("text-orange-700");
+    expect(tone.number).toContain("text-foreground-secondary");
   });
 
-  it("returns red Low fit for < 45", () => {
+  it("returns the muted Low fit tone for < 45", () => {
     const tone = getFitScoreTone(30);
     expect(tone.key).toBe("low");
     expect(tone.label).toBe("Low fit");
-    expect(tone.container).toContain("bg-red-50");
-    expect(tone.number).toContain("text-red-700");
+    expect(tone.number).toContain("text-foreground-muted");
+  });
+
+  it("uses no traffic-light hues in any band", () => {
+    for (const style of Object.values(FIT_SCORE_STYLES)) {
+      expect(`${style.container} ${style.number}`).not.toMatch(
+        /emerald|green|lime|orange|amber|yellow|red|rose|teal|brown/
+      );
+    }
   });
 
   it("handles boundary values inclusively", () => {

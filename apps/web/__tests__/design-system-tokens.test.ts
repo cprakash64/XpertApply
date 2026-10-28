@@ -142,9 +142,9 @@ describe("canonical design tokens", () => {
     }
   });
 
-  it("keeps legacy pine independent from canonical cyan", () => {
-    expect(declaration(rootBlock, "--accent")).toBe("#1f5e45");
-    expect(declaration(darkBlock, "--accent")).toBe("#4c9e7a");
+  it("keeps the retired legacy accent slate, never green, and independent from canonical cyan", () => {
+    expect(declaration(rootBlock, "--accent")).toBe("#25364b");
+    expect(declaration(darkBlock, "--accent")).toBe("#9bb3cf");
     expect(css).not.toMatch(/--accent:\s*var\(--xa-cyan/);
   });
 

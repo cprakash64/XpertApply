@@ -513,15 +513,15 @@ describe("DashboardClient", () => {
 
     it("bands a weak match by its own score rather than the strong-fit colour", async () => {
       const badge = await renderMatchWithScore(42);
-      // A 42% match is a low fit; painting it the strong-fit green would make
-      // the score meaningless.
-      expect(badge.className).toMatch(/red/);
-      expect(badge.className).not.toMatch(/emerald/);
+      // A 42% match is a low fit; giving it the emphasised strong-fit surface
+      // would make the score meaningless.
+      expect(badge.className).toMatch(/text-foreground-secondary/);
+      expect(badge.className).not.toMatch(/bg-surface-selected/);
     });
 
     it("keeps a strong match on the semantic strong-fit band", async () => {
       const badge = await renderMatchWithScore(91);
-      expect(badge.className).toMatch(/emerald/);
+      expect(badge.className).toMatch(/bg-surface-selected/);
     });
 
     /**
