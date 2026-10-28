@@ -79,15 +79,12 @@ function isTrustedLogoUrl(value?: string | null): value is string {
   }
 }
 
-const BRAND_PALETTE = [
-  ["#17324D", "#D9EAF7"],
-  ["#3B1D64", "#E9DDF8"],
-  ["#17453B", "#D8EFE7"],
-  ["#6A2E18", "#F7E2D7"],
-  ["#4E3B0D", "#F6ECC8"],
-  ["#3B2948", "#EADFF1"]
-] as const;
-
+/*
+ * The generated mark is XpertApply's own placeholder, not a third-party logo, so
+ * it uses the product palette: one quiet ice-blue tile with slate initials. The
+ * old per-company hash picked from six hues (including green and brown), which
+ * made an arbitrary colour look like a signal.
+ */
 function GeneratedCompanyMark({ company, size }: { company: string; size: number }) {
   const words = company
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
@@ -95,20 +92,14 @@ function GeneratedCompanyMark({ company, size }: { company: string; size: number
     .split(/\s+/)
     .filter(Boolean);
   const initials = (words.length > 1 ? `${words[0][0]}${words[1][0]}` : words[0]?.slice(0, 2) || "JP").toUpperCase();
-  const hash = Array.from(company).reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 7);
-  const [foreground, background] = BRAND_PALETTE[hash % BRAND_PALETTE.length];
 
   return (
     <span
       data-testid="company-logo-generated"
       role="img"
       aria-label={`${company} generated company mark`}
-      className="flex h-full w-full items-center justify-center font-bold tracking-[-0.04em]"
-      style={{
-        color: foreground,
-        backgroundColor: background,
-        fontSize: Math.max(11, Math.round(size * 0.33))
-      }}
+      className="flex h-full w-full items-center justify-center bg-surface-selected font-bold tracking-[-0.04em] text-brand-primary"
+      style={{ fontSize: Math.max(11, Math.round(size * 0.33)) }}
     >
       {initials}
     </span>
