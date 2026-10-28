@@ -12,7 +12,7 @@
 #   sudo -E bash staging-web-release-premium-ui.sh rollback  # recreate ONLY the web with OLD_IMG
 # Never touches api/postgres/redis, volumes or networks. Prints no environment values.
 #
-# Safety properties (reviewed in PUI-RC1): files are created 0600 and the resolved-config JSON lives in a
+# Safety properties (reviewed in PUI-RC1, extended in PUI-STG1 with the wrapper's context and rendered-config guards): files are created 0600 and the resolved-config JSON lives in a
 # private temp dir removed on exit (it contains environment values); the image id AND its recorded source
 # revision must match; the compose `web` service must be the STAGING container; only web.image may differ.
 #
@@ -29,6 +29,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ "$(id -u)" == 0 ]] || { echo "run with sudo"; exit 1; }
 [[ -f "$INFRA/compose.staging.yml" && -f "$INFRA/.env.staging" ]] || { echo "staging infra files missing under INFRA"; exit 1; }
 [[ -f "$API_OVR" ]] || { echo "API override file missing: $API_OVR"; exit 1; }
+# Same protections as infra/staging/staging-compose.sh (which this script cannot use because it must layer the API override).
+: "${GUARD:=$INFRA/staging_guard.py}"
+[[ -f "$GUARD" ]] || { echo "staging guard missing: $GUARD"; exit 1; }
+[[ -z "${DOCKER_HOST:-}" && -z "${DOCKER_CONTEXT:-}" ]] || { echo "DOCKER_HOST/DOCKER_CONTEXT is set; staging runs only against the local default Docker context"; exit 1; }
+[[ "$(env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin docker context show)" == "default" ]] \
+  || { echo "Docker context is not 'default'"; exit 1; }
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 [[ "$(docker image inspect -f '{{.Id}}' "$NEW_IMG")" == "$NEW_ID" ]] || { echo "new image id mismatch"; exit 1; }
 [[ "$(docker image inspect -f '{{.Id}}' "$OLD_IMG")" == "$OLD_ID" ]] || { echo "rollback image no longer $OLD_ID"; exit 1; }
@@ -62,6 +68,9 @@ a["services"]["web"].pop("image"); b["services"]["web"].pop("image")
 if a!=b: sys.exit("UNEXPECTED effective-config difference beyond web.image - STOP")
 print("effective config identical except web.image")
 PY
+  # The repository's own isolation guard: forbidden published ports (incl. production 3000/8020), allowed services,
+  # staging name prefixes, no production paths. Names settings, never prints values.
+  python3 "$GUARD" rendered-config < "$WORK/cfg.new.json" || { echo "staging guard refused the rendered configuration - STOP"; exit 1; }
 }
 mode="${1:-plan}"
 case "$mode" in

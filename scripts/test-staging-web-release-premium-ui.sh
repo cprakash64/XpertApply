@@ -7,6 +7,13 @@ set -uo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/staging-web-release-premium-ui.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/run" "$T/infra"; : > "$T/infra/compose.staging.yml"; : > "$T/infra/.env.staging"; : > "$T/infra/api.yml"; : > "$T/knobs"
+# Stub of the repository's staging_guard.py: accepts unless the "guard" knob is set (reads and discards stdin).
+cat > "$T/infra/staging_guard.py" <<'G'
+import os,sys
+sys.stdin.read()
+k=open(os.path.join(os.path.dirname(__file__),"..","knobs")).read()
+sys.exit(1 if "guard=refuse" in k else 0)
+G
 cat > "$T/bin/id" <<'S'
 #!/usr/bin/env bash
 [[ "$1" == "-u" ]] && { cat "$(dirname "$0")/../uid" 2>/dev/null || echo 0; exit 0; }; exec /usr/bin/id "$@"
@@ -15,6 +22,7 @@ printf '#!/usr/bin/env bash\necho "web http=200"\n' > "$T/bin/curl"
 cat > "$T/bin/docker" <<'S'
 #!/usr/bin/env bash
 args="$*"; K="$(dirname "$0")/../knobs"; kn() { grep -s "^$1=" "$K" | tail -1 | cut -d= -f2-; }
+if [[ "$1" == "context" && "$2" == "show" ]]; then [[ -n "$(kn ctx)" ]] && kn ctx || echo default; exit 0; fi
 if [[ "$1" == "image" && "$2" == "inspect" ]]; then fmt="$4"; img="$5"
   case "$fmt" in
     *Labels*) [[ -n "$(kn rev)" ]] && kn rev || echo 1111111111111111111111111111111111111111;;
@@ -53,6 +61,9 @@ t "plan: platform mismatch refused"           plan     1 "platform differs"     
 t "plan: compose web is not staging refused"  plan     1 "not xpertapply-staging-web"       cname=xpertapply-web
 t "plan: config differs beyond image refused" plan     1 "UNEXPECTED effective-config"      cfgdiff=1
 t "plan: missing API override refused"        plan     1 "API override file missing"        "" API_OVR="$T/infra/missing.yml"
+t "plan: staging guard refuses rendered config"  plan     1 "staging guard refused"            guard=refuse
+t "plan: non-default Docker context refused"  plan     1 "context is not 'default'"         ctx=remote
+t "plan: DOCKER_HOST set refused"             plan     1 "DOCKER_HOST/DOCKER_CONTEXT is set" "" DOCKER_HOST=tcp://x:2375
 t "plan: malformed NEW_REV refused"           plan     1 "full 40-char sha"                 "" NEW_REV=abc
 UID_STUB=1000 t "plan: non-root refused"      plan     1 "run with sudo"
 t "apply: other containers unchanged"         apply    0 "web http=200"
