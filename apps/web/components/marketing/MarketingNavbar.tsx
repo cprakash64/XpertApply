@@ -70,7 +70,7 @@ export function MarketingNavbar() {
               Sign in
             </Link>
             <Link href="/signup" className="xa-btn xa-btn--primary xa-btn--sm">
-              Get started free →
+              Get started →
             </Link>
           </div>
 
@@ -116,7 +116,7 @@ export function MarketingNavbar() {
                 Sign in
               </Link>
               <Link href="/signup" onClick={close} className="xa-btn xa-btn--primary">
-                Get started free →
+                Get started →
               </Link>
             </div>
           </div>

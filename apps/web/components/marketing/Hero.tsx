@@ -33,7 +33,7 @@ export function Hero() {
 
           <div className="xa-cta-row">
             <Link href="/signup" className="xa-btn xa-btn--primary">
-              Get started free →
+              Get started →
             </Link>
             <a href="#story" className="xa-btn xa-btn--ghost">
               See XpertApply in action ↓

@@ -24,7 +24,7 @@ export function FinalCta() {
           </div>
           <div className="xa-final__action">
             <Link href="/signup" className="xa-btn xa-btn--primary">
-              Get started free →
+              Get started →
             </Link>
           </div>
         </div>

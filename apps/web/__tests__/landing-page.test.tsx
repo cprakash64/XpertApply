@@ -106,7 +106,7 @@ describe("marketing homepage", () => {
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading).toHaveTextContent("Find the right job.Apply with confidence.");
 
-    expect(screen.getAllByRole("link", { name: /Get started free/ })[0]).toHaveAttribute(
+    expect(screen.getAllByRole("link", { name: /Get started/ })[0]).toHaveAttribute(
       "href",
       "/signup"
     );
