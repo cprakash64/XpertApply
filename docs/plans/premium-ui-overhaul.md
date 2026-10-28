@@ -115,6 +115,32 @@ DNS, billing or the extension.
    and Chrome Web Store links still work.
 6. Founder accepts the design and decides the pricing item.
 
+### 7a. Local verification image (built, not deployed)
+
+- Tag `xpertapply-web:premium-ui-1aff376`, id
+  `sha256:bc10171bd397b416750f8a2c7f7df3e5c7b25ea1d3b4606d2aa130794f29b814`, built from
+  `git archive` of commit `1aff376` (not the working folder) with `apps/web/Dockerfile`, 1.4 GB.
+- Local smoke (container on a loopback port, then removed): `/`, `/pricing`, `/privacy`, `/opensource`,
+  `/login`, `/signup`, `/dashboard`, `/robots.txt`, `/sitemap.xml` all 200; CSP report-only header
+  present; no placeholder caption or "MOST POPULAR".
+- NOT deployable as built: (1) architecture is arm64 (Apple Silicon); a typical VPS needs
+  `--platform linux/amd64`. (2) It was built with EMPTY `NEXT_PUBLIC_*` args, so its canonical URL is
+  the production domain and its API URL is unset. The staging image must be built with the real
+  staging args (`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_CHROME_EXTENSION_URL`,
+  `NEXT_PUBLIC_CHROME_EXTENSION_ID`) because they are compiled into the browser bundle.
+- `scripts/staging-web-release-premium-ui.sh` is a DRAFT parametrized copy of the 50D script
+  (`NEW_IMG/NEW_ID/OLD_IMG/OLD_ID` from the environment; logic after `dc()` is byte-identical). It has
+  been syntax-checked (`bash -n`) only and has NOT been run on any server.
+
+### 7b. Operator steps (run on the staging host by the operator)
+
+1. Build `linux/amd64` with the real staging args; record `docker image inspect -f '{{.Id}}'`.
+2. Record the id and tag of the image staging runs today (the rollback target).
+3. `export NEW_IMG NEW_ID OLD_IMG OLD_ID`, then `sudo -E bash staging-web-release-premium-ui.sh plan`;
+   expect "effective config identical except web.image" and only `xpertapply-staging-web` recreated.
+4. `apply`; expect "all other containers unchanged" and `web http=200`.
+5. Review, then either keep or `rollback`.
+
 ## 8. Production web-only rollout and rollback (after explicit founder approval only)
 
 Rollout: merge this branch onto the production release line, build the web image, deploy only the
