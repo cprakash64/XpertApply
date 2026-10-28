@@ -67,6 +67,9 @@ VERIFIED
   (`/`, `/pricing`, `/privacy`, `/opensource`, `/login`, `/signup`, `/dashboard`, `/jobs`,
   `/tracker`, `/settings`, `/profile`; signed-in routes with mocked API and synthetic data).
   The first run found 49 contrast failures on `/`, dashboard `dl` markup and dark-mode contrast; all fixed.
+- WebKit 26.5 (Playwright webkit-2311, macOS): `/`, `/pricing`, `/login`, `/jobs` at 390 and 1440 px,
+  8/8 pass: no horizontal overflow, no page errors, no `backdrop-filter` in use, page background
+  `rgb(248, 249, 251)`; homepage and Jobs screenshots read correctly.
 - Keyboard: 14 consecutive Tab stops on the homepage all show a focus style.
 - No horizontal overflow at 320/390/768/1024/1440/1920 on Jobs and Tracker, and at 320/390/768/1440
   on login, signup, settings, profile.
@@ -77,9 +80,10 @@ VERIFIED
   `/login` JS 171 -> 174 KB (+3 KB); `/pricing` JS 166 -> 166 KB, CSS 11 -> 10 KB. Static payload only.
 
 NOT TESTED / BLOCKED
-- Firefox and WebKit: BLOCKED. Installed Playwright browsers (firefox-1555, webkit-2370) do not
-  match this Playwright version (expects firefox-1532, webkit-2311). Needs `npx playwright install`
-  (a download; needs approval). Edge not tested.
+- Firefox: BLOCKED. Playwright's Firefox 151 (firefox-1532) downloaded but its launch hangs on this
+  machine (timeout at 150 s; WebKit launches in ~11 s). Cause not diagnosed; macOS first-launch
+  checks on the downloaded app are suspected but unconfirmed, and no security setting was changed.
+  Test Firefox manually or on another machine. Edge not tested.
 - Screen-reader testing; full manual keyboard walk of every dialog and editor.
 - Core Web Vitals (LCP/INP/CLS): not measured; no field data.
 - Profile wizard and editor forms, document preview components, Google sign-in button (disabled in
