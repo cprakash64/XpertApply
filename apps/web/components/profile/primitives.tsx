@@ -218,9 +218,9 @@ export type MetaRowTone =
  * rainbow — and every tone still has a text label beside it.
  */
 const TONE_CLASSES: Record<MetaRowTone, string> = {
-  email: "bg-[var(--email-action-surface)] text-[var(--email-action)]",
+  email: "bg-surface-selected text-brand-primary",
   phone: "bg-surface-selected text-brand-primary",
-  location: "bg-status-warning-surface text-status-warning",
+  location: "bg-surface-selected text-brand-primary",
   linkedin: "bg-[var(--linkedin-surface)] text-[var(--linkedin)]",
   // X and GitHub are monochrome brands; a neutral chip is the honest rendering
   // and keeps contrast in both themes.

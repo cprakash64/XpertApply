@@ -113,7 +113,7 @@ describe("AutoApplyModal", () => {
     expect(screen.getByText(/never submits it/)).toBeInTheDocument();
   });
 
-  it("renders as a centered modal with a blurred glass backdrop", async () => {
+  it("renders as a centered modal over a dimmed backdrop", async () => {
     renderModal();
     await screen.findByText("Tailored resume");
     const dialog = screen.getByRole("dialog", { name: "Assisted application" });

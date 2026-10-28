@@ -204,7 +204,7 @@ export function ImportProfilePreview({
 
   return (
     <div className="flex max-h-[80vh] flex-col">
-      <div className="sticky top-0 z-10 border-b border-line-default bg-surface-card/95 px-1 py-4 backdrop-blur">
+      <div className="sticky top-0 z-10 border-b border-line-default bg-surface-card px-1 py-4">
         <div className="mx-auto max-w-[880px]">
           <h3 className="text-xl font-semibold">Review imported profile</h3>
           <p className="mt-1 text-sm text-foreground-muted">
@@ -299,7 +299,7 @@ export function ImportProfilePreview({
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-10 border-t border-line-default bg-surface-card/95 px-1 py-4 backdrop-blur">
+      <div className="sticky bottom-0 z-10 border-t border-line-default bg-surface-card px-1 py-4">
         <div className="mx-auto flex max-w-[880px] flex-wrap items-center gap-3">
           <Button type="button" disabled={saving} onClick={() => apply(allSections, "all")}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Accept all

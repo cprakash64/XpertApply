@@ -226,7 +226,9 @@ function IdentityCard({
           hint={
             completion.missing.length > 0
               ? `Next: ${completion.missing[0].label}`
-              : "Everything filled in"
+              : completion.percent >= 100
+                ? "Everything filled in"
+                : "Add details to raise your completion"
           }
         />
         {/* A separate signal on purpose: a complete-looking profile can still be

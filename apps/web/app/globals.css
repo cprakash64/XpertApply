@@ -208,11 +208,11 @@
   /* Chrome */
   --overlay: var(--color-surface-overlay);
   --shadow: 0 1px 2px rgb(23 33 27 / 6%), 0 8px 24px rgb(23 33 27 / 8%);
-  --glass-surface: rgb(255 255 255 / 90%);
-  --glass-surface-strong: rgb(255 255 255 / 94%);
-  --glass-border: rgb(23 33 27 / 14%);
-  --glass-shadow: 0 24px 64px rgb(23 33 27 / 18%), 0 3px 12px rgb(23 33 27 / 8%);
-  --glass-input: rgb(255 255 255 / 66%);
+  --glass-surface: var(--color-surface-card);
+  --glass-surface-strong: var(--color-surface-card);
+  --glass-border: var(--color-border-default);
+  --glass-shadow: var(--shadow-overlay);
+  --glass-input: var(--color-surface-raised);
   --input-background: var(--color-surface-raised);
   --disabled-background: var(--color-surface-disabled);
 }
@@ -307,11 +307,11 @@
     --accent-foreground: #1d2c3d;
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
-    --glass-surface: rgb(27 31 34 / 88%);
-    --glass-surface-strong: rgb(27 31 34 / 93%);
-    --glass-border: rgb(255 255 255 / 13%);
-    --glass-shadow: 0 24px 64px rgb(0 0 0 / 48%), 0 3px 12px rgb(0 0 0 / 30%);
-    --glass-input: rgb(255 255 255 / 8%);
+    --glass-surface: var(--color-surface-card);
+    --glass-surface-strong: var(--color-surface-card);
+    --glass-border: var(--color-border-default);
+    --glass-shadow: var(--shadow-overlay);
+    --glass-input: var(--color-surface-raised);
   }
 }
 
@@ -339,8 +339,6 @@ body {
   place-items: center;
   overflow-y: auto;
   background: var(--overlay);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
 }
 
 .assisted-application-dialog {
@@ -348,39 +346,29 @@ body {
   border: 1px solid var(--glass-border);
   background: var(--glass-surface);
   box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
   animation: assisted-application-enter 220ms cubic-bezier(.2, .78, .2, 1) both;
 }
 
 .assisted-application-glass-bar {
   background: var(--glass-surface-strong);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
 }
 
-/* Auth chrome. The glass surface/border/shadow tokens below are SHARED with
- * the authenticated assisted-application modal and are deliberately untouched;
- * only this backdrop is auth-owned, and it was the last hard-coded warm black
- * on a public surface. */
+/* Auth chrome. The --glass-* names are historical: they now resolve to solid
+ * card, border and overlay-shadow tokens (no translucency, no blur), and are
+ * shared with the assisted-application modal. */
 .auth-backdrop {
   background: var(--color-surface-overlay);
-  -webkit-backdrop-filter: blur(16px) saturate(108%);
-  backdrop-filter: blur(16px) saturate(108%);
 }
 
 .auth-dialog {
   border: 1px solid var(--glass-border);
   background: var(--glass-surface);
-  box-shadow: var(--glass-shadow), inset 0 1px 0 rgb(255 255 255 / 14%);
-  -webkit-backdrop-filter: blur(28px) saturate(125%);
-  backdrop-filter: blur(28px) saturate(125%);
+  box-shadow: var(--glass-shadow);
   animation: assisted-application-enter 220ms cubic-bezier(.2, .78, .2, 1) both;
 }
 
 .auth-input {
   background: var(--glass-input);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
 }
 
 @keyframes assisted-application-enter {

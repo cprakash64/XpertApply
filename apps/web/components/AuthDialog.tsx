@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, BriefcaseBusiness, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
+import Link from "next/link";
+import Image from "next/image";
+import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
 import { API_URL, api } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 import { beginGoogleAuth } from "@/lib/googleAuth";
@@ -121,7 +123,7 @@ export function AuthDialog({
   const isLogin = mode === "login";
   const card = (
     <section
-      className="auth-dialog w-full max-w-[480px] overflow-hidden rounded-[28px]"
+      className="auth-dialog w-full max-w-[480px] overflow-hidden rounded-panel"
       role={presentation === "modal" ? "dialog" : undefined}
       aria-modal={presentation === "modal" ? "true" : undefined}
       aria-labelledby="auth-dialog-title"
@@ -129,9 +131,10 @@ export function AuthDialog({
     >
       <div className="px-7 pb-5 pt-7 sm:px-9 sm:pt-9">
         <div className="flex items-start justify-between gap-5">
-          <span className="grid h-10 w-10 place-items-center rounded-field border border-[var(--glass-border)] bg-surface-selected text-brand-primary">
-            <BriefcaseBusiness className="h-5 w-5" />
-          </span>
+          <Link href="/" className="ds-focus-ring -m-1 inline-flex items-center gap-2.5 rounded-control p-1 text-base font-semibold tracking-tight text-foreground">
+            <Image aria-hidden src="/brand/xpertapply-logo.png" alt="" width={32} height={32} unoptimized />
+            XpertApply
+          </Link>
           {presentation === "modal" && (
             <button
               type="button"
