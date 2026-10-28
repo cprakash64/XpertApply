@@ -645,7 +645,7 @@ export function ProfileWizard({
           )}
 
           {!loadError && step === 8 && (
-            <div className="grid gap-4">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
               <ReviewBlock title="Profile" data={form} />
               <ReviewBlock title="Career" data={career} />
             </div>
@@ -1304,7 +1304,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 
 function ReviewBlock({ title, data }: { title: string; data: unknown }) {
   return (
-    <section>
+    <section className="min-w-0">
       <h3 className="mb-2 font-semibold">{title}</h3>
       <pre className="overflow-auto rounded-control bg-surface-subtle p-4 text-xs text-foreground">
         {JSON.stringify(data, null, 2)}

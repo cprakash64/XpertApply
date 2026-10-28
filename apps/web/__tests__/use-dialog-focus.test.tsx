@@ -26,7 +26,28 @@ function Harness() {
   );
 }
 
+function BusyOpener() {
+  // Mimics "Resume": the button is disabled while work runs, so focus drops to <body> before the dialog mounts.
+  const [state, setState] = useState<"idle" | "busy" | "open">("idle");
+  return (
+    <>
+      <button type="button" disabled={state === "busy"} onClick={() => { setState("busy"); setTimeout(() => setState("open"), 10); }}>Generate</button>
+      {state === "open" && <Dialog onClose={() => setState("idle")} />}
+    </>
+  );
+}
+
 describe("useDialogFocus", () => {
+  it("returns focus to the opener even when it was disabled (focus on <body>) as the dialog mounted", async () => {
+    render(<BusyOpener />);
+    const opener = screen.getByRole("button", { name: "Generate" });
+    await userEvent.click(opener);
+    await screen.findByRole("dialog", { name: "Test dialog" });
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Generate" }));
+  });
+
   it("moves focus in, wraps Tab, closes on Escape, and restores focus to the opener", async () => {
     render(<Harness />);
     const opener = screen.getByRole("button", { name: "Open" });
