@@ -32,26 +32,26 @@
    * are now aliases onto them, so light and dark are one value set rather than
    * two — see the alias block for why they still exist at all.
    * ------------------------------------------------------------------ */
-  --xa-navy: #06245c;
-  --xa-navy-hover: #0b3577;
-  --xa-cyan: #14b8c4;
-  --xa-cyan-highlight: #63d7dc;
-  --xa-cyan-dark: #0e7c85;
-  --xa-ink: #08182f;
-  --xa-neutral-secondary: #475467;
-  --xa-neutral-muted: #667085;
-  --xa-light-page: #f8fafc;
+  --xa-navy: #25364b;
+  --xa-navy-hover: #1d2c3d;
+  --xa-cyan: #6888ad;
+  --xa-cyan-highlight: #9bb3cf;
+  --xa-cyan-dark: #405f80;
+  --xa-ink: #20242b;
+  --xa-neutral-secondary: #596779;
+  --xa-neutral-muted: #627186;
+  --xa-light-page: #f8f9fb;
   --xa-light-card: #ffffff;
-  --xa-light-border-subtle: #edf0f4;
-  --xa-light-border: #e5e9f0;
-  --xa-light-border-strong: #d9e1eb;
+  --xa-light-border-subtle: #e8edf3;
+  --xa-light-border: #dce3eb;
+  --xa-light-border-strong: #c9d3df;
 
   /* Brand and actions. Canonical cyan is an accent, not a white-text fill. */
   --color-brand-primary: var(--xa-navy);
   --color-brand-primary-hover: var(--xa-navy-hover);
   --color-brand-accent: var(--xa-cyan);
   --color-brand-accent-highlight: var(--xa-cyan-highlight);
-  --color-brand-accent-foreground: var(--xa-ink);
+  --color-brand-accent-foreground: #0f1925;
   --color-brand-accent-text: var(--xa-cyan-dark);
   --color-action-primary-background: var(--xa-navy);
   --color-action-primary-foreground: var(--xa-light-card);
@@ -71,8 +71,8 @@
   --color-surface-card: var(--xa-light-card);
   --color-surface-raised: var(--xa-light-card);
   --color-surface-subtle: var(--xa-light-page);
-  --color-surface-selected: rgb(20 184 196 / 10%);
-  --color-surface-overlay: rgb(8 24 47 / 52%);
+  --color-surface-selected: #eaf0f7;
+  --color-surface-overlay: rgb(29 44 61 / 52%);
   --color-surface-disabled: #f1f2ee;
   --color-text-primary: var(--xa-ink);
   --color-text-secondary: var(--xa-neutral-secondary);
@@ -86,7 +86,7 @@
   --color-border-subtle: var(--xa-light-border-subtle);
   --color-border-default: var(--xa-light-border);
   --color-border-strong: var(--xa-light-border-strong);
-  --color-border-interactive: #b8c5d6;
+  --color-border-interactive: #7d90a8;
   --color-border-selected: var(--xa-cyan-dark);
   --color-border-error: #f0b4a4;
   --color-focus-ring: var(--xa-cyan-dark);
@@ -98,12 +98,12 @@
   --color-status-neutral: var(--xa-neutral-secondary);
   --color-status-neutral-surface: var(--xa-light-page);
   --color-status-neutral-border: var(--xa-light-border-strong);
-  --color-status-info: #2f6f9f;
-  --color-status-info-surface: #edf5ff;
-  --color-status-info-border: #bdd8f5;
-  --color-status-success: #1f6b4a;
-  --color-status-success-surface: #eef8f1;
-  --color-status-success-border: #b9d7c3;
+  --color-status-info: #405f80;
+  --color-status-info-surface: #eaf0f7;
+  --color-status-info-border: #c5d3e3;
+  --color-status-success: #25364b;
+  --color-status-success-surface: #eaf0f7;
+  --color-status-success-border: #b3c4d8;
   --color-status-warning: #7a5d12;
   --color-status-warning-surface: #fff9e8;
   --color-status-warning-border: #ead191;
@@ -117,7 +117,7 @@
    * selected row, which is a stronger requirement than any line token carries.
    * Deliberately subdued — around 1.2:1 in light and 1.35:1 in dark against
    * their host surfaces — so a loading screen never reads as real content. */
-  --color-skeleton: #e3e8ef;
+  --color-skeleton: #e3e9f0;
 
   /* Generated resumes and cover letters are facsimiles of a printed page, not
    * product chrome. They are FIXED in both themes: the preview has to match the
@@ -231,15 +231,15 @@
     /* Canonical primitives keep the proven charcoal product surfaces. Navy is
      * not placed on charcoal: cyan with dark ink becomes the dark primary
      * action, while lighter cyan is reserved for links and focus. */
-    --color-brand-primary: var(--xa-cyan);
-    --color-brand-primary-hover: var(--xa-cyan-highlight);
+    --color-brand-primary: var(--xa-cyan-highlight);
+    --color-brand-primary-hover: #b4c6dc;
     --color-brand-accent: var(--xa-cyan);
     --color-brand-accent-highlight: var(--xa-cyan-highlight);
-    --color-brand-accent-foreground: var(--xa-ink);
+    --color-brand-accent-foreground: #0f1925;
     --color-brand-accent-text: var(--xa-cyan-highlight);
-    --color-action-primary-background: var(--xa-cyan);
-    --color-action-primary-foreground: var(--xa-ink);
-    --color-action-primary-hover: var(--xa-cyan-highlight);
+    --color-action-primary-background: var(--xa-cyan-highlight);
+    --color-action-primary-foreground: #1d2c3d;
+    --color-action-primary-hover: #b4c6dc;
     --color-action-secondary-background: #23282c;
     --color-action-secondary-foreground: #eef1ed;
     --color-action-secondary-border: #4a5357;
@@ -254,23 +254,23 @@
     --color-surface-card: #1b1f22;
     --color-surface-raised: #23282c;
     --color-surface-subtle: #21262a;
-    --color-surface-selected: rgb(20 184 196 / 14%);
+    --color-surface-selected: rgb(104 136 173 / 18%);
     --color-surface-overlay: rgb(0 0 0 / 62%);
     --color-surface-disabled: #262b2e;
     --color-text-primary: #eef1ed;
     --color-text-secondary: #c3cbc5;
     --color-text-muted: #98a29b;
     --color-text-disabled: #98a29b;
-    --color-text-inverse: #08182f;
-    --color-text-link: #63d7dc;
+    --color-text-inverse: #1d2c3d;
+    --color-text-link: #9bb3cf;
 
     --color-border-subtle: #2b3136;
     --color-border-default: #333a3d;
     --color-border-strong: #4a5357;
     --color-border-interactive: #647075;
-    --color-border-selected: #14b8c4;
+    --color-border-selected: #6888ad;
     --color-border-error: #6b3527;
-    --color-focus-ring: #63d7dc;
+    --color-focus-ring: #9bb3cf;
     --color-focus-ring-offset: #1b1f22;
     --color-focus-ring-error: #f08a70;
 
@@ -280,9 +280,9 @@
     --color-status-info: #7db8e8;
     --color-status-info-surface: rgb(125 184 232 / 12%);
     --color-status-info-border: rgb(125 184 232 / 40%);
-    --color-status-success: #6cc196;
-    --color-status-success-surface: #172b22;
-    --color-status-success-border: #2c5c45;
+    --color-status-success: #b3c4d8;
+    --color-status-success-surface: #1f2b3a;
+    --color-status-success-border: #3c5068;
     --color-status-warning: #e0b95f;
     --color-status-warning-surface: #2b2415;
     --color-status-warning-border: #5c4a1f;

@@ -113,21 +113,21 @@ function contrast(foreground: string, background: string): number {
 }
 
 describe("canonical design tokens", () => {
-  it("defines the small marketing-derived raw palette exactly", () => {
+  it("defines the approved Midnight Slate + Glacier Blue raw palette exactly", () => {
     const expected = {
-      "--xa-navy": "#06245c",
-      "--xa-navy-hover": "#0b3577",
-      "--xa-cyan": "#14b8c4",
-      "--xa-cyan-highlight": "#63d7dc",
-      "--xa-cyan-dark": "#0e7c85",
-      "--xa-ink": "#08182f",
-      "--xa-neutral-secondary": "#475467",
-      "--xa-neutral-muted": "#667085",
-      "--xa-light-page": "#f8fafc",
+      "--xa-navy": "#25364b",
+      "--xa-navy-hover": "#1d2c3d",
+      "--xa-cyan": "#6888ad",
+      "--xa-cyan-highlight": "#9bb3cf",
+      "--xa-cyan-dark": "#405f80",
+      "--xa-ink": "#20242b",
+      "--xa-neutral-secondary": "#596779",
+      "--xa-neutral-muted": "#627186",
+      "--xa-light-page": "#f8f9fb",
       "--xa-light-card": "#ffffff",
-      "--xa-light-border-subtle": "#edf0f4",
-      "--xa-light-border": "#e5e9f0",
-      "--xa-light-border-strong": "#d9e1eb"
+      "--xa-light-border-subtle": "#e8edf3",
+      "--xa-light-border": "#dce3eb",
+      "--xa-light-border-strong": "#c9d3df"
     } as const;
     expect(RAW_TOKENS).toEqual(Object.keys(expected));
     for (const [token, value] of Object.entries(expected)) {
@@ -197,8 +197,8 @@ describe("canonical contrast contracts", () => {
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it("forbids white text on canonical cyan and permits dark ink instead", () => {
+  it("forbids white text on canonical cyan and permits the dedicated accent foreground instead", () => {
     expect(contrast("#ffffff", resolveHex("--xa-cyan", "light"))).toBeLessThan(4.5);
-    expect(contrast(resolveHex("--xa-ink", "light"), resolveHex("--xa-cyan", "light"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(resolveHex("--color-brand-accent-foreground", "light"), resolveHex("--xa-cyan", "light"))).toBeGreaterThanOrEqual(4.5);
   });
 });
