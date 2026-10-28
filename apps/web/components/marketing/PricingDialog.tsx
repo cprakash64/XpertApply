@@ -59,7 +59,7 @@ const PLANS = [
     name: "Pro",
     price: "$4.99",
     cadence: "/ month",
-    tag: "MOST POPULAR",
+    tag: null,
     description: "For active job seekers who want to apply broadly without sacrificing quality.",
     action: "Choose Pro →",
     features: [

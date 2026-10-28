@@ -5,12 +5,10 @@ import { BrandWordmark } from "@/components/marketing/BrandWordmark";
 /**
  * The footer.
  *
- * Every linked entry resolves. Reference labels without a production route stay
- * visible as quiet text so the approved Product / Company / Resources / Legal
- * taxonomy and column geometry are preserved without introducing dead links.
- *
- * Terms is the one deliberate omission from the approved footer: there is no
- * /terms route yet. It belongs here the day the page ships, and not before.
+ * Every entry is a working link. Labels for pages that do not exist (About,
+ * Careers, Help center, Blog, Terms) were removed rather than shown as inert
+ * text: a footer that lists pages a visitor cannot open reads as unfinished.
+ * Each one belongs here the day its page ships, and not before.
  */
 const PRODUCT_LINKS = [
   { href: "#stage-discover", label: "Job discovery" },
@@ -48,12 +46,8 @@ export function MarketingFooter() {
             <div>
               <h3>Company</h3>
               <ul>
-                <li>
-                  <span className="xa-footer__static">About</span>
-                </li>
-                <li>
-                  <span className="xa-footer__static">Careers</span>
-                </li>
+                <li><Link href="/pricing" className="xa-footer__link">Pricing</Link></li>
+                <li><Link href="/opensource" className="xa-footer__link">Open source</Link></li>
                 <li><a href="mailto:privacy@xpertapply.com" className="xa-footer__link">Privacy contact</a></li>
               </ul>
             </div>
@@ -61,28 +55,15 @@ export function MarketingFooter() {
             <div>
               <h3>Resources</h3>
               <ul>
-                <li>
-                  <a href="#story" className="xa-footer__link">Product tour</a>
-                </li>
-                <li><span className="xa-footer__static">Help center</span></li>
-                <li><span className="xa-footer__static">Blog</span></li>
+                <li><a href="#story" className="xa-footer__link">Product tour</a></li>
+                <li><a href="#security" className="xa-footer__link">Security</a></li>
               </ul>
             </div>
 
             <div>
               <h3>Legal</h3>
               <ul>
-                <li>
-                  <a href="#security" className="xa-footer__link">
-                    Security
-                  </a>
-                </li>
-                <li>
-                  <Link href="/privacy" className="xa-footer__link">
-                    Privacy
-                  </Link>
-                </li>
-                <li><span className="xa-footer__static">Terms</span></li>
+                <li><Link href="/privacy" className="xa-footer__link">Privacy</Link></li>
               </ul>
             </div>
           </nav>
@@ -92,7 +73,6 @@ export function MarketingFooter() {
           <p>
             &copy; 2026 {PRODUCT_NAME}
           </p>
-          <p>Apply smarter. Get hired.</p>
         </div>
       </div>
     </footer>

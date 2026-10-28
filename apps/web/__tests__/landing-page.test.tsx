@@ -138,9 +138,10 @@ describe("marketing homepage", () => {
       "href",
       "#extension"
     );
-    // No /terms route exists, so Terms remains text rather than a dead link.
-    expect(screen.queryByRole("link", { name: /^Terms$/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Terms")).toBeInTheDocument();
+    // Pages that do not exist are not listed at all, linked or as inert text.
+    for (const label of ["Terms", "About", "Careers", "Help center", "Blog"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
   });
 
   /*
@@ -150,7 +151,7 @@ describe("marketing homepage", () => {
    */
   it("links only to destinations that exist", () => {
     const { container } = renderLanding();
-    const routes = new Set(["/", "/login", "/signup", "/privacy"]);
+    const routes = new Set(["/", "/login", "/signup", "/privacy", "/pricing", "/opensource"]);
 
     for (const link of container.querySelectorAll("a[href]")) {
       const href = link.getAttribute("href") as string;
