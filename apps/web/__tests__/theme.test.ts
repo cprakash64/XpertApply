@@ -88,7 +88,7 @@ describe("theme tokens", () => {
   });
 
   it("overrides every non-aliased token for dark mode", () => {
-    const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    const darkBlock = globalsCss.slice(globalsCss.indexOf(':root[data-theme="dark"]'));
     for (const token of REQUIRED_TOKENS) {
       if (ALIASED_NAMES.has(token)) continue;
       expect(darkBlock, `${token} needs a dark value`).toContain(`${token}:`);
@@ -96,7 +96,7 @@ describe("theme tokens", () => {
   });
 
   it("never restates an alias in the dark block, where it could drift", () => {
-    const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    const darkBlock = globalsCss.slice(globalsCss.indexOf(':root[data-theme="dark"]'));
     for (const [legacy] of ALIASED_TOKENS) {
       expect(darkBlock, `${legacy} is an alias and must not be redeclared`).not.toMatch(
         new RegExp(`^\\s*${legacy}:`, "m")
@@ -104,8 +104,9 @@ describe("theme tokens", () => {
     }
   });
 
-  it("declares color-scheme: light dark so native UI and first paint follow the OS", () => {
-    expect(globalsCss).toMatch(/color-scheme:\s*light dark/);
+  it("declares a color-scheme per theme so native UI follows the resolved theme", () => {
+    expect(globalsCss).toMatch(/:root\s*\{[^}]*color-scheme:\s*light/);
+    expect(globalsCss).toMatch(/:root\[data-theme="dark"\]\s*\{[^}]*color-scheme:\s*dark/);
   });
 
   it("paints html as well as body, so first paint and over-scroll are themed", () => {
@@ -115,7 +116,7 @@ describe("theme tokens", () => {
 
   it("does not use pure black as the dark background", () => {
     // Read the canonical page role the `--background` alias resolves to.
-    const darkBlock = globalsCss.slice(globalsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    const darkBlock = globalsCss.slice(globalsCss.indexOf(':root[data-theme="dark"]'));
     const background = /--color-surface-page:\s*(#[0-9a-fA-F]{6})/.exec(darkBlock)?.[1]?.toLowerCase();
     expect(background).toBeDefined();
     expect(background).not.toBe("#000000");

@@ -11,10 +11,11 @@
  * variables in tailwind.config.ts, which is what makes existing utility classes
  * like `bg-panel` or `border-line` theme-aware without editing every component.
  *
- * Dark mode is driven purely by `prefers-color-scheme`. There is no class
- * toggle and no JavaScript: a script that stamps a theme class before hydration
- * is the usual source of hydration mismatches, and following the OS preference
- * is the requirement here.
+ * Light is the default value set; dark is the data-theme="dark" block below. A
+ * tiny blocking script (public/theme-init.js) resolves the user's stored choice
+ * (light, dark or system) to one of those two before first paint, so there is
+ * no flash and nothing for React to mismatch (<html> suppresses the warning for
+ * that one attribute).
  */
 
 :root {
@@ -22,7 +23,7 @@
    * paints) in BOTH schemes. This is also what prevents the white flash in dark
    * mode: the UA background is already dark on the very first paint, before any
    * stylesheet or script runs. */
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* --------------------------------------------------------------------
    * XpertApply design-system foundation
@@ -32,18 +33,18 @@
    * are now aliases onto them, so light and dark are one value set rather than
    * two — see the alias block for why they still exist at all.
    * ------------------------------------------------------------------ */
-  --xa-navy: #25364b;
-  --xa-navy-hover: #1d2c3d;
-  --xa-glacier: #6888ad;
-  --xa-glacier-light: #9bb3cf;
-  --xa-glacier-deep: #405f80;
-  --xa-ink: #20242b;
+  --xa-navy: #17283f;
+  --xa-navy-hover: #0f1d30;
+  --xa-glacier: #3078ac;
+  --xa-glacier-light: #8db6d8;
+  --xa-glacier-deep: #2a6a9a;
+  --xa-ink: #17283f;
   --xa-neutral-secondary: #596779;
   --xa-neutral-muted: #5d6c81;
-  --xa-light-page: #f8f9fb;
+  --xa-light-page: #f7f9fc;
   --xa-light-card: #ffffff;
   --xa-light-border-subtle: #e8edf3;
-  --xa-light-border: #dce3eb;
+  --xa-light-border: #dfe5ed;
   --xa-light-border-strong: #c9d3df;
 
   /* Brand and actions. Canonical glacier is an accent, not a white-text fill. */
@@ -51,7 +52,7 @@
   --color-brand-primary-hover: var(--xa-navy-hover);
   --color-brand-accent: var(--xa-glacier);
   --color-brand-accent-highlight: var(--xa-glacier-light);
-  --color-brand-accent-foreground: #0f1925;
+  --color-brand-accent-foreground: #ffffff;
   --color-brand-accent-text: var(--xa-glacier-deep);
   --color-action-primary-background: var(--xa-navy);
   --color-action-primary-foreground: var(--xa-light-card);
@@ -71,8 +72,8 @@
   --color-surface-card: var(--xa-light-card);
   --color-surface-raised: var(--xa-light-card);
   --color-surface-subtle: var(--xa-light-page);
-  --color-surface-selected: #eaf0f7;
-  --color-surface-overlay: rgb(29 44 61 / 52%);
+  --color-surface-selected: #eaf2fa;
+  --color-surface-overlay: rgb(23 40 63 / 52%);
   --color-surface-disabled: #f1f2ee;
   --color-text-primary: var(--xa-ink);
   --color-text-secondary: var(--xa-neutral-secondary);
@@ -98,10 +99,10 @@
   --color-status-neutral: var(--xa-neutral-secondary);
   --color-status-neutral-surface: var(--xa-light-page);
   --color-status-neutral-border: var(--xa-light-border-strong);
-  --color-status-info: #405f80;
+  --color-status-info: #2a6a9a;
   --color-status-info-surface: #eaf0f7;
   --color-status-info-border: #c5d3e3;
-  --color-status-success: #25364b;
+  --color-status-success: #17283f;
   --color-status-success-surface: #eaf0f7;
   --color-status-success-border: #b3c4d8;
   --color-status-warning: #8a5300;
@@ -166,6 +167,9 @@
   /* LinkedIn brand. A vendor colour, not a theme colour: it identifies one
    * specific outbound action and must never be reused for anything else.
    * Held as a token so components stay free of hard-coded hex. */
+  /* Wordmark accent: Sapphire on light surfaces, lifted on dark ones. */
+  --brand-logo-accent: #3078ac;
+
   --linkedin: #0A66C2;
   --linkedin-surface: rgba(10, 102, 194, 0.08);
 
@@ -184,8 +188,8 @@
   /* Legacy accent aliases. Retired: nothing in the runtime references them, and
    * `design-system-contracts.test.ts` forbids using them. They are kept as
    * slate (never green) so a stray `bg-accent` cannot reintroduce a green. */
-  --accent: #25364b;
-  --accent-hover: #1d2c3d;
+  --accent: #17283f;
+  --accent-hover: #0f1d30;
   --accent-foreground: #ffffff;
 
   /* Focus. One ring for the whole product: the legacy `.focus-ring` helper and
@@ -217,102 +221,107 @@
   --disabled-background: var(--color-surface-disabled);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Canonical primitives keep the proven charcoal product surfaces. Navy is
-     * not placed on charcoal: light glacier with dark ink becomes the dark primary
-     * action, while the lighter glacier is reserved for links and focus. */
-    --color-brand-primary: var(--xa-glacier-light);
-    --color-brand-primary-hover: #b4c6dc;
-    --color-brand-accent: var(--xa-glacier);
-    --color-brand-accent-highlight: var(--xa-glacier-light);
-    --color-brand-accent-foreground: #0f1925;
-    --color-brand-accent-text: var(--xa-glacier-light);
-    --color-action-primary-background: var(--xa-glacier-light);
-    --color-action-primary-foreground: #1d2c3d;
-    --color-action-primary-hover: #b4c6dc;
-    --color-action-secondary-background: #23282c;
-    --color-action-secondary-foreground: #eef1ed;
-    --color-action-secondary-border: #4a5357;
-    --color-action-ghost-foreground: #c3cbc5;
-    --color-action-ghost-hover: #21262a;
-    --color-action-destructive-background: #f2877f;
-    --color-action-destructive-foreground: #08182f;
-    --color-action-destructive-hover: #f6a39d;
+/*
+ * Dark theme. Selected by `data-theme="dark"` on <html>, which /theme-init.js
+ * sets before first paint from the stored choice (or, for "system", from the OS
+ * preference) and keeps in sync. Everything below is a value for a semantic
+ * role; no component restates a colour for dark mode.
+ *
+ * Direction: a rich midnight slate, clearly stepped (canvas, surface, elevated),
+ * never black. Cool-blue Soft Sky is the single accent. The primary action is
+ * a light sky fill with midnight text, so it keeps its hierarchy on a dark page
+ * rather than inheriting the navy button that suits white.
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --color-surface-page: #14171a;
-    --color-surface-shell: #1b1f22;
-    --color-surface-card: #1b1f22;
-    --color-surface-raised: #23282c;
-    --color-surface-subtle: #21262a;
-    --color-surface-selected: rgb(104 136 173 / 18%);
-    --color-surface-overlay: rgb(0 0 0 / 62%);
-    --color-surface-disabled: #262b2e;
-    --color-text-primary: #eef1ed;
-    --color-text-secondary: #c3cbc5;
-    --color-text-muted: #98a29b;
-    --color-text-disabled: #98a29b;
-    --color-text-inverse: #1d2c3d;
-    --color-text-link: #9bb3cf;
+  --color-brand-primary: #8db6d8;
+  --color-brand-primary-hover: #a6c7e2;
+  --color-brand-accent: #8db6d8;
+  --color-brand-accent-highlight: #a6c7e2;
+  --color-brand-accent-foreground: #101a28;
+  --color-brand-accent-text: #8db6d8;
+  --color-action-primary-background: #8db6d8;
+  --color-action-primary-foreground: #101a28;
+  --color-action-primary-hover: #a6c7e2;
+  --color-action-secondary-background: #243449;
+  --color-action-secondary-foreground: #edf3fa;
+  --color-action-secondary-border: #52667f;
+  --color-action-ghost-foreground: #aabbd0;
+  --color-action-ghost-hover: #1f2f44;
+  --color-action-destructive-background: #f2877f;
+  --color-action-destructive-foreground: #101a28;
+  --color-action-destructive-hover: #f6a39d;
 
-    --color-border-subtle: #2b3136;
-    --color-border-default: #333a3d;
-    --color-border-strong: #4a5357;
-    --color-border-interactive: #647075;
-    --color-border-selected: #6888ad;
-    --color-border-error: #6b2b27;
-    --color-focus-ring: #9bb3cf;
-    --color-focus-ring-offset: #1b1f22;
-    --color-focus-ring-error: #f2877f;
+  --color-surface-page: #101a28;
+  --color-surface-shell: #1a2839;
+  --color-surface-card: #1a2839;
+  --color-surface-raised: #243449;
+  --color-surface-subtle: #162233;
+  --color-surface-selected: rgb(141 182 216 / 16%);
+  --color-surface-overlay: rgb(5 10 18 / 66%);
+  --color-surface-disabled: #202f42;
+  --color-text-primary: #edf3fa;
+  --color-text-secondary: #aabbd0;
+  --color-text-muted: #91a5bd;
+  --color-text-disabled: #94a8c0;
+  --color-text-inverse: #101a28;
+  --color-text-link: #8db6d8;
 
-    --color-status-neutral: #c3cbc5;
-    --color-status-neutral-surface: #21262a;
-    --color-status-neutral-border: #4a5357;
-    --color-status-info: #7db8e8;
-    --color-status-info-surface: rgb(125 184 232 / 12%);
-    --color-status-info-border: rgb(125 184 232 / 40%);
-    --color-status-success: #b3c4d8;
-    --color-status-success-surface: #1f2b3a;
-    --color-status-success-border: #3c5068;
-    --color-status-warning: #e0b95f;
-    --color-status-warning-surface: #2b2415;
-    --color-status-warning-border: #5c4a1f;
-    --color-status-danger: #f2877f;
-    --color-status-danger-strong: #f6a39d;
-    --color-status-danger-surface: #2e1a19;
-    --color-status-danger-border: #6b2b27;
+  --color-border-subtle: #263548;
+  --color-border-default: #33465d;
+  --color-border-strong: #40536a;
+  --color-border-interactive: #6a809b;
+  --color-border-selected: #8db6d8;
+  --color-border-error: #7a3430;
+  --color-focus-ring: #8db6d8;
+  --color-focus-ring-offset: #1a2839;
+  --color-focus-ring-error: #f2877f;
 
-    /* Lifted off the dark page/card rather than darkened, so a placeholder is
-     * a soft grey block and never a hole punched in the surface. Document
-     * paper/ink roles are deliberately NOT redefined here. */
-    --color-skeleton: #2f363b;
+  --color-status-neutral: #aabbd0;
+  --color-status-neutral-surface: #162233;
+  --color-status-neutral-border: #40536a;
+  --color-status-info: #8db6d8;
+  --color-status-info-surface: rgb(141 182 216 / 12%);
+  --color-status-info-border: rgb(141 182 216 / 40%);
+  --color-status-success: #b3c4d8;
+  --color-status-success-surface: #1c2f45;
+  --color-status-success-border: #3c5068;
+  --color-status-warning: #e0b95f;
+  --color-status-warning-surface: #2b2415;
+  --color-status-warning-border: #5c4a1f;
+  --color-status-danger: #f2877f;
+  --color-status-danger-strong: #f6a39d;
+  --color-status-danger-surface: #2e1a19;
+  --color-status-danger-border: #6b2b27;
 
-    --shadow-subtle: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 38%);
-    --shadow-overlay: 0 26px 80px rgb(0 0 0 / 52%);
+  /* Lifted off the dark page/card rather than darkened, so a placeholder is a
+   * soft block and never a hole punched in the surface. Document paper/ink
+   * roles are deliberately NOT redefined here. */
+  --color-skeleton: #2b3c52;
 
-    /* The legacy surface/text/line/status names are aliases now (see :root), so
-     * they follow the canonical charcoal roles above without being restated. */
+  --shadow-subtle: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 38%);
+  --shadow-overlay: 0 26px 80px rgb(0 0 0 / 52%);
 
-    /* Brand hue is fixed; lightened for contrast on a dark surface. */
-    --linkedin: #5ea9f0;
-    --linkedin-surface: rgba(94, 169, 240, 0.12);
-    /* Lightened for contrast on a dark surface. */
-    --email-action: #f4796b;
-    --email-action-surface: rgba(244, 121, 107, 0.14);
+  --brand-logo-accent: #5b9bcb;
 
-    /* Retained only so the pair above stays complete in both schemes. */
-    --accent: #9bb3cf;
-    --accent-hover: #b4c6dc;
-    --accent-foreground: #1d2c3d;
+  /* Brand hue is fixed; lightened for contrast on a dark surface. */
+  --linkedin: #5ea9f0;
+  --linkedin-surface: rgba(94, 169, 240, 0.12);
+  --email-action: #f4796b;
+  --email-action-surface: rgba(244, 121, 107, 0.14);
 
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
-    --glass-surface: var(--color-surface-card);
-    --glass-surface-strong: var(--color-surface-card);
-    --glass-border: var(--color-border-default);
-    --glass-shadow: var(--shadow-overlay);
-    --glass-input: var(--color-surface-raised);
-  }
+  --accent: #8db6d8;
+  --accent-hover: #a6c7e2;
+  --accent-foreground: #101a28;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
+  --glass-surface: var(--color-surface-card);
+  --glass-surface-strong: var(--color-surface-card);
+  --glass-border: var(--color-border-default);
+  --glass-shadow: var(--shadow-overlay);
+  --glass-input: var(--color-surface-raised);
 }
 
 * {
@@ -526,27 +535,7 @@ input[type="radio"] {
 }
 
 .app-brand-mark {
-  position: relative;
-  display: block;
-  width: 2rem;
-  height: 2rem;
   flex: none;
-  overflow: hidden;
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-control);
-  background: var(--xa-light-card);
-  box-shadow: var(--shadow-subtle);
-}
-
-/* The supplied source asset contains the complete lockup. This crop exposes
- * its existing compact X mark without redrawing or inventing a rail logo. */
-.app-brand-mark img {
-  position: absolute;
-  top: -0.875rem;
-  left: -2.625rem;
-  width: 7.25rem;
-  height: 5.4375rem;
-  max-width: none;
 }
 
 .app-nav-link {
@@ -920,4 +909,67 @@ html:has(.landing-page) {
   position: absolute;
   inset: 0;
   z-index: 0;
+}
+
+/* Theme control: a compact segmented radio group, themed entirely by role tokens
+ * so the same markup serves the marketing bar and the signed-in app. */
+.theme-ctl {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-border-default);
+}
+.theme-ctl__option {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--easing-standard), color var(--duration-fast) var(--easing-standard);
+}
+.theme-ctl__option:hover { color: var(--color-text-primary); }
+.theme-ctl__option[aria-checked="true"] {
+  background: var(--color-surface-card);
+  color: var(--color-brand-accent-text);
+  box-shadow: 0 0 0 1px var(--color-border-default);
+}
+
+/* Logo: the theme picks which transparent mark is visible. */
+.brand-mark {
+  display: inline-block;
+  flex: none;
+  width: var(--brand-logo-size, 36px);
+  height: var(--brand-logo-size, 36px);
+  line-height: 0;
+}
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.brand-mark__dark { display: none !important; }
+:root[data-theme="dark"] .brand-mark__light { display: none !important; }
+:root[data-theme="dark"] .brand-mark__dark { display: block !important; }
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.brand-logo__xpert { color: var(--color-text-primary); }
+.brand-logo__apply { color: var(--brand-logo-accent); }
+
+/* Sidebar theme row: shown wherever the nav labels are shown (expanded states). */
+.app-theme-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.25rem 0.75rem 0.5rem; }
+@media (min-width: 640px) {
+  .app-sidebar .app-theme-row { display: none; }
+  .app-sidebar[data-tablet-expanded="true"] .app-theme-row { display: flex; }
+}
+@media (min-width: 1024px) {
+  .app-shell:not([data-desktop-collapsed="true"]) .app-sidebar .app-theme-row { display: flex; }
 }

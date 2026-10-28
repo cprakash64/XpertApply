@@ -9,6 +9,8 @@ import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 import { beginGoogleAuth } from "@/lib/googleAuth";
 import { mapAuthError, validatePasswordAuth } from "@/lib/authErrors";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeControl } from "@/components/ThemeControl";
 
 export type AuthMode = "login" | "signup";
 
@@ -130,11 +132,8 @@ export function AuthDialog({
     >
       <div className="px-7 pb-5 pt-7 sm:px-9 sm:pt-9">
         <div className="flex items-start justify-between gap-5">
-          <Link href="/" prefetch={false} className="ds-focus-ring -m-1 inline-flex items-center gap-2.5 rounded-control p-1 text-base font-semibold tracking-tight text-foreground">
-            {/* A plain <img>: next/image added ~9 KB gzip to the auth routes for a 32px static mark. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img aria-hidden src="/brand/xpertapply-logo-256.png" alt="" width={32} height={32} />
-            XpertApply
+          <Link href="/" prefetch={false} className="ds-focus-ring -m-1 inline-flex items-center rounded-control p-1">
+            <BrandLogo size={44} />
           </Link>
           {presentation === "modal" && (
             <button
@@ -270,7 +269,8 @@ export function AuthDialog({
 
   if (presentation === "page") {
     return (
-      <main className="grid min-h-screen place-items-center px-4 py-10">
+      <main className="relative grid min-h-screen place-items-center px-4 py-10">
+        <ThemeControl className="absolute right-4 top-4" />
         {card}
       </main>
     );

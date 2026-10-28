@@ -6,9 +6,9 @@ const ROOT = join(__dirname, "..");
 const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
 const tailwind = readFileSync(join(ROOT, "tailwind.config.ts"), "utf8");
 
-const rootBlock = css.slice(css.indexOf(":root {"), css.indexOf("@media (prefers-color-scheme: dark)"));
-const darkStart = css.indexOf(":root {", css.indexOf("@media (prefers-color-scheme: dark)"));
-const darkBlock = css.slice(darkStart, css.indexOf("\n  }\n}", darkStart));
+const rootBlock = css.slice(css.indexOf(":root {"), css.indexOf(':root[data-theme="dark"]'));
+const darkStart = css.indexOf(':root[data-theme="dark"]');
+const darkBlock = css.slice(darkStart, css.indexOf("\n}\n", darkStart));
 
 const RAW_TOKENS = [
   "--xa-navy",
@@ -115,18 +115,18 @@ function contrast(foreground: string, background: string): number {
 describe("canonical design tokens", () => {
   it("defines the approved Midnight Slate + Glacier Blue raw palette exactly", () => {
     const expected = {
-      "--xa-navy": "#25364b",
-      "--xa-navy-hover": "#1d2c3d",
-      "--xa-glacier": "#6888ad",
-      "--xa-glacier-light": "#9bb3cf",
-      "--xa-glacier-deep": "#405f80",
-      "--xa-ink": "#20242b",
+      "--xa-navy": "#17283f",
+      "--xa-navy-hover": "#0f1d30",
+      "--xa-glacier": "#3078ac",
+      "--xa-glacier-light": "#8db6d8",
+      "--xa-glacier-deep": "#2a6a9a",
+      "--xa-ink": "#17283f",
       "--xa-neutral-secondary": "#596779",
       "--xa-neutral-muted": "#5d6c81",
-      "--xa-light-page": "#f8f9fb",
+      "--xa-light-page": "#f7f9fc",
       "--xa-light-card": "#ffffff",
       "--xa-light-border-subtle": "#e8edf3",
-      "--xa-light-border": "#dce3eb",
+      "--xa-light-border": "#dfe5ed",
       "--xa-light-border-strong": "#c9d3df"
     } as const;
     expect(RAW_TOKENS).toEqual(Object.keys(expected));
@@ -143,8 +143,8 @@ describe("canonical design tokens", () => {
   });
 
   it("keeps the retired legacy accent slate, never green, and independent from canonical cyan", () => {
-    expect(declaration(rootBlock, "--accent")).toBe("#25364b");
-    expect(declaration(darkBlock, "--accent")).toBe("#9bb3cf");
+    expect(declaration(rootBlock, "--accent")).toBe("#17283f");
+    expect(declaration(darkBlock, "--accent")).toBe("#8db6d8");
     expect(css).not.toMatch(/--accent:\s*var\(--xa-glacier/);
   });
 
@@ -197,8 +197,10 @@ describe("canonical contrast contracts", () => {
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it("forbids white text on canonical cyan and permits the dedicated accent foreground instead", () => {
-    expect(contrast("#ffffff", resolveHex("--xa-glacier", "light"))).toBeLessThan(4.5);
-    expect(contrast(resolveHex("--color-brand-accent-foreground", "light"), resolveHex("--xa-glacier", "light"))).toBeGreaterThanOrEqual(4.5);
+  it("keeps the sapphire accent usable as a fill under white text, and as the dark-theme text colour", () => {
+    // Refined Sapphire is dark enough to carry white text (4.76:1); the dedicated foreground role agrees.
+    expect(contrast("#ffffff", resolveHex("--xa-glacier", "light"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(resolveHex("--color-brand-accent-foreground", "light"), resolveHex("--color-brand-accent", "light"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(resolveHex("--color-brand-accent-foreground", "dark"), resolveHex("--color-brand-accent", "dark"))).toBeGreaterThanOrEqual(4.5);
   });
 });

@@ -11,7 +11,8 @@ import {
   useSyncExternalStore
 } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import { BrandMark } from "@/components/BrandLogo";
+import { ThemeControl } from "@/components/ThemeControl";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BriefcaseBusiness,
@@ -489,18 +490,10 @@ function Brand({ compact, onNavigate }: { compact: boolean; onNavigate?: () => v
         compact ? "py-2" : "gap-2 px-1 py-1"
       }`}
     >
-      <span aria-hidden className="app-brand-mark">
-        <Image
-          src="/brand/xpertapply-logo-256.png"
-          alt=""
-          width={116}
-          height={87}
-          unoptimized
-        />
-      </span>
+      <BrandMark size={compact ? 32 : 34} className="app-brand-mark" />
       <span className={compact ? "app-brand-label" : undefined} aria-hidden>
-        <span className="text-foreground">Xpert</span>
-        <span className="text-brand-accent-text">Apply</span>
+        <span className="brand-logo__xpert">Xpert</span>
+        <span className="brand-logo__apply">Apply</span>
       </span>
     </Link>
   );
@@ -526,6 +519,10 @@ function NavigationFooter({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <div className="app-navigation-footer mt-auto space-y-1 border-t border-line-subtle pt-4">
+      <div className="app-theme-row">
+        <span className="text-xs font-medium text-foreground-muted">Theme</span>
+        <ThemeControl />
+      </div>
       <NavItem
         {...settingsItem}
         active={isItemActive(pathname, settingsItem.activeRoots)}

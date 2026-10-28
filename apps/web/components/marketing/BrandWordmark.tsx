@@ -1,34 +1,10 @@
-import { PRODUCT_NAME } from "@/lib/siteConfig";
-import Image from "next/image";
+import { BrandLogo } from "@/components/BrandLogo";
 
 /**
- * The XpertApply wordmark.
- *
- * The two halves are ALWAYS two colours — "Xpert" in the primary navy, "Apply"
- * in the primary cyan. Rendering the name in a single colour is the one thing
- * this component exists to prevent, which is why no caller is given a way to do
- * it; `invert` only swaps the navy half to white for the dark trust section.
- *
- * The reference pairs its image mark with a two-colour text wordmark. The image
- * is the source asset embedded in the supplied design HTML.
+ * The XpertApply wordmark as the marketing page uses it: the shared logo
+ * (see BrandLogo) at navbar scale. The marketing stylesheet sizes it through
+ * the `xa-wordmark` hook.
  */
-export function BrandWordmark({
-  invert = false,
-  className = ""
-}: {
-  invert?: boolean;
-  className?: string;
-}) {
-  return (
-    <span className={`xa-wordmark ${invert ? "xa-wordmark--invert" : ""} ${className}`}>
-      {/* One accessible string, two visual halves: a screen reader hears
-        * "XpertApply", never "Xpert Apply". */}
-      <span className="sr-only">{PRODUCT_NAME}</span>
-      <Image aria-hidden src="/brand/xpertapply-mark.png" alt="" width={40} height={40} unoptimized />
-      <span aria-hidden>
-        <span className="xa-wordmark__xpert">Xpert</span>
-        <span className="xa-wordmark__apply">Apply</span>
-      </span>
-    </span>
-  );
+export function BrandWordmark({ className = "" }: { className?: string }) {
+  return <BrandLogo size={40} className={`xa-wordmark ${className}`} />;
 }

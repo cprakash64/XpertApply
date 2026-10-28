@@ -27,7 +27,7 @@ export type DemoRow = {
 };
 
 /** An authentic product screenshot (sample data) shown for a stage. */
-export type StageShot = { src: string; width: number; height: number; alt: string };
+export type StageShot = { src: string; darkSrc: string; width: number; height: number; alt: string };
 
 export type WorkflowStage = {
   /** Stable id — used for the anchor, the observer map and React keys. */
@@ -152,6 +152,7 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
     ],
     shot: {
       src: "/story/application-materials.webp",
+      darkSrc: "/story/application-materials-dark.webp",
       width: 766,
       height: 530,
       alt: "XpertApply application materials: tailored résumé and cover letter actions, the tailoring angle, and the skills kept out of the résumé because the profile does not evidence them."
@@ -257,6 +258,7 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
     ],
     shot: {
       src: "/story/tracker.webp",
+      darkSrc: "/story/tracker-dark.webp",
       width: 808,
       height: 560,
       alt: "XpertApply tracker: status filters and a saved application with downloadable résumé and cover letter."

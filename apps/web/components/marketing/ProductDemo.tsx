@@ -6,8 +6,8 @@ import { PRODUCT_SIDEBAR, type WorkflowStage } from "@/components/marketing/work
  * The sticky visual beside the workflow story.
  *
  * ONE component renders all six states, and it never draws a user interface.
- * Where a real product screenshot exists for a stage (sample data, no scores or
- * counts), it is shown matted like a print: a quiet frame, a hairline border and
+ * Where a real product screenshot exists for a stage (sample data), in a
+ * light and a dark rendering that CSS swaps with the theme, it is shown matted like a print: a quiet frame, a hairline border and
  * a caption saying what it is. Every other stage shows the workflow index, which
  * is typography and a list of the six steps, not a picture of a screen that does
  * not exist. A frame of fixed proportion keeps the column from jumping while the
@@ -21,7 +21,18 @@ export function ProductDemo({ stage }: { stage: WorkflowStage }) {
         <figure className="xa-vis__shot">
           <div className="xa-vis__mat">
             <Image
+              className="xa-vis__img-light"
               src={shot.src}
+              width={shot.width}
+              height={shot.height}
+              alt={shot.alt}
+              // Already a small WebP at its native size; the optimizer would resample it softer.
+              unoptimized
+            />
+            <Image
+              className="xa-vis__img-dark"
+              loading="lazy"
+              src={shot.darkSrc}
               width={shot.width}
               height={shot.height}
               alt={shot.alt}

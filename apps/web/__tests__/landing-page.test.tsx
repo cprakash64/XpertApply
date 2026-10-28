@@ -85,12 +85,21 @@ describe("marketing homepage", () => {
   it("renders the wordmark in two brand colours with one accessible name", () => {
     const { container } = renderLanding();
 
-    const xpert = container.querySelectorAll(".xa-wordmark__xpert");
-    const apply = container.querySelectorAll(".xa-wordmark__apply");
+    const xpert = container.querySelectorAll(".brand-logo__xpert");
+    const apply = container.querySelectorAll(".brand-logo__apply");
     expect(xpert.length).toBeGreaterThan(0);
     expect(xpert.length).toBe(apply.length);
     for (const half of xpert) expect(half.textContent).toBe("Xpert");
     for (const half of apply) expect(half.textContent).toBe("Apply");
+  });
+
+  it("ships a light and a dark mark, both transparent assets, with no padded tile", () => {
+    const { container } = renderLanding();
+    const light = container.querySelector(".brand-mark__light") as HTMLImageElement;
+    const dark = container.querySelector(".brand-mark__dark") as HTMLImageElement;
+    expect(light.getAttribute("src")).toBe("/brand/xpertapply-mark.png");
+    expect(dark.getAttribute("src")).toBe("/brand/xpertapply-mark-dark.png");
+    expect(dark).toHaveAttribute("loading", "lazy");
   });
 
   it("never runs the brand name into the following word", () => {

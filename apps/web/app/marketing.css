@@ -100,8 +100,7 @@
  * product's own pages use. This keeps over-scroll and first paint on the
  * marketing palette for a visitor whose OS is in dark mode. */
 html:has(.xa-page) {
-  background: #f8f9fb;
-  color-scheme: light;
+  background: #ffffff;
   scroll-behavior: smooth;
 }
 
@@ -187,23 +186,23 @@ html:has(.xa-page) {
 }
 
 .xa-btn--primary {
-  background: var(--xa-navy);
-  color: #fff;
+  background: var(--xa-btn-bg);
+  color: var(--xa-on-navy);
   box-shadow: 0 1px 2px rgb(37 54 75 / 22%), 0 8px 20px rgb(37 54 75 / 14%);
 }
 
 .xa-btn--primary:hover {
-  background: var(--xa-navy-2);
+  background: var(--xa-btn-bg-hover);
 }
 
 .xa-btn--ghost {
-  background: #fff;
+  background: var(--xa-surface);
   border-color: var(--xa-line-strong);
   color: var(--xa-ink);
 }
 
 .xa-btn--ghost:hover {
-  background: #fff;
+  background: var(--xa-surface);
   border-color: rgb(29 44 61 / 20%);
 }
 
@@ -215,7 +214,7 @@ html:has(.xa-page) {
 }
 
 .xa-btn--onnavy {
-  background: #fff;
+  background: var(--xa-surface);
   color: var(--xa-navy);
 }
 
@@ -358,7 +357,7 @@ html:has(.xa-page) {
   height: 2.75rem;
   border: 1px solid var(--xa-line-strong);
   border-radius: 10px;
-  background: #fff;
+  background: var(--xa-surface);
   color: var(--xa-ink);
   cursor: pointer;
 }
@@ -381,7 +380,7 @@ html:has(.xa-page) {
   padding: 0.75rem;
   border: 1px solid var(--xa-glass-border);
   border-radius: 18px;
-  background: #fcfdfe;
+  background: var(--xa-surface-sunken);
   box-shadow: var(--xa-shadow);
 }
 
@@ -685,7 +684,7 @@ html:has(.xa-page) {
   margin-left: -4px;
   margin-top: -5px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--xa-surface);
   box-shadow: inset 0 0 0 2px rgb(29 44 61 / 14%);
   transition:
     background-color 260ms ease,
@@ -835,7 +834,7 @@ html:has(.xa-page) {
   padding: 0.25rem 0.625rem;
   border: 1px solid var(--xa-line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--xa-surface);
   font-size: 0.6875rem;
   color: var(--xa-muted);
   text-align: center;
@@ -967,7 +966,7 @@ html:has(.xa-page) {
   padding: 0.75rem;
   border: 1px solid var(--xa-line-soft);
   border-radius: 9px;
-  background: #fff;
+  background: var(--xa-surface);
 }
 
 .xa-mock__row[data-state="active"] {
@@ -1080,7 +1079,7 @@ html:has(.xa-page) {
 
 .xa-mock__action--primary {
   background: var(--xa-navy);
-  color: #fff;
+  color: var(--xa-on-navy);
 }
 
 .xa-mock__action--secondary {
@@ -1208,7 +1207,7 @@ html:has(.xa-page) {
 
 .xa-controller__item[aria-current="true"] {
   background: var(--xa-navy);
-  color: #fff;
+  color: var(--xa-on-navy);
   font-weight: 600;
 }
 
@@ -1314,7 +1313,7 @@ html:has(.xa-page) {
   padding: 0.3125rem 0.75rem;
   border: 1px solid var(--xa-line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--xa-surface);
   font-size: 0.6875rem;
   color: var(--xa-muted);
   text-align: center;
@@ -1370,7 +1369,7 @@ html:has(.xa-page) {
   padding: 0 0.75rem;
   border: 1px solid var(--xa-line-strong);
   border-radius: 8px;
-  background: #fff;
+  background: var(--xa-surface);
 }
 
 .xa-ext__field-input i {
@@ -1451,7 +1450,7 @@ html:has(.xa-page) {
   padding: 0.6875rem;
   border-radius: 9px;
   background: var(--xa-navy);
-  color: #fff;
+  color: var(--xa-on-navy);
   font-size: 0.75rem;
   font-weight: 600;
   text-align: center;
@@ -1481,7 +1480,7 @@ html:has(.xa-page) {
  * -------------------------------------------------------------------------- */
 
 .xa-trust {
-  background: var(--xa-navy);
+  background: var(--xa-section-dark);
   padding-block: 100px;
   scroll-margin-top: 5rem;
 }
@@ -1569,7 +1568,7 @@ html:has(.xa-page) {
   gap: 30px;
   align-items: center;
   padding: 50px;
-  border: 1px solid #dfe5ec;
+  border: 1px solid var(--xa-line-solid);
   border-radius: 17px;
   background: var(--xa-surface-sunken);
   box-shadow: 0 16px 40px rgb(29 44 61 / 5%);
@@ -1597,7 +1596,7 @@ html:has(.xa-page) {
 
 .xa-footer {
   border-top: 1px solid var(--xa-line);
-  background: #fff;
+  background: var(--xa-surface);
   padding-block: 72px 32px;
 }
 
@@ -1714,7 +1713,7 @@ html:has(.xa-page) {
   padding: clamp(1.5rem, 4vw, 2.5rem);
   border: 1px solid rgb(29 44 61 / 8%);
   border-radius: 22px;
-  background: #fcfdfe;
+  background: var(--xa-surface-sunken);
   box-shadow: 0 40px 90px rgb(20 30 42 / 24%);
   overflow: hidden;
   animation: xa-dialog-in 240ms cubic-bezier(0.2, 0.78, 0.2, 1) both;
@@ -1750,7 +1749,7 @@ html:has(.xa-page) {
   height: 2.25rem;
   border: 1px solid var(--xa-line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--xa-surface);
   color: var(--xa-body);
   cursor: pointer;
   transition: color 160ms ease, border-color 160ms ease;
@@ -1838,7 +1837,7 @@ html:has(.xa-page) {
 
 .xa-btn:hover { transform: translateY(-1px); }
 .xa-btn--primary { box-shadow: 0 10px 22px rgb(37 54 75 / 17%); }
-.xa-btn--ghost { background: #fff; border-color: #d7deea; color: var(--xa-navy); }
+.xa-btn--ghost { background: var(--xa-surface); border-color: var(--xa-line-solid); color: var(--xa-navy); }
 .xa-btn--sm { min-height: 42px; padding-inline: 16px; font-size: 14px; }
 
 .xa-wordmark {
@@ -1855,7 +1854,7 @@ html:has(.xa-page) {
   justify-content: flex-start;
   gap: 28px;
   padding: 0 15px;
-  border-color: #fff;
+  border-color: var(--xa-surface);
   background: var(--xa-surface-sunken);
   box-shadow:
     0 1px 1px #fff inset,
@@ -1863,7 +1862,7 @@ html:has(.xa-page) {
     0 14px 36px rgb(16 24 40 / 7%);
 }
 .xa-nav__links { gap: 28px; margin-left: 26px; }
-.xa-nav__link { padding: 0; font-size: 14.5px; font-weight: 650; color: #344054; }
+.xa-nav__link { padding: 0; font-size: 14.5px; font-weight: 650; color: var(--xa-ink); }
 .xa-nav__link:hover { background: none; color: var(--xa-navy); }
 .xa-nav__actions { gap: 10px; margin-left: auto; }
 .xa-nav__actions .xa-btn { padding-inline: 18px; font-size: 14.5px; }
@@ -1887,7 +1886,7 @@ html:has(.xa-page) {
 .xa-hero__trust li { gap: 8px; font-size: 13px; font-weight: 650; }
 .xa-hero__trust svg {
   width: 18px; height: 18px; padding: 4px; border-radius: 50%;
-  background: #eaf0f7; color: #25364b; stroke-width: 3;
+  background: var(--xa-tint); color: var(--xa-navy); stroke-width: 3;
 }
 
 .xa-story { padding: 68px 0 116px; background: var(--xa-surface-sunken); }
@@ -1904,7 +1903,7 @@ html:has(.xa-page) {
 .xa-stage__benefits li { gap: 10px; font-size: 15px; }
 .xa-stage__benefits svg {
   width: 18px; height: 18px; padding: 4px; border-radius: 50%;
-  background: #eaf0f7; color: #25364b; stroke-width: 3;
+  background: var(--xa-tint); color: var(--xa-navy); stroke-width: 3;
 }
 .xa-stage__marker { width: 9px; height: 9px; margin-left: -3.5px; margin-top: -4.5px; }
 .xa-stage[data-state="active"] .xa-stage__marker { box-shadow: 0 0 0 3px var(--rail-glow-color); transform: scale(1.08); }
@@ -1915,65 +1914,65 @@ html:has(.xa-page) {
   .xa-story__sticky { top: 96px; width: auto; justify-self: stretch; padding-top: 5px; }
   .xa-stage { min-height: 70vh; }
 }
-.xa-mock { border-color: #dfe5ed; border-radius: 20px; }
+.xa-mock { border-color: var(--xa-line-solid); border-radius: 20px; }
 .xa-mock__chrome { min-height: 46px; padding: 0 14px; gap: 7px; }
 .xa-mock__dots { gap: 7px; }
-.xa-mock__dots span { width: 8px; height: 8px; border: 1px solid #cbd4df; background: #fff; }
-.xa-mock__url { height: 24px; margin-left: 8px; padding: 0 11px; border-color: #e0e6ed; border-radius: 7px; font-size: 10px; text-align: left; }
+.xa-mock__dots span { width: 8px; height: 8px; border: 1px solid var(--xa-line-solid); background: var(--xa-surface); }
+.xa-mock__url { height: 24px; margin-left: 8px; padding: 0 11px; border-color: var(--xa-line-solid); border-radius: 7px; font-size: 10px; text-align: left; }
 .xa-mock__body { grid-template-columns: 180px minmax(0, 1fr); height: auto; min-height: 520px; }
-.xa-mock__sidebar { gap: 0; padding: 18px 12px; background: #fbfcfe; }
+.xa-mock__sidebar { gap: 0; padding: 18px 12px; background: var(--xa-surface-sunken); }
 .xa-mock__brand { padding: 0 6px 16px; }
 .xa-mock__brand .xa-wordmark { gap: 8px; font-size: 12px; font-weight: 850; }
 .xa-mock__brand .xa-wordmark > img { width: 25px; height: 25px; }
 .xa-mock__nav-item { height: 36px; gap: 9px; margin: 3px 0; padding: 0 10px; border-radius: 8px; font-size: 11px; font-weight: 700; }
-.xa-mock__nav-item[data-current="true"] { background: #eaf0f7; }
+.xa-mock__nav-item[data-current="true"] { background: var(--xa-tint); }
 .xa-mock__panes { grid-template-columns: minmax(0, 1.08fr) minmax(250px, .92fr); align-content: start; }
 .xa-mock__workspace { padding: 22px; border-right: 0; }
 .xa-mock__head { padding: 0; margin-bottom: 17px; border: 0; }
 .xa-mock__head span { display: block; max-width: none; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
 .xa-mock__head h4 { margin-top: 5px; font-size: 21px; letter-spacing: -.033em; }
-.xa-mock__head > i { width: 160px; height: 33px; border: 1px solid #e0e6ed; border-radius: 7px; background: #fbfcfe; }
+.xa-mock__head > i { width: 160px; height: 33px; border: 1px solid var(--xa-line-solid); border-radius: 7px; background: var(--xa-surface-sunken); }
 .xa-mock__rows { gap: 10px; margin: 0; }
-.xa-mock__row { gap: 11px; padding: 13px; border-color: #e5eaf0; border-radius: 10px; }
-.xa-mock__row[data-state="active"] { border-color: #c5d3e3; background: #fff; box-shadow: 0 8px 22px rgb(16 24 40 / 5%); }
+.xa-mock__row { gap: 11px; padding: 13px; border-color: var(--xa-line-solid); border-radius: 10px; }
+.xa-mock__row[data-state="active"] { border-color: var(--xa-line-solid); background: var(--xa-surface); box-shadow: 0 8px 22px rgb(16 24 40 / 5%); }
 .xa-mock__row-title { font-size: 12px; font-weight: 820; }
-.xa-mock__row-meta { margin-top: 4px; font-size: 10px; color: #5d6c81; }
-.xa-mock__panel { align-self: start; min-height: 300px; margin: 22px 22px 22px 0; padding: 18px; border: 1px solid #e5eaf0; border-radius: 12px; background: var(--xa-surface-sunken); }
+.xa-mock__row-meta { margin-top: 4px; font-size: 10px; color: var(--xa-muted); }
+.xa-mock__panel { align-self: start; min-height: 300px; margin: 22px 22px 22px 0; padding: 18px; border: 1px solid var(--xa-line-solid); border-radius: 12px; background: var(--xa-surface-sunken); }
 .xa-mock__panel h5 { font-size: 14px; font-weight: 800; }
 .xa-mock__points { gap: 9px; margin-top: 13px; }
 .xa-mock__points li { gap: 8px; font-size: 11px; line-height: 1.45; }
-.xa-mock__points svg { width: 16px; height: 16px; padding: 4px; border-radius: 50%; background: #eaf0f7; color: #25364b; stroke-width: 3; }
+.xa-mock__points svg { width: 16px; height: 16px; padding: 4px; border-radius: 50%; background: var(--xa-tint); color: var(--xa-navy); stroke-width: 3; }
 .xa-mock__actions { flex-wrap: nowrap; gap: 7px; padding-top: 15px; }
 .xa-mock__action { padding: 10px 7px; font-size: 10px; border-radius: 10px; }
 .xa-controller { width: max-content; max-width: 94%; margin: -27px auto 0; gap: 4px; padding: 7px; }
 .xa-controller__item { flex: 0 0 auto; padding: 10px 13px; font-size: 11.5px; font-weight: 760; }
 
-.xa-ext { padding: 116px 0 118px; background: var(--xa-surface-sunken); border-top: 1px solid #e8edf3; }
+.xa-ext { padding: 116px 0 118px; background: var(--xa-surface-sunken); border-top: 1px solid var(--xa-line-solid); }
 .xa-ext > .xa-shell { width: min(calc(100% - 40px), 1320px); }
 .xa-ext__grid { grid-template-columns: minmax(430px,.82fr) minmax(600px,1.18fr); gap: 60px; }
 .xa-ext .xa-section-head { max-width: 590px; }
 .xa-ext .xa-section-head h2 { max-width: 460px; font-size: clamp(48px,4.4vw,66px); }
 .xa-ext .xa-section-head h2 > span { display: block; }
-.xa-ext .xa-section-head p { max-width: 510px; margin-top: 24px; font-size: 18px; line-height: 1.72; color: #536174; }
+.xa-ext .xa-section-head p { max-width: 510px; margin-top: 24px; font-size: 18px; line-height: 1.72; color: var(--xa-body); }
 .xa-ext__steps { gap: 16px; margin-top: 32px; }
 .xa-ext__step { grid-template-columns: 40px 1fr; gap: 14px; }
 .xa-ext__step-n { width: 40px; height: 40px; }
 .xa-ext .xa-cta-row { align-items: flex-start; margin-top: 32px; margin-left: 54px; }
 .xa-ext .xa-cta-note { gap: 8px; max-width: 26rem; }
-.xa-ext .xa-cta-note > span { max-width: 26rem; font-size: 10px; line-height: 1.35; color: #5d6c81; }
+.xa-ext .xa-cta-note > span { max-width: 26rem; font-size: 10px; line-height: 1.35; color: var(--xa-muted); }
 .xa-ext .xa-btn--primary[aria-disabled="true"] {
   border-color: transparent;
   border-style: solid;
   background: var(--xa-navy);
-  color: #fff;
+  color: var(--xa-on-navy);
   box-shadow: 0 10px 22px rgb(37 54 75 / 17%);
 }
-.xa-ext__text-link { color: #596779; font-size: 13px; font-weight: 760; }
-.xa-ext__visual { min-height: 0; border-color: #dfe6ee; border-radius: 22px; }
+.xa-ext__text-link { color: var(--xa-body); font-size: 13px; font-weight: 760; }
+.xa-ext__visual { min-height: 0; border-color: var(--xa-line-solid); border-radius: 22px; }
 .xa-ext__chrome { min-height: 44px; padding: 0 13px; }
 .xa-ext__browser-body { grid-template-columns: 1fr 250px; min-height: 478px; }
 .xa-ext__form { padding: 28px; }
-.xa-ext__panel { padding: 18px; border-left: 1px solid #e3e8ef; background: var(--xa-surface-sunken); }
+.xa-ext__panel { padding: 18px; border-left: 1px solid var(--xa-line-solid); background: var(--xa-surface-sunken); }
 .xa-ext__panel .xa-wordmark { gap: 8px; font-size: 12px; font-weight: 850; }
 .xa-ext__panel .xa-wordmark > img { width: 25px; height: 25px; }
 .xa-ext__caption { margin-top: 13px; font-size: 11px; line-height: 1.5; }
@@ -1982,17 +1981,17 @@ html:has(.xa-page) {
 .xa-final__copy { max-width: 1040px; }
 .xa-final h2 { max-width: 1040px; font-size: clamp(42px,3.55vw,48px); }
 .xa-final p { max-width: 900px; }
-.xa-footer { padding: 50px 0 48px; background: #fbfcfe; }
+.xa-footer { padding: 50px 0 48px; background: var(--xa-surface-sunken); }
 .xa-footer__top { grid-template-columns: 1.28fr repeat(4,.72fr); gap: 44px; }
 .xa-footer__groups { display: contents; }
 .xa-footer__blurb { max-width: 300px; margin-top: 16px; font-size: 14px; line-height: 1.55; }
-.xa-footer__groups h3 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: none; color: #344054; }
+.xa-footer__groups h3 { margin: 0 0 13px; font-size: 13px; letter-spacing: 0; text-transform: none; color: var(--xa-ink); }
 .xa-footer__groups ul { gap: 0; margin-top: 0; }
-.xa-footer__link, .xa-footer__static { display: block; margin: 8px 0; font-size: 13.5px; line-height: 1.5; color: #5d6c81; }
-.xa-footer__bottom { margin-top: 38px; padding-top: 22px; font-size: 12px; color: #5d6c81; }
+.xa-footer__link, .xa-footer__static { display: block; margin: 8px 0; font-size: 13.5px; line-height: 1.5; color: var(--xa-muted); }
+.xa-footer__bottom { margin-top: 38px; padding-top: 22px; font-size: 12px; color: var(--xa-muted); }
 
 .xa-pricing__backdrop { padding: 28px; background: rgb(29 44 61 / 28%); }
-.xa-pricing__dialog { width: min(1040px,100%); max-height: min(780px,calc(100vh - 48px)); padding: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; background: #fcfdfe; box-shadow: 0 34px 110px rgb(29 44 61 / 22%); }
+.xa-pricing__dialog { width: min(1040px,100%); max-height: min(780px,calc(100vh - 48px)); padding: 30px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; background: var(--xa-surface-sunken); box-shadow: 0 34px 110px rgb(29 44 61 / 22%); }
 .xa-pricing__dialog::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .xa-pricing__close { top: 18px; right: 18px; width: 38px; height: 38px; }
 .xa-pricing__head { max-width: 660px; padding-right: 50px; }
@@ -2046,7 +2045,7 @@ html:has(.xa-page) {
 @media (max-width: 700px) {
   .xa-ext { padding: 74px 0; }
   .xa-ext__browser-body { grid-template-columns: 1fr; }
-  .xa-ext__panel { border-left: 0; border-top: 1px solid #e3e8ef; }
+  .xa-ext__panel { border-left: 0; border-top: 1px solid var(--xa-line-solid); }
   .xa-ext .xa-cta-row { align-items: flex-start; }
 }
 @media (min-width: 701px) {
@@ -2101,8 +2100,9 @@ html:has(.xa-page) {
 
 .xa-page,
 .xa-story,
-.xa-hero::before { background: #fff; }
-html:has(.xa-page) { background: #fff; }
+.xa-hero::before { background: var(--xa-page); }
+html:has(.xa-page) { background: #ffffff; }
+:root[data-theme="dark"]:has(.xa-page) { background: #101a28; }
 
 /* --- Navigation: a floating bar that frosts once the page scrolls ---------- */
 .xa-nav-sentinel { position: absolute; top: 0; left: 0; width: 1px; height: 24px; pointer-events: none; }
@@ -2121,30 +2121,30 @@ html:has(.xa-page) { background: #fff; }
   padding: 0 10px 0 20px;
   border: 0;
   border-radius: 16px;
-  background: rgb(255 255 255 / 98%);
+  background: var(--xa-nav-bg);
   /* No border: the bar floats on elevation and the page's negative space. */
-  box-shadow: 0 1px 3px rgb(23 40 63 / 5%), 0 10px 30px rgb(23 40 63 / 7%);
+  box-shadow: 0 1px 2px rgb(23 40 63 / 5%), 0 6px 20px rgb(23 40 63 / 6%);
   transition: background-color 210ms ease, box-shadow 210ms ease, backdrop-filter 210ms ease;
 }
 /* Scrolled: translucent, frosted, quieter elevation. Opacity stays high enough that
  * Midnight Ink text keeps its contrast over any section, including the navy one. */
 .xa-navwrap[data-scrolled="true"] .xa-nav {
-  background: rgb(255 255 255 / 80%);
+  background: var(--xa-nav-bg-scrolled);
   box-shadow: 0 1px 2px rgb(23 40 63 / 3%), 0 8px 24px rgb(23 40 63 / 6%);
   -webkit-backdrop-filter: blur(18px) saturate(1.3);
   backdrop-filter: blur(18px) saturate(1.3);
 }
 /* Over a dark section the bar is nearly opaque so it never goes grey. */
-.xa-navwrap[data-scrolled="true"][data-tone="dark"] .xa-nav { background: rgb(255 255 255 / 93%); }
+.xa-navwrap[data-scrolled="true"][data-tone="dark"] .xa-nav { background: var(--xa-nav-bg-over-dark); }
 /* No backdrop-filter support, or the user asked for less transparency: solid. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .xa-navwrap[data-scrolled="true"] .xa-nav,
-  .xa-navwrap[data-scrolled="true"][data-tone="dark"] .xa-nav { background: rgb(255 255 255 / 98%); }
+  .xa-navwrap[data-scrolled="true"][data-tone="dark"] .xa-nav { background: var(--xa-nav-bg); }
 }
 @media (prefers-reduced-transparency: reduce) {
   .xa-navwrap[data-scrolled="true"] .xa-nav,
   .xa-navwrap[data-scrolled="true"][data-tone="dark"] .xa-nav {
-    background: #fff;
+    background: var(--xa-surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -2159,8 +2159,8 @@ html:has(.xa-page) { background: #fff; }
 .xa-nav__link:hover { color: var(--xa-glacier); background: none; }
 .xa-btn { border-radius: 999px; }
 .xa-btn--primary { box-shadow: none; }
-.xa-btn--primary:hover { background: var(--xa-navy-2); transform: none; }
-.xa-btn--ghost { border-color: #dfe5ed; color: var(--xa-navy); }
+.xa-btn--primary:hover { background: var(--xa-btn-bg-hover); transform: none; }
+.xa-btn--ghost { border-color: var(--xa-line-solid); color: var(--xa-navy); }
 .xa-btn--ghost:hover { border-color: var(--xa-glacier); color: var(--xa-glacier); transform: none; }
 .xa-nav__actions .xa-btn { padding-inline: 20px; }
 /* The expanded mobile menu is always solid, whatever the bar behind it is doing. */
@@ -2168,7 +2168,7 @@ html:has(.xa-page) { background: #fff; }
   margin-top: 8px;
   border: 0;
   border-radius: 16px;
-  background: #fff;
+  background: var(--xa-surface);
   box-shadow: 0 1px 3px rgb(23 40 63 / 6%), 0 14px 34px rgb(23 40 63 / 12%);
   pointer-events: auto;
 }
@@ -2199,7 +2199,7 @@ html:has(.xa-page) { background: #fff; }
 }
 .xa-hero .xa-cta-row { justify-content: center; margin-top: 36px; }
 .xa-hero__trust { justify-content: center; margin-top: 28px; }
-.xa-hero__trust svg { background: #eaf2fa; color: var(--xa-glacier); }
+.xa-hero__trust svg { background: var(--xa-tint); color: var(--xa-glacier); }
 
 @media (min-width: 640px) {
   .xa-hero h1 { font-size: clamp(48px, 6.7vw, 90px); }
@@ -2219,9 +2219,9 @@ html:has(.xa-page) { background: #fff; }
 .xa-vis__shot { margin: 0; }
 .xa-vis__mat,
 .xa-vis__index {
-  border: 1px solid #dfe5ed;
+  border: 1px solid var(--xa-line-solid);
   border-radius: 22px;
-  background: #f7f9fc;
+  background: var(--xa-surface-sunken);
 }
 .xa-vis__mat {
   display: flex;
@@ -2255,7 +2255,7 @@ html:has(.xa-page) { background: #fff; }
   flex-direction: column;
   aspect-ratio: 1.5 / 1;
   padding: clamp(24px, 4vw, 44px);
-  background: #fff;
+  background: var(--xa-surface);
 }
 .xa-vis__numeral {
   margin: 0;
@@ -2282,7 +2282,7 @@ html:has(.xa-page) { background: #fff; }
   gap: 6px 20px;
   margin: auto 0 0;
   padding: 24px 0 0;
-  border-top: 1px solid #dfe5ed;
+  border-top: 1px solid var(--xa-line-solid);
   list-style: none;
   font-size: 13px;
   color: var(--xa-muted);
@@ -2309,10 +2309,10 @@ html:has(.xa-page) { background: #fff; }
   pointer-events: none;
   background: radial-gradient(
     closest-side,
-    rgb(200 219 236 / 55%) 0%,
-    rgb(221 234 245 / 36%) 40%,
-    rgb(234 242 250 / 16%) 70%,
-    rgb(234 242 250 / 0%) 100%
+    var(--xa-halo-1) 0%,
+    var(--xa-halo-2) 40%,
+    var(--xa-halo-3) 70%,
+    transparent 100%
   );
 }
 @media (max-width: 680px) {
@@ -2326,3 +2326,83 @@ html:has(.xa-page) { background: #fff; }
 .xa-pricing__head > h2:first-child { margin-top: 0; }
 .xa-hero { padding-top: clamp(64px, 11vh, 124px); }
 .xa-hero::after { top: 43%; }
+
+/* The page begins at the very top of the viewport: without this, the navbar's
+ * top margin collapsed through the page container and left a 14px seam above
+ * it. */
+.xa-page { display: flow-root; }
+/* The hero must not clip its own light. With overflow hidden the halo was cut
+ * flat where it passed under the navbar, which read as a horizontal line across
+ * the hero. The page container already clips horizontal bleed. */
+.xa-hero { overflow: visible; }
+
+/* ==========================================================================
+ * Theme (PUI-THEME-01): the page's own roles, light and dark.
+ * Light is the default; dark applies under data-theme="dark" on <html>.
+ * ========================================================================== */
+.xa-theme {
+  --xa-page: #ffffff;
+  --xa-surface: #ffffff;
+  --xa-surface-sunken: #f7f9fc;
+  --xa-tint: #eaf2fa;
+  --xa-line-solid: #dfe5ed;
+  --xa-on-navy: #ffffff;
+  --xa-btn-bg: #17283f;
+  --xa-btn-bg-hover: #0f1d30;
+  --xa-section-dark: #17283f;
+  --xa-nav-bg: rgb(255 255 255 / 98%);
+  --xa-nav-bg-scrolled: rgb(255 255 255 / 80%);
+  --xa-nav-bg-over-dark: rgb(255 255 255 / 93%);
+  --xa-halo-1: rgb(200 219 236 / 55%);
+  --xa-halo-2: rgb(221 234 245 / 36%);
+  --xa-halo-3: rgb(234 242 250 / 16%);
+  color-scheme: light;
+}
+:root[data-theme="dark"] .xa-theme {
+  --xa-navy: #edf3fa;
+  --xa-navy-2: #ffffff;
+  --xa-ink: #edf3fa;
+  --xa-body: #aabbd0;
+  --xa-muted: #91a5bd;
+  --xa-glacier: #8db6d8;
+  --xa-accent-text: #8db6d8;
+  --xa-glacier-soft: #8db6d8;
+  --xa-page: #101a28;
+  --xa-surface: #1a2839;
+  --xa-surface-sunken: #162233;
+  --xa-tint: rgb(141 182 216 / 14%);
+  --xa-line: rgb(237 243 250 / 12%);
+  --xa-line-soft: rgb(237 243 250 / 8%);
+  --xa-line-strong: #40536a;
+  --xa-line-solid: #2d3f55;
+  --xa-glass: #1a2839;
+  --xa-glass-border: #33465d;
+  --xa-on-navy: #101a28;
+  --xa-btn-bg: #8db6d8;
+  --xa-btn-bg-hover: #a6c7e2;
+  --xa-section-dark: #0b1422;
+  --xa-nav-bg: rgb(26 40 57 / 96%);
+  --xa-nav-bg-scrolled: rgb(26 40 57 / 76%);
+  --xa-nav-bg-over-dark: rgb(26 40 57 / 90%);
+  --xa-halo-1: rgb(141 182 216 / 15%);
+  --xa-halo-2: rgb(141 182 216 / 8%);
+  --xa-halo-3: rgb(141 182 216 / 3%);
+  --xa-shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --xa-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 28%);
+  --xa-shadow-lg: 0 2px 6px rgb(0 0 0 / 30%), 0 28px 70px rgb(0 0 0 / 35%);
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .xa-btn--onnavy { background: #8db6d8; color: #101a28; }
+:root[data-theme="dark"] .xa-btn--onnavy:hover { background: #a6c7e2; color: #101a28; }
+:root[data-theme="dark"] .xa-nav { box-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 28%); }
+:root[data-theme="dark"] .xa-nav__link:hover { background: none; }
+:root[data-theme="dark"] .xa-vis__mat img { filter: drop-shadow(0 12px 24px rgb(0 0 0 / 35%)); }
+
+/* Theme control placement inside the marketing bar. */
+.xa-nav__theme { margin-right: 6px; }
+.xa-nav__panel-theme { margin: 4px 0 12px; align-self: flex-start; }
+
+/* Story screenshots: the theme picks the light or the dark capture. */
+.xa-vis__img-dark { display: none !important; }
+:root[data-theme="dark"] .xa-vis__img-light { display: none !important; }
+:root[data-theme="dark"] .xa-vis__img-dark { display: block !important; }

@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/AppShell";
 import { ApplicationAccounts } from "@/components/ApplicationAccounts";
 import { PrivacyControls } from "@/components/PrivacyControls";
+import { ThemeControl } from "@/components/ThemeControl";
 
 export default function SettingsPage() {
   return (
@@ -11,6 +12,13 @@ export default function SettingsPage() {
           Employer account credentials, data export, and account deletion.
         </p>
       </header>
+      <section aria-labelledby="appearance-title" className="mb-8">
+        <h2 id="appearance-title" className="text-xl font-semibold tracking-tight text-foreground">Appearance</h2>
+        <p className="mt-1 text-sm text-foreground-muted">
+          Light, dark, or match your device. Applies across XpertApply on this browser.
+        </p>
+        <ThemeControl className="mt-4" />
+      </section>
       {/* Credentials live here rather than on the profile: they are secrets used
         * to sign in on your behalf, not career information. */}
       <ApplicationAccounts />

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { PRODUCT_NAME, siteUrl } from "@/lib/siteConfig";
+import { ThemeSync } from "@/components/ThemeControl";
 
 /**
  * Site-wide metadata.
@@ -56,15 +57,25 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   colorScheme: "light dark",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8f9fb" },
-    { media: "(prefers-color-scheme: dark)", color: "#14171a" }
+    { media: "(prefers-color-scheme: light)", color: "#f7f9fc" },
+    { media: "(prefers-color-scheme: dark)", color: "#101a28" }
   ]
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    // suppressHydrationWarning covers only this element's attributes: theme-init.js
+    // sets data-theme / data-theme-pref on <html> before React hydrates.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Deliberately synchronous: it must set data-theme before first paint, or the page flashes the wrong theme. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/theme-init.js" />
+      </head>
+      <body>
+        <ThemeSync />
+        {children}
+      </body>
     </html>
   );
 }

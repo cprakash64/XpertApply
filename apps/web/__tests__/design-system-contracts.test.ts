@@ -169,7 +169,7 @@ describe("generated document facsimiles", () => {
     }
 
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
-    const darkBlock = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"));
+    const darkBlock = css.slice(css.indexOf(':root[data-theme="dark"]'));
     for (const token of ["--color-document-paper", "--color-document-ink"]) {
       expect(css).toContain(`${token}:`);
       expect(darkBlock, `${token} is fixed and must not be themed`).not.toContain(`${token}:`);
