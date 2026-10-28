@@ -143,6 +143,12 @@ See `docs/release/PUI-STG1_STAGING_PREPARATION_REPORT.md`: a verified `linux/amd
 staging noindex headers, the extension-ID decision and host-side image identity. The script now also enforces the
 staging wrapper's default-context and `staging_guard.py rendered-config` checks (18 stub tests).
 
+### 7a-3. Blocker resolution (PUI-STG2)
+
+See `docs/release/PUI-STG2_BLOCKER_RESOLUTION_REPORT.md`: status READY_FOR_AUTHORIZED_SERVER_REMEDIATION. Staging noindex nginx patch
+(15/15 local nginx tests), extension-ID resolution (staging extension, no image rebuild), a store-independent image-identity process
+with a verified transfer archive, and a hardened script (24 stub tests). Nothing has been executed on the server.
+
 ### 7b. Operator steps (run on the staging host by the operator)
 
 1. Build `linux/amd64` with the real staging args; record `docker image inspect -f '{{.Id}}'`.

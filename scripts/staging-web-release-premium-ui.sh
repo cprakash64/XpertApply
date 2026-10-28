@@ -26,6 +26,12 @@ umask 077
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${NEW_IMG:?set NEW_IMG}" "${NEW_ID:?set NEW_ID}" "${OLD_IMG:?set OLD_IMG}" "${OLD_ID:?set OLD_ID}" "${NEW_REV:?set NEW_REV}"
 [[ "$NEW_REV" =~ ^[0-9a-f]{40}$ ]] || { echo "NEW_REV must be a full 40-char sha"; exit 1; }
+# Values are written into a YAML override and passed to docker: accept only plain image references and sha256 ids.
+REF_RE='^[a-z0-9][a-zA-Z0-9._/-]*:[A-Za-z0-9._-]{1,128}$'
+[[ "$NEW_IMG" =~ $REF_RE && "$OLD_IMG" =~ $REF_RE ]] || { echo "NEW_IMG/OLD_IMG must be repo:tag references (no spaces, digests or shell characters)"; exit 1; }
+[[ "$NEW_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "NEW_ID/OLD_ID must be sha256:<64 hex> ids recorded on THIS host"; exit 1; }
+# The rollback image must never be overwritten or retagged by the new one.
+[[ "$NEW_IMG" != "$OLD_IMG" && "$NEW_ID" != "$OLD_ID" ]] || { echo "NEW and OLD must differ (tag and id): the rollback image must stay intact"; exit 1; }
 [[ "$(id -u)" == 0 ]] || { echo "run with sudo"; exit 1; }
 [[ -f "$INFRA/compose.staging.yml" && -f "$INFRA/.env.staging" ]] || { echo "staging infra files missing under INFRA"; exit 1; }
 [[ -f "$API_OVR" ]] || { echo "API override file missing: $API_OVR"; exit 1; }
@@ -42,6 +48,10 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
   || { echo "new image was not built from NEW_REV"; exit 1; }
 [[ "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$NEW_IMG")" == "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$OLD_IMG")" ]] \
   || { echo "new image platform differs from the image staging runs today"; exit 1; }
+running_image() { docker inspect -f '{{.Image}}' xpertapply-staging-web; }
+if [[ "${1:-plan}" != "rollback" ]]; then
+  [[ "$(running_image)" == "$OLD_ID" ]] || { echo "OLD_ID is not the image the staging web container runs today - record the real rollback image first"; exit 1; }
+fi
 cat > "$HERE/staging-web.release.yml" <<YML
 services:
   web:
@@ -89,6 +99,14 @@ case "$mode" in
     else
       echo "OTHER CONTAINERS CHANGED (production and staging api/postgres/redis must not) - STOP and investigate"; exit 2
     fi
-    sleep 6; curl -s -o /dev/null -w "web http=%{http_code}\n" http://127.0.0.1:3001/ ;;
+    want_img="$NEW_IMG"; [[ $mode == rollback ]] && want_img="$OLD_IMG"
+    if [[ "$(running_image)" != "$(docker image inspect -f '{{.Id}}' "$want_img")" ]]; then
+      echo "RUNNING CONTAINER IS NOT ON $want_img - STOP; run rollback with the recorded OLD_* values"; exit 3
+    fi
+    ok=""; for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3001/; then ok=1; break; fi; sleep 3
+    done
+    [[ -n "$ok" ]] || { echo "HEALTH CHECK FAILED on 127.0.0.1:3001 - run: sudo -E bash $0 rollback (with the recorded OLD_* values)"; exit 4; }
+    echo "web http=200; container is on $want_img" ;;
   *) echo "usage: plan|apply|rollback"; exit 1 ;;
 esac
