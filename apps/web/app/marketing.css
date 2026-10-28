@@ -1027,19 +1027,6 @@ html:has(.xa-page) {
   background: rgb(104 136 173 / 5%);
 }
 
-.xa-mock__company {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  border: 1px solid var(--xa-line);
-  border-radius: 9px;
-  background: var(--xa-surface-sunken);
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--xa-navy);
-}
 
 .xa-mock__row-text {
   min-width: 0;
@@ -1068,26 +1055,8 @@ html:has(.xa-page) {
   white-space: nowrap;
 }
 
-.xa-mock__score {
-  display: grid;
-  gap: 1px;
-  min-width: 32px;
-  text-align: center;
-  flex: none;
-}
 
-.xa-mock__score strong {
-  font-size: 0.875rem;
-  line-height: 1;
-  color: var(--xa-navy);
-}
 
-.xa-mock__score small {
-  font-size: 0.5rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--xa-muted);
-}
 
 /* --- Detail panel --------------------------------------------------------- */
 
@@ -1106,41 +1075,10 @@ html:has(.xa-page) {
   color: var(--xa-ink);
 }
 
-.xa-mock__metric {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-}
 
-.xa-mock__metric strong {
-  font-size: 2.5rem;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: var(--xa-cyan);
-}
 
-.xa-mock__metric span {
-  font-size: 0.6875rem;
-  color: var(--xa-muted);
-}
 
-.xa-mock__meter {
-  margin-top: 0.75rem;
-  height: 4px;
-  border-radius: 4px;
-  background: rgb(29 44 61 / 7%);
-  overflow: hidden;
-}
 
-.xa-mock__meter i {
-  display: block;
-  height: 100%;
-  border-radius: 4px;
-  background: var(--xa-navy);
-  transition: width 420ms cubic-bezier(0.2, 0.78, 0.2, 1);
-}
 
 .xa-mock__points {
   display: grid;
@@ -2175,18 +2113,10 @@ html:has(.xa-page) {
 .xa-mock__rows { gap: 10px; margin: 0; }
 .xa-mock__row { gap: 11px; padding: 13px; border-color: #e5eaf0; border-radius: 10px; }
 .xa-mock__row[data-state="active"] { border-color: #c5d3e3; background: #fff; box-shadow: 0 8px 22px rgb(16 24 40 / 5%); }
-.xa-mock__company { width: 41px; height: 41px; border-radius: 8px; font-size: 14px; font-weight: 900; }
 .xa-mock__row-title { font-size: 12px; font-weight: 820; }
 .xa-mock__row-meta { margin-top: 4px; font-size: 10px; color: #627186; }
-.xa-mock__score strong { color: #25364b; font-size: 16px; }
-.xa-mock__score small { font-size: 8.5px; color: #627186; }
 .xa-mock__panel { align-self: start; min-height: 300px; margin: 22px 22px 22px 0; padding: 18px; border: 1px solid #e5eaf0; border-radius: 12px; background: var(--xa-surface-sunken); }
 .xa-mock__panel h5 { font-size: 14px; font-weight: 800; }
-.xa-mock__metric { margin-top: 15px; }
-.xa-mock__metric strong { font-size: 43px; font-weight: 850; }
-.xa-mock__metric span { display: none; }
-.xa-mock__meter { height: 7px; margin-top: 8px; background: #e9eef3; }
-.xa-mock__meter i { background: var(--xa-cyan); }
 .xa-mock__points { gap: 9px; margin-top: 13px; }
 .xa-mock__points li { gap: 8px; font-size: 11px; line-height: 1.45; }
 .xa-mock__points svg { width: 16px; height: 16px; padding: 4px; border-radius: 50%; background: #eaf0f7; color: #25364b; stroke-width: 3; }
@@ -2326,4 +2256,11 @@ html:has(.xa-page) {
   .xa-story__intro { text-align: center; }
   .xa-mock__panes { grid-template-columns: 1fr; }
   .xa-mock__panel { margin: 0 21px 21px; }
+}
+
+.xa-mock__note {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--xa-muted);
 }

@@ -18,8 +18,6 @@
 export type DemoRow = {
   title: string;
   meta: string;
-  /** Right-aligned figure (a fit score) — omitted for non-scored rows. */
-  value?: string;
   /**
    * Row emphasis. `active` is the row the workspace is focused on, `done` is
    * complete/confirmed, `pending` still needs the user. Drives colour only;
@@ -51,8 +49,6 @@ export type WorkflowStage = {
     rows: DemoRow[];
     panel: {
       title: string;
-      metric: string;
-      metricCaption: string;
       points: string[];
       /** [primary, secondary] — presentational, they are not links. */
       actions: [string, string];
@@ -88,15 +84,13 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       workspaceTitle: "Jobs worth your time",
       workspaceMeta: "Recommended for you",
       rows: [
-        { title: "Senior Software Engineer", meta: "Remote · Posted today", value: "92", state: "active" },
-        { title: "Software Engineer, Product", meta: "Hybrid · 2 days ago", value: "87" },
-        { title: "Backend Engineer", meta: "Remote · 3 days ago", value: "83" },
-        { title: "Full Stack Engineer", meta: "On-site · 4 days ago", value: "79" }
+        { title: "Example role 1", meta: "Location and work type", state: "active" },
+        { title: "Example role 2", meta: "Location and work type" },
+        { title: "Example role 3", meta: "Location and work type" },
+        { title: "Example role 4", meta: "Location and work type" }
       ],
       panel: {
         title: "Best-fit opportunities",
-        metric: "92",
-        metricCaption: "Fit score",
         points: [
           "Strong match based on your experience",
           "Roles are prioritized by relevance",
@@ -123,15 +117,13 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       workspaceTitle: "Understand the opportunity",
       workspaceMeta: "Fit analysis",
       rows: [
-        { title: "Distributed systems at scale", meta: "Matched · 6 years", state: "done" },
-        { title: "Python and TypeScript", meta: "Matched · Primary stack", state: "done" },
-        { title: "Team leadership", meta: "Partial · Mentoring, not managing", state: "pending" },
-        { title: "Kubernetes in production", meta: "Gap · Worth addressing", state: "pending" }
+        { title: "Example requirement 1", meta: "Matched to your profile", state: "done" },
+        { title: "Example requirement 2", meta: "Matched to your profile", state: "done" },
+        { title: "Example requirement 3", meta: "Partial match", state: "pending" },
+        { title: "Example requirement 4", meta: "Gap to consider", state: "pending" }
       ],
       panel: {
         title: "Why this role fits",
-        metric: "88",
-        metricCaption: "Fit score",
         points: [
           "Core requirements are clearly surfaced",
           "Potential gaps are visible before applying",
@@ -160,13 +152,11 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       rows: [
         { title: "Tailored resume", meta: "Ready to review", state: "done" },
         { title: "Cover letter", meta: "Drafted from your experience", state: "done" },
-        { title: "Highlighted achievements", meta: "4 brought forward", state: "active" },
+        { title: "Highlighted achievements", meta: "Brought forward for this role", state: "active" },
         { title: "Keyword alignment", meta: "Checked against the posting", state: "done" }
       ],
       panel: {
         title: "Preparation readiness",
-        metric: "94",
-        metricCaption: "Ready to review",
         points: [
           "Resume aligned to the role",
           "Cover letter grounded in your experience",
@@ -195,13 +185,11 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       rows: [
         { title: "Technical Recruiter", meta: "Hiring for this team", state: "active" },
         { title: "Engineering Manager", meta: "Likely hiring manager" },
-        { title: "Senior Engineer", meta: "Same team · Shared background" },
+        { title: "Senior Engineer", meta: "Related team" },
         { title: "Staff Engineer", meta: "Adjacent team" }
       ],
       panel: {
         title: "People inside the company",
-        metric: "12",
-        metricCaption: "People found",
         points: [
           "Recruiters and employees are surfaced",
           "Networking stays tied to the opportunity",
@@ -235,8 +223,6 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       ],
       panel: {
         title: "Application progress",
-        metric: "84",
-        metricCaption: "Fields prepared",
         points: [
           "Profile fields are detected",
           "Reusable answers are prepared",
@@ -263,15 +249,13 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       workspaceTitle: "Track everything in one place",
       workspaceMeta: "Search organization",
       rows: [
-        { title: "Senior Software Engineer", meta: "Interview · Thursday 2pm", state: "active" },
-        { title: "Software Engineer, Product", meta: "Applied · 4 days ago", state: "done" },
-        { title: "Backend Engineer", meta: "Follow-up due tomorrow", state: "pending" },
-        { title: "Full Stack Engineer", meta: "Saved · Not applied yet" }
+        { title: "Example role 1", meta: "Interviewing", state: "active" },
+        { title: "Example role 2", meta: "Applied", state: "done" },
+        { title: "Example role 3", meta: "Follow-up due", state: "pending" },
+        { title: "Example role 4", meta: "Saved · Not applied" }
       ],
       panel: {
         title: "Application tracker",
-        metric: "18",
-        metricCaption: "In progress",
         points: [
           "Status changes stay visible",
           "Follow-ups remain organized",
