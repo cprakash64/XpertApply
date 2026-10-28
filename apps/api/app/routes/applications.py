@@ -59,7 +59,7 @@ from app.applications.tracker_lifecycle import (
     dismiss_submission_confirmation,
     require_submission_confirmation,
 )
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token_claims, token_predates_password_change
 from app.core.session_tokens import decode_scoped_token
 from app.db.session import get_db
 from app.documents.filenames import build_document_filename
@@ -133,9 +133,12 @@ def _resolve_session(
         if int(scoped["sid"]) != session_id or int(scoped["uid"]) != session.user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token not valid for this session")
     else:
-        subject = decode_access_token(token)
-        if subject is None or int(subject) != session.user_id:
+        claims = decode_access_token_claims(token)
+        if claims is None or int(claims["sub"]) != session.user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized for this session")
+        owner = db.get(User, session.user_id)
+        if owner is None or token_predates_password_change(claims, owner.password_changed_at):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Sign in again.")
 
     if is_expired(session) and session.status not in {
         ApplicationSessionStatus.completed,

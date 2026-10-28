@@ -3,7 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token_claims, token_predates_password_change
 from app.db.session import get_db
 from app.models.entities import User
 
@@ -16,9 +16,10 @@ def get_current_user(
 ) -> User:
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
-    subject = decode_access_token(credentials.credentials)
-    if subject is None:
+    claims = decode_access_token_claims(credentials.credentials)
+    if claims is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    subject = claims["sub"]
     try:
         user = db.get(User, int(subject))
     except SQLAlchemyError as exc:
@@ -28,4 +29,7 @@ def get_current_user(
         ) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if token_predates_password_change(claims, user.password_changed_at):
+        # The password changed after this token was issued (a reset): sign in again.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Sign in again.")
     return user

@@ -132,6 +132,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Set when a password reset completes. Login tokens issued before this moment
+    # are refused (see app.core.security.token_predates_password_change).
+    password_changed_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -144,6 +147,28 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class PasswordResetToken(Base):
+    """A single-use password reset credential.
+
+    Only the SHA-256 of the token is stored, so a database read cannot be turned
+    into working reset links. The token itself (256 random bits) exists only in
+    the email that carries it.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    created_at: Mapped[DateTimeValue] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ExternalIdentity(Base):

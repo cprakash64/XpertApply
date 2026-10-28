@@ -142,7 +142,7 @@ describe("theme control", () => {
   });
 });
 
-const PUBLIC_PATHS = ["/", "/login", "/signup", "/pricing", "/privacy", "/opensource", "/auth/google/callback", "/not-a-page"];
+const PUBLIC_PATHS = ["/", "/login", "/signup", "/forgot-password", "/reset-password", "/pricing", "/privacy", "/opensource", "/auth/google/callback", "/not-a-page"];
 const APP_PATHS = ["/dashboard", "/jobs", "/jobs/12", "/tracker", "/profile/personal", "/settings", "/resume", "/cover-letter"];
 
 describe("the public website is always light", () => {

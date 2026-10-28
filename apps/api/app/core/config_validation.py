@@ -867,6 +867,47 @@ def _check_google_oauth(settings) -> list[Finding]:
     return findings
 
 
+def _check_email_recovery(settings) -> list[Finding]:
+    """Password recovery needs real delivery and a trusted https link origin.
+
+    Email is optional: with the backend "disabled" recovery reports itself
+    unavailable and nothing here applies. Once it is turned on in production, a
+    development backend, plaintext SMTP, or a non-https/any-path link origin
+    would each undermine the feature, so each is refused at startup.
+    """
+    backend = str(getattr(settings, "email_backend", "disabled") or "disabled").strip().lower()
+    if backend == "disabled":
+        return []
+    findings: list[Finding] = []
+    if backend not in {"smtp"}:
+        findings.append(Finding("EMAIL_BACKEND", "must be 'smtp' (or 'disabled') in production"))
+        return findings
+    if not str(getattr(settings, "smtp_host", "") or "").strip():
+        findings.append(Finding("SMTP_HOST", "is required when EMAIL_BACKEND is smtp"))
+    if str(getattr(settings, "smtp_security", "starttls") or "").strip().lower() not in {"starttls", "ssl"}:
+        findings.append(Finding("SMTP_SECURITY", "must be starttls or ssl in production"))
+    sender = str(getattr(settings, "email_from", "") or "")
+    if "@" not in sender or sender.rsplit("@", 1)[-1].strip(" >").lower() in {"localhost", ""}:
+        findings.append(Finding("EMAIL_FROM", "must be a real sender address in production"))
+    try:
+        parsed = urlparse(str(getattr(settings, "web_base_url", "") or "").strip())
+    except ValueError:
+        parsed = None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+    ):
+        findings.append(Finding("WEB_BASE_URL", "must be a plain https origin (no path) when recovery email is on"))
+    elif parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+        findings.append(Finding("WEB_BASE_URL", "must not point at localhost in production"))
+    return findings
+
+
 def collect_findings(settings) -> list[Finding]:
     """Every unsafe production setting. Empty means the config is acceptable.
 
@@ -890,6 +931,7 @@ def collect_findings(settings) -> list[Finding]:
     findings += _check_people_employment_verification_configuration(settings)
     findings += _check_people_discovery_configuration(settings)
     findings += _check_google_oauth(settings)
+    findings += _check_email_recovery(settings)
     findings += _check_cors(
         getattr(settings, "cors_origins", None),
         allow_credentials=bool(getattr(settings, "cors_allow_credentials", True)),

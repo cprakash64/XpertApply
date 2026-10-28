@@ -15,10 +15,22 @@ const { CSP_HEADER, CSP_PAGE_SOURCE, reportOnlyHeaders, reportOnlyPolicy, serial
 describe("static-safe CSP observation", () => {
   it("uses only Report-Only and suppresses the powered-by header", async () => {
     expect(config.poweredByHeader).toBe(false);
-    expect(await config.headers()).toEqual(reportOnlyHeaders());
+    const headers = await config.headers();
+    // Every page carries the Report-Only CSP; the two recovery pages add, never replace, headers.
+    expect(headers.slice(0, reportOnlyHeaders().length)).toEqual(reportOnlyHeaders());
+    expect(headers.filter(h => h.headers.some(x => x.key.toLowerCase() === "content-security-policy"))).toEqual([]);
     expect(CSP_HEADER).toBe("Content-Security-Policy-Report-Only");
     expect(config).not.toHaveProperty("experimental");
     expect(config).not.toHaveProperty("cacheComponents");
+  });
+
+  it("keeps reset tokens out of Referer headers and caches on the two recovery pages", async () => {
+    const recovery = (await config.headers()).find(h => /forgot-password/.test(h.source));
+    expect(recovery?.source).toBe("/:page(forgot-password|reset-password)");
+    const byKey = Object.fromEntries((recovery?.headers ?? []).map(h => [h.key, h.value]));
+    expect(byKey["Referrer-Policy"]).toBe("no-referrer");
+    expect(byKey["Cache-Control"]).toBe("no-store");
+    expect(byKey["X-Robots-Tag"]).toBe("noindex, nofollow");
   });
 
   it("serializes an ordered strict production candidate without broad script/connect sources", () => {

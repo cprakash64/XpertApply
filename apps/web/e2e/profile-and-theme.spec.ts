@@ -47,7 +47,12 @@ function trackErrors(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(`console: ${m.text()}`);
+    // The production build ships a Report-Only CSP, and Chromium logs that one of
+    // its directives is inert in Report-Only mode. That is the policy's documented
+    // shape, not a page error.
+    if (m.type() === "error" && !/Content Security Policy directive .* report-only policy/.test(m.text())) {
+      errors.push(`console: ${m.text()}`);
+    }
   });
   return errors;
 }
@@ -252,7 +257,11 @@ test.describe("Optional EEO", () => {
 // --------------------------------------------------------------------------- //
 // Theme
 // --------------------------------------------------------------------------- //
-const ROUTES = ["/login", "/dashboard", "/profile", "/jobs", "/tracker", "/settings"];
+// The public website (login, signup, homepage...) is always light; only the signed-in
+// application follows the OS or the saved choice. See lib/theme.ts.
+const PUBLIC_ROUTES = ["/login", "/signup"];
+const APP_ROUTES = ["/dashboard", "/profile", "/jobs", "/tracker", "/settings"];
+const ROUTES = [...PUBLIC_ROUTES, ...APP_ROUTES];
 
 function luminance(rgb: string): number {
   const [r, g, b] = (rgb.match(/\d+/g) ?? ["255", "255", "255"]).map(Number);
@@ -272,39 +281,55 @@ test.describe("System light/dark theme", () => {
     }
   });
 
-  test("dark preference renders dark surfaces on every major route", async ({ page }) => {
+  test("dark preference renders dark surfaces on every app route and keeps public routes light", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
     const email = await signUp(page);
     await login(page, email);
 
-    for (const route of ROUTES) {
+    for (const route of APP_ROUTES) {
       await page.goto(`${BASE}${route}`);
       const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
       expect(luminance(bg), `${route} should be dark`).toBeLessThan(0.3);
       // Charcoal, not pure black.
       expect(bg, `${route} should not be pure black`).not.toBe("rgb(0, 0, 0)");
     }
+    for (const route of PUBLIC_ROUTES) {
+      await page.goto(`${BASE}${route}`);
+      const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      expect(luminance(bg), `${route} is public and stays light under a dark OS`).toBeGreaterThan(0.9);
+    }
   });
 
-  test("changing the OS preference at runtime updates the page", async ({ page }) => {
+  test("changing the OS preference at runtime updates the signed-in app", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
-    await page.goto(`${BASE}/login`);
+    const email = await signUp(page);
+    await login(page, email);
+    await page.goto(`${BASE}/dashboard`);
     const light = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
     await page.emulateMedia({ colorScheme: "dark" });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-theme")))
+      .toBe("dark");
     const dark = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 
     expect(dark).not.toBe(light);
     expect(luminance(dark)).toBeLessThan(luminance(light));
   });
 
-  test("no white first paint in dark mode", async ({ page }) => {
+  test("no white first paint: dark in the app, and a light public page under a dark OS", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
-    // Sample the <html> background as early as the document exists — this is
-    // painted by CSS + color-scheme, with no JS involved.
-    await page.goto(`${BASE}/login`, { waitUntil: "commit" });
-    const html = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
-    expect(luminance(html)).toBeLessThan(0.3);
+    // Sample <html> as soon as the document exists. The blocking theme-init
+    // script has already run by then; no application JavaScript is needed.
+    const email = await signUp(page);
+    await login(page, email);
+    await page.goto(`${BASE}/dashboard`, { waitUntil: "domcontentloaded" });
+    const appHtml = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+    expect(luminance(appHtml)).toBeLessThan(0.3);
+
+    await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
+    const publicHtml = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+    expect(luminance(publicHtml)).toBeGreaterThan(0.9);
   });
 
   test("inputs, cards and buttons use themed surfaces in dark mode", async ({ page }) => {

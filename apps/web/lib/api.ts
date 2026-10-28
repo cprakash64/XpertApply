@@ -429,7 +429,8 @@ export async function apiResponse(path: string, options: RequestInit = {}): Prom
     path === "/auth/signup" ||
     path === "/auth/providers" ||
     path === "/auth/google/complete" ||
-    path === "/auth/google/link";
+    path === "/auth/google/link" ||
+    path.startsWith("/auth/password-reset/");
   const token = publicAuthRequest ? null : readAuthToken();
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 

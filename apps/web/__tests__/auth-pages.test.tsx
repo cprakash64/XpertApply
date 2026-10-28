@@ -332,13 +332,45 @@ describe("auth pages", () => {
     }
   });
 
-  it("still switches between login and signup in place on the auth page itself", async () => {
-    render(React.createElement(SignupPage));
+  it("moves between login and signup with real links, so the URL always matches the form", () => {
+    const signup = render(React.createElement(SignupPage));
+    expect(screen.getByRole("heading", { name: "Create your account" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    signup.unmount();
 
-    const form = screen.getByRole("heading", { name: "Create your account" });
-    expect(form).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    render(React.createElement(LoginPage));
     expect(screen.getByRole("heading", { name: "Sign in to XpertApply" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup");
+  });
+
+  it("offers Forgot password? on login only, pointing at the recovery page", () => {
+    const login = render(React.createElement(LoginPage));
+    expect(screen.getByRole("link", { name: "Forgot password?" })).toHaveAttribute("href", "/forgot-password");
+    login.unmount();
+    render(React.createElement(SignupPage));
+    expect(screen.queryByRole("link", { name: "Forgot password?" })).toBeNull();
+  });
+
+  it.each([["login", LoginPage], ["signup", SignupPage]])(
+    "%s no longer carries the privacy tagline, its lock icon or its divider",
+    (_name, Page) => {
+      const { container } = render(React.createElement(Page));
+      expect(container.textContent).not.toMatch(/Private by default|You stay in control/);
+      expect(container.querySelector("form svg.lucide-lock-keyhole")).toBeNull();
+      expect(container.querySelector("form p.border-t")).toBeNull();
+    }
+  );
+
+  it("the logo is a working link back to the public homepage", () => {
+    render(React.createElement(LoginPage));
+    const home = screen.getByRole("link", { name: "XpertApply" });
+    expect(home).toHaveAttribute("href", "/");
+  });
+
+  it("keeps a safe ?next= return path when moving between login and signup", async () => {
+    window.history.pushState({}, "", "/login?next=%2Fjobs%3Fjob%3D4");
+    render(React.createElement(LoginPage));
+    expect(await screen.findByRole("link", { name: "Create an account" })).toHaveAttribute("href", "/signup?next=%2Fjobs%3Fjob%3D4");
+    window.history.pushState({}, "", "/");
   });
 });

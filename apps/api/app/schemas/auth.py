@@ -20,3 +20,21 @@ class UserResponse(BaseModel):
     id: int
     email: EmailStr
 
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetVerify(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
+    # Same policy as signup (10-128 characters); the route also refuses the email itself.
+    new_password: str = Field(min_length=10, max_length=128)
+
+
+class PasswordResetAvailability(BaseModel):
+    available: bool

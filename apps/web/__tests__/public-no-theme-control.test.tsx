@@ -15,6 +15,8 @@ import { viewport as signupViewport } from "../app/signup/page";
 import { viewport as pricingViewport } from "../app/pricing/page";
 import { viewport as privacyViewport } from "../app/privacy/page";
 import { viewport as openSourceViewport } from "../app/opensource/page";
+import { viewport as forgotViewport } from "../app/forgot-password/page";
+import { viewport as resetViewport } from "../app/reset-password/page";
 import { viewport as callbackViewport } from "../app/auth/google/callback/layout";
 import { viewport as rootViewport } from "../app/layout";
 
@@ -42,7 +44,7 @@ describe("public surfaces carry no theme switcher", () => {
   });
 
   it("every public route opts into it, while the root layout keeps both schemes for the app", () => {
-    for (const viewport of [homeViewport, loginViewport, signupViewport, pricingViewport, privacyViewport, openSourceViewport, callbackViewport]) {
+    for (const viewport of [homeViewport, loginViewport, signupViewport, pricingViewport, privacyViewport, openSourceViewport, callbackViewport, forgotViewport, resetViewport]) {
       expect(viewport).toBe(publicViewport);
     }
     expect(rootViewport.colorScheme).toBe("light dark");

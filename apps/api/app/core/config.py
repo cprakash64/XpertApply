@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     legal_answer_reconfirmation_days: int = 365
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    @property
+    def password_reset_available(self) -> bool:
+        """True only when a real delivery path is configured."""
+        backend = (self.email_backend or "disabled").strip().lower()
+        if backend == "smtp":
+            return bool((self.smtp_host or "").strip())
+        return backend == "outbox"
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -96,6 +104,30 @@ class Settings(BaseSettings):
     google_oauth_redirect_uri: str = "http://localhost:8000/auth/google/callback"
     google_oauth_web_callback_url: str = "http://localhost:3000/auth/google/callback"
     google_oauth_transaction_ttl_seconds: int = 600
+    # --- Account recovery (password reset) and the email it needs --------------
+    # The ONLY origin reset links are built from. It is configuration, never the
+    # request's Host header, so a forged Host cannot point a reset email at an
+    # attacker. Must be an https origin (no path) in production, once email is on.
+    web_base_url: str = "http://localhost:3000"
+    # disabled | smtp | outbox. "disabled" (the default) means no email can be sent,
+    # so password recovery reports itself unavailable instead of pretending.
+    # "outbox" writes .eml files to email_outbox_dir for local development and
+    # tests only; production validation refuses it.
+    email_backend: str = "disabled"
+    email_from: str = "XpertApply <no-reply@localhost>"
+    email_outbox_dir: str = "./outbox"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    # starttls | ssl | none. "none" is for a local sink only; production refuses it.
+    smtp_security: str = "starttls"
+    smtp_timeout_seconds: int = 10
+    password_reset_token_ttl_minutes: int = 30
+    # Per-recipient and per-client (shared by everything behind one proxy IP)
+    # request caps per hour. The recipient cap also stops mail-bombing a victim.
+    password_reset_per_email_hourly_limit: int = 3
+    password_reset_per_client_hourly_limit: int = 30
     secret_key: str = Field(default="dev-only-change-me", min_length=12)
     jwt_expires_minutes: int = 60 * 24 * 7
     cors_origins: list[str] = ["http://localhost:3000"]

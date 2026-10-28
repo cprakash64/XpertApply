@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, X } from "lucide-react";
 import { API_URL, api } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
 import { beginGoogleAuth } from "@/lib/googleAuth";
@@ -43,10 +43,18 @@ export function AuthDialog({
   const [submitting, setSubmitting] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [googleStarting, setGoogleStarting] = useState(false);
+  // Keeps a validated ?next= return path when moving between login and signup.
+  const [nextQuery, setNextQuery] = useState("");
   const submittingRef = useRef(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const formErrorRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const destination = safeReturnPath(new URLSearchParams(window.location.search).get("next"));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once from the address bar after mount
+    setNextQuery(destination ? `?next=${encodeURIComponent(destination)}` : "");
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -198,8 +206,17 @@ export function AuthDialog({
           </p>
         )}
 
-        <div className="mt-5 flex items-center justify-between">
+        <div className="mt-5 flex items-center justify-between gap-3">
           <label className="text-sm font-medium" htmlFor="auth-password">Password</label>
+          {isLogin && (
+            <Link
+              href="/forgot-password"
+              prefetch={false}
+              className="ds-focus-ring -m-1 rounded-control p-1 text-sm font-medium text-foreground-link hover:underline"
+            >
+              Forgot password?
+            </Link>
+          )}
         </div>
         <div className="relative mt-2">
           <input
@@ -249,19 +266,26 @@ export function AuthDialog({
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-sm text-foreground-muted">
           <span>{isLogin ? "New to XpertApply?" : "Already have an account?"}</span>
-          <button
-            type="button"
-            className="ds-focus-ring rounded-control px-1 py-0.5 font-semibold text-foreground-link"
-            onClick={() => changeMode(isLogin ? "signup" : "login")}
-          >
-            {isLogin ? "Create an account" : "Sign in"}
-          </button>
+          {presentation === "page" ? (
+            // On the real /login and /signup routes this is a link, so the URL, the
+            // back button and a copied address all agree with what is on screen.
+            <Link
+              href={`${isLogin ? "/signup" : "/login"}${nextQuery}`}
+              prefetch={false}
+              className="ds-focus-ring rounded-control px-1 py-0.5 font-semibold text-foreground-link"
+            >
+              {isLogin ? "Create an account" : "Sign in"}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className="ds-focus-ring rounded-control px-1 py-0.5 font-semibold text-foreground-link"
+              onClick={() => changeMode(isLogin ? "signup" : "login")}
+            >
+              {isLogin ? "Create an account" : "Sign in"}
+            </button>
+          )}
         </div>
-
-        <p className="mt-6 flex items-center justify-center gap-2 border-t border-line-subtle pt-5 text-center text-xs text-foreground-muted">
-          <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-brand-accent-text" />
-          Private by default. You stay in control.
-        </p>
       </form>
     </section>
   );

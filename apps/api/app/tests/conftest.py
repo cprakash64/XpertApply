@@ -44,8 +44,11 @@ def _reset_rate_limiter() -> None:
     from app.people.service import _RATE_BUCKETS as people_rate_buckets
     from app.routes.applications import _RATE_BUCKETS
 
+    from app.services.password_reset import reset_rate_limits
+
     _RATE_BUCKETS.clear()
     people_rate_buckets.clear()
+    reset_rate_limits()
 
 
 @pytest.fixture(autouse=True)
