@@ -28,9 +28,9 @@ export default function GlobalError({
                  document cannot reference them. Light: cool page, navy action on
                  white. Dark: charcoal page, cyan action on ink — never cyan under
                  white text. Keep in step with the --color-* roles if they move. */
-              :root { color-scheme: light dark; --bg:#f8fafc; --surface:#ffffff; --fg:#08182f; --muted:#667085; --line:#e5e9f0; --accent:#06245c; --accent-fg:#ffffff; --focus:#0e7c85; }
+              :root { color-scheme: light dark; --bg:#f8f9fb; --surface:#ffffff; --fg:#20242b; --muted:#627186; --line:#dce3eb; --accent:#25364b; --accent-fg:#ffffff; --focus:#0e7c85; }
               @media (prefers-color-scheme: dark) {
-                :root { --bg:#14171a; --surface:#1b1f22; --fg:#eef1ed; --muted:#98a29b; --line:#333a3d; --accent:#14b8c4; --accent-fg:#08182f; --focus:#63d7dc; }
+                :root { --bg:#14171a; --surface:#1b1f22; --fg:#eef1ed; --muted:#98a29b; --line:#333a3d; --accent:#6888ad; --accent-fg:#20242b; --focus:#9bb3cf; }
               }
               html,body { margin:0; background:var(--bg); color:var(--fg);
                 font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }

@@ -41,15 +41,15 @@ import { WORKFLOW_STAGES } from "@/components/marketing/workflowStages";
  * the rail's leading edge read as the same moment in the journey.
  */
 
-/** #14B8C4 → #06245C, the cyan-to-navy journey, as RGB triples. */
-const RAIL_FROM = [20, 184, 196] as const;
-const RAIL_TO = [6, 36, 92] as const;
+/** #6888AD → #25364B, the glacier-to-slate journey, as RGB triples. */
+const RAIL_FROM = [104, 136, 173] as const;
+const RAIL_TO = [37, 54, 75] as const;
 
 function railColor(progress: number): { solid: string; glow: string } {
   const channel = (i: number) =>
     Math.round(RAIL_FROM[i] + (RAIL_TO[i] - RAIL_FROM[i]) * progress);
   const [r, g, b] = [channel(0), channel(1), channel(2)];
-  return { solid: `rgb(${r} ${g} ${b})`, glow: `rgb(${r} ${g} ${b} / 14%)` };
+  return { solid: `rgb(${r} ${g} ${b})`, glow: "transparent" };
 }
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));

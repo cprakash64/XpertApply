@@ -10,21 +10,13 @@ import { Check } from "lucide-react";
  * preview here would make the reader work out what they are looking at before
  * they have read what it is.
  *
- * The atmosphere behind it is decorative and marked `aria-hidden`. The monogram
- * sits at 1% opacity: it is meant to register as a faint sense of brand, not as
- * a shape anyone notices.
+ * The background is a flat porcelain surface: no gradient, glow or monogram.
  */
 const TRUST = ["No auto-submit", "You stay in control", "One profile across applications"];
 
 export function Hero() {
   return (
     <section className="xa-hero">
-      <div aria-hidden className="xa-hero__atmos">
-        <span className="xa-hero__x">X</span>
-        <span className="xa-hero__glow xa-hero__glow--cyan" />
-        <span className="xa-hero__glow xa-hero__glow--navy" />
-      </div>
-
       <div className="xa-shell">
         <div className="xa-hero__inner">
           <span className="xa-eyebrow xa-eyebrow--dot">Built for the whole job search</span>
@@ -56,11 +48,6 @@ export function Hero() {
               </li>
             ))}
           </ul>
-
-          <p className="xa-hero__scroll" aria-hidden>
-            <span className="xa-hero__mouse"><i /></span>
-            Scroll to explore
-          </p>
         </div>
       </div>
     </section>
