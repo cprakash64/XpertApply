@@ -36,7 +36,7 @@ protected files above (no changes).
 | Decision | Reason |
 |---|---|
 | Keep dark mode in the app (`prefers-color-scheme`); homepage stays light-only | Founder brief is light-first; removing dark mode is a product call. OPEN: confirm. |
-| Pricing dialog content left unchanged | Plans/prices have no billing code behind them; commercial terms are the founder's call. OPEN. |
+| Pricing dialog now states "Pricing is not finalized yet" (same position as `/pricing`); plans, prices, limits and "Cancel anytime" removed | No billing code backs them; the founder chose the placeholder. Real plans return here only once billing exists. |
 | Removed "MOST POPULAR" badge | Unsupported popularity claim. |
 | Removed invented demo data (companies, fit scores, counts, "84%") from the homepage | No fabricated metrics. Demo is labelled illustrative. |
 | Removed visible authoring instruction ("Replace this illustration with...") from the public homepage | It shipped publicly in the base. Replaced with an "illustrative example" caption. |
@@ -94,9 +94,8 @@ NOT TESTED / BLOCKED
 
 ## 6. Open issues and risks
 
-- P1 (founder decision): pricing dialog shows plans/prices/limits and "Cancel anytime" with no
-  billing implementation; `/pricing` says pricing is a placeholder. Do not deploy publicly without
-  resolving.
+- RESOLVED: the pricing dialog previously showed unbacked plans; it now matches `/pricing`.
+  Follow-up (P3): the unused `.xa-pricing__plan*` rules remain in `app/marketing.css` and can be pruned.
 - P2: dark mode vs light-only homepage; warning amber still reads warm on light; mobile marketing
   nav hamburger is not right-aligned; phone job-card density (fit badge on its own row); tablet
   "Word" download button wraps; `--xa-cyan*` variable names no longer match their values.

@@ -309,16 +309,14 @@ describe("marketing homepage", () => {
 
       const dialog = screen.getByRole("dialog");
       expect(dialog).toHaveAttribute("aria-modal", "true");
-      expect(dialog).toHaveAccessibleName("Pick the level of help you need.");
+      expect(dialog).toHaveAccessibleName("Pricing is not finalized yet.");
       // The page behind must not scroll under the overlay.
       expect(document.body.style.overflow).toBe("hidden");
 
-      for (const plan of ["Free", "Pro", "Pro + Outreach"]) {
-        expect(within(dialog).getByText(plan)).toBeInTheDocument();
-      }
-      expect(within(dialog).getByText("$0")).toBeInTheDocument();
-      expect(within(dialog).getByText("$4.99")).toBeInTheDocument();
-      expect(within(dialog).getByText("$9.99")).toBeInTheDocument();
+      // No plans, prices or limits: none are backed by the product, and the
+      // dialog must say what /pricing says.
+      expect(within(dialog).getByText(/Hosted pricing is intentionally a placeholder/)).toBeInTheDocument();
+      expect(dialog.textContent).not.toMatch(/\$\d|per month|\/ month|Cancel anytime|Most popular/i);
 
       await userEvent.keyboard("{Escape}");
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -348,15 +346,14 @@ describe("marketing homepage", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("sends every plan to the real signup route", async () => {
+    it("links only to real routes: signup and the pricing page", async () => {
       renderLanding();
 
       await userEvent.click(screen.getAllByRole("button", { name: "Pricing" })[0]);
       const dialog = screen.getByRole("dialog");
 
-      const ctas = within(dialog).getAllByRole("link");
-      expect(ctas).toHaveLength(3);
-      for (const cta of ctas) expect(cta).toHaveAttribute("href", "/signup");
+      const hrefs = within(dialog).getAllByRole("link").map((link) => link.getAttribute("href"));
+      expect(hrefs).toEqual(["/signup", "/pricing"]);
     });
   });
 

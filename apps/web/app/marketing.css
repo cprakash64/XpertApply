@@ -2234,3 +2234,10 @@ html:has(.xa-page) {
   line-height: 1.4;
   color: var(--xa-muted);
 }
+
+.xa-pricing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}

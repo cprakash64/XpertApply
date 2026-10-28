@@ -10,16 +10,17 @@ import {
   useState
 } from "react";
 import Link from "next/link";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 
 /**
  * Pricing, as an overlay on the marketing page.
  *
- * PRESENTATION ONLY. There is no billing, subscription, plan or quota logic
- * anywhere in this repository — the API has no notion of a paid tier — so
- * nothing here reads or writes commercial state, and every plan's action is the
- * same signup route the rest of the page uses. When real billing arrives, the
- * plans below become its client, not its source of truth.
+ * PRESENTATION ONLY, and deliberately without plans. There is no billing,
+ * subscription, plan or quota logic anywhere in this repository — the API has no
+ * notion of a paid tier — so this dialog states the same position as /pricing:
+ * hosted pricing is not finalized. It lists no prices, limits or plan names
+ * because none are backed by the product. When real billing exists, plans belong
+ * here as its client, not its source of truth.
  *
  * Kept as an overlay rather than a route because the navbar entry is a detail
  * request in the middle of reading the page: sending the visitor to /pricing
@@ -38,56 +39,6 @@ const PricingContext = createContext<PricingApi | null>(null);
 export function usePricingDialog(): PricingApi | null {
   return useContext(PricingContext);
 }
-
-const PLANS = [
-  {
-    name: "Free",
-    price: "$0",
-    cadence: "/ month",
-    tag: null,
-    description: "A real way to try the full XpertApply workflow before paying.",
-    action: "Start free",
-    features: [
-      "Up to 30 job applications per month",
-      "Job discovery and fit insights",
-      "Application tracking",
-      "Reusable career profile",
-      "Browser extension autofill"
-    ]
-  },
-  {
-    name: "Pro",
-    price: "$4.99",
-    cadence: "/ month",
-    tag: null,
-    description: "For active job seekers who want to apply broadly without sacrificing quality.",
-    action: "Choose Pro →",
-    features: [
-      "Unlimited job applications",
-      "Everything in Free",
-      "Tailored resume for each role",
-      "Tailored cover letters",
-      "Unlimited application tracking",
-      "Priority preparation workflow"
-    ]
-  },
-  {
-    name: "Pro + Outreach",
-    price: "$9.99",
-    cadence: "/ month",
-    tag: null,
-    description: "For candidates who want applications and networking working together.",
-    action: "Choose Pro + Outreach →",
-    features: [
-      "Everything in Pro",
-      "Unlimited job applications",
-      "Find relevant recruiters and employees",
-      "Personalized recruiter/referral messages",
-      "Send outreach through supported LinkedIn or email flows",
-      "Track outreach alongside applications"
-    ]
-  }
-];
 
 export function PricingProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -197,54 +148,23 @@ function PricingModal({ onClose }: { onClose: () => void }) {
         </button>
 
         <div className="xa-pricing__head">
-          <span className="xa-eyebrow">Simple pricing</span>
-          <h2 id="xa-pricing-title">Pick the level of help you need.</h2>
+          <span className="xa-eyebrow">Pricing</span>
+          <h2 id="xa-pricing-title">Pricing is not finalized yet.</h2>
           <p>
-            Start free, then upgrade when you want unlimited applications, tailored materials,
-            and direct outreach tools.
+            The open-source MVP is free to run locally. Hosted pricing is intentionally a
+            placeholder until deployment costs, AI usage controls, and privacy commitments are
+            finalized.
           </p>
         </div>
 
-        <ul className="xa-pricing__plans">
-          {PLANS.map((plan) => (
-            <li
-              key={plan.name}
-              className="xa-pricing__plan"
-              data-featured={plan.tag ? "true" : "false"}
-            >
-              <p className="xa-pricing__plan-name">
-                {plan.name}
-                {plan.tag && <span className="xa-pricing__tag">{plan.tag}</span>}
-              </p>
-              <p className="xa-pricing__price">
-                <strong>{plan.price}</strong>
-                {plan.cadence && <span>{plan.cadence}</span>}
-              </p>
-              <p className="xa-pricing__description">{plan.description}</p>
-              <ul className="xa-pricing__features">
-                {plan.features.map((feature) => (
-                  <li key={feature}>
-                    <Check aria-hidden />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                href="/signup"
-                className={`xa-btn ${plan.tag ? "xa-btn--primary" : "xa-btn--ghost"}`}
-                onClick={onClose}
-              >
-                {plan.action}
-                <span className="sr-only"> with the {plan.name} plan</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-
-        <p className="xa-pricing__note">
-          Cancel anytime. No long-term commitment. Outreach availability depends on supported
-          integrations and user authorization.
-        </p>
+        <div className="xa-pricing__actions">
+          <Link href="/signup" className="xa-btn xa-btn--primary" onClick={onClose}>
+            Create an account
+          </Link>
+          <Link href="/pricing" className="xa-btn xa-btn--ghost" onClick={onClose}>
+            Read the pricing page
+          </Link>
+        </div>
       </div>
     </div>
   );
