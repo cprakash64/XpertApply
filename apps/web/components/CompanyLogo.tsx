@@ -98,7 +98,7 @@ function GeneratedCompanyMark({ company, size }: { company: string; size: number
       data-testid="company-logo-generated"
       role="img"
       aria-label={`${company} generated company mark`}
-      className="flex h-full w-full items-center justify-center bg-surface-selected font-bold tracking-[-0.04em] text-brand-primary"
+      className="flex h-full w-full items-center justify-center bg-surface-subtle font-bold tracking-[-0.04em] text-foreground-secondary"
       style={{ fontSize: Math.max(11, Math.round(size * 0.33)) }}
     >
       {initials}

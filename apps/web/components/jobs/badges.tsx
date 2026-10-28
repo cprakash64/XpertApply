@@ -87,7 +87,7 @@ export function FitBadge({
         className="w-24 shrink-0 rounded-card border border-line-default bg-surface-subtle px-2 py-2 text-center text-foreground-muted"
         title={display.helper}
       >
-        <p className="text-[10px] font-medium uppercase tracking-wide opacity-70">Fit score</p>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-secondary">Fit score</p>
         {display.kind === "calculating" ? (
           <p className="flex h-8 items-center justify-center" aria-label="Calculating fit">
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -108,7 +108,7 @@ export function FitBadge({
       className={`w-24 shrink-0 rounded-card border px-2 py-2 text-center ${tone.container}`}
       title={tone.description}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wide opacity-70">Fit score</p>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-secondary">Fit score</p>
       <p className={`text-2xl font-bold leading-tight ${tone.number}`}>{score !== null ? Math.round(score) : "—"}</p>
       <p className="text-[11px] font-semibold">{label ?? tone.label}</p>
     </div>

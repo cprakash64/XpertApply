@@ -274,13 +274,15 @@ function Pipeline({
   const reached = lastReachedStage(counts);
 
   return (
-    <dl role="group" className="mt-6 grid gap-3" aria-label="Application pipeline">
+    <div role="group" className="mt-6" aria-label="Application pipeline">
+    <dl className="grid gap-3">
       {PIPELINE_STAGES.map((stage, index) => {
         const value = counts[stage.key];
         const isCurrent = value > 0 && index === reached;
         return (
-          <div key={stage.key} className="grid grid-cols-[5.5rem_1fr_2rem] items-center gap-3">
+          <div key={stage.key} className="grid grid-cols-[5.5rem_1fr] items-center gap-3">
             <dt className="truncate text-sm text-foreground-secondary">{stage.label}</dt>
+            <dd className="grid grid-cols-[1fr_2rem] items-center gap-3">
             <div
               aria-hidden
               className="h-2 overflow-hidden rounded-pill bg-surface-subtle"
@@ -291,7 +293,7 @@ function Pipeline({
                 className={`block h-full rounded-pill transition-[width] duration-normal ease-standard ${
                   // Only the furthest stage the user has actually reached is
                   // accented. Reaching *Offer* is a genuine positive outcome, so
-                  // that one stage earns semantic green; every earlier stage is
+                  // that one stage earns the success tone; every earlier stage is
                   // progress, which is brand cyan rather than success.
                   isCurrent
                     ? stage.key === "offers"
@@ -302,11 +304,13 @@ function Pipeline({
                 style={{ width: value === 0 ? "0%" : `${Math.max((value / peak) * 100, 4)}%` }}
               />
             </div>
-            <dd className="text-right text-sm font-semibold tabular-nums text-foreground">{value}</dd>
+            <span className="text-right text-sm font-semibold tabular-nums text-foreground">{value}</span>
+            </dd>
           </div>
         );
       })}
     </dl>
+    </div>
   );
 }
 

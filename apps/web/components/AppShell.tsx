@@ -500,7 +500,7 @@ function Brand({ compact, onNavigate }: { compact: boolean; onNavigate?: () => v
       </span>
       <span className={compact ? "app-brand-label" : undefined} aria-hidden>
         <span className="text-foreground">Xpert</span>
-        <span className="text-brand-accent">Apply</span>
+        <span className="text-brand-accent-text">Apply</span>
       </span>
     </Link>
   );

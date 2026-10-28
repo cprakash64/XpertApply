@@ -229,9 +229,10 @@ describe("marketing homepage", () => {
       expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: "smooth" });
     });
 
-    it("uses the supplied extension-demo replacement caption", () => {
+    it("labels the extension illustration as illustrative, with no authoring instruction", () => {
       renderLanding();
-      expect(screen.getByText(/Replace this illustration with an 8–12 second recording/i)).toBeInTheDocument();
+      expect(screen.getByText(/Illustrative example of the XpertApply panel/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Replace this illustration/i)).not.toBeInTheDocument();
     });
   });
 

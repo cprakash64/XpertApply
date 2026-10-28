@@ -40,6 +40,14 @@ export const metadata: Metadata = {
     `Discover better-fit jobs, tailor every application, connect with the right people, ` +
     `and apply faster with ${PRODUCT_NAME}.`,
   alternates: { canonical: siteUrl() },
+  twitter: {
+    // No share image exists yet, so a plain summary card rather than a large-image card.
+    card: "summary",
+    title: `${PRODUCT_NAME} — Find the right job. Apply with confidence.`,
+    description:
+      `Discover better-fit jobs, tailor every application, connect with the right people, ` +
+      `and apply faster with ${PRODUCT_NAME}.`
+  },
   openGraph: {
     type: "website",
     siteName: PRODUCT_NAME,

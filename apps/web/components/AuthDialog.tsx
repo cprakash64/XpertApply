@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, X } from "lucide-react";
 import { API_URL, api } from "@/lib/api";
 import { safeReturnPath, storeAuthToken } from "@/lib/authSession";
@@ -132,7 +131,9 @@ export function AuthDialog({
       <div className="px-7 pb-5 pt-7 sm:px-9 sm:pt-9">
         <div className="flex items-start justify-between gap-5">
           <Link href="/" className="ds-focus-ring -m-1 inline-flex items-center gap-2.5 rounded-control p-1 text-base font-semibold tracking-tight text-foreground">
-            <Image aria-hidden src="/brand/xpertapply-logo.png" alt="" width={32} height={32} unoptimized />
+            {/* A plain <img>: next/image added ~9 KB gzip to the auth routes for a 32px static mark. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img aria-hidden src="/brand/xpertapply-logo.png" alt="" width={32} height={32} />
             XpertApply
           </Link>
           {presentation === "modal" && (

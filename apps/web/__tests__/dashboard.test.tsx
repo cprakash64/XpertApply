@@ -247,7 +247,7 @@ describe("DashboardClient", () => {
 
     const pipeline = screen.getByRole("group", { name: "Application pipeline" });
     // A description list gives assistive tech stage/count pairs.
-    expect(pipeline.tagName).toBe("DL");
+    expect(pipeline.querySelector("dl")).not.toBeNull();
     for (const stage of ["Saved", "In progress", "Interview", "Offer"]) {
       expect(within(pipeline).getByText(stage)).toBeInTheDocument();
     }

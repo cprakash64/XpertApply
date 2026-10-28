@@ -119,7 +119,6 @@ function ExtensionVisual() {
             <BrandWordmark />
             <div className="xa-ext__progress-head">
               <span>Application progress</span>
-              <strong>84%</strong>
             </div>
             <div className="xa-ext__progress"><i /></div>
             <ul className="xa-ext__panel-list">
@@ -132,7 +131,7 @@ function ExtensionVisual() {
         </div>
       </div>
       <figcaption className="xa-ext__caption">
-        Replace this illustration with an 8–12 second recording of the real extension filling an application.
+        Illustrative example of the XpertApply panel beside an application form. It is not real data.
       </figcaption>
     </figure>
   );
