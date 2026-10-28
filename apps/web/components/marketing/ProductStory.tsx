@@ -42,8 +42,8 @@ import { WORKFLOW_STAGES } from "@/components/marketing/workflowStages";
  */
 
 /** #6888AD → #25364B, the glacier-to-slate journey, as RGB triples. */
-const RAIL_FROM = [104, 136, 173] as const;
-const RAIL_TO = [37, 54, 75] as const;
+const RAIL_FROM = [48, 120, 172] as const;
+const RAIL_TO = [23, 40, 63] as const;
 
 function railColor(progress: number): { solid: string; glow: string } {
   const channel = (i: number) =>

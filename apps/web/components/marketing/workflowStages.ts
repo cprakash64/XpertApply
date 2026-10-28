@@ -26,6 +26,9 @@ export type DemoRow = {
   state?: "active" | "done" | "pending";
 };
 
+/** An authentic product screenshot (sample data) shown for a stage. */
+export type StageShot = { src: string; width: number; height: number; alt: string };
+
 export type WorkflowStage = {
   /** Stable id — used for the anchor, the observer map and React keys. */
   id: string;
@@ -38,6 +41,8 @@ export type WorkflowStage = {
   headline: string;
   body: string;
   benefits: string[];
+  /** Present only where a real screenshot exists; other stages use the workflow index. */
+  shot?: StageShot;
   demo: {
     /**
      * Which product sidebar item is current. Uses the app's own vocabulary,
@@ -145,6 +150,12 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       "Cover letters grounded in your background",
       "Less rewriting, stronger applications"
     ],
+    shot: {
+      src: "/story/application-materials.webp",
+      width: 766,
+      height: 530,
+      alt: "XpertApply application materials: tailored résumé and cover letter actions, the tailoring angle, and the skills kept out of the résumé because the profile does not evidence them."
+    },
     demo: {
       sidebarLabel: "Prepare",
       workspaceTitle: "Tailor your application",
@@ -244,6 +255,12 @@ export const WORKFLOW_STAGES: WorkflowStage[] = [
       "Status and next steps stay visible",
       "One system from discovery to follow-up"
     ],
+    shot: {
+      src: "/story/tracker.webp",
+      width: 808,
+      height: 560,
+      alt: "XpertApply tracker: status filters and a saved application with downloadable résumé and cover letter."
+    },
     demo: {
       sidebarLabel: "Tracker",
       workspaceTitle: "Track everything in one place",
