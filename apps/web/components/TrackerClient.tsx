@@ -343,7 +343,7 @@ export function TrackerClient() {
   if (loading) {
     return (
       <section aria-busy="true">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[0, 1, 2, 3].map((card) => (
             <div key={card} className={`${CARD} p-4`}>
               <div className="flex items-center justify-between">
@@ -376,7 +376,7 @@ export function TrackerClient() {
 
   return (
     <section>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <SummaryCard
           icon={<BriefcaseBusiness className="h-5 w-5" />}
           label="Total tracked"
@@ -500,14 +500,14 @@ function SummaryCard({
   value: number;
 }) {
   return (
-    <div className={`${CARD} p-4`}>
-      <div className="flex items-center justify-between">
-        <span className="rounded-control border border-line-default bg-surface-subtle p-2 text-foreground-muted">
+    <div className={`${CARD} p-3 sm:p-4`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="rounded-control border border-line-default bg-surface-subtle p-1.5 text-foreground-muted sm:p-2">
           {icon}
         </span>
         <span className="text-2xl font-semibold tabular-nums text-foreground">{value}</span>
       </div>
-      <p className="mt-3 text-sm font-medium text-foreground-secondary">{label}</p>
+      <p className="mt-2 text-sm font-medium text-foreground-secondary sm:mt-3">{label}</p>
     </div>
   );
 }
