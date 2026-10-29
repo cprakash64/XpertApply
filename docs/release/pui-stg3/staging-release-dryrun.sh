@@ -10,6 +10,36 @@
 set -uo pipefail
 umask 077
 
+# --- Dry-run output validator (sourced by test-dryrun-validator.sh; ignored when the script is executed) -----------
+# validate_dry_run <api|web> <output-file> <compose-exit-code> <current-short-container-id (12 lowercase hex)>
+# Accepts only the grammar Compose v2.35 was observed to emit for a recreate of ONE service:
+#   " DRY-RUN MODE -  Container NAME  VERB"   with VERB in Recreate|Recreated|Starting|Started
+# where NAME is exactly xpertapply-staging-<service>, or <that service's CURRENT 12-hex container id>_xpertapply-staging-<service>
+# (Compose names the container being replaced with its own id while it starts). Every non-blank line must match; an unknown
+# service, prefix, suffix, verb, extra line, empty output or non-zero exit is rejected. Prints the reason and returns 1.
+validate_dry_run() {
+  local svc="${1:-}" file="${2:-}" rc="${3:-}" cid="${4:-}" name line n_re recreate=0 lines=0
+  case "$svc" in api|web) name="xpertapply-staging-$svc" ;; *) echo "unknown service '$svc'"; return 1 ;; esac
+  [[ "$rc" == 0 ]] || { echo "$svc dry run exited '$rc'"; return 1; }
+  [[ "$cid" =~ ^[0-9a-f]{12}$ ]] || { echo "current container id for $svc is not 12 lowercase hex: '$cid'"; return 1; }
+  [[ -s "$file" ]] || { echo "$svc dry run output is empty"; return 1; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    lines=$((lines+1))
+    if [[ "$line" =~ ^[[:space:]]*DRY-RUN\ MODE\ -[[:space:]]+Container[[:space:]]+([A-Za-z0-9_.-]+)[[:space:]]+(Recreate|Recreated|Starting|Started)[[:space:]]*$ ]]; then
+      n_re="${BASH_REMATCH[1]}"
+      if [[ "$n_re" != "$name" && "$n_re" != "${cid}_${name}" ]]; then echo "$svc dry run names an unexpected container: $n_re"; return 1; fi
+      [[ "${BASH_REMATCH[2]}" == Recreate && "$n_re" == "$name" ]] && recreate=1
+    else
+      echo "$svc dry run has an unexpected line: $line"; return 1
+    fi
+  done < "$file"
+  [[ $lines -gt 0 && $recreate -eq 1 ]] || { echo "$svc dry run does not show a recreate of $name"; return 1; }
+  return 0
+}
+if [[ "${XA_DRYRUN_SOURCE_ONLY:-}" == "1" && "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
 EXPECT_HOST="srv738314"
 INFRA="${INFRA:-/home/xpertapply/apps/staging/infra/staging}"
 API_OVR="${API_OVR:-/home/xpertapply/nav02-staging-release-1516f23/staging-api.release.yml}"
@@ -135,14 +165,14 @@ sys.exit(1 if bad else 0)
 PY
 
 echo "== 5. Compose dry runs (literal output; --no-deps --no-build --pull never)"
-dc -f "$WORK/api.new.yml" up --dry-run -d --no-deps --no-build --pull never api > "$WORK/dry.api" 2>&1; echo "dry-run api exit=$?"
+dc -f "$WORK/api.new.yml" up --dry-run -d --no-deps --no-build --pull never api > "$WORK/dry.api" 2>&1; rc_api=$?; echo "dry-run api exit=$rc_api"
 cat "$WORK/dry.api"
-dc -f "$WORK/web.new.yml" --profile web up --dry-run -d --no-deps --no-build --pull never web > "$WORK/dry.web" 2>&1; echo "dry-run web exit=$?"
+dc -f "$WORK/web.new.yml" --profile web up --dry-run -d --no-deps --no-build --pull never web > "$WORK/dry.web" 2>&1; rc_web=$?; echo "dry-run web exit=$rc_web"
 cat "$WORK/dry.web"
-touched="$(cat "$WORK/dry.api" "$WORK/dry.web" | grep -oE 'Container [A-Za-z0-9_.-]+' | awk '{print $2}' | sort -u | tr '\n' ' ')"
-info "containers named in the dry runs: $touched"
-extra="$(for c in $touched; do [[ "$c" == xpertapply-staging-api || "$c" == xpertapply-staging-web ]] || echo "$c"; done)"
-[[ -z "$extra" && -n "$touched" ]] && ok "only xpertapply-staging-api and xpertapply-staging-web are in scope" || bad "dry run names other containers: $extra"
+api_cid="$(docker inspect -f '{{.Id}}' xpertapply-staging-api | cut -c1-12)"; web_cid="$(docker inspect -f '{{.Id}}' xpertapply-staging-web | cut -c1-12)"
+info "current short ids: api=$api_cid web=$web_cid (Compose prefixes the container being replaced with its own id)"
+if r="$(validate_dry_run api "$WORK/dry.api" "$rc_api" "$api_cid")"; then ok "api dry run: only xpertapply-staging-api (plain or prefixed with its own id $api_cid), exit 0"; else bad "api dry run rejected: $r"; fi
+if r="$(validate_dry_run web "$WORK/dry.web" "$rc_web" "$web_cid")"; then ok "web dry run: only xpertapply-staging-web (plain or prefixed with its own id $web_cid), exit 0"; else bad "web dry run rejected: $r"; fi
 grep -qiE 'Recreate' "$WORK/dry.api" && ok "api would be recreated" || bad "api dry run shows no Recreate (is the image already in use?)"
 grep -qiE 'Recreate' "$WORK/dry.web" && ok "web would be recreated" || bad "web dry run shows no Recreate"
 grep -qiE 'xpertapply-staging-(postgres|redis)|xpertapply-(api|web|worker|scheduler|postgres|redis)-1|veotrex' "$WORK/dry.api" "$WORK/dry.web" && bad "a database/cache, production or veotrex container appears in the dry run" || ok "no postgres, redis, production or veotrex container appears in the dry runs"
