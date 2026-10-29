@@ -40,3 +40,16 @@ Disable by `EMAIL_BACKEND=disabled` (pages then say recovery is unavailable). Co
 - Per-client limiting keys on the peer address; behind the nginx proxy that is the proxy address unless uvicorn trusts `X-Forwarded-For` (not configured), so it acts as a shared cap. The per-recipient cap is the effective abuse control.
 - Rate-limit buckets are per process (the DB cap is shared). A Redis-backed limiter would be a later hardening.
 - Extension session tokens are not revoked by a reset (short-lived, scoped).
+
+## Resend SMTP integration (2026-10-28)
+
+- No backend change was required: `EMAIL_BACKEND=smtp`, `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=465`,
+  `SMTP_SECURITY=ssl` (implicit TLS via `smtplib.SMTP_SSL`, default verifying context), `SMTP_USERNAME=resend`,
+  `SMTP_PASSWORD=<Resend API key>`, `EMAIL_FROM`, `WEB_BASE_URL` were already supported and production-validated.
+- Compose already passes them: the `api` (and `worker`, `scheduler`) services load `.env` through `env_file`.
+- Added tests: implicit TLS with a trusted test certificate (AUTH PLAIN as `resend`, delivery, reset link origin) and
+  refusal of an untrusted certificate (nothing sent, request still answers generically).
+- Added a commented Resend block to `.env.example`. Real delivery to a mailbox remains NOT verified.
+- Rollout: set the variables in each server's `.env` (separate staging/production keys), recreate only the `api`
+  container (no migration needed beyond 0034). Rollback: remove `EMAIL_BACKEND` (or set `disabled`) and recreate `api`;
+  recovery reports itself unavailable.

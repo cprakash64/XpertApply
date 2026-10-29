@@ -8,10 +8,13 @@ delivery FAILURE on purpose.
 
 from __future__ import annotations
 
+import base64
 import email as emaillib
 import logging
 import re
 import socketserver
+import ssl
+import subprocess
 import threading
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -464,6 +467,134 @@ def test_real_smtp_delivery_reaches_the_sink(smtp_sink, session_factory) -> None
     message = emaillib.message_from_string(raw)
     assert message["Subject"] == "Reset your XpertApply password"
     assert f"{ORIGIN}/reset-password#token=" in raw.replace("=\n", "")
+
+
+# --- Implicit TLS (port 465 style, SMTP_SECURITY=ssl), as Resend requires ----- #
+class _TlsSinkHandler(_SinkHandler):
+    """Same sink, but it advertises and records AUTH PLAIN like a real relay."""
+
+    def handle(self) -> None:
+        def reply(line: str) -> None:
+            self.wfile.write((line + "\r\n").encode())
+
+        reply("220 tls-sink ESMTP")
+        data_mode, lines, rcpt = False, [], []
+        for raw in self.rfile:
+            line = raw.decode(errors="replace").rstrip("\r\n")
+            if data_mode:
+                if line == ".":
+                    data_mode = False
+                    self.server.messages.append(("\n".join(lines), list(rcpt)))  # type: ignore[attr-defined]
+                    reply("250 queued")
+                else:
+                    lines.append(line[1:] if line.startswith("..") else line)
+                continue
+            verb = line.split(" ", 1)[0].upper()
+            if verb == "EHLO":
+                reply("250-tls-sink")
+                reply("250 AUTH PLAIN")
+            elif verb == "AUTH":
+                self.server.logins.append(line.split(" ", 2)[-1])  # type: ignore[attr-defined]
+                reply("235 ok")
+            elif verb == "RCPT":
+                rcpt.append(line)
+                reply("250 ok")
+            elif verb == "DATA":
+                data_mode, lines = True, []
+                reply("354 go")
+            elif verb == "QUIT":
+                reply("221 bye")
+                return
+            else:
+                reply("250 ok")
+
+
+class _TlsSink(_Sink):
+    logins: list[str]
+    context: ssl.SSLContext
+
+    def get_request(self):  # type: ignore[no-untyped-def]
+        sock, addr = super().get_request()
+        return self.context.wrap_socket(sock, server_side=True), addr
+
+
+def _self_signed(directory: Path) -> tuple[Path, Path]:
+    cert, key = directory / "cert.pem", directory / "key.pem"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return cert, key
+
+
+@pytest.fixture()
+def tls_sink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[_TlsSink, None, None]:
+    cert, key = _self_signed(tmp_path)
+    server = _TlsSink(("127.0.0.1", 0), _TlsSinkHandler)
+    server.messages, server.logins = [], []
+    server.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.context.load_cert_chain(cert, key)
+    server.cert_path = cert  # type: ignore[attr-defined]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(settings, "email_backend", "smtp")
+    monkeypatch.setattr(settings, "smtp_host", "127.0.0.1")
+    monkeypatch.setattr(settings, "smtp_port", server.server_address[1])
+    monkeypatch.setattr(settings, "smtp_security", "ssl")
+    monkeypatch.setattr(settings, "smtp_username", "resend")
+    monkeypatch.setattr(settings, "smtp_password", "re_test_not_a_real_key")
+    monkeypatch.setattr(settings, "web_base_url", ORIGIN)
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_implicit_tls_authenticates_and_delivers_when_the_certificate_is_trusted(
+    tls_sink,
+    monkeypatch,
+    session_factory,  # noqa: ARG001
+) -> None:
+    real = ssl.create_default_context
+    # Trust ONLY the test certificate, still with full verification and hostname checking.
+    monkeypatch.setattr(
+        "app.core.email.ssl.create_default_context",
+        lambda *a, **k: real(cafile=str(tls_sink.cert_path)),
+    )
+    client = TestClient(app)
+    signup(client)
+    assert request_reset(client, "ada@example.com").status_code == 202
+    assert len(tls_sink.messages) == 1
+    plain = base64.b64decode(tls_sink.logins[0]).split(b"\0")
+    assert plain[-2:] == [b"resend", b"re_test_not_a_real_key"]
+    assert f"{ORIGIN}/reset-password#token=" in tls_sink.messages[0][0].replace("=\n", "")
+
+
+def test_implicit_tls_refuses_an_untrusted_certificate(tls_sink, session_factory) -> None:  # noqa: ARG001
+    # System trust store only: the self-signed sink must be rejected, and nothing is sent.
+    with pytest.raises(EmailDeliveryError):
+        send_email(to="a@example.com", subject="s", text="t")
+    assert tls_sink.messages == [] and tls_sink.logins == []
+    response = request_reset(TestClient(app), "ada@example.com")
+    assert response.status_code == 202
 
 
 def test_smtp_failure_is_a_typed_error_and_the_request_still_answers_generically(
