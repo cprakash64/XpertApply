@@ -70,13 +70,25 @@ docker exec xpertapply-staging-postgres sh -c "psql -U \"\$POSTGRES_USER\" -d po
 Pass criteria: `restore-exit=0`, revision `0036_application_doc_snapshots`, user count equals section 3. **No backup
 that has not been restore-tested counts.** The dump stays under `/home/luna/staging-backups` (0700).
 
-## 5. Staging-only noindex (root)
+## 5. Staging-only noindex (root; PUI-STG3B)
 
-Follow section 2 of the operator checklist in `PUI-STG2_BLOCKER_RESOLUTION_REPORT.md` exactly: verify the nginx file
-SHA-256, back it up, `patch --dry-run`, apply, `nginx -t`, reload, then
-`bash docs/release/pui-stg2/validate-staging-noindex.sh` until it exits 0. Do not edit any production vhost; confirm
-`sha256sum` of the production vhost is unchanged before and after. Rollback: restore the `.bak` and reload.
-Do this **before** the new build is publicly reachable.
+Use the guarded script `docs/release/pui-stg2/staging-nginx-noindex.sh` (modes `plan`, `apply`, `rollback`). It pins the
+host name, the reviewed patch and validator SHA-256 values, the live file baseline (`1d635e30…`) and the exact expected
+result (`c7f40f8b…`). It edits only `/etc/nginx/sites-available/xpertapply-staging`, takes a verified backup
+(`xpertapply-staging.bak-noindex-<UTC>`, never overwritten), runs `nginx -t` before and after, restores automatically if
+the post-change test fails, reloads gracefully (no restart), and proves that production files and all container
+IDs are unchanged before it runs the public validator.
+
+```bash
+bash staging-nginx-noindex.sh plan                 # read-only, any user
+sudo bash staging-nginx-noindex.sh apply           # only after the plan is reviewed and approved
+sudo bash staging-nginx-noindex.sh rollback [backup-file]
+```
+
+Notes: nginx adds the header itself, so the app's own `X-Robots-Tag` on `/forgot-password` and `/reset-password` will
+appear twice with the same value (harmless). The staging vhost has no other `add_header`, so nothing is suppressed, and
+staging nginx adds no HSTS or frame headers (unchanged from today; production sets its own in a separate file). Noindex is
+a crawler hint and is not access control.
 
 ## 6. Pre-flight for the release (root)
 
