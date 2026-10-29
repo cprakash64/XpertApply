@@ -194,3 +194,52 @@ store an explicit choice. The live-API specs (`profile-and-theme`, `tracker-docu
 
 Rollout: web-only build from the committed source; no API, migration or environment change. Rollback: redeploy the previous web image. The
 theme default is the only behavioural change outside the page and is reversible by reverting `lib/theme.ts` and `public/theme-init.js`.
+
+## 10. Dashboard, Jobs and Applications refinement (PUI-DASH-JOBS-FINAL)
+
+Scope: three authenticated pages only; the public site, the sidebar structure and the theme system are unchanged.
+
+### Applications
+- Visible breadcrumb, eyebrow, page title and introduction are removed; a visually hidden `h1 "Applications"` stays. The toolbar (status filters left;
+  search and a quiet "Find more jobs" link right) now starts at the top of the content area. Master-detail, status editing, documents and links unchanged.
+
+### Dashboard (layout from the founder's target; every figure real)
+- Compact welcome + a job search that hands off to `/jobs?q=` (a jobs search, labelled as such; there is no combined index). No notification bell or
+  account menu: neither exists as a feature. The server-decided next action is kept as one slim bar.
+- Four metrics: job matches, applications (submitted or in progress = in progress + interviews + offers + rejected; saved roles excluded), interviews, offers.
+  No growth percentages: nothing computes a prior period.
+- Main column: three vertical "Top job matches" cards (company logo mark on a neutral field, never stock photography; fit chip; the user's own matched
+  skills; short description; real Save; "Review & apply" which opens the job in the Jobs workspace, where the existing apply flow runs, so the Dashboard never
+  submits anything) and a compact "Recent applications" table. Right rail: profile completion (real percentage and labelled sections) and a donut pipeline
+  (saved, in progress, interviews, offers, rejected). Below `xl` the rail moves under the main column.
+- API (additive, `GET /dashboard/summary`): `applications.rejected`; `recentApplications` now 5 rows with `jobId`, `appliedAt`, `fitScore`; `topMatches` gains
+  `workplaceType`, `employmentType`, `postedAt`, `fitSummary`, `matchedSkills`, `snippet`, `logoUrl`, `saved`; new `profile {percent, completed[], missing[]}`.
+  The new web tolerates an older API (every new field is optional).
+
+### Jobs
+- Hidden `h1`; one compact toolbar (search, workplace, minimum fit, posted window, sort) with the result count and the date note beside it; "Find fresh
+  jobs" and "Refresh matches" demoted to quiet buttons. Cards are denser: one fit chip, one match reason, one filled action (Apply), the rest quiet text actions.
+  A job with no employer posting date says "Posting date not listed"; the day we discovered it is never shown as a date.
+- Fixed in passing: the search box could not hold a space (the URL writer trimmed the text it read back), so multi-word searches could only be pasted.
+
+### Fit colours
+- Bands unchanged (>=80 Strong, 60-79 Good, 45-59 Stretch, <45 Low). Colours: Strong green (new `--color-fit-strong*` tokens, light and dark, because the product's
+  success token is navy), Good and Stretch amber (`status-warning`), Low red (`status-danger`). Number and label always accompany the colour. One shared
+  `FitScoreChip` is used on Jobs, the Dashboard and the Applications detail.
+
+### Ranking and paging (server side; `apps/api/app/jobs/ranking.py`)
+- `GET /jobs` gains `sort` (`best_recent` default, `fit`, `newest`), `limit` (1-100) and `cursor`; the response gains `page {sort,total,limit,returned,has_more,next_cursor}`.
+  Without `limit` the whole list is returned as before (discover and refresh-matches are unchanged apart from the new default order).
+- `best_recent`: fit BAND (the product's own thresholds) first; then dated before undated; newest posting DAY first; higher fit within that day; exact posting time; id.
+  A recent weak match therefore never outranks a strong one. `fit`: exact score, then newest. `newest`: verified `posted_at` only (undated last), then fit.
+  `discovered_at` never places a job by date. Every key ends with the job id, so the order is total.
+- Paging is keyset: the cursor carries the sort mode and the rank key of the last job; the next page is every job with a strictly greater key. A job added or
+  removed between requests cannot shift the boundary, repeat a job or skip one. The cursor holds no user data.
+- Filters are query parameters on every request (`role`, `workplace_type`, `min_fit_score`, `posted_within_days`). The UI no longer filters or sorts a downloaded list.
+
+### Deployment implication
+- Web and API ship together for the full effect. The new web works against the currently deployed API (a response without `page` is treated as a full legacy list,
+  and the Dashboard shows what that API provides), but ranking, paging, the richer cards and the profile and pipeline blocks need the new API.
+- No migration and no environment change. Rollback: redeploy the previous web and API images (the API change is additive).
+- Performance note: ranking runs in the API process over the caller's eligible set (eligibility is evaluated in Python, so the database cannot order it); each page
+  request recomputes the ranking. See the measurements in the release report.

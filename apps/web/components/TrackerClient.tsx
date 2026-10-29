@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { CompanyLogo } from "@/components/CompanyLogo";
+import { FitScoreChip } from "@/components/jobs/badges";
 import { Alert, Chip, StatusBadge } from "@/components/ui";
 import {
   formatApplicationStatus,
@@ -440,23 +441,32 @@ export function TrackerClient() {
               </Chip>
             ))}
           </div>
-          {/* The icon sits inside the control, which the Input primitive's chrome
-              does not express — so this keeps its own markup and borrows the
-              field's visual contract instead. */}
-          <label className="relative block w-full md:max-w-xs">
-            <Search
-              aria-hidden
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
-            />
-            <span className="sr-only">Search applications</span>
-            <input
-              aria-label="Search applications"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search company or role"
-              className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
-            />
-          </label>
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center md:w-auto">
+            {/* The icon sits inside the control, which the Input primitive's chrome
+                does not express — so this keeps its own markup and borrows the
+                field's visual contract instead. */}
+            <label className="relative block w-full sm:w-64">
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
+              />
+              <span className="sr-only">Search applications</span>
+              <input
+                aria-label="Search applications"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search company or role"
+                className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
+              />
+            </label>
+            {/* Quiet on purpose: the page is for the applications you already have. */}
+            <Link
+              href="/jobs"
+              className="ds-focus-ring inline-flex h-10 shrink-0 items-center justify-center rounded-control px-3 text-sm font-medium text-foreground-link transition duration-fast ease-standard hover:bg-surface-subtle"
+            >
+              Find more jobs
+            </Link>
+          </div>
         </div>
       )}
 
@@ -483,7 +493,7 @@ export function TrackerClient() {
           </Link>
         </div>
       ) : (
-        <div className="mt-5 grid gap-4 md:grid-cols-2 md:items-start lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:gap-6">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 md:items-start lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:gap-6">
           <section
             aria-labelledby="tracked-applications-heading"
             className={`${detailOpen && selected ? "hidden" : ""} min-w-0 md:block`}
@@ -672,12 +682,14 @@ function ApplicationDetail({
             </dd>
           </div>
         )}
-        {/* Fit stays plain metadata. The score's colour bands are a Jobs/Dashboard
-            signal, and only an existing score is shown: nothing is computed here. */}
+        {/* The same semantic fit chip as Jobs and the Dashboard (number plus label plus colour). Only an existing score is shown:
+            nothing is computed here. */}
         {fitScore != null && (
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Fit score</dt>
-            <dd className="mt-0.5 text-foreground">{Math.round(fitScore)}% fit</dd>
+            <dd className="mt-1">
+              <FitScoreChip score={fitScore} scoreState="scored" />
+            </dd>
           </div>
         )}
         {application.applied_source && (

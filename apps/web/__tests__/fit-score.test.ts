@@ -1,42 +1,47 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FIT_SCORE_STYLES, getFitScoreTone, getScoreDisplay } from "../lib/fitScore";
 
 describe("getFitScoreTone", () => {
-  it("returns the emphasised slate tone for Strong fit (>= 80)", () => {
+  it("is green for Strong fit (>= 80), with the number and label beside it", () => {
     const tone = getFitScoreTone(88);
     expect(tone.key).toBe("strong");
     expect(tone.label).toBe("Strong fit");
-    expect(tone.container).toContain("bg-surface-selected");
-    expect(tone.number).toContain("text-brand-primary");
+    expect(tone.container).toContain("fit-strong");
+    expect(tone.number).toContain("text-fit-strong");
   });
 
-  it("returns the link-toned Good fit for 60–79", () => {
-    const tone = getFitScoreTone(79);
-    expect(tone.key).toBe("good");
-    expect(tone.label).toBe("Good fit");
-    expect(tone.number).toContain("text-foreground-link");
+  it("is amber for Good fit (60-79) and for Stretch (45-59), told apart by label", () => {
+    const good = getFitScoreTone(79);
+    expect(good.key).toBe("good");
+    expect(good.label).toBe("Good fit");
+    expect(good.container).toContain("status-warning");
+    const stretch = getFitScoreTone(55);
+    expect(stretch.key).toBe("stretch");
+    expect(stretch.label).toBe("Stretch");
+    expect(stretch.container).toContain("status-warning");
+    expect(good.label).not.toBe(stretch.label);
   });
 
-  it("returns the quiet Stretch tone for 45–59", () => {
-    const tone = getFitScoreTone(55);
-    expect(tone.key).toBe("stretch");
-    expect(tone.label).toBe("Stretch");
-    expect(tone.number).toContain("text-foreground-secondary");
-  });
-
-  it("returns the muted Low fit tone for < 45", () => {
+  it("is red for Low fit (< 45)", () => {
     const tone = getFitScoreTone(30);
     expect(tone.key).toBe("low");
     expect(tone.label).toBe("Low fit");
-    expect(tone.number).toContain("text-foreground-muted");
+    expect(tone.container).toContain("status-danger");
+    expect(tone.number).toContain("text-status-danger");
   });
 
-  it("uses no traffic-light hues in any band", () => {
-    for (const style of Object.values(FIT_SCORE_STYLES)) {
-      expect(`${style.container} ${style.number}`).not.toMatch(
-        /emerald|green|lime|orange|amber|yellow|red|rose|teal|brown/
-      );
+  it("uses only the semantic status tokens (green, amber, red), never raw palette colours", () => {
+    for (const [key, style] of Object.entries(FIT_SCORE_STYLES)) {
+      const classes = `${style.container} ${style.number}`;
+      expect(classes, key).not.toMatch(/\b(?:bg|text|border)-(?:emerald|green|lime|orange|amber|yellow|red|rose|teal)-\d/);
+      if (key !== "none") expect(classes, key).toMatch(/fit-strong|status-(?:warning|danger)/);
     }
+  });
+
+  it("every band keeps a visible text label, so colour is never the only signal", () => {
+    for (const score of [95, 70, 50, 10]) expect(getFitScoreTone(score).label).toMatch(/fit|Stretch/);
   });
 
   it("handles boundary values inclusively", () => {
@@ -97,5 +102,23 @@ describe("getScoreDisplay", () => {
   it("falls back to scored when a number exists but no state is given", () => {
     const d = getScoreDisplay(undefined, 70);
     expect(d.kind).toBe("score");
+  });
+});
+
+describe("fit-strong tokens", () => {
+  const css = readFileSync(join(__dirname, "../app/globals.css"), "utf8");
+  const tailwind = readFileSync(join(__dirname, "../tailwind.config.ts"), "utf8");
+
+  it("define green for the light theme and a separate value for the dark theme", () => {
+    const values = [...css.matchAll(/--color-fit-strong:\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
+    expect(values).toHaveLength(2);
+    expect(values[0]).not.toBe(values[1]);
+    for (const family of ["--color-fit-strong-surface", "--color-fit-strong-border"]) {
+      expect([...css.matchAll(new RegExp(`${family}:`, "g"))]).toHaveLength(2);
+    }
+  });
+
+  it("are mapped in Tailwind so the static class names resolve", () => {
+    for (const name of ["fit-strong", "fit-strong-surface", "fit-strong-border"]) expect(tailwind).toContain(`"${name}"`);
   });
 });

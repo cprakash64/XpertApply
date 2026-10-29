@@ -83,25 +83,33 @@ async function axeViolations(page: Page) {
 test.describe("Applications page, desktop", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("header, filters, two-column master-detail, and no statistic cards", async ({ page }) => {
+  test("no introductory header: filters and search sit at the top, beside a quiet Find more jobs link", async ({ page }) => {
     await install(page);
     await page.goto("/tracker");
-    await expect(page.getByRole("heading", { level: 1, name: "Applications" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toContainText("Workspace");
-    await expect(page.getByRole("navigation", { name: "Breadcrumb" }).locator('[aria-current="page"]')).toHaveText("Applications");
-    await expect(page.getByText("Your job search", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Find more jobs" })).toHaveAttribute("href", "/jobs");
+    // Removed: breadcrumb, eyebrow, big heading and introduction. The h1 stays for assistive technology only.
+    await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toHaveCount(0);
+    await expect(page.getByText("Your job search", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Every application in one place")).toHaveCount(0);
+    const h1 = page.getByRole("heading", { level: 1, name: "Applications" });
+    await expect(h1).toHaveCount(1);
+    expect(await h1.evaluate((el) => { const r = el.getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })).toBe(true); // visually hidden
+    await expect(page.locator("main").getByText("Applications", { exact: true })).toHaveCount(1);                    // only the hidden h1: no visible page title
+
+    const first = page.getByRole("button", { name: "All", exact: true });
     for (const name of ["All", "Applied", "Interviews", "Offers", "Rejected"]) await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByLabel("Search applications")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Find more jobs" })).toHaveAttribute("href", "/jobs");
     await expect(page.getByText("Total tracked")).toHaveCount(0);
+    // No dead band where the header used to be: the toolbar starts near the top of the content area.
+    const top = (await first.boundingBox())!.y;
+    expect(top).toBeLessThan(90);
 
     await expect(list(page).getByRole("button")).toHaveCount(5);
-    // Newest first, and the newest is open.
     await expect(list(page).getByRole("button").first()).toContainText("Senior Machine Learning Engineer");
     await expect(list(page).getByRole("button").first()).toHaveAttribute("aria-current", "true");
     const detail = page.getByRole("region", { name: "Selected application" });
     await expect(detail.getByRole("heading", { level: 2, name: "Senior Machine Learning Engineer" })).toBeVisible();
-    await expect(detail.getByText("88% fit")).toBeVisible();
+    await expect(detail.locator("[data-fit-tone='strong']")).toContainText("88");
     await expect(detail.getByText(/not an employer receipt/i)).toBeVisible();
 
     // Roughly 55 / 45, side by side.

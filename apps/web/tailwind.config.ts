@@ -81,6 +81,9 @@ const config: Config = {
         "status-danger-strong": "var(--color-status-danger-strong)",
         "status-danger-surface": "var(--color-status-danger-surface)",
         "status-danger-border": "var(--color-status-danger-border)",
+        "fit-strong": "var(--color-fit-strong)",
+        "fit-strong-surface": "var(--color-fit-strong-surface)",
+        "fit-strong-border": "var(--color-fit-strong-border)",
         skeleton: "var(--color-skeleton)",
 
         // Printed-document facsimile. Fixed in both themes on purpose — see the

@@ -286,11 +286,23 @@ export type JobEligibility = {
   flags: Record<string, boolean | null>;
 };
 
+/** Present when the server ranked and paged the list. Absent on an older API and on the discover/refresh responses. */
+export type JobsPage = {
+  sort: "best_recent" | "fit" | "newest";
+  /** Every job matching the filters, not just this page. */
+  total: number;
+  limit: number | null;
+  returned: number;
+  has_more: boolean;
+  next_cursor: string | null;
+};
+
 export type JobsResponse = {
   profile_complete: boolean;
   criteria: { role_queries: string[]; skills: string[]; seniority_targets: string[] };
   profile_filters: ProfileFilters;
   jobs: Job[];
+  page?: JobsPage;
   discovery?: DiscoverySummary;
 };
 

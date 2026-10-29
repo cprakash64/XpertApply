@@ -13,6 +13,8 @@ import {
   type RefreshSummary
 } from "@/lib/api";
 import { useJobsQuery, type JobsQuery } from "@/lib/jobsQuery";
+import { useJobsFeed } from "@/lib/useJobsFeed";
+import { LoadMore } from "@/components/jobs/LoadMore";
 import { Alert, Button } from "@/components/ui";
 import { useAppShell } from "@/components/AppShell";
 import { AutoApplyModal } from "@/components/AutoApplyModal";
@@ -42,29 +44,19 @@ export function JobDiscovery() {
   const { query, setQuery, selectJob, closeJob } = useJobsQuery();
   const shell = useAppShell();
 
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [listLoaded, setListLoaded] = useState(false);
-  // The FIRST jobs request is a distinct state from "the list is empty".
-  //
-  // Root cause of the reported blank/broken workspace on a cold hard refresh:
-  // `listLoaded` gated only the detail pane, so while the very first request
-  // was still in flight the list rendered its terminal empty state — "0 jobs
-  // for you / No jobs match the current filters" in the workspace, and "Click
-  // Find fresh jobs" in the list view. On a warm reload that window is too
-  // short to see, which is exactly why a second refresh appeared to "fix" it.
-  // Nothing here may render a terminal state until the first response lands.
-  const [listError, setListError] = useState("");
-  const [profileComplete, setProfileComplete] = useState(true);
+  // The list is ranked, filtered and paged by the SERVER (see `useJobsFeed`). The FIRST request is a distinct state from
+  // "the list is empty": nothing may render a terminal empty state until the first response lands, which is the cold-refresh
+  // defect this guards against.
+  const feed = useJobsFeed(query);
+  const { jobs, setJobs, profileComplete, setProfileComplete } = feed;
+  const listLoaded = feed.status !== "bootstrapping";
+  const listError = feed.status === "error" ? "Could not load jobs." : "";
   const [hasDiscovered, setHasDiscovered] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
-  // Which posted-within window the currently shown list came from. Derived
-  // rather than flagged, so the spinner cannot get stuck out of sync with the
-  // window the user selected.
-  const [loadedWindow, setLoadedWindow] = useState<number | null>(null);
 
   const [applyJobId, setApplyJobId] = useState<number | null>(null);
   const [docModal, setDocModal] = useState<{ doc: GeneratedDocument; subtitle: string } | null>(null);
@@ -92,61 +84,12 @@ export function JobDiscovery() {
     shell?.requestCollapsed(detailOpen);
   }, [detailOpen, shell]);
 
-  // Re-fetch from the server whenever the "Posted within" window changes so the
-  // list actually reflects the selected range. The backend applies the date
-  // filter — widening the window can surface jobs the server previously
-  // withheld, which a client-only filter could never do.
-  useEffect(() => {
-    let active = true;
-    const requestedWindow = query.postedWithin;
-    void (async () => {
-      try {
-        const result = await api<JobsResponse>(`/jobs?posted_within_days=${requestedWindow}`);
-        if (!active) return;
-        setJobs(result.jobs);
-        setProfileComplete(result.profile_complete);
-        setListError("");
-      } catch (loadError) {
-        if (active) {
-          // Recorded separately from the generic action error so the workspace
-          // can render a retryable list-level error instead of an empty list
-          // that looks like "no jobs matched".
-          setListError(
-            loadError instanceof Error ? loadError.message : "Could not load jobs."
-          );
-        }
-      } finally {
-        if (active) {
-          setLoadedWindow(requestedWindow);
-          setListLoaded(true);
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [query.postedWithin]);
+  // A changed filter or window re-requests from the server while the previous results stay on screen.
+  const dateRefreshing = feed.refetching;
 
-  const dateRefreshing = loadedWindow !== query.postedWithin;
-
-  // Re-read the list from the server. Used after an action changes what the
-  // server would return — notably a confirmed application, which the backend
-  // now excludes from discovery for this user.
-  const refreshJobs = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await api<JobsResponse>(`/jobs?posted_within_days=${query.postedWithin}`);
-      setJobs(result.jobs);
-      setProfileComplete(result.profile_complete);
-      setListError("");
-      return true;
-    } catch {
-      // Silent by design: this runs after a confirmed application, where the
-      // optimistic state already reflects the change and the next load
-      // reconciles. The caller decides whether a failure is worth surfacing —
-      // `reloadJobs` (explicit "Try again") does surface it.
-      return false;
-    }
-  }, [query.postedWithin]);
+  // Re-read after an action changes what the server would return (a confirmed application is now excluded for this user).
+  // Scores are patched in place; the list is not re-ranked under the reader.
+  const refreshJobs = feed.refreshScores;
 
   // Saved/applied state comes from the user's own ledger, so a card can show it
   // without every card asking for it.
@@ -182,26 +125,14 @@ export function JobDiscovery() {
     [jobs]
   );
 
+  const { refreshScores } = feed;
   useEffect(() => {
     if (!hasPendingScores) {
       return;
     }
-    let active = true;
-    const timer = setTimeout(async () => {
-      try {
-        const result = await api<JobsResponse>(`/jobs?posted_within_days=${query.postedWithin}`);
-        if (active) {
-          setJobs(result.jobs);
-        }
-      } catch {
-        // Transient; the next tick (or a manual action) will retry.
-      }
-    }, 4000);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [hasPendingScores, query.postedWithin, jobs]);
+    const timer = setTimeout(() => void refreshScores(), 4000);
+    return () => clearTimeout(timer);
+  }, [hasPendingScores, refreshScores, jobs]);
 
   /**
    * The one explicit state the workspace is in. Every branch below renders from
@@ -219,9 +150,12 @@ export function JobDiscovery() {
         : "loaded";
   const bootstrapping = workspaceState === "bootstrapping";
 
+  // The server has already filtered and ranked what it returned, so that list is shown as it arrived. Only a legacy full list
+  // (no `page` block: an older API, or a discover/refresh response) is filtered and ordered here, as it always was.
+  const { serverRanked } = feed;
   const filtered = useMemo(() => {
+    if (serverRanked) return jobs;
     // Filtering "posted within N days" is inherently time-dependent.
-    // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
     return jobs
       .filter((job) => {
@@ -242,7 +176,7 @@ export function JobDiscovery() {
         const postedDifference = dateValue(b.posted_at) - dateValue(a.posted_at);
         return postedDifference || (b.match?.fit_score ?? -1) - (a.match?.fit_score ?? -1);
       });
-  }, [jobs, query.q, query.workplace, query.minFit, query.postedWithin, query.sort]);
+  }, [serverRanked, jobs, query.q, query.workplace, query.minFit, query.postedWithin, query.sort]);
 
   const jobFromList = useMemo(
     () => (selectedId === null ? null : jobs.find((job) => job.id === selectedId) ?? null),
@@ -336,8 +270,7 @@ export function JobDiscovery() {
         method: "POST",
         body: JSON.stringify({ posted_within_days: query.postedWithin })
       });
-      setJobs(result.jobs);
-      setProfileComplete(result.profile_complete);
+      await showDiscoveredJobs(result);
       setHasDiscovered(true);
       applyDiscoverySummary(result.discovery);
     } catch (discoverError) {
@@ -346,6 +279,20 @@ export function JobDiscovery() {
     } finally {
       setDiscovering(false);
     }
+  }
+
+  /**
+   * After discover or refresh. A response carrying a `page` block was ranked by the server for its default order, so the list
+   * is re-read through the paged endpoint with the user's own filters and sort; a response without one is a legacy full list
+   * and is shown as returned.
+   */
+  async function showDiscoveredJobs(result: { jobs: Job[]; profile_complete: boolean; page?: unknown }) {
+    if (result.page) {
+      setProfileComplete(result.profile_complete);
+      if (!(await feed.reload())) feed.showLegacyList(result.jobs, result.profile_complete);
+      return;
+    }
+    feed.showLegacyList(result.jobs, result.profile_complete);
   }
 
   function applyDiscoverySummary(discovery?: DiscoverySummary) {
@@ -363,12 +310,11 @@ export function JobDiscovery() {
     setError("");
     setMessage("Re-scoring jobs against your profile…");
     try {
-      const result = await api<{ jobs: Job[]; summary: RefreshSummary; profile_complete: boolean }>(
+      const result = await api<{ jobs: Job[]; summary: RefreshSummary; profile_complete: boolean; page?: unknown }>(
         `/jobs/refresh-matches?posted_within_days=${query.postedWithin}`,
         { method: "POST" }
       );
-      setJobs(result.jobs);
-      setProfileComplete(result.profile_complete);
+      await showDiscoveredJobs(result);
       setWarnings(summarizeSourceWarnings(result.summary.source_warnings ?? []));
       setMessage(`Re-scored ${result.summary.rescored_count} jobs · ${result.summary.matched_count} match your profile.`);
     } catch (refreshError) {
@@ -491,7 +437,7 @@ export function JobDiscovery() {
       markingRef.current = false;
       setMarkingApplied(false);
     }
-  }, [markApplied, jobs, tracker, selectedId, filtered, closeJob, selectJob, refreshJobs, loadTracker]);
+  }, [markApplied, jobs, tracker, selectedId, filtered, closeJob, selectJob, refreshJobs, loadTracker, setJobs]);
 
   const cancelMarkApplied = useCallback(() => {
     // Cancelling changes nothing at all: no request, no list change, no status.
@@ -541,23 +487,20 @@ export function JobDiscovery() {
   // A count is only truthful once a response has actually landed. While
   // bootstrapping "0 jobs for you" is false, and after a failed request it is
   // equally false — the answer is unknown, not zero.
+  // The server's total counts every matching job, not only the pages loaded so far.
+  const shownTotal = feed.total ?? filtered.length;
   const resultSummary = bootstrapping
     ? "Loading jobs…"
     : workspaceState === "error"
       ? "Jobs unavailable"
-      : `${filtered.length} job${filtered.length === 1 ? "" : "s"} for you`;
+      : `${shownTotal} job${shownTotal === 1 ? "" : "s"} for you`;
 
   /** Explicit "Try again" from the error state. Returns to `bootstrapping`
    * (skeleton) rather than leaving the failed empty list on screen. */
+  const { reload: reloadFeed } = feed;
   const reloadJobs = useCallback(() => {
-    setListLoaded(false);
-    setListError("");
-    void (async () => {
-      const ok = await refreshJobs();
-      if (!ok) setListError("Could not load jobs.");
-      setListLoaded(true);
-    })();
-  }, [refreshJobs]);
+    void reloadFeed();
+  }, [reloadFeed]);
 
   const modals = (
     <>
@@ -655,6 +598,17 @@ export function JobDiscovery() {
               state={workspaceState}
               onRetry={reloadJobs}
               onSelect={(jobId) => openJob(jobId)}
+              foot={
+                <LoadMore
+                  compact
+                  hasMore={feed.hasMore}
+                  loading={feed.loadingMore}
+                  error={feed.moreError}
+                  onLoadMore={() => void feed.loadMore()}
+                  loadedCount={filtered.length}
+                  total={feed.total}
+                />
+              }
             />
           </aside>
 
@@ -682,10 +636,14 @@ export function JobDiscovery() {
               }
               onNext={
                 selectedIndex >= 0 && selectedIndex < filtered.length - 1
-                  ? () => openJob(filtered[selectedIndex + 1].id)
+                  ? () => {
+                      // Reaching the last loaded job pulls the next page, so "Next" never dead-ends while more exist.
+                      if (selectedIndex + 2 >= filtered.length && feed.hasMore) void feed.loadMore();
+                      openJob(filtered[selectedIndex + 1].id);
+                    }
                   : null
               }
-              position={selectedIndex >= 0 ? `${selectedIndex + 1} of ${filtered.length}` : null}
+              position={selectedIndex >= 0 ? `${selectedIndex + 1} of ${shownTotal}` : null}
             />
           </section>
         </div>
@@ -695,26 +653,29 @@ export function JobDiscovery() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1080px] px-5 pb-16 pt-8 sm:px-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">Jobs</h1>
-          <p className="mt-1.5 text-[15px] text-foreground-muted">
-            Fresh roles matched to your profile, from official application sources.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="lg" onClick={findFreshJobs} disabled={busy}>
-            {discovering ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Search aria-hidden className="h-4 w-4" />} Find fresh jobs
-          </Button>
-          <Button variant="secondary" size="lg" type="button" onClick={refreshMatches} disabled={busy}>
-            {refreshing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden className="h-4 w-4" />} Refresh matches
-          </Button>
-        </div>
-      </header>
+    <div className="mx-auto w-full max-w-[1120px] px-4 pb-16 pt-4 sm:px-6">
+      {/* The active navigation item already names this page; the h1 stays for screen readers and the document outline. */}
+      <h1 className="sr-only">Jobs</h1>
+
+      <JobsFilterBar
+        query={query}
+        onChange={onFilterChange}
+        dateRefreshing={dateRefreshing}
+        summary={resultSummary}
+        actions={
+          <>
+            <Button type="button" variant="secondary" size="md" onClick={findFreshJobs} disabled={busy}>
+              {discovering ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Search aria-hidden className="h-4 w-4" />} Find fresh jobs
+            </Button>
+            <Button type="button" variant="ghost" size="md" onClick={refreshMatches} disabled={busy}>
+              {refreshing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden className="h-4 w-4" />} Refresh matches
+            </Button>
+          </>
+        }
+      />
 
       {(message || error) && (
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-2 flex flex-wrap items-center gap-3">
           {message && <p className="text-sm text-foreground-muted">{message}</p>}
           {error && <p className="text-sm font-medium text-status-danger">{error}</p>}
         </div>
@@ -740,23 +701,13 @@ export function JobDiscovery() {
         </Alert>
       )}
 
-      <div className="mt-6">
-        <JobsFilterBar query={query} onChange={onFilterChange} dateRefreshing={dateRefreshing} />
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-baseline justify-between gap-2 text-sm text-foreground-muted">
-        <p>
-          <span className="font-semibold text-foreground">{resultSummary}</span>
-          {` · Posted in the last ${query.postedWithin === 1 ? "24 hours" : `${query.postedWithin} days`}`}
+      {hasDiscovered && filtered.length > 0 && filtered.length < 10 && (
+        <p className="mt-2 text-sm text-foreground-muted">
+          Only a few strict matches — add target roles or locations to broaden results.
         </p>
-        {hasDiscovered && filtered.length > 0 && filtered.length < 10 && (
-          <p className="text-foreground-muted">
-            Only a few strict matches — add target roles or locations to broaden results.
-          </p>
-        )}
-      </div>
+      )}
 
-      <div className="mt-3.5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+      <div className="mt-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
         {/* Bootstrapping renders a skeleton, never an empty state: telling the
           * user "no jobs matched" before the first response has landed is the
           * cold-refresh defect, and it is indistinguishable from a broken page. */}
@@ -790,6 +741,17 @@ export function JobDiscovery() {
               actions={cardActions}
             />
           ))}
+
+        {!bootstrapping && workspaceState === "loaded" && (
+          <LoadMore
+            hasMore={feed.hasMore}
+            loading={feed.loadingMore}
+            error={feed.moreError}
+            onLoadMore={() => void feed.loadMore()}
+            loadedCount={filtered.length}
+            total={feed.total}
+          />
+        )}
 
         {workspaceState === "error" && (
           <div
@@ -850,7 +812,8 @@ function CompactJobList({
   tracker,
   state,
   onRetry,
-  onSelect
+  onSelect,
+  foot
 }: {
   jobs: Job[];
   selectedId: number | null;
@@ -858,6 +821,7 @@ function CompactJobList({
   state: "bootstrapping" | "error" | "empty" | "loaded";
   onRetry: () => void;
   onSelect: (jobId: number) => void;
+  foot?: React.ReactNode;
 }) {
   const container = useRef<HTMLUListElement>(null);
 
@@ -922,6 +886,7 @@ function CompactJobList({
       {state !== "error" && jobs.length === 0 && (
         <li className="px-3 py-6 text-sm text-foreground-muted">No jobs match the current filters.</li>
       )}
+      {foot && <li>{foot}</li>}
     </ul>
   );
 }

@@ -3,6 +3,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
@@ -47,6 +48,7 @@ from app.jobs.job_ingestion_service import (
 )
 from app.jobs.job_normalization_service import DEMO_COMPANIES, is_placeholder_url
 from app.jobs.job_search_criteria_service import build_search_criteria
+from app.jobs.ranking import DEFAULT_SORT, InvalidCursor, page_of, rank_cards
 from app.jobs.safe_fetch import FetchFailedError, UnsafeUrlError, safe_fetch_image
 from app.models.entities import (
     ApplicationStatus,
@@ -211,10 +213,22 @@ def list_jobs(
     include_unknown_dates: bool = Query(default=False),
     include_unknown_location: bool = Query(default=False),
     include_ineligible: bool = Query(default=False),
+    sort: Literal["best_recent", "fit", "newest"] = Query(default=DEFAULT_SORT),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=512),
 ) -> dict:
+    """The caller's ranked, filtered jobs.
+
+    ``sort`` is applied on the server over the WHOLE matching set (see :mod:`app.jobs.ranking`): ``best_recent`` (default),
+    ``fit`` or ``newest``. With ``limit`` the response is one page and ``page.next_cursor`` continues it; without ``limit`` it
+    is the whole list, as before. Filters are sent on every request and are not part of the cursor.
+    """
     return _list_payload(
         db,
         user,
+        sort=sort,
+        limit=limit,
+        cursor=cursor,
         role=role,
         company=company,
         location=location,
@@ -240,6 +254,9 @@ def _list_payload(
     include_unknown: bool = False,
     include_unknown_location: bool = False,
     include_ineligible: bool = False,
+    sort: str = DEFAULT_SORT,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> dict:
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
     experiences = list(db.scalars(select(Experience).where(Experience.user_id == user.id)).all())
@@ -322,17 +339,12 @@ def _list_payload(
             continue
         cards.append(_serialize_card(job, match, sources.get(job.source_id), eligibility))
 
-    cards.sort(
-        key=lambda card: (
-            card["match"]["fit_score"]
-            if card["match"] and card["match"].get("fit_score") is not None
-            else -1.0,
-            card["_posted_key"],
-        ),
-        reverse=True,
-    )
     for card in cards:
         card.pop("_posted_key", None)
+    try:
+        page, paging = page_of(rank_cards(cards, sort), sort, limit=limit, cursor=cursor)  # type: ignore[arg-type]
+    except InvalidCursor as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor.") from error
 
     if filtered_as_applied:
         metric("applied_job_filtered_from_discovery", filtered_as_applied)
@@ -342,7 +354,8 @@ def _list_payload(
         "criteria": criteria.model_dump(),
         "counts": counts,
         "profile_filters": _profile_filter_payload(profile),
-        "jobs": cards,
+        "jobs": page,
+        "page": paging,
     }
 
 

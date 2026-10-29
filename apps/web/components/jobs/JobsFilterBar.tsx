@@ -12,15 +12,23 @@ const WORKPLACE_OPTIONS = ["", "remote", "hybrid", "onsite"] as const;
 export function JobsFilterBar({
   query,
   onChange,
-  dateRefreshing
+  dateRefreshing,
+  summary,
+  actions
 }: {
   query: JobsQuery;
   onChange: (patch: Partial<JobsQuery>) => void;
   dateRefreshing: boolean;
+  /** The result count, shown right under the controls. */
+  summary?: string;
+  /** Page-level actions (find, refresh), kept quiet and out of the way of the filters. */
+  actions?: React.ReactNode;
 }) {
   const hasFilters = Boolean(query.q || query.workplace || query.minFit > 0);
+  const window = query.postedWithin === 1 ? "24 hours" : `${query.postedWithin} days`;
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-card border border-line-default bg-surface-card p-2">
+    <>
+    <div className="flex flex-wrap items-center gap-2">
       {/* Search stays first and widest: it is the control people reach for
         * before any of the dropdowns. */}
       <label className="min-w-[220px] flex-1">
@@ -88,8 +96,9 @@ export function JobsFilterBar({
         value={query.sort}
         onChange={(value) => onChange({ sort: value as JobSort })}
         options={[
-          { value: "newest", label: "Newest first" },
-          { value: "fit", label: "Best fit" }
+          { value: "best_recent", label: "Best & recent" },
+          { value: "fit", label: "Best fit" },
+          { value: "newest", label: "Newest first" }
         ]}
       />
 
@@ -103,6 +112,16 @@ export function JobsFilterBar({
         </button>
       )}
     </div>
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+      <p className="text-sm text-foreground-muted">
+        {summary && <span className="font-semibold text-foreground">{summary}</span>}
+        {` · Posted in the last ${window}`}
+        {/* Said once, here, so a shorter list is never a mystery: the posting date is the employer's, never the day we found it. */}
+        <span className="hidden sm:inline"> · Jobs without a posting date are not shown</span>
+      </p>
+      {actions && <div className="flex flex-wrap items-center gap-1">{actions}</div>}
+    </div>
+    </>
   );
 }
 

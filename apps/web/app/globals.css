@@ -113,6 +113,13 @@
   --color-status-danger-surface: #fef3f2;
   --color-status-danger-border: #f4c7c3;
 
+  /* Fit score: the ONE semantic exception to the brand palette. A strong match is green because the product's own success
+   * token is navy, which would not read as "good" in a score. Amber and red reuse status-warning and status-danger. The
+   * number and the band label always accompany the colour; these are never the only signal. */
+  --color-fit-strong: #166534;
+  --color-fit-strong-surface: #eaf6ee;
+  --color-fit-strong-border: #a7d5b5;
+
   /* Loading placeholders. A dedicated role rather than a border colour: a
    * skeleton has to stay perceivable on the page, on a card, and on a tinted
    * selected row, which is a stronger requirement than any line token carries.
@@ -294,6 +301,11 @@
   --color-status-danger-strong: #f6a39d;
   --color-status-danger-surface: #2e1a19;
   --color-status-danger-border: #6b2b27;
+
+  /* Fit score green (dark values); see the light block. */
+  --color-fit-strong: #86d6a1;
+  --color-fit-strong-surface: #14291f;
+  --color-fit-strong-border: #2f5d43;
 
   /* Lifted off the dark page/card rather than darkened, so a placeholder is a
    * soft block and never a hole punched in the surface. Document paper/ink

@@ -15,7 +15,9 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
  * stays in sync with these writes.
  */
 
-export type JobSort = "newest" | "fit";
+/** `best_recent` is the default: strong fit first, newer postings first among comparable fits (ranked by the server). */
+export type JobSort = "best_recent" | "fit" | "newest";
+export const JOB_SORTS: readonly JobSort[] = ["best_recent", "fit", "newest"];
 
 export type JobsQuery = {
   /** The open job, or null for the plain list state. */
@@ -35,7 +37,7 @@ export const JOBS_QUERY_DEFAULTS: JobsQuery = {
   workplace: "",
   minFit: 0,
   postedWithin: 7,
-  sort: "newest"
+  sort: "best_recent"
 };
 
 const PARAM = {
@@ -72,7 +74,7 @@ export function parseJobsQuery(search: string): JobsQuery {
     workplace: ["remote", "hybrid", "onsite"].includes(workplace) ? workplace : "",
     minFit: MIN_FIT_STEPS.includes(minFit) ? minFit : 0,
     postedWithin: POSTED_WINDOWS.includes(posted) ? posted : JOBS_QUERY_DEFAULTS.postedWithin,
-    sort: sort === "fit" ? "fit" : "newest"
+    sort: sort === "fit" || sort === "newest" ? sort : "best_recent"
   };
 }
 
@@ -88,14 +90,17 @@ function serializeJobsQuery(next: JobsQuery, currentSearch: string): string {
     }
   };
   set(PARAM.job, next.job === null ? null : String(next.job));
-  set(PARAM.q, next.q.trim());
+  // Kept exactly as typed (only an all-blank value is dropped). The input reads its value back from this URL, so trimming
+  // here would erase a space the moment it is typed and make a multi-word search impossible to enter. The server request
+  // trims the text instead (see `jobsParams`).
+  set(PARAM.q, next.q.trim() === "" ? "" : next.q);
   set(PARAM.workplace, next.workplace);
   set(PARAM.minFit, next.minFit > 0 ? String(next.minFit) : null);
   set(
     PARAM.postedWithin,
     next.postedWithin === JOBS_QUERY_DEFAULTS.postedWithin ? null : String(next.postedWithin)
   );
-  set(PARAM.sort, next.sort === "newest" ? null : next.sort);
+  set(PARAM.sort, next.sort === JOBS_QUERY_DEFAULTS.sort ? null : next.sort);
   return params.toString();
 }
 

@@ -158,3 +158,52 @@ export function FitPill({
     </span>
   );
 }
+
+
+/**
+ * The compact fit indicator used wherever a score sits beside other content (job cards, Dashboard cards, tables).
+ *
+ * The number and the band label are always text, and a screen reader hears "Fit score 84 Strong fit", so the
+ * semantic colour (green, amber, red; see `lib/fitScore.ts`) is never the only signal. Lifecycle states that have no score
+ * say what is happening instead of showing a permanent dash.
+ */
+export function FitScoreChip({
+  score,
+  label,
+  scoreState,
+  className = ""
+}: {
+  score: number | null;
+  label?: string | null;
+  scoreState?: ScoreState | null;
+  className?: string;
+}) {
+  const display = getScoreDisplay(scoreState, score);
+  if (display.kind !== "score") {
+    return (
+      <span
+        data-fit-tone="none"
+        data-score-state={scoreState ?? "pending"}
+        title={display.helper}
+        className={`inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-pill border border-line-default bg-surface-subtle px-2.5 text-xs font-medium text-foreground-muted ${className}`}
+      >
+        {display.kind === "calculating" && <Loader2 aria-hidden className="h-3 w-3 animate-spin" />}
+        {display.kind === "calculating" ? "Calculating fit…" : display.kind === "failed" ? "Score unavailable" : "No fit score"}
+      </span>
+    );
+  }
+  const tone = getFitScoreTone(score);
+  const rounded = score !== null ? Math.round(score) : null;
+  return (
+    <span
+      data-fit-tone={tone.key}
+      data-score-state="scored"
+      title={tone.description}
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-pill border px-2.5 text-xs font-semibold ${tone.container} ${className}`}
+    >
+      <span className="sr-only">Fit score </span>
+      <span className="text-sm font-bold tabular-nums">{rounded}</span>
+      <span>{label ?? tone.label}</span>
+    </span>
+  );
+}

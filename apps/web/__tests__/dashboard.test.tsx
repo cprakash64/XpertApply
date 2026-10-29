@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardClient } from "../components/DashboardClient";
@@ -8,6 +9,9 @@ import {
   __resetDashboardSummaryCache,
   invalidateDashboardSummary
 } from "../lib/dashboardSummary";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }), usePathname: () => "/dashboard" }));
 
 const ROOT = join(__dirname, "..");
 
@@ -20,14 +24,17 @@ function jsonResponse(body: unknown) {
 
 const SUMMARY = {
   freshMatches: 227,
-  applications: { saved: 4, inProgress: 15, interviews: 2, offers: 1 },
+  applications: { saved: 4, inProgress: 15, interviews: 2, offers: 1, rejected: 2 },
   recentApplications: [
     {
       id: "1",
+      jobId: 7,
       title: "Platform Engineer",
       company: "Northstar",
       status: "interview",
       updatedAt: "2026-08-01T12:00:00Z",
+      appliedAt: "2026-07-28T12:00:00Z",
+      fitScore: 84,
       logoUrl: "/jobs/companies/northstar/logo"
     }
   ],
@@ -37,9 +44,28 @@ const SUMMARY = {
       title: "Senior Software Engineer",
       company: "Acme",
       location: "Remote",
-      fitScore: 91
+      workplaceType: "remote",
+      employmentType: "full-time",
+      postedAt: "2026-07-30T12:00:00Z",
+      fitScore: 91,
+      fitSummary: "Strong overlap with your Python work.",
+      matchedSkills: ["Python", "FastAPI", "PostgreSQL", "Docker"],
+      snippet: "Build and run the services behind our hiring platform.",
+      logoUrl: "/jobs/companies/acme/logo",
+      saved: false
     }
   ],
+  profile: {
+    percent: 78,
+    completed: [
+      { key: "identity", label: "Name" },
+      { key: "skills", label: "Skills" }
+    ],
+    missing: [
+      { key: "links", label: "Professional links" },
+      { key: "education", label: "Education" }
+    ]
+  },
   strongMatches: 18,
   nextAction: {
     kind: "strong_matches",
@@ -82,15 +108,19 @@ describe("DashboardClient", () => {
     render(React.createElement(DashboardClient));
 
     // The frame is present on the very first paint — no full-screen spinner.
-    expect(screen.getByRole("link", { name: /find jobs/i })).toBeInTheDocument();
+    expect(screen.getByRole("search", { name: "Search jobs" })).toBeInTheDocument();
     expect(screen.getByText("Application pipeline")).toBeInTheDocument();
-    expect(screen.getByText("Best matches this week")).toBeInTheDocument();
-    expect(screen.getAllByText("Fresh matches")[0]).toBeInTheDocument();
+    expect(screen.getByText("Profile completion")).toBeInTheDocument();
+    expect(screen.getByText("Top job matches for you")).toBeInTheDocument();
+    expect(screen.getByText("Recent applications")).toBeInTheDocument();
+    expect(screen.getAllByText("Job matches")[0]).toBeInTheDocument();
 
     // And the data regions are skeletons, not empty space.
     expect(screen.getByTestId("recent-applications-skeleton")).toBeInTheDocument();
     expect(screen.getByTestId("top-matches-skeleton")).toBeInTheDocument();
     expect(screen.getByTestId("next-action-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("pipeline-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("profile-skeleton")).toBeInTheDocument();
 
     release();
   });
@@ -103,7 +133,7 @@ describe("DashboardClient", () => {
     expect(screen.getByText("227")).toBeInTheDocument();
     expect(screen.getByText("Platform Engineer")).toBeInTheDocument();
     expect(screen.getByText("Senior Software Engineer")).toBeInTheDocument();
-    expect(screen.getByText("91% fit")).toBeInTheDocument();
+    expect(screen.getAllByText("Strong fit")).toHaveLength(2); // the top match (91) and the recent row (84)
     expect(screen.getAllByText("Interviews")[0]).toBeInTheDocument();
     expect(screen.queryByTestId("recent-applications-skeleton")).not.toBeInTheDocument();
   });
@@ -165,7 +195,7 @@ describe("DashboardClient", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t load your dashboard/i);
     // The shell survives the failure — the page is still navigable.
-    expect(screen.getByRole("link", { name: /find jobs/i })).toBeInTheDocument();
+    expect(screen.getByRole("search", { name: "Search jobs" })).toBeInTheDocument();
     expect(screen.getByText("Application pipeline")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
   });
@@ -203,19 +233,15 @@ describe("DashboardClient", () => {
         ...SUMMARY,
         freshMatches: 0,
         strongMatches: 0,
-        applications: { saved: 0, inProgress: 0, interviews: 0, offers: 0 },
+        applications: { saved: 0, inProgress: 0, interviews: 0, offers: 0, rejected: 0 },
         recentApplications: [],
         topMatches: []
       })
     );
     render(React.createElement(DashboardClient));
 
-    expect(
-      await screen.findByText("Applications you save or start will appear here.")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Run job discovery to see your strongest matches here.")
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No applications yet\./)).toBeInTheDocument();
+    expect(screen.getByText("No scored matches yet")).toBeInTheDocument();
   });
 
   it("greets without a name when the profile has no confirmed first name", async () => {
@@ -230,56 +256,70 @@ describe("DashboardClient", () => {
   // ------------------------------------------------------------------ //
   // Header
   // ------------------------------------------------------------------ //
-  it("uses the new orienting subtitle", async () => {
+  it("keeps a short orienting sentence beside the greeting", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
     render(React.createElement(DashboardClient));
     await screen.findByText("Welcome back, Chandra.");
-    expect(screen.getByText("Here’s where your job search stands.")).toBeInTheDocument();
+    expect(screen.getByText(/Here’s where your job search stands/)).toBeInTheDocument();
   });
 
   // ------------------------------------------------------------------ //
   // Pipeline
   // ------------------------------------------------------------------ //
-  it("renders the pipeline as labelled stages, not a second scoreboard", async () => {
+  it("renders the pipeline as a donut with a labelled legend, never colour alone", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
     render(React.createElement(DashboardClient));
     await screen.findByText("Welcome back, Chandra.");
 
-    const pipeline = screen.getByRole("group", { name: "Application pipeline" });
-    // A description list gives assistive tech stage/count pairs.
-    expect(pipeline.querySelector("dl")).not.toBeNull();
-    for (const stage of ["Saved", "In progress", "Interview", "Offer"]) {
+    const pipeline = screen.getByRole("region", { name: "Application pipeline" });
+    expect(pipeline.querySelector("svg")).not.toBeNull();
+    expect(pipeline.querySelector("svg")).toHaveAttribute("aria-hidden", "true"); // decorative: the legend carries the data
+    for (const stage of ["Saved", "In progress", "Interviews", "Offers", "Rejected"]) {
       expect(within(pipeline).getByText(stage)).toBeInTheDocument();
     }
-    // "Saved" is the stage the metrics row does not duplicate.
-    expect(within(pipeline).getByText("4")).toBeInTheDocument();
+    expect(pipeline.querySelector("dl")).not.toBeNull();
   });
 
-  it("shows every pipeline count as text, not colour or width alone", async () => {
+  it("shows every pipeline count as text and the centre total is exactly their sum (no double counting)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
     render(React.createElement(DashboardClient));
     await screen.findByText("Welcome back, Chandra.");
 
-    const values = within(screen.getByRole("group", { name: "Application pipeline" }))
-      .getAllByRole("definition")
-      .map((node) => node.textContent);
-    expect(values).toEqual(["4", "15", "2", "1"]);
+    const pipeline = screen.getByRole("region", { name: "Application pipeline" });
+    const values = within(pipeline).getAllByRole("definition").map((node) => Number(node.textContent));
+    expect(values).toEqual([4, 15, 2, 1, 2]);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    expect(within(pipeline).getByText(String(total), { selector: "p" })).toBeInTheDocument();
+    // One arc per non-empty slice.
+    expect(pipeline.querySelectorAll("svg circle[stroke-dasharray]")).toHaveLength(5);
   });
 
   it("shows a pipeline empty state when nothing has been applied to", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         ...SUMMARY,
-        applications: { saved: 0, inProgress: 0, interviews: 0, offers: 0 }
+        applications: { saved: 0, inProgress: 0, interviews: 0, offers: 0, rejected: 0 }
       })
     );
     render(React.createElement(DashboardClient));
     await screen.findByText("Welcome back, Chandra.");
 
     expect(
-      screen.getByText("Save or start an application and your pipeline will appear here.")
+      screen.getByText("Save or start an application and your pipeline will appear here.", { exact: false })
     ).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Application pipeline" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("definition")).not.toBeInTheDocument();
+  });
+
+  it("treats a missing rejected count (an older API) as zero", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ...SUMMARY, applications: { saved: 4, inProgress: 15, interviews: 2, offers: 1 } })
+    );
+    render(React.createElement(DashboardClient));
+    await screen.findByText("Welcome back, Chandra.");
+    const values = within(screen.getByRole("region", { name: "Application pipeline" }))
+      .getAllByRole("definition")
+      .map((node) => node.textContent);
+    expect(values).toEqual(["4", "15", "2", "1", "0"]);
   });
 
   it("shows a pipeline skeleton while loading", () => {
@@ -390,10 +430,11 @@ describe("DashboardClient", () => {
     render(React.createElement(DashboardClient));
     await screen.findByText("Welcome back, Chandra.");
 
-    const row = screen.getByText("Platform Engineer").closest("a");
-    expect(row).toHaveAttribute("href", "/tracker");
-    expect(within(row as HTMLElement).getByText(/Northstar ·/)).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("Interview")).toBeInTheDocument();
+    const row = screen.getByText("Platform Engineer").closest("tr") as HTMLElement;
+    expect(within(row).getByRole("link", { name: /Open Platform Engineer at Northstar/ })).toHaveAttribute("href", "/tracker");
+    expect(within(row).getByText("Northstar")).toBeInTheDocument();
+    expect(within(row).getByText("Interview")).toBeInTheDocument();
+    expect(within(row).getByText("Strong fit")).toBeInTheDocument();          // the user's own stored score, with its label
   });
 
   it("tolerates a missing updated timestamp", async () => {
@@ -508,20 +549,27 @@ describe("DashboardClient", () => {
         })
       );
       render(React.createElement(DashboardClient));
-      return await screen.findByText(`${fitScore}% fit`);
+      return await screen.findByText(String(fitScore), { selector: "span.tabular-nums" });
     }
 
-    it("bands a weak match by its own score rather than the strong-fit colour", async () => {
-      const badge = await renderMatchWithScore(42);
-      // A 42% match is a low fit; giving it the emphasised strong-fit surface
-      // would make the score meaningless.
-      expect(badge.className).toMatch(/text-foreground-secondary/);
-      expect(badge.className).not.toMatch(/bg-surface-selected/);
+    it("bands a weak match by its own score: red, with the number and the words Low fit", async () => {
+      const badge = (await renderMatchWithScore(42)).closest("[data-fit-tone]") as HTMLElement;
+      expect(badge).toHaveAttribute("data-fit-tone", "low");
+      expect(badge.className).toMatch(/status-danger/);
+      expect(badge).toHaveTextContent("Low fit");
     });
 
-    it("keeps a strong match on the semantic strong-fit band", async () => {
-      const badge = await renderMatchWithScore(91);
-      expect(badge.className).toMatch(/bg-surface-selected/);
+    it("keeps a strong match green, with its number and label", async () => {
+      const badge = (await renderMatchWithScore(91)).closest("[data-fit-tone]") as HTMLElement;
+      expect(badge).toHaveAttribute("data-fit-tone", "strong");
+      expect(badge.className).toMatch(/fit-strong/);
+      expect(badge).toHaveTextContent("Strong fit");
+    });
+
+    it("shows a mid fit in amber", async () => {
+      const badge = (await renderMatchWithScore(66)).closest("[data-fit-tone]") as HTMLElement;
+      expect(badge.className).toMatch(/status-warning/);
+      expect(badge).toHaveTextContent("Good fit");
     });
 
     /**
@@ -553,7 +601,8 @@ describe("DashboardClient", () => {
 
       // Scoped to the recent list: "Offer" and "Saved" are also pipeline stage
       // labels, and this is asserting the badge tone, not the funnel.
-      const recent = within(screen.getByText("Recently updated").parentElement!);
+      // The table body only: "Applied" is also a column header, and this asserts the badge.
+      const recent = within(screen.getByRole("table").querySelector("tbody") as HTMLElement);
       const badge = recent.getByText(label);
       expect(badge.className).toMatch(new RegExp(tone));
       // Meaning never rests on colour alone — the label is always present.
@@ -580,6 +629,152 @@ describe("DashboardClient", () => {
       // The primary action is the canonical navy action, never cyan-on-white.
       expect(source).toContain("bg-action-primary");
       expect(source).not.toMatch(/bg-brand-accent\s+text-white|bg-cyan/);
+    });
+  });
+  // ------------------------------------------------------------------ //
+  // The redesigned layout
+  // ------------------------------------------------------------------ //
+  describe("top job matches", () => {
+    async function open(summary: object = SUMMARY) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(summary));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      return screen.getByRole("article", { name: "Senior Software Engineer at Acme" });
+    }
+
+    it("shows the real posting fields on the card", async () => {
+      const card = await open();
+      expect(within(card).getByRole("heading", { name: "Senior Software Engineer" })).toBeInTheDocument();
+      expect(within(card).getByText("Acme")).toBeInTheDocument();
+      expect(within(card).getByText("Remote · Remote · Full-time")).toBeInTheDocument();
+      expect(within(card).getByText(/Build and run the services/)).toBeInTheDocument();
+      expect(card.querySelector("[data-fit-tone='strong']")).not.toBeNull();
+    });
+
+    it("lists only the skills the user shares with the role, three at most, and counts the rest", async () => {
+      const card = await open();
+      const skills = within(within(card).getByRole("list", { name: /Skills you share/ })).getAllByRole("listitem").map((n) => n.textContent);
+      expect(skills).toEqual(["Python", "FastAPI", "PostgreSQL", "+1"]);
+    });
+
+    it("sends Review & apply to the real apply flow in the Jobs workspace, and never claims to submit anything", async () => {
+      const card = await open();
+      expect(within(card).getByRole("link", { name: /Review & apply/ })).toHaveAttribute("href", "/jobs?job=22");
+      expect(card.textContent).not.toMatch(/auto-?appl|applied for you|submitted/i);
+    });
+
+    it("uses no photography: the only image area is the company's own logo mark", async () => {
+      const card = await open();
+      expect(card.querySelectorAll("img").length).toBeLessThanOrEqual(1);
+      expect(card.querySelector("img[src*='unsplash'], img[src*='stock']")).toBeNull();
+    });
+
+    it("saves through the real endpoint, reflects it, and refreshes the cached summary", async () => {
+      const card = await open();
+      const fetchMock = vi.mocked(fetch);
+      fetchMock.mockClear();
+      fetchMock.mockResolvedValue(jsonResponse({ tracker: { status: "saved" } }));
+      const button = within(card).getByRole("button", { name: /Save Senior Software Engineer at Acme/ });
+      expect(button).toHaveAttribute("aria-pressed", "false");
+      await userEvent.click(button);
+      await waitFor(() => expect(within(card).getByRole("button", { name: /is saved/ })).toHaveAttribute("aria-pressed", "true"));
+      expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/jobs\/22\/save$/);
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    });
+
+    it("says so when the save fails and leaves the card unsaved", async () => {
+      const card = await open();
+      vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: "boom" }), { status: 500 }));
+      await userEvent.click(within(card).getByRole("button", { name: /Save Senior Software Engineer/ }));
+      expect(await within(card).findByRole("alert")).toHaveTextContent("Could not save this job.");
+      expect(within(card).getByRole("button", { name: /Save Senior Software Engineer/ })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("starts saved when the server says the role is already saved", async () => {
+      const card = await open({ ...SUMMARY, topMatches: [{ ...SUMMARY.topMatches[0], saved: true }] });
+      expect(within(card).getByRole("button", { name: /is saved/ })).toBeDisabled();
+    });
+
+    it("renders at most the three cards the server sent", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        jsonResponse({ ...SUMMARY, topMatches: [1, 2, 3].map((id) => ({ ...SUMMARY.topMatches[0], id, title: `Role ${id}` })) })
+      );
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      expect(screen.getAllByRole("article")).toHaveLength(3);
+    });
+  });
+
+  describe("metrics, profile and search", () => {
+    it("shows four real metrics and invents no growth figure", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      const metrics = screen.getByRole("region", { name: "Search metrics" });
+      expect(within(metrics).getByText("227")).toBeInTheDocument();                     // job matches
+      expect(within(metrics).getByText("20")).toBeInTheDocument();                       // 15 + 2 + 1 + 2 submitted or in progress
+      expect(within(metrics).getAllByText(/Interviews|Offers|Applications|Job matches/)).toHaveLength(4);
+      expect(metrics.textContent).not.toMatch(/[+\-−]\d+%|vs\.? last|this week|↑|↓/i);
+    });
+
+    it("reports profile completion from the server, with sections done and still missing", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      const card = screen.getByRole("region", { name: "Profile completion" });
+      expect(within(card).getByRole("progressbar", { name: "Profile completion" })).toHaveAttribute("aria-valuenow", "78");
+      expect(within(card).getByText("78%")).toBeInTheDocument();
+      for (const label of ["Name", "Skills", "Professional links", "Education"]) expect(within(card).getByText(label)).toBeInTheDocument();
+      expect(card.textContent).toMatch(/Name\s*\(done\)/);
+      expect(card.textContent).toMatch(/Education\s*\(to do\)/);
+      expect(within(card).getByRole("link", { name: "Continue profile" })).toHaveAttribute("href", "/profile");
+    });
+
+    it("falls back to the one percentage an older API sends, and nothing it cannot back up", async () => {
+      const { profile: _unused, ...older } = SUMMARY;
+      void _unused;
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(older));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      const card = screen.getByRole("region", { name: "Profile completion" });
+      expect(within(card).getByText("100%")).toBeInTheDocument();
+      expect(within(card).queryByText(/\(to do\)/)).not.toBeInTheDocument();
+    });
+
+    it("renders a payload from an older API that lacks every new field", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        jsonResponse({
+          freshMatches: 5,
+          applications: { saved: 1, inProgress: 1, interviews: 0, offers: 0 },
+          recentApplications: [{ id: "1", title: "Old Row", company: "OldCo", status: "applied", updatedAt: null, logoUrl: null }],
+          topMatches: [{ id: 9, title: "Old Match", company: "OldCo", location: null, fitScore: 70 }],
+          strongMatches: 0,
+          nextAction: SUMMARY.nextAction
+        })
+      );
+      render(React.createElement(DashboardClient));
+      expect(await screen.findByText("Old Match")).toBeInTheDocument();
+      expect(screen.getByText("Old Row")).toBeInTheDocument();
+    });
+
+    it("hands the search to the Jobs workspace, and never claims to search applications", async () => {
+      push.mockClear();
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      const input = screen.getByRole("textbox", { name: "Search jobs" });
+      await userEvent.type(input, "machine learning{enter}");
+      expect(push).toHaveBeenCalledWith("/jobs?q=machine%20learning");
+      await userEvent.clear(input);
+      await userEvent.type(input, "   {enter}");
+      expect(push).toHaveBeenLastCalledWith("/jobs");
+    });
+
+    it("has no notification bell or account control it cannot back with a feature", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(SUMMARY));
+      render(React.createElement(DashboardClient));
+      await screen.findByText("Welcome back, Chandra.");
+      expect(screen.queryByRole("button", { name: /notification/i })).not.toBeInTheDocument();
     });
   });
 });

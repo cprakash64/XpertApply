@@ -643,15 +643,14 @@ describe("JobDiscovery", () => {
     };
     const strong = await badge("Strong Role");
     expect(strong).toHaveAttribute("data-fit-tone", "strong");
-    expect(strong.className).toContain("bg-surface-selected");
+    expect(strong.className).toContain("fit-strong");
     const good = await badge("Good Role");
     expect(good).toHaveAttribute("data-fit-tone", "good");
     expect((await badge("Stretch Role"))).toHaveAttribute("data-fit-tone", "stretch");
     expect((await badge("Low Role"))).toHaveAttribute("data-fit-tone", "low");
-    // The band is carried by the label and number, never a traffic-light hue.
-    for (const el of [strong, good]) {
-      expect(el.className).not.toMatch(/emerald|lime|orange|red|green|amber/);
-    }
+    // Colour is semantic (green strong, amber good/stretch, red low) and the band is ALSO carried by the label and number.
+    expect(good.className).toContain("status-warning");
+    expect((await badge("Low Role")).className).toContain("status-danger");
     expect(within(strong).getByText("88")).toBeInTheDocument();
     // No colored top strip element inside any badge.
     expect(strong.querySelector("[class*='h-1.5']")).toBeNull();

@@ -1,19 +1,22 @@
 /**
  * Fit-score visual tone.
  *
- * Maps a 0–100 fit score to a tone + label. The band is carried by the LABEL
- * and the number, never by hue alone: the scale is a single slate/glacier
- * family that steps from emphasised (strong) to quiet (low), so no band reads
- * as traffic-light green, amber or red, and a colour-blind user loses nothing.
+ * Maps a 0-100 fit score to a band, a label and a semantic colour. The BANDS are the product's long-standing thresholds and
+ * are unchanged (the backend ranks with the same ones, see `app/jobs/ranking.py`):
  *
- *   >= 80  "Strong fit"   selected surface, brand border, brand number
- *   60–79  "Good fit"     subtle surface, interactive border, link-coloured number
- *   45–59  "Stretch"      subtle surface, default border, secondary number
- *   < 45   "Low fit"      subtle surface, default border, muted number
+ *   >= 80  "Strong fit"   green   (fit-strong, the one dedicated fit token family)
+ *   60-79  "Good fit"     amber   (status-warning)
+ *   45-59  "Stretch"      amber   (status-warning)
+ *   < 45   "Low fit"      red     (status-danger)
  *
- * Every class resolves through a semantic token that already has a light and a
- * dark value, so no `dark:` variants are needed. The class strings are STATIC
- * so Tailwind's compiler can see them; never build them dynamically.
+ * Green, amber and red here are SEMANTIC colours, not brand colours. Amber and red are the status-warning and status-danger
+ * tokens; green is the dedicated fit-strong family, because the product's status-success token is navy. Each has a verified
+ * light and dark value. Colour is never the only signal:
+ * the number and the band label are always rendered next to it. Two bands share amber on purpose (the label tells them
+ * apart), so the traffic-light reading stays three-way.
+ *
+ * Every class resolves through a semantic token that already has a light and a dark value, so no `dark:` variants are
+ * needed. The class strings are STATIC so Tailwind's compiler can see them; never build them dynamically.
  */
 
 export type FitToneKey = "strong" | "good" | "stretch" | "low" | "none";
@@ -31,26 +34,26 @@ export type FitScoreTone = {
 export const FIT_SCORE_STYLES: Record<FitToneKey, Omit<FitScoreTone, "key">> = {
   strong: {
     label: "Strong fit",
-    container: "border-line-selected bg-surface-selected text-foreground",
-    number: "text-brand-primary",
+    container: "border-fit-strong-border bg-fit-strong-surface text-fit-strong",
+    number: "text-fit-strong",
     description: "Your profile strongly matches this role."
   },
   good: {
     label: "Good fit",
-    container: "border-line-interactive bg-surface-subtle text-foreground",
-    number: "text-foreground-link",
+    container: "border-status-warning-border bg-status-warning-surface text-status-warning",
+    number: "text-status-warning",
     description: "A decent chance with a few gaps to address."
   },
   stretch: {
     label: "Stretch",
-    container: "border-line-default bg-surface-subtle text-foreground",
-    number: "text-foreground-secondary",
+    container: "border-status-warning-border bg-status-warning-surface text-status-warning",
+    number: "text-status-warning",
     description: "A stretch — expect notable skill gaps."
   },
   low: {
     label: "Low fit",
-    container: "border-line-default bg-surface-subtle text-foreground-secondary",
-    number: "text-foreground-muted",
+    container: "border-status-danger-border bg-status-danger-surface text-status-danger",
+    number: "text-status-danger",
     description: "This role is far from your current profile."
   },
   none: {

@@ -25,7 +25,7 @@ import {
   formatApplicationStatus,
   getApplicationStatusTone
 } from "@/lib/applicationStatus";
-import { FitBadge, FitPill, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
+import { FitPill, FitScoreChip, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
 import { AssistedApplyButton } from "@/components/jobs/ApplyButton";
 import {
   capitalize,
@@ -86,7 +86,7 @@ export const JobCard = memo(function JobCard({
   const titleId = useId();
   const fit = job.match?.fit_score ?? null;
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
-  const reasons = job.match?.match_reasons?.slice(0, 2) ?? [];
+  const reasons = job.match?.match_reasons?.slice(0, 1) ?? [];
   const posted = postedLabel(job.posted_at);
   const scoreDisplay = getScoreDisplay(job.match?.score_state ?? null, job.match?.fit_score ?? null);
 
@@ -102,25 +102,22 @@ export const JobCard = memo(function JobCard({
       // refuses to shrink below the content's min-content width. Without it a
       // long role title pushed the whole card ~130px past a 390px viewport and
       // gave the document a horizontal scrollbar.
-      className="group relative min-w-0 cursor-pointer rounded-card border border-line-default bg-surface-card p-4 transition-[border-color,background-color] duration-fast ease-standard hover:border-line-interactive hover:bg-surface-subtle has-[:focus-visible]:border-line-selected sm:p-6"
+      className="group relative min-w-0 cursor-pointer rounded-card border border-line-default bg-surface-card p-4 transition-[border-color,background-color] duration-fast ease-standard hover:border-line-interactive hover:bg-surface-subtle has-[:focus-visible]:border-line-selected sm:p-5"
     >
-      {/* Two columns so the score card never pushes the title down: identity and
-        * context stay one continuous block on the left. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <CompanyLogo
+          company={job.company}
+          logoUrl={job.company_logo_url}
+          proxyPath={job.company_logo_proxy_path}
+          companyDomain={job.company_domain}
+          size={40}
+        />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-3">
-            <CompanyLogo
-              company={job.company}
-              logoUrl={job.company_logo_url}
-              proxyPath={job.company_logo_proxy_path}
-              companyDomain={job.company_domain}
-              size={40}
-            />
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium text-foreground-muted">{job.company}</p>
               <h2
                 id={titleId}
-                className="mt-0.5 text-[1.15rem] font-semibold leading-snug tracking-[-0.01em] text-foreground"
+                className="text-[1.05rem] font-semibold leading-snug tracking-[-0.01em] text-foreground"
               >
                 <button
                   type="button"
@@ -135,10 +132,13 @@ export const JobCard = memo(function JobCard({
                   {job.title}
                 </button>
               </h2>
+              <p className="truncate text-sm text-foreground-muted">{job.company}</p>
             </div>
+            {/* Beside the title from `sm`, under it on a phone; always text as well as colour. */}
+            <FitScoreChip score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-foreground-muted">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-foreground-muted">
             {job.location && (
               <Meta icon={<MapPin className="h-3.5 w-3.5" />}>{job.location_display || job.location}</Meta>
             )}
@@ -148,26 +148,21 @@ export const JobCard = memo(function JobCard({
             {job.employment_type && (
               <Meta icon={<Briefcase className="h-3.5 w-3.5" />}>{formatEmployment(job.employment_type)}</Meta>
             )}
-            {posted && <Meta icon={<CalendarDays className="h-3.5 w-3.5" />}>{posted}</Meta>}
+            {/* Only the employer's posting date is ever shown as a date. A job without one says so, rather than
+                borrowing the day we found it. */}
+            <Meta icon={<CalendarDays className="h-3.5 w-3.5" />}>{posted ?? "Posting date not listed"}</Meta>
             <SourceBadge source={job.source} />
             <TrackerPill status={trackerStatus} />
-            {/* Compensation earns its own weight rather than blending into the
-              * metadata — and is simply absent when the employer published none. */}
             {salary && <SalaryChip value={salary} />}
           </div>
 
           {reasons.length > 0 ? (
-            <ul className="mt-3.5 grid gap-1.5 text-sm leading-6 text-foreground-secondary">
-              {reasons.map((reason) => (
-                <li key={reason} className="flex gap-2.5">
-                  <span aria-hidden className="mt-2 h-1 w-1 shrink-0 rounded-pill bg-brand-accent" />
-                  <span className="line-clamp-2">{reason}</span>
-                </li>
-              ))}
-            </ul>
-          ) : scoreDisplay.kind !== "score" ? (
-            <p className="mt-3.5 flex items-center gap-2 text-sm text-foreground-muted">
-              {scoreDisplay.kind === "calculating" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            <p className="mt-2 flex gap-2 text-sm leading-6 text-foreground-secondary">
+              <span aria-hidden className="mt-2.5 h-1 w-1 shrink-0 rounded-pill bg-brand-accent" />
+              <span className="line-clamp-2">{reasons[0]}</span>
+            </p>
+          ) : scoreDisplay.kind !== "score" && scoreDisplay.kind !== "calculating" ? (
+            <p className="mt-2 flex items-center gap-2 text-sm text-foreground-muted">
               <span>{scoreDisplay.helper}</span>
               {scoreDisplay.kind === "profile_incomplete" && (
                 <Link href="/profile" className="ds-focus-ring rounded-control font-medium text-foreground-link underline" onClick={stop}>
@@ -177,16 +172,10 @@ export const JobCard = memo(function JobCard({
             </p>
           ) : null}
         </div>
-
-        {/* Below the identity block on a phone, beside it from `sm` up: the
-          * role and the company are what a scan is looking for first. */}
-        <div>
-          <FitBadge score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
-        </div>
       </div>
 
-      {/* Two even columns on a phone (Apply spans both), a single wrapping row from `sm`. */}
-      <div className="mt-4 grid grid-cols-2 items-center gap-2 border-t border-line-subtle pt-3 sm:mt-5 sm:flex sm:flex-wrap sm:pt-4 [&>*:first-child]:col-span-2 sm:[&>*:first-child]:col-auto">
+      {/* One filled action (Apply); everything else is quiet text. Apply spans the width on a phone. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-1 gap-y-2 border-t border-line-subtle pt-3 [&>*:first-child]:mr-2 max-sm:[&>*:first-child]:w-full">
         <AssistedApplyButton url={job.application_url} onApply={() => actions.onApply(job.id)} />
         <CardAction
           label={trackerStatus ? "Saved" : "Save"}
@@ -231,7 +220,7 @@ function CardAction({
         event.stopPropagation();
         onClick();
       }}
-      className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover disabled:cursor-not-allowed disabled:opacity-50"
+      className="ds-focus-ring ds-touch-target inline-flex h-10 items-center justify-center gap-1.5 rounded-control px-2.5 text-sm font-medium text-foreground-secondary transition duration-fast ease-standard hover:bg-action-ghost-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
     >
       {icon}
       {label}
@@ -265,7 +254,7 @@ function PeopleAction({ jobId, onOpen }: { jobId: number; onOpen: () => void }) 
         onOpen();
       }}
       data-people-state={summary.state}
-      className="ds-focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
+      className="ds-focus-ring ds-touch-target inline-flex h-10 items-center justify-center gap-1.5 rounded-control px-2.5 text-sm font-medium text-foreground-secondary transition duration-fast ease-standard hover:bg-action-ghost-hover hover:text-foreground"
     >
       {summary.state === "loading" ? (
         <Loader2 className="h-4 w-4 animate-spin" />

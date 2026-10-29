@@ -52,11 +52,17 @@ from app.models.entities import (
     JobSource,
     UserProfile,
 )
-from app.profile.completeness import build_profile_signals, profile_completion
+from app.profile.completeness import COMPLETION_SECTIONS, build_profile_signals, profile_completion
 
-#: Rows rendered by the "Recently updated" card. The Dashboard shows three; the
+#: Rows rendered by the "Recent applications" table. The Dashboard shows five; the
 #: query asks for exactly that many rather than paging the whole ledger.
-RECENT_APPLICATION_LIMIT = 3
+RECENT_APPLICATION_LIMIT = 5
+
+#: Characters of the posting description shown on a top-match card. Cut at a word boundary.
+SNIPPET_LENGTH = 200
+
+#: Matched skills shown per card: the posting's own required skills that the user's profile also lists.
+MATCHED_SKILL_LIMIT = 4
 
 #: Freshness window for the match count, matching the Jobs screen's default.
 FRESH_WINDOW_DAYS = 7
@@ -87,6 +93,9 @@ STATUS_BUCKETS: dict[str, tuple[ApplicationStatus, ...]] = {
     "inProgress": (ApplicationStatus.applying, ApplicationStatus.applied),
     "interviews": (ApplicationStatus.interview,),
     "offers": (ApplicationStatus.offer,),
+    # A closed outcome the pipeline chart shows. ``withdrawn`` stays in no bucket, so the buckets never overlap and the
+    # chart total is exactly the sum of its slices.
+    "rejected": (ApplicationStatus.rejected,),
 }
 
 
@@ -99,15 +108,39 @@ def build_dashboard_summary(db: Session, user_id: int) -> dict:
     counts, ledger_fingerprint = _application_counts(db, user_id)
     fingerprint = _fingerprint(profile, ledger_fingerprint)
     discovery = _fresh_discovery(db, user_id, fingerprint)
+    completion = profile_completion(build_profile_signals(db, user_id))
     return {
         "freshMatches": discovery["count"],
         "applications": counts,
         "recentApplications": _recent_applications(db, user_id),
-        "topMatches": _top_matches(db, user_id, discovery["topJobIds"]),
+        "topMatches": _top_matches(db, user_id, discovery["topJobIds"], _profile_skills(profile)),
         "strongMatches": discovery["strongCount"],
+        "profile": _profile_progress(completion),
         "nextAction": _next_action(
-            db, user_id, profile, counts, discovery["strongCount"]
+            db, user_id, profile, counts, discovery["strongCount"], completion["percent"]
         ),
+    }
+
+
+def _profile_skills(profile) -> set[str]:
+    """The user's own skills, lower-cased, for matching against a posting's required skills."""
+    if profile is None:
+        return set()
+    return {skill.strip().lower() for skill in (profile.skills or []) if isinstance(skill, str) and skill.strip()}
+
+
+def _profile_progress(completion: dict) -> dict:
+    """The completion percentage with human labels for the sections done and still missing.
+
+    Straight from :func:`profile_completion`, the same helper the Profile overview uses, so the two screens cannot quote
+    different numbers. Sections the user chose to answer per application are reported as missing, with the reason the
+    helper already attaches.
+    """
+    labels = {key: label for key, label, _ in COMPLETION_SECTIONS}
+    return {
+        "percent": completion["percent"],
+        "completed": [{"key": key, "label": labels.get(key, key)} for key in completion["satisfied"]],
+        "missing": [dict(item) for item in completion["missing"]],
     }
 
 
@@ -206,16 +239,24 @@ def _recent_applications(db: Session, user_id: int) -> list[dict]:
     rows = db.execute(
         select(
             ApplicationTracker.id,
+            ApplicationTracker.job_id,
             ApplicationTracker.status,
             ApplicationTracker.updated_at,
+            ApplicationTracker.applied_at,
             JobPosting.title,
             JobPosting.company,
             JobPosting.company_logo_url,
             JobPosting.application_url,
             JobSource.type,
+            JobMatch.fit_score,
         )
         .join(JobPosting, JobPosting.id == ApplicationTracker.job_id)
         .outerjoin(JobSource, JobSource.id == JobPosting.source_id)
+        # The user's own stored score for the same job, if one exists. Never computed here.
+        .outerjoin(
+            JobMatch,
+            (JobMatch.job_id == ApplicationTracker.job_id) & (JobMatch.user_id == user_id),
+        )
         .where(ApplicationTracker.user_id == user_id)
         .order_by(ApplicationTracker.updated_at.desc(), ApplicationTracker.id.desc())
         .limit(RECENT_APPLICATION_LIMIT)
@@ -226,8 +267,12 @@ def _recent_applications(db: Session, user_id: int) -> list[dict]:
             "id": str(row.id),
             "title": row.title,
             "company": row.company,
+            "jobId": row.job_id,
             "status": row.status.value,
             "updatedAt": row.updated_at,
+            # When the user applied (null for a saved role). ``updatedAt`` is the last touch, not the application date.
+            "appliedAt": row.applied_at,
+            "fitScore": row.fit_score,
             "logoUrl": _logo_url(row),
         }
         for row in rows
@@ -410,12 +455,12 @@ def _strong_match_count(db: Session, user_id: int, eligible_ids: list[int]) -> i
     )
 
 
-def _top_matches(db: Session, user_id: int, job_ids: list[int]) -> list[dict]:
-    """Display rows for the "Best matches this week" card.
+def _top_matches(db: Session, user_id: int, job_ids: list[int], user_skills: set[str]) -> list[dict]:
+    """Display rows for the "Top job matches" cards.
 
-    At most :data:`TOP_MATCH_LIMIT` postings, fetched by primary key — the card
-    renders three roles, so three rows are read. ``description_clean`` and the
-    rest of the posting are left in the database.
+    At most :data:`TOP_MATCH_LIMIT` postings, fetched by primary key. Only the columns a card shows are read, and the
+    description is cut to a short snippet before it is returned. Matched skills are the posting's required skills that
+    the user's profile also lists, so nothing is guessed.
     """
     if not job_ids:
         return []
@@ -426,28 +471,79 @@ def _top_matches(db: Session, user_id: int, job_ids: list[int]) -> list[dict]:
             JobPosting.company,
             JobPosting.location_display,
             JobPosting.location,
+            JobPosting.remote_type,
+            JobPosting.employment_type,
+            JobPosting.posted_at,
+            JobPosting.description_clean,
+            JobPosting.required_skills,
+            JobPosting.company_logo_url,
+            JobPosting.application_url,
+            JobSource.type,
             JobMatch.fit_score,
+            JobMatch.fit_summary,
         )
         .join(
             JobMatch,
             (JobMatch.job_id == JobPosting.id) & (JobMatch.user_id == user_id),
         )
+        .outerjoin(JobSource, JobSource.id == JobPosting.source_id)
         .where(JobPosting.id.in_(job_ids))
     ).all()
+    saved_ids = set(
+        db.scalars(
+            select(ApplicationTracker.job_id).where(
+                ApplicationTracker.user_id == user_id,
+                ApplicationTracker.job_id.in_(job_ids),
+                ApplicationTracker.status.in_(STATUS_BUCKETS["saved"]),
+            )
+        ).all()
+    )
 
     by_id = {row.id: row for row in rows}
     # Preserve the ranking the scores produced; the IN clause does not.
     return [
         {
-            "id": by_id[job_id].id,
-            "title": by_id[job_id].title,
-            "company": by_id[job_id].company,
-            "location": by_id[job_id].location_display or by_id[job_id].location,
-            "fitScore": by_id[job_id].fit_score,
+            "id": row.id,
+            "title": row.title,
+            "company": row.company,
+            "location": row.location_display or row.location,
+            "workplaceType": row.remote_type,
+            "employmentType": row.employment_type,
+            "postedAt": row.posted_at,
+            "fitScore": row.fit_score,
+            "fitSummary": row.fit_summary,
+            "matchedSkills": _matched_skills(row.required_skills, user_skills),
+            "snippet": _snippet(row.description_clean),
+            "logoUrl": _logo_url(row),
+            "saved": row.id in saved_ids,
         }
         for job_id in job_ids
-        if job_id in by_id
+        if (row := by_id.get(job_id)) is not None
     ]
+
+
+def _matched_skills(required: list | None, user_skills: set[str]) -> list[str]:
+    seen: set[str] = set()
+    matched: list[str] = []
+    for skill in required or []:
+        if not isinstance(skill, str):
+            continue
+        key = skill.strip().lower()
+        if key and key in user_skills and key not in seen:
+            seen.add(key)
+            matched.append(skill.strip())
+        if len(matched) == MATCHED_SKILL_LIMIT:
+            break
+    return matched
+
+
+def _snippet(description: str | None) -> str | None:
+    text = " ".join((description or "").split())
+    if not text:
+        return None
+    if len(text) <= SNIPPET_LENGTH:
+        return text
+    return text[:SNIPPET_LENGTH].rsplit(" ", 1)[0].rstrip(",.;:- ") + "…"
 
 
 def _job_view(row, *, description: str) -> JobView:
@@ -517,6 +613,7 @@ def _next_action(
     profile,
     counts: dict[str, int],
     strong_matches: int,
+    progress: int,
 ) -> dict:
     """The single most useful next step, decided server-side.
 
@@ -539,8 +636,6 @@ def _next_action(
     first_name = ""
     if profile is not None:
         first_name = (profile.preferred_first_name or profile.first_name or "").strip()
-    progress = profile_completion(build_profile_signals(db, user_id))["percent"]
-
     needs_attention = _sessions_needing_user(db, user_id)
     interview_on = _upcoming_interview_date(db, user_id) if counts["interviews"] else None
 

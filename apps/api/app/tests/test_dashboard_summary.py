@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
 from app.dashboard.summary_cache import clear_local_dashboard_cache
+from app.dashboard.summary_service import RECENT_APPLICATION_LIMIT
 from app.db.base import Base
 from app.main import app
 from app.models import entities  # noqa: F401
@@ -20,9 +21,7 @@ from app.models import entities as E
 
 @pytest.fixture()
 def client() -> Generator[TestClient, None, None]:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(bind=engine)
 
@@ -45,9 +44,7 @@ def client() -> Generator[TestClient, None, None]:
 
 
 def auth(client: TestClient, email: str = "dash@mailbox.test-domain.co") -> dict[str, str]:
-    token = client.post(
-        "/auth/signup", json={"email": email, "password": "password123"}
-    ).json()
+    token = client.post("/auth/signup", json={"email": email, "password": "password123"}).json()
     return {"Authorization": f"Bearer {token['access_token']}"}
 
 
@@ -100,9 +97,7 @@ def seed_job(*, company: str, days: int = 1, title: str = "Backend Engineer") ->
     db = next(app.dependency_overrides[get_db]())
     src = db.scalar(select(E.JobSource).where(E.JobSource.name == company))
     if src is None:
-        src = E.JobSource(
-            name=company, type="greenhouse", base_url="x", enabled=True, supports_api=True
-        )
+        src = E.JobSource(name=company, type="greenhouse", base_url="x", enabled=True, supports_api=True)
         db.add(src)
         db.flush()
     url = f"https://boards.greenhouse.io/{company.lower()}/1"
@@ -129,9 +124,7 @@ def seed_job(*, company: str, days: int = 1, title: str = "Backend Engineer") ->
     return job_id
 
 
-def track(
-    *, user_email: str, job_id: int, status: E.ApplicationStatus, updated_at: datetime | None = None
-) -> int:
+def track(*, user_email: str, job_id: int, status: E.ApplicationStatus, updated_at: datetime | None = None) -> int:
     db = next(app.dependency_overrides[get_db]())
     user = db.scalar(select(E.User).where(E.User.email == user_email))
     row = E.ApplicationTracker(user_id=user.id, job_id=job_id, status=status)
@@ -161,9 +154,7 @@ def test_summary_requires_authentication(client: TestClient):
 
 
 def test_summary_rejects_invalid_token(client: TestClient):
-    resp = client.get(
-        "/dashboard/summary", headers={"Authorization": "Bearer not-a-real-token"}
-    )
+    resp = client.get("/dashboard/summary", headers={"Authorization": "Bearer not-a-real-token"})
     assert resp.status_code == 401
 
 
@@ -186,6 +177,7 @@ def test_summary_is_isolated_per_user(client: TestClient):
         "inProgress": 0,
         "interviews": 0,
         "offers": 0,
+        "rejected": 0,
     }
     assert bob_payload["recentApplications"] == []
 
@@ -202,6 +194,7 @@ def test_empty_state_returns_zeroes_not_errors(client: TestClient):
         "inProgress": 0,
         "interviews": 0,
         "offers": 0,
+        "rejected": 0,
     }
     assert payload["recentApplications"] == []
     assert payload["nextAction"]["kind"] == "complete_profile"
@@ -225,10 +218,10 @@ def test_status_buckets_aggregate_correctly(client: TestClient):
         track(user_email=email, job_id=seed_job(company=company), status=status)
 
     counts = summary(client, headers)["applications"]
-    assert counts == {"saved": 2, "inProgress": 2, "interviews": 1, "offers": 1}
+    assert counts == {"saved": 2, "inProgress": 2, "interviews": 1, "offers": 1, "rejected": 0}
 
 
-def test_closed_outcomes_are_excluded_from_active_buckets(client: TestClient):
+def test_closed_outcomes_are_counted_separately_and_withdrawn_belongs_to_no_bucket(client: TestClient):
     email = "closed@mailbox.test-domain.co"
     headers = auth(client, email)
     track(
@@ -247,6 +240,7 @@ def test_closed_outcomes_are_excluded_from_active_buckets(client: TestClient):
         "inProgress": 0,
         "interviews": 0,
         "offers": 0,
+        "rejected": 1,
     }
 
 
@@ -257,7 +251,7 @@ def test_recent_applications_are_limited_and_newest_first(client: TestClient):
     email = "recent@mailbox.test-domain.co"
     headers = auth(client, email)
     now = datetime.now(UTC)
-    for index, company in enumerate(["Oldest", "Middle", "Newer", "Newest"]):
+    for index, company in enumerate(["Oldest", "Older", "Middle", "Newer", "Newest", "Newest+1"]):
         track(
             user_email=email,
             job_id=seed_job(company=company),
@@ -266,9 +260,11 @@ def test_recent_applications_are_limited_and_newest_first(client: TestClient):
         )
 
     recent = summary(client, headers)["recentApplications"]
-    assert len(recent) == 3
-    assert [row["company"] for row in recent] == ["Newest", "Newer", "Middle"]
-    assert {"id", "title", "company", "status", "updatedAt", "logoUrl"} <= set(recent[0])
+    assert len(recent) == RECENT_APPLICATION_LIMIT == 5
+    assert [row["company"] for row in recent] == ["Newest+1", "Newest", "Newer", "Middle", "Older"]
+    assert {"id", "jobId", "title", "company", "status", "updatedAt", "appliedAt", "fitScore", "logoUrl"} <= set(
+        recent[0]
+    )
     assert recent[0]["status"] == "applied"
 
 
@@ -349,9 +345,9 @@ def test_years_of_experience_rule_still_applies_after_deferred_fetch(client: Tes
     heavy = seed_job(company="Heavy1")
 
     db = next(app.dependency_overrides[get_db]())
-    db.get(E.JobPosting, heavy).description_clean = (
-        "Backend Engineer. Requires 8+ years of experience building services."
-    )
+    db.get(
+        E.JobPosting, heavy
+    ).description_clean = "Backend Engineer. Requires 8+ years of experience building services."
     db.commit()
     db.close()
     clear_local_dashboard_cache()
@@ -517,9 +513,7 @@ def test_repeat_request_reuses_the_cached_fresh_match_count(client: TestClient):
 
     statements.clear()
     assert summary(client, headers)["freshMatches"] == 1
-    assert not [s for s in statements if "FROM job_postings" in s], (
-        "warm request must serve the count from cache"
-    )
+    assert not [s for s in statements if "FROM job_postings" in s], "warm request must serve the count from cache"
     db.close()
 
 
@@ -595,7 +589,7 @@ def test_summary_issues_a_bounded_number_of_queries(client: TestClient):
     payload = summary(client, headers)
     db.close()
 
-    assert len(payload["recentApplications"]) == 3
+    assert len(payload["recentApplications"]) == RECENT_APPLICATION_LIMIT
     assert len(statements) <= 16, f"unexpected query fan-out: {len(statements)}"
 
 
@@ -623,8 +617,7 @@ def set_follow_up(*, user_email: str, job_id: int, days_ahead: int) -> None:
     user = db.scalar(select(E.User).where(E.User.email == user_email))
     row = db.scalar(
         select(E.ApplicationTracker).where(
-            (E.ApplicationTracker.user_id == user.id)
-            & (E.ApplicationTracker.job_id == job_id)
+            (E.ApplicationTracker.user_id == user.id) & (E.ApplicationTracker.job_id == job_id)
         )
     )
     row.follow_up_date = (datetime.now(UTC) + timedelta(days=days_ahead)).date()
@@ -637,9 +630,7 @@ def test_incomplete_profile_outranks_everything(client: TestClient):
     email = "prio-profile@mailbox.test-domain.co"
     headers = auth(client, email)
     job = seed_job(company="PrioProfile")
-    paused_session(
-        user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required
-    )
+    paused_session(user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required)
 
     action = summary(client, headers)["nextAction"]
     assert action["kind"] == "complete_profile"
@@ -654,9 +645,7 @@ def test_paused_application_outranks_interviews_and_matches(client: TestClient):
     interview_job = seed_job(company="PrioAttentionIv")
     track(user_email=email, job_id=interview_job, status=E.ApplicationStatus.interview)
     set_follow_up(user_email=email, job_id=interview_job, days_ahead=2)
-    paused_session(
-        user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required
-    )
+    paused_session(user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required)
 
     action = summary(client, headers)["nextAction"]
     assert action["kind"] == "needs_attention"
@@ -670,13 +659,9 @@ def test_paused_application_count_is_pluralized(client: TestClient):
     complete_profile(client, headers)
     for index in range(3):
         job = seed_job(company=f"PrioPlural{index}")
-        paused_session(
-            user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required
-        )
+        paused_session(user_email=email, job_id=job, status=E.ApplicationSessionStatus.review_required)
 
-    assert (
-        summary(client, headers)["nextAction"]["eyebrow"] == "3 applications need attention"
-    )
+    assert summary(client, headers)["nextAction"]["eyebrow"] == "3 applications need attention"
 
 
 def test_upcoming_interview_outranks_strong_matches(client: TestClient):
@@ -819,3 +804,91 @@ def test_the_suite_never_shares_a_dashboard_cache_with_a_real_redis(monkeypatch)
     assert summary_cache._redis_client() is None
     assert circuit._redis_client() is None
     assert pdl_company._redis_client() is None
+
+
+# --------------------------------------------------------------------------- #
+# The richer Dashboard payload: card fields, pipeline buckets, profile sections
+# --------------------------------------------------------------------------- #
+def test_top_match_cards_carry_real_posting_fields_and_only_the_users_matched_skills(client: TestClient):
+    email = "cards@mailbox.test-domain.co"
+    headers = auth(client, email)
+    complete_profile(client, headers)  # profile skills: Python, FastAPI
+    job_id = seed_job(company="CardCo", title="Backend Engineer")
+    db = next(app.dependency_overrides[get_db]())
+    posting = db.get(E.JobPosting, job_id)
+    posting.employment_type = "Full-time"
+    posting.required_skills = ["python", "Kubernetes", "FastAPI", "Python", "Rust"]
+    posting.description_clean = "Build resilient services. " * 30
+    db.commit()
+    db.close()
+    score(user_email=email, job_id=job_id, fit_score=88.0)
+
+    card = summary(client, headers)["topMatches"][0]
+    assert card["title"] == "Backend Engineer" and card["fitScore"] == 88.0
+    assert card["employmentType"] == "Full-time" and card["workplaceType"] == "remote"
+    assert card["matchedSkills"] == ["python", "FastAPI"]  # the user's skills only; case-insensitive; no duplicates
+    assert card["postedAt"] is not None
+    assert card["snippet"].endswith("…") and len(card["snippet"]) <= 205
+    assert card["logoUrl"] is None or card["logoUrl"].startswith("/jobs/companies/")
+    assert card["saved"] is False
+
+
+def test_top_match_saved_flag_reflects_this_users_saved_row_only(client: TestClient):
+    mine, theirs = "savedmine@mailbox.test-domain.co", "savedtheirs@mailbox.test-domain.co"
+    headers = auth(client, mine)
+    auth(client, theirs)
+    complete_profile(client, headers)
+    job_id = seed_job(company="SavedCo")
+    score(user_email=mine, job_id=job_id, fit_score=90.0)
+    track(user_email=theirs, job_id=job_id, status=E.ApplicationStatus.saved)
+    assert summary(client, headers)["topMatches"][0]["saved"] is False
+    track(user_email=mine, job_id=job_id, status=E.ApplicationStatus.saved)
+    clear_local_dashboard_cache()
+    assert summary(client, headers)["topMatches"][0]["saved"] is True
+
+
+def test_pipeline_buckets_never_double_count_and_cover_every_status_but_withdrawn(client: TestClient):
+    email = "pipeline@mailbox.test-domain.co"
+    headers = auth(client, email)
+    for index, status in enumerate(E.ApplicationStatus):
+        track(user_email=email, job_id=seed_job(company=f"Pipe{index}"), status=status)
+    counts = summary(client, headers)["applications"]
+    assert set(counts) == {"saved", "inProgress", "interviews", "offers", "rejected"}
+    total_rows = len(list(E.ApplicationStatus))
+    withdrawn = 1  # the only status that belongs to no pipeline bucket
+    assert sum(counts.values()) == total_rows - withdrawn
+    assert counts["saved"] == 2 and counts["inProgress"] == 2  # saved+ready_to_apply, applying+applied
+
+
+def test_profile_block_reports_the_real_percentage_with_labelled_sections(client: TestClient):
+    email = "profileblock@mailbox.test-domain.co"
+    headers = auth(client, email)
+    fresh = summary(client, headers)["profile"]
+    assert fresh["percent"] == 0 and fresh["completed"] == [] and len(fresh["missing"]) >= 5
+    complete_profile(client, headers)
+    clear_local_dashboard_cache()
+    payload = summary(client, headers)
+    block = payload["profile"]
+    helper = client.get("/profile/completeness", headers=headers).json()["completion"]
+    assert block["percent"] == helper["percent"] == payload["nextAction"]["profileProgress"]  # one number everywhere
+    assert [item["key"] for item in block["completed"]] == helper["satisfied"]
+    assert all(item["label"] and item["label"] != item["key"] for item in block["completed"])
+    assert [item["key"] for item in block["missing"]] == [m["key"] for m in helper["missing"]]
+
+
+def test_recent_rows_carry_the_applied_date_and_only_the_users_own_fit_score(client: TestClient):
+    mine, other = "recentfit@mailbox.test-domain.co", "recentfitother@mailbox.test-domain.co"
+    headers = auth(client, mine)
+    auth(client, other)
+    job_id = seed_job(company="FitRow")
+    applied_at = datetime.now(UTC) - timedelta(days=2)
+    track(user_email=mine, job_id=job_id, status=E.ApplicationStatus.applied)
+    score(user_email=other, job_id=job_id, fit_score=99.0)  # someone else's score must never appear on my row
+    db = next(app.dependency_overrides[get_db]())
+    db.scalar(select(E.ApplicationTracker).where(E.ApplicationTracker.job_id == job_id)).applied_at = applied_at
+    db.commit()
+    db.close()
+    row = summary(client, headers)["recentApplications"][0]
+    assert row["fitScore"] is None and row["appliedAt"] is not None and row["jobId"] == job_id
+    score(user_email=mine, job_id=job_id, fit_score=71.0)
+    assert summary(client, headers)["recentApplications"][0]["fitScore"] == 71.0

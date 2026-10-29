@@ -25,6 +25,8 @@ export type DashboardApplicationCounts = {
   inProgress: number;
   interviews: number;
   offers: number;
+  /** A closed outcome. Absent from an older API, which never reported it. */
+  rejected?: number;
 };
 
 export type DashboardRecentApplication = {
@@ -34,6 +36,12 @@ export type DashboardRecentApplication = {
   status: string;
   updatedAt: string | null;
   logoUrl: string | null;
+  /** The job's id, for links into Jobs. */
+  jobId?: number;
+  /** When the user applied; null for a saved role. `updatedAt` is the last touch, not this. */
+  appliedAt?: string | null;
+  /** The user's own stored score for the job, if one exists. */
+  fitScore?: number | null;
 };
 
 /**
@@ -68,6 +76,25 @@ export type DashboardTopMatch = {
   company: string;
   location: string | null;
   fitScore: number | null;
+  // Everything below is real posting data from the same payload; each is absent from an older API.
+  workplaceType?: string | null;
+  employmentType?: string | null;
+  postedAt?: string | null;
+  fitSummary?: string | null;
+  /** The posting's required skills that the user's profile also lists. */
+  matchedSkills?: string[];
+  snippet?: string | null;
+  /** Relative path on the API (our own cached logo proxy). */
+  logoUrl?: string | null;
+  saved?: boolean;
+};
+
+export type DashboardProfileSection = { key: string; label: string; reason?: string };
+
+export type DashboardProfile = {
+  percent: number;
+  completed: DashboardProfileSection[];
+  missing: DashboardProfileSection[];
 };
 
 export type DashboardSummary = {
@@ -77,6 +104,7 @@ export type DashboardSummary = {
   topMatches: DashboardTopMatch[];
   /** Fresh matches whose stored fit score clears the strong-fit bar. */
   strongMatches: number;
+  profile?: DashboardProfile;
   nextAction: DashboardNextAction;
 };
 

@@ -128,7 +128,10 @@ describe("TrackerClient", () => {
     const detail = screen.getByRole("region", { name: "Selected application" });
     expect(within(detail).getByRole("heading", { name: "Software Engineer" })).toBeInTheDocument();
     expect(within(detail).getByText("New York, NY")).toBeInTheDocument();
-    expect(within(detail).getByText("84% fit")).toBeInTheDocument();
+    const chip = detail.querySelector("[data-fit-tone]") as HTMLElement;
+    expect(chip).toHaveAttribute("data-fit-tone", "strong");
+    expect(chip).toHaveTextContent("84");
+    expect(chip).toHaveTextContent("Strong fit");
     expect(within(detail).getByRole("link", { name: /View job posting/i })).toHaveAttribute(
       "href",
       "https://careers.acme.com/101"
@@ -156,7 +159,7 @@ describe("TrackerClient", () => {
     expect(first).not.toHaveAttribute("aria-current");
     const detail = screen.getByRole("region", { name: "Selected application" });
     expect(within(detail).getByRole("heading", { name: "Backend Engineer" })).toBeInTheDocument();
-    expect(within(detail).getByText("91% fit")).toBeInTheDocument();
+    expect(detail.querySelector("[data-fit-tone]")).toHaveTextContent("91");
     expect(within(detail).getByRole("link", { name: /View job posting/i })).toHaveAttribute("href", "https://northstar.dev/jobs/102");
   });
 
