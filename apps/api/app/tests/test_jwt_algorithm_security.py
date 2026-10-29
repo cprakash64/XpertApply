@@ -36,7 +36,7 @@ def _legacy_token(claims: dict, *, secret: str | None = None, algorithm: str = "
 
 
 def test_dependency_replacement_is_exact() -> None:
-    assert metadata.version("PyJWT") == "2.14.0"
+    assert metadata.version("PyJWT") == "2.15.1"
     assert metadata.version("cryptography") == "50.0.1"
     for removed in ("python-jose", "ecdsa"):
         with pytest.raises(metadata.PackageNotFoundError):
