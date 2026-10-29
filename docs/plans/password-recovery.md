@@ -53,3 +53,17 @@ Disable by `EMAIL_BACKEND=disabled` (pages then say recovery is unavailable). Co
 - Rollout: set the variables in each server's `.env` (separate staging/production keys), recreate only the `api`
   container (no migration needed beyond 0034). Rollback: remove `EMAIL_BACKEND` (or set `disabled`) and recreate `api`;
   recovery reports itself unavailable.
+
+## Release baseline and migration order (2026-10-28)
+
+- Staging and production run API `nav02-gated-1516f23` with the database at `0036_application_doc_snapshots`
+  (chain `0033 -> 0035_extension_auth -> 0036`). This branch had been cut before 0035/0036 existed.
+- `1516f23` was merged into this branch (web tracker conflicts resolved in favour of the approved premium UI) and
+  `0034_password_reset` was re-parented onto `0036_application_doc_snapshots`. 0034 was never applied anywhere, so no
+  applied migration was edited. Alembic has one head: `0034_password_reset`. `0036` is byte-identical (hash test).
+- Verified on disposable PostgreSQL 16: `0033 -> 0036 -> 0034`, downgrade to 0036 and re-upgrade; a database built and
+  populated by the deployed code needs exactly one migration (0034) and is read unchanged by this code.
+- 0034 is additive (nullable `users.password_changed_at` plus a new table), so the previous API image keeps running on the
+  new schema. On staging/production roll back by recreating the old image; do NOT run `alembic downgrade` there.
+- Release order: verified backup, `migrate`, then recreate `api`. Never start this API before 0034 is applied.
+- Inherited lint debt from the merged line is isolated in scoped `per-file-ignores` in `apps/api/pyproject.toml`.

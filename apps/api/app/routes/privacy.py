@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.documents.materialized_files import MaterializedFileError, remove_document_exports
 from app.documents.store import serialize_document
 from app.models.entities import (
+    ApplicationDocumentSnapshot,
     ApplicationTracker,
     Award,
     Certification,
@@ -86,6 +87,21 @@ def export_user_data(user: User = Depends(get_current_user), db: Session = Depen
             )
         ],
         "applications": _rows(db, ApplicationTracker, user.id),
+        "application_document_snapshots": [
+            {
+                "application_id": snap.tracker_id,
+                "kind": snap.kind,
+                "title": snap.title,
+                "content": snap.content,
+                "plain_text": snap.plain_text,
+                "attached_by_extension": snap.attached_by_extension,
+                "association_basis": snap.association_basis,
+                "created_at": snap.created_at,
+            }
+            for snap in db.scalars(
+                select(ApplicationDocumentSnapshot).where(ApplicationDocumentSnapshot.user_id == user.id)
+            )
+        ],
         "people_recommendations": _rows(db, UserJobPeopleRecommendation, user.id),
         "people_discovery_runs": _rows(db, PeopleDiscoveryRun, user.id),
         "people_feedback": _rows(db, PeopleRecommendationFeedback, user.id),

@@ -88,3 +88,6 @@ docker-compose.override.yml
 * copy.*
 
 .pnpm-store/
+
+# XA-STG0: the real staging environment file is generated on the host and never committed.
+infra/staging/.env.staging

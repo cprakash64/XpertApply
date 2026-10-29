@@ -201,6 +201,21 @@ class ResolveQuestionsIn(BaseModel):
     questions: list[ResolveQuestionIn] = Field(min_length=1, max_length=MAX_QUESTIONS)
 
 
+class DraftQuestionIn(BaseModel):
+    """One open-ended question as the extension SEES it. Nothing about who the
+    candidate is or which job this is belongs here: both come from the session."""
+
+    field_identifier: str = Field(min_length=1, max_length=MAX_REF_LENGTH)
+    question: str = Field(min_length=1, max_length=600)
+    control_type: str = Field(default="textarea", pattern="^(textarea|text)$")
+    max_length: int | None = Field(default=None, ge=1, le=10000)
+    required: bool = False
+
+
+class DraftAnswersIn(BaseModel):
+    questions: list[DraftQuestionIn] = Field(min_length=1, max_length=8)
+
+
 class ApplicationOverrideIn(BaseModel):
     """A single answer, for this application only.
 

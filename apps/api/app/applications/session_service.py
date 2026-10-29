@@ -393,6 +393,7 @@ def complete_session(
         submission_reference=submission_reference,
         application_url=session.source_url,
         metadata=evidence,
+        session_id=session.id,
     )
 
     session.status = ApplicationSessionStatus.completed

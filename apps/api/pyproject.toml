@@ -37,3 +37,18 @@ markers = [
     "migration: requires a reachable PostgreSQL server",
 ]
 
+
+# Inherited from the deployed release line (1516f23), merged without rewrapping so the
+# deployed code stays byte-comparable. Scoped per file; do not widen. Wrap when next touched.
+[tool.ruff.lint.per-file-ignores]
+"app/applications/document_association.py" = ["E501"]
+"app/applications/mark_applied.py" = ["E501"]
+"app/documents/store.py" = ["E501"]
+"app/main.py" = ["E501"]
+"app/models/entities.py" = ["E501"]
+"app/routes/jobs.py" = ["E501"]
+"app/tests/test_migration_0036_snapshots.py" = ["E501"]
+"app/tests/test_deployed_schema_compat_postgres.py" = ["E501", "F811"]
+"app/tests/test_tracker_document_downloads.py" = ["E501", "F811"]
+"app/tests/test_tracker_provenance_postgres.py" = ["E501"]
+"app/tests/test_tracker_snapshots_postgres.py" = ["E501", "F811"]

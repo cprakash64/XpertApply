@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0034_password_reset"
-down_revision = "0033_prod_auth_identities"
+down_revision = "0036_application_doc_snapshots"
 branch_labels = None
 depends_on = None
 

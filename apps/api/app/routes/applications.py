@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.applications import answer_vault_service as vault
-from app.applications import option_mapping_service, preparation
+from app.applications import option_mapping_service, preparation, question_drafting_service
 from app.applications.answer_resolution_service import (
     OptionIn,
     QuestionIn,
@@ -82,6 +82,7 @@ from app.schemas.applications import (
     AutofillResultIn,
     CompleteSessionIn,
     CreateSessionIn,
+    DraftAnswersIn,
     ExchangeTokenIn,
     MapOptionIn,
     ResolveQuestionsIn,
@@ -91,6 +92,7 @@ from app.schemas.applications import (
     StatusPatchIn,
     SubmissionConfirmedIn,
 )
+from app.services.documents import profile_payload, public_dict
 
 logger = logging.getLogger("jobpilot.applications")
 
@@ -597,6 +599,63 @@ def resolve_application_questions(
         "answer_contract_version": ANSWER_VAULT_CONTRACT_VERSION,
         "results": [result.as_dict() for result in results],
     }
+
+
+@router.post("/{session_id}/draft-answers")
+async def draft_application_answers(
+    payload: DraftAnswersIn,
+    session: ApplicationSession = Depends(session_access),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Draft grounded, EDITABLE answers to open-ended employer questions.
+
+    The candidate and the job are derived from the session, never from the body,
+    so a caller cannot draw on someone else's experience or another job. Only
+    career facts reach the model; legal, consent, compensation, authorization and
+    demographic questions are refused here and left to the applicant. Every draft
+    is returned unverified and requiring review, and the model's output is
+    validated in code against the facts supplied. The OpenAI key never leaves the
+    server, and neither the questions nor the drafts are logged.
+    """
+    # Fail closed, after authentication/authorization and before any rate-limit, DB or provider work.
+    if not question_drafting_service.drafting_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "answer_drafting_disabled", "message": "Answer drafting is not available."},
+        )
+    _rate_limit(f"draft:{session.user_id}", limit=12, window_seconds=60)
+    # session_access lazily EXPIRES an out-of-date session but still returns it.
+    # Drafting draws on the applicant's saved facts, so it needs a live session.
+    if session.status in {
+        ApplicationSessionStatus.expired,
+        ApplicationSessionStatus.cancelled,
+        ApplicationSessionStatus.completed,
+    }:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Application session is no longer active")
+    job = db.get(JobPosting, session.job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application job not found")
+    results = await question_drafting_service.draft_answers(
+        questions=[
+            question_drafting_service.DraftQuestion(
+                field_identifier=item.field_identifier,
+                question=item.question,
+                control_type=item.control_type,
+                max_length=item.max_length,
+                required=item.required,
+            )
+            for item in payload.questions
+        ],
+        profile_payload=profile_payload(db, session.user_id),
+        job_payload=public_dict(job),
+    )
+    drafted = sum(1 for item in results if item["proposed_answer"])
+    log_action(
+        db, session.id, "answer_drafting", source="extension",
+        status="drafted" if drafted else "none",
+    )
+    db.commit()
+    return {"drafts": results, "drafted": drafted}
 
 
 @router.post("/{session_id}/map-option")

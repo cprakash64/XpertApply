@@ -929,6 +929,37 @@ class ApplicationTracker(Base):
     )
 
 
+class ApplicationDocumentSnapshot(Base):
+    """The exact resume / cover-letter text that was prepared for ONE application, kept as it was when the user applied.
+
+    ``GeneratedDocument`` rows are edited in place (``PUT /jobs/documents/{id}``) and a newer tailoring creates a newer row, so a
+    reference to one is not a promise about what was sent. This copy is written once, the first time the application becomes
+    ``applied``, and never updated, so the Tracker can offer the version that belongs to that application whatever the user does
+    to their profile or documents afterwards. No file path is stored: files are rendered from this content on demand.
+    ``attached_by_extension`` records only that the extension REPORTED attaching the file to the employer's form. It is not proof
+    that the employer received it, and ``applied`` does not imply it.
+    """
+
+    __tablename__ = "application_document_snapshots"
+    __table_args__ = (UniqueConstraint("tracker_id", "kind", name="uq_doc_snapshot_tracker_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tracker_id: Mapped[int] = mapped_column(ForeignKey("application_tracker.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # "resume" | "cover_letter"
+    source_document_id: Mapped[int | None] = mapped_column(ForeignKey("generated_documents.id", ondelete="SET NULL"))
+    title: Mapped[str | None] = mapped_column(String(300))
+    content: Mapped[dict] = mapped_column(JsonType, default=dict)
+    plain_text: Mapped[str | None] = mapped_column(Text)
+    format_version: Mapped[str] = mapped_column(String(20), default="v1")
+    attached_by_extension: Mapped[bool] = mapped_column(Boolean, default=False)
+    # How the documents were tied to the application: "confirming_session" (the session named by the confirmation), "linked_session"
+    # (a session that raised the confirmation), "sole_session" (every prepared session for this user and job points at the same
+    # documents) or "job_document" (the unique document of that type for this exact job at confirmation). Never a guess between several.
+    association_basis: Mapped[str] = mapped_column(String(24), default="sole_session", server_default="sole_session")
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -1049,3 +1080,43 @@ class ApplicationAnswer(Base):
     updated_at: Mapped[DateTimeValue] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class ExtensionAuthCode(Base):
+    """One-time authorization code for the browser extension's PKCE sign-in.
+
+    Minted by the signed-in website for a ``code_challenge`` the extension
+    generated, redeemed once at ``/extension/auth/token`` with the matching
+    verifier. Only the SHA-256 of the code is stored.
+    """
+
+    __tablename__ = "extension_auth_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    code_challenge: Mapped[str] = mapped_column(String(64))
+    redirect_uri: Mapped[str] = mapped_column(String(300))
+    expires_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExtensionCredential(Base):
+    """A rotating refresh credential held only by the extension's service worker.
+
+    Each refresh retires the presented row and issues a new one in the same
+    ``family_id``. Presenting an already-rotated token revokes the whole family;
+    revoking a family also ends every access token minted for it.
+    """
+
+    __tablename__ = "extension_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    family_id: Mapped[str] = mapped_column(String(32), index=True)
+    refresh_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True))
+    rotated_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[DateTimeValue | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[DateTimeValue] = mapped_column(DateTime(timezone=True), server_default=func.now())

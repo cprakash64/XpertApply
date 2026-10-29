@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     jwt_expires_minutes: int = 60 * 24 * 7
     cors_origins: list[str] = ["http://localhost:3000"]
     app_env: str = "development"
+    # Exact Chrome extension ids allowed to receive an authorization code
+    # (redirect https://<id>.chromiumapp.org/...). Production fails closed when empty.
+    extension_allowed_ids: list[str] = []
     # Validated at startup by app.core.config_validation: when app_env names a
     # production environment, development defaults (the shipped SECRET_KEY, the
     # compose database password, wildcard CORS, DEBUG) are refused outright.
@@ -227,6 +230,9 @@ class Settings(BaseSettings):
     people_email_discovery_enabled: bool = False
     people_pdl_fallback_enabled: bool = False
     people_outreach_drafting_enabled: bool = False
+    # Fail-closed gate for NAV02 application-answer drafting. A configured
+    # OPENAI_API_KEY alone must never let this feature call the provider.
+    application_answer_drafting_enabled: bool = False
     # OpenAI refinement of an already-built deterministic draft. Off by
     # default, and gated on an explicit user action even when on: the card
     # prefetches drafts on hover/focus, so an unconditional model call here
