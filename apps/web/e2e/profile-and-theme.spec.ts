@@ -283,6 +283,8 @@ test.describe("System light/dark theme", () => {
 
   test("dark preference renders dark surfaces on every app route and keeps public routes light", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
+    // The default appearance is light; following the OS is an explicit, stored choice.
+    await page.addInitScript(() => localStorage.setItem("xa-theme", "system"));
     const email = await signUp(page);
     await login(page, email);
 
@@ -302,6 +304,8 @@ test.describe("System light/dark theme", () => {
 
   test("changing the OS preference at runtime updates the signed-in app", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
+    // The default appearance is light; following the OS is an explicit, stored choice.
+    await page.addInitScript(() => localStorage.setItem("xa-theme", "system"));
     const email = await signUp(page);
     await login(page, email);
     await page.goto(`${BASE}/dashboard`);
@@ -319,6 +323,8 @@ test.describe("System light/dark theme", () => {
 
   test("no white first paint: dark in the app, and a light public page under a dark OS", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
+    // The default appearance is light; following the OS is an explicit, stored choice.
+    await page.addInitScript(() => localStorage.setItem("xa-theme", "system"));
     // Sample <html> as soon as the document exists. The blocking theme-init
     // script has already run by then; no application JavaScript is needed.
     const email = await signUp(page);
@@ -334,6 +340,8 @@ test.describe("System light/dark theme", () => {
 
   test("inputs, cards and buttons use themed surfaces in dark mode", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
+    // The default appearance is light; following the OS is an explicit, stored choice.
+    await page.addInitScript(() => localStorage.setItem("xa-theme", "system"));
     const email = await signUp(page);
     await login(page, email);
     await page.goto(`${BASE}/profile/edit`);

@@ -25,8 +25,12 @@ let downloads: Array<{ url: string; accept: string | null }>;
 let downloadResponse: () => Response;
 let anchorClicks: Array<{ download: string; href: string }>;
 
+/** The row for one application in the list; its details open when it is chosen. */
+const rowFor = (title: string) => screen.findByRole("button", { name: new RegExp(`^${title}`) });
+
 beforeEach(() => {
   localStorage.setItem("jobpilot_token", "token");
+  sessionStorage.clear();
   downloads = [];
   anchorClicks = [];
   downloadResponse = () => new Response(new Blob(["%PDF-1.4 test"]), { status: 200, headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="Plaid_Resume_2026-07-20.pdf"' } });
@@ -82,10 +86,27 @@ describe("Tracker document downloads", () => {
   it("older records with no document references, or no documents field at all, still render and offer nothing", async () => {
     applications = [app(11, { resume: null, cover_letter: null }), { ...app(12, undefined), documents: undefined }];
     render(React.createElement(TrackerClient));
-    expect(await screen.findByText("Engineer 11")).toBeInTheDocument();
-    expect(screen.getByText("Engineer 12")).toBeInTheDocument();
+    // Both are listed; the details show the chosen one, and each says Not available for both documents.
+    const first = await rowFor("Engineer 11");
+    const second = await rowFor("Engineer 12");
+    expect(first).toHaveAttribute("aria-current", "true");
     expect(screen.queryByRole("button", { name: /^Download/i })).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Not available/i).length).toBe(4);
+    expect(screen.getAllByText(/Not available/i).length).toBe(2);
+    await userEvent.click(second);
+    expect(second).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByRole("button", { name: /^Download/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Not available/i).length).toBe(2);
+  });
+
+  it("shows each application's own documents when the selection changes", async () => {
+    applications = [app(11, { resume: doc(), cover_letter: null }), app(12, { resume: null, cover_letter: doc() })];
+    render(React.createElement(TrackerClient));
+    await rowFor("Engineer 11");
+    expect(screen.getByRole("button", { name: /Download resume for Engineer 11/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download cover letter/i })).not.toBeInTheDocument();
+    await userEvent.click(await rowFor("Engineer 12"));
+    expect(screen.queryByRole("button", { name: /Download resume for/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Download cover letter for Engineer 12 at Plaid/i })).toBeInTheDocument();
   });
 
   it.each([
@@ -96,7 +117,7 @@ describe("Tracker document downloads", () => {
   ])("explains why nothing is available (%s) instead of offering a guess", async (reason, wording) => {
     applications = [{ ...app(11, { resume: null, cover_letter: null }), documents_availability: "none", documents_unavailable_reason: reason }];
     render(React.createElement(TrackerClient));
-    await screen.findByText("Engineer 11");
+    await rowFor("Engineer 11");
     expect(screen.queryByRole("button", { name: /^Download/i })).not.toBeInTheDocument();
     expect(screen.getAllByText(wording).length).toBe(2);
   });
@@ -104,7 +125,7 @@ describe("Tracker document downloads", () => {
   it("gives no reason when the server recorded none", async () => {
     applications = [app(11, { resume: null, cover_letter: null })];
     render(React.createElement(TrackerClient));
-    await screen.findByText("Engineer 11");
+    await rowFor("Engineer 11");
     expect(screen.getAllByText(/Not available/i).length).toBe(2);
     expect(screen.queryByText(/XpertApply session|didn.t prepare|can.t tell|nothing links/i)).not.toBeInTheDocument();
   });
@@ -112,6 +133,7 @@ describe("Tracker document downloads", () => {
   it("keeps applications of the same company apart", async () => {
     applications = [app(11, { resume: doc({ download_path: "/jobs/tracker/11/documents/resume" }), cover_letter: null }), app(12, { resume: doc(), cover_letter: null })];
     render(React.createElement(TrackerClient));
+    await userEvent.click(await rowFor("Engineer 12"));
     await userEvent.click(await screen.findByRole("button", { name: /Download resume for Engineer 12 at Plaid/i }));
     await waitFor(() => expect(downloads).toHaveLength(1));
     expect(downloads[0].url).toContain("/jobs/tracker/12/documents/resume");
@@ -186,13 +208,24 @@ describe("Tracker document downloads", () => {
     expect(screen.getByLabelText(/Documents for Engineer 11/i)).toHaveTextContent("current saved copy; may have changed since");
   });
 
-  it("works on a phone: tap targets are at least 40px and the two documents stack", async () => {
+  it("works on a phone: tap targets are at least 40px and the two documents always stack in one column", async () => {
     applications = [app(11, { resume: doc(), cover_letter: doc() })];
     render(React.createElement(TrackerClient));
     const button = await screen.findByRole("button", { name: /Download resume for/i });
     expect(button.className).toMatch(/min-h-10/);
-    expect(screen.getByLabelText(/Documents for Engineer 11/i).className).toMatch(/grid-cols-2/);
-    expect(screen.getByLabelText(/Documents for Engineer 11/i).className).toMatch(/xl:grid-cols-2/);     // one column below xl, so "Download resume" and "Word" never wrap in a squeezed cell
+    // The details panel is a narrow column at every width, so the documents never sit side by side
+    // where "Download resume" and "Word" would wrap in a squeezed cell.
+    const group = screen.getByLabelText(/Documents for Engineer 11/i);
+    expect(group.className).toMatch(/grid-cols-1/);
+    expect(group.className).not.toMatch(/grid-cols-2/);
+  });
+
+  it("keeps the PDF and Word choices as separate, individually labelled controls", async () => {
+    applications = [app(11, { resume: doc(), cover_letter: doc({ formats: ["pdf"] }) })];
+    render(React.createElement(TrackerClient));
+    await screen.findByRole("button", { name: /Download resume for/i });
+    expect(screen.getByRole("button", { name: /Download resume as Word document/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download cover letter as Word document/i })).not.toBeInTheDocument();
   });
 
   it("changing the status still works with documents present", async () => {

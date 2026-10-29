@@ -167,3 +167,30 @@ web container with a pinned digest, smoke-test `/`, `/login`, `/jobs`, `/tracker
 Rollback: recreate the web container from the previous pinned image digest (the script's `rollback`
 mode). No data migration is involved, so rollback is stateless and does not affect user data.
 The extension is not part of this release.
+
+## 9. Applications page redesign and sidebar cleanup (PUI-APP-FINAL)
+
+Decisions
+- `/tracker` (nav label "Applications") is now a master-detail workspace: header (breadcrumb, eyebrow, "Applications", subtitle, "Find more jobs"),
+  filter chips and search, a sortable "Tracked applications" list (about 55%) and the selected application's details (about 45%). The four KPI
+  cards and per-application stacked cards are gone. Two columns from 768px (even split below 1024px, 55/45 above); phones show the list and open
+  the details with an "All applications" way back. The data layer is unchanged: same endpoints, same status transitions, same document downloads.
+- Real fields only. Fit score shows only when it exists; nothing is computed. The status note says the status comes from the user or the
+  extension and is not an employer receipt. Document wording is unchanged ("prepared", "not confirmed as uploaded to the employer").
+- Selection: the most recent application is open by default, the choice is remembered per browser tab (sessionStorage), and a filter or search that
+  hides it moves the details to the first listed row. Sorting: most recent (applied date, else added date) or oldest.
+- The sidebar theme selector is removed; Settings > Appearance is the only place (now with visible words: Light / System / Dark).
+- Default appearance is LIGHT. With no stored choice the app is light even under a dark OS; "system" is an explicit, stored choice.
+  KNOWN EFFECT: before this change "System" was stored as the absence of a value, so existing users who had picked System (and anyone who
+  never chose) now see light until they choose again. Users who stored Light or Dark are unchanged.
+- Accessibility: one button per row (no nested controls, `aria-current` on the open row), decorative logos inside rows, a polite live region for
+  status changes, labelled status select, visible focus, and a contrast fix for the selected row in dark mode (found by axe).
+
+Validation (this change): typecheck, ESLint, 1141 unit tests, production build, `npm audit --omit=dev` 0, 19 new mocked Playwright cases
+(`e2e/applications-redesign.spec.ts`: layout, selection, filters, sort, status persistence across reload, downloads, empty/error states,
+keyboard, six widths 320 to 1920 in both themes, axe wcag2a/2aa/21aa serious+critical = 0, default-light, sidebar and Settings), and the
+whole mocked Playwright suite (78 passed, 25 skipped because they need the live API). Specs that assumed "follow the OS by default" were updated to
+store an explicit choice. The live-API specs (`profile-and-theme`, `tracker-documents-live`, people/profile) were NOT run.
+
+Rollout: web-only build from the committed source; no API, migration or environment change. Rollback: redeploy the previous web image. The
+theme default is the only behavioural change outside the page and is reversible by reverting `lib/theme.ts` and `public/theme-init.js`.

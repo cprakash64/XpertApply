@@ -2,6 +2,7 @@
  * Theme preference: persistence, resolution, the init script and the control.
  *
  *   - the stored choice (light | dark | system) resolves to data-theme on <html>;
+ *   - with NO stored choice the approved light appearance applies, whatever the OS prefers;
  *   - the blocking init script and lib/theme.ts agree on that resolution;
  *   - the control is a radio group that stores, applies and announces a choice;
  *   - storage failures fall back to the OS preference instead of throwing.
@@ -61,16 +62,31 @@ describe("theme resolution", () => {
     expect(resolveTheme("dark")).toBe("dark");
   });
 
-  it("ignores junk in storage and treats it as system", () => {
+  it("ignores junk in storage and uses the approved light default", () => {
     localStorage.setItem("xa-theme", "purple");
+    expect(readThemePreference()).toBe("light");
+  });
+
+  it("defaults to light with nothing stored, even when the OS prefers dark", () => {
+    stubOsDark(true);
+    expect(readThemePreference()).toBe("light");
+    applyThemePreference(readThemePreference());
+    expect(root().getAttribute("data-theme")).toBe("light");
+  });
+
+  it("keeps an explicit system choice as system", () => {
+    localStorage.setItem("xa-theme", "system");
+    stubOsDark(true);
     expect(readThemePreference()).toBe("system");
+    applyThemePreference(readThemePreference());
+    expect(root().getAttribute("data-theme")).toBe("dark");
   });
 
   it("survives storage that throws", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    expect(readThemePreference()).toBe("system");
+    expect(readThemePreference()).toBe("light");
   });
 });
 
@@ -80,18 +96,20 @@ describe("theme-init.js (runs before first paint)", () => {
   it.each([
     ["light", true, "light"],
     ["dark", false, "dark"],
-    [null, true, "dark"],
+    ["system", true, "dark"],
+    ["system", false, "light"],
+    [null, true, "light"], // no stored choice: the approved light default, not the OS
     [null, false, "light"]
   ])("stored %s, OS dark=%s -> data-theme %s", (stored, osDark, expected) => {
     if (stored) localStorage.setItem("xa-theme", stored);
     stubOsDark(osDark);
     run();
     expect(root().getAttribute("data-theme")).toBe(expected);
-    expect(root().getAttribute("data-theme-pref")).toBe(stored ?? "system");
+    expect(root().getAttribute("data-theme-pref")).toBe(stored ?? "light");
   });
 
   it("agrees with lib/theme for every combination", () => {
-    for (const stored of [null, "light", "dark"] as const) {
+    for (const stored of [null, "light", "dark", "system"] as const) {
       for (const osDark of [true, false]) {
         localStorage.clear();
         if (stored) localStorage.setItem("xa-theme", stored);
@@ -106,14 +124,14 @@ describe("theme-init.js (runs before first paint)", () => {
 });
 
 describe("theme control", () => {
-  it("is a labelled radio group with one selected option, system by default", () => {
+  it("is a labelled radio group with one selected option, light by default", () => {
     render(React.createElement(ThemeControl));
     expect(screen.getByRole("radiogroup", { name: "Theme" })).toBeInTheDocument();
     expect(screen.getAllByRole("radio")).toHaveLength(3);
-    expect(screen.getByRole("radio", { name: "Match system theme" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Light theme" })).toBeChecked();
   });
 
-  it("stores and applies a choice, then restores system by clearing storage", async () => {
+  it("stores and applies a choice, including an explicit system choice", async () => {
     render(React.createElement(ThemeControl));
     await userEvent.click(screen.getByRole("radio", { name: "Dark theme" }));
     expect(localStorage.getItem("xa-theme")).toBe("dark");
@@ -121,8 +139,8 @@ describe("theme control", () => {
     expect(screen.getByRole("radio", { name: "Dark theme" })).toBeChecked();
 
     await userEvent.click(screen.getByRole("radio", { name: "Match system theme" }));
-    expect(localStorage.getItem("xa-theme")).toBeNull();
-    expect(root().getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("xa-theme")).toBe("system");     // stored, because the default is now light
+    expect(root().getAttribute("data-theme")).toBe("light");     // OS is light in this test
   });
 
   it("reflects a stored choice and moves between options with the arrow keys", async () => {
@@ -133,6 +151,15 @@ describe("theme control", () => {
     dark.focus();
     await userEvent.keyboard("{ArrowLeft}");
     expect(screen.getByRole("radio", { name: "Match system theme" })).toBeChecked();
+  });
+
+  it("can show visible words (Settings) without changing the accessible names", () => {
+    render(React.createElement(ThemeControl, { showLabels: true }));
+    for (const [name, word] of [["Light theme", "Light"], ["Match system theme", "System"], ["Dark theme", "Dark"]]) {
+      const radio = screen.getByRole("radio", { name });
+      expect(radio).toHaveTextContent(word);
+      expect(name.toLowerCase()).toContain(word.toLowerCase()); // the visible label is contained in the accessible name
+    }
   });
 
   it("keeps two mounted controls in step", async () => {
@@ -173,7 +200,7 @@ describe("the public website is always light", () => {
 
   it("theme-init.js agrees with lib/theme on every route, choice and OS setting", () => {
     for (const path of [...PUBLIC_PATHS, ...APP_PATHS])
-      for (const stored of [null, "light", "dark"] as const)
+      for (const stored of [null, "light", "dark", "system"] as const)
         for (const osDark of [true, false]) {
           localStorage.clear();
           if (stored) localStorage.setItem("xa-theme", stored);
@@ -181,7 +208,7 @@ describe("the public website is always light", () => {
           stubOsDark(osDark);
           new Function(initScript)();
           expect(root().getAttribute("data-theme"), `${path} stored=${stored} os-dark=${osDark}`).toBe(
-            themeForPath(path, stored ?? "system")
+            themeForPath(path, stored ?? "light")
           );
         }
   });

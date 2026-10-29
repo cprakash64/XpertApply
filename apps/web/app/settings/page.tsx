@@ -17,7 +17,7 @@ export default function SettingsPage() {
         <p className="mt-1 text-sm text-foreground-muted">
           Light, dark, or match your device. Applies across XpertApply on this browser.
         </p>
-        <ThemeControl className="mt-4" />
+        <ThemeControl className="mt-4" showLabels />
       </section>
       {/* Credentials live here rather than on the profile: they are secrets used
         * to sign in on your behalf, not career information. */}

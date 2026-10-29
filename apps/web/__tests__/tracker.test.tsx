@@ -60,9 +60,14 @@ const APPLICATIONS = [
   }
 ];
 
+/** A row in the "Tracked applications" list (one button per application). */
+const row = (title: string) => screen.findByRole("button", { name: new RegExp(title) });
+const list = () => screen.getByRole("list", { name: "Tracked applications" });
+
 describe("TrackerClient", () => {
   beforeEach(() => {
     localStorage.setItem("jobpilot_token", "token");
+    sessionStorage.clear();
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input);
       if (url.endsWith("/jobs/tracker/submitted")) {
@@ -112,17 +117,101 @@ describe("TrackerClient", () => {
   it("loads automatically and presents useful job information instead of IDs", async () => {
     render(React.createElement(TrackerClient));
 
-    expect(await screen.findByText("Software Engineer")).toBeInTheDocument();
-    expect(screen.getByText("Acme")).toBeInTheDocument();
-    expect(screen.getByText("Backend Engineer")).toBeInTheDocument();
-    expect(screen.getByText("Northstar")).toBeInTheDocument();
-    expect(screen.getByText("Total tracked")).toBeInTheDocument();
-    expect(screen.getAllByText("Applied").length).toBeGreaterThan(0);
+    await row("Software Engineer");
+    const rows = within(list());
+    expect(rows.getByText("Software Engineer")).toBeInTheDocument();
+    expect(rows.getByText("Acme")).toBeInTheDocument();
+    expect(rows.getByText("Backend Engineer")).toBeInTheDocument();
+    expect(rows.getByText("Northstar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Load applications/i })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /View job/i })[0]).toHaveAttribute(
+    // The most recent application is open by default, with its real fields.
+    const detail = screen.getByRole("region", { name: "Selected application" });
+    expect(within(detail).getByRole("heading", { name: "Software Engineer" })).toBeInTheDocument();
+    expect(within(detail).getByText("New York, NY")).toBeInTheDocument();
+    expect(within(detail).getByText("84% fit")).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: /View job posting/i })).toHaveAttribute(
       "href",
       "https://careers.acme.com/101"
     );
+  });
+
+  it("has no summary statistic cards or stacked per-application cards", async () => {
+    render(React.createElement(TrackerClient));
+    await row("Software Engineer");
+    expect(screen.queryByText("Total tracked")).not.toBeInTheDocument();
+    // One status control and one document block: the selected application's, not one per row.
+    expect(screen.getAllByLabelText(/Update status for/i)).toHaveLength(1);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+  });
+
+  it("shows the selected application's details and follows the selection", async () => {
+    render(React.createElement(TrackerClient));
+    const first = await row("Software Engineer");
+    const second = await row("Backend Engineer");
+    expect(first).toHaveAttribute("aria-current", "true");
+    expect(second).not.toHaveAttribute("aria-current");
+
+    await userEvent.click(second);
+    expect(second).toHaveAttribute("aria-current", "true");
+    expect(first).not.toHaveAttribute("aria-current");
+    const detail = screen.getByRole("region", { name: "Selected application" });
+    expect(within(detail).getByRole("heading", { name: "Backend Engineer" })).toBeInTheDocument();
+    expect(within(detail).getByText("91% fit")).toBeInTheDocument();
+    expect(within(detail).getByRole("link", { name: /View job posting/i })).toHaveAttribute("href", "https://northstar.dev/jobs/102");
+  });
+
+  it("sorts by most recent date by default and can be reversed", async () => {
+    render(React.createElement(TrackerClient));
+    await row("Software Engineer");
+    const titles = () => within(list()).getAllByRole("button").map((button) => button.textContent ?? "");
+    expect(titles()[0]).toMatch(/Software Engineer/); // 2026-07-20 before 2026-07-19
+    await userEvent.selectOptions(screen.getByLabelText("Sort applications"), "oldest");
+    expect(titles()[0]).toMatch(/Backend Engineer/);
+  });
+
+  it("remembers the selected application for the browser tab", async () => {
+    const first = render(React.createElement(TrackerClient));
+    await userEvent.click(await row("Backend Engineer"));
+    first.unmount();
+
+    render(React.createElement(TrackerClient));
+    expect(await row("Backend Engineer")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("moves the details to the first listed application when a filter hides the selected one", async () => {
+    render(React.createElement(TrackerClient));
+    await userEvent.click(await row("Software Engineer"));
+    await userEvent.click(screen.getByRole("button", { name: "Interviews" }));
+    const detail = screen.getByRole("region", { name: "Selected application" });
+    expect(within(detail).getByRole("heading", { name: "Backend Engineer" })).toBeInTheDocument();
+  });
+
+  it("opens details from the list and returns to it on a small screen", async () => {
+    render(React.createElement(TrackerClient));
+    await userEvent.click(await row("Backend Engineer"));
+    // The back control exists for phones (it is hidden from tablet and desktop by CSS), and returns to the list.
+    const back = screen.getByRole("button", { name: /All applications/i });
+    expect(back.className).toMatch(/md:hidden/);
+    expect(screen.getByRole("region", { name: "Selected application" }).className).not.toMatch(/(^|\s)hidden(\s|$)/);
+    await userEvent.click(back);
+    expect(screen.getByRole("region", { name: "Selected application" }).className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(screen.getByRole("region", { name: "Selected application" }).className).toMatch(/md:block/);
+  });
+
+  it("does not claim the employer confirmed anything", async () => {
+    render(React.createElement(TrackerClient));
+    await row("Software Engineer");
+    const detail = screen.getByRole("region", { name: "Selected application" });
+    expect(detail).toHaveTextContent(/not an employer receipt/i);
+    expect(detail.textContent).not.toMatch(/employer confirmed|confirmed by the employer\b(?! \()/i);
+  });
+
+  it("rows are single buttons with no nested interactive elements", async () => {
+    render(React.createElement(TrackerClient));
+    await row("Software Engineer");
+    for (const button of within(list()).getAllByRole("button")) {
+      expect(button.querySelector("a, button, input, select, textarea")).toBeNull();
+    }
   });
 
   it("updates status from the application card", async () => {
@@ -139,22 +228,39 @@ describe("TrackerClient", () => {
         })
       )
     );
-    expect(await screen.findByText("Moved to Offer / selected.")).toBeInTheDocument();
+    const confirmation = await screen.findByText("Moved to Offer / selected.");
+    expect(confirmation).toBeInTheDocument();
+    expect(confirmation).toHaveAttribute("role", "status"); // announced to screen readers
+    // The change is reflected in the list row and in the details, not only in the control.
+    expect(within(list()).getByText("Offer / selected")).toBeInTheDocument();
+  });
+
+  it("keeps the old status and says so when the server refuses the change", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith("/jobs/tracker/submitted")) return Promise.resolve(jsonResponse({ applications: APPLICATIONS }));
+      if (url.endsWith("/jobs/101/tracker") && init?.method === "PUT") return Promise.resolve(jsonResponse({ detail: "boom" }, 500));
+      return Promise.resolve(jsonResponse({}));
+    });
+    render(React.createElement(TrackerClient));
+    await userEvent.selectOptions(await screen.findByLabelText("Update status for Software Engineer"), "offer");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t update that application/i);
+    expect(within(list()).queryByText("Offer / selected")).not.toBeInTheDocument();
   });
 
   it("filters applications by stage", async () => {
     render(React.createElement(TrackerClient));
-    await screen.findByText("Software Engineer");
+    await row("Software Engineer");
 
     await userEvent.click(screen.getByRole("button", { name: "Interviews" }));
-    expect(screen.getByText("Backend Engineer")).toBeInTheDocument();
-    expect(screen.queryByText("Software Engineer")).not.toBeInTheDocument();
+    expect(within(list()).getByText("Backend Engineer")).toBeInTheDocument();
+    expect(within(list()).queryByText("Software Engineer")).not.toBeInTheDocument();
   });
 
   describe("XpertApply visual semantics", () => {
     it("announces the selected stage filter rather than only colouring it", async () => {
       render(React.createElement(TrackerClient));
-      await screen.findByText("Software Engineer");
+      await row("Software Engineer");
 
       const all = screen.getByRole("button", { name: "All" });
       const interviews = screen.getByRole("button", { name: "Interviews" });
@@ -168,7 +274,7 @@ describe("TrackerClient", () => {
 
     it("gives each stage its domain tone alongside a readable label", async () => {
       render(React.createElement(TrackerClient));
-      await screen.findByText("Software Engineer");
+      await row("Software Engineer");
 
       // Scoped to the badge: "Applied" and "Interview" are also option labels
       // in the status select, and this is asserting the badge tone.
@@ -196,7 +302,7 @@ describe("TrackerClient", () => {
 
     it("offers a way forward only when the tracker is genuinely empty", async () => {
       render(React.createElement(TrackerClient));
-      await screen.findByText("Software Engineer");
+      await row("Software Engineer");
 
       // A search that matched nothing needs a different query, not a new job.
       await userEvent.type(screen.getByLabelText("Search applications"), "zzzzz");

@@ -313,6 +313,8 @@ test("XpertApply shell visuals stay semantic across themes and responsive modes"
 
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
+    // The default appearance is light; the dark pass uses an explicit saved choice (the control lives in Settings).
+    await page.addInitScript((scheme) => localStorage.setItem("xa-theme", scheme), colorScheme);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/dashboard");

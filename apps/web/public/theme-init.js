@@ -1,19 +1,19 @@
 /*
  * Resolves data-theme on <html> before first paint. The public website is always
  * light; only the signed-in application follows the stored choice (light | dark |
- * system). The stored choice is read here but never written. The route list must
+ * system, default light). The stored choice is read here but never written. The route list must
  * match THEMED_ROUTE_PREFIXES in lib/theme.ts (a unit test compares them).
  *
  * A plain blocking script from our own origin: no inline code (CSP-friendly), and
- * tiny enough that the extra request is cheap and cacheable. Failure to read
- * storage falls back to the OS preference (app routes only), then light.
+ * tiny enough that the extra request is cheap and cacheable. No stored choice, or storage that cannot be read, means the approved
+ * light appearance; "system" (follow the OS) applies only when it was chosen.
  */
 (function () {
   var root = document.documentElement;
-  var pref = "system";
+  var pref = "light";
   try {
     var stored = window.localStorage.getItem("xa-theme");
-    if (stored === "light" || stored === "dark") pref = stored;
+    if (stored === "light" || stored === "dark" || stored === "system") pref = stored;
   } catch (e) {}
   var themed = ["/dashboard", "/jobs", "/matches", "/tracker", "/profile", "/resume", "/cover-letter", "/application-answers", "/demographics", "/settings", "/design-system-specimen"];
   var path = window.location.pathname;

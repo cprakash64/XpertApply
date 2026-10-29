@@ -74,6 +74,8 @@ test("on a phone the controls fit the screen, are tappable, and the documents st
   await page.setViewportSize({ width: 375, height: 812 });
   await install(page, { documents: { resume: doc("/jobs/tracker/31/documents/resume"), cover_letter: doc("/jobs/tracker/31/documents/cover-letter") } });
   await page.goto("/tracker");
+  // On a phone the list comes first; the application's details (and its documents) open on selection.
+  await page.getByRole("button", { name: /^Senior Machine Learning Engineer/ }).click();
   const resume = page.getByRole("button", { name: /Download resume for/i });
   const cover = page.getByRole("button", { name: /Download cover letter for/i });
   await expect(resume).toBeVisible();

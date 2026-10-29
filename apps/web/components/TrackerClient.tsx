@@ -2,15 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeft,
   BriefcaseBusiness,
-  CalendarDays,
-  CheckCircle2,
   Download,
   ExternalLink,
   Loader2,
-  MapPin,
-  Search,
-  Trophy
+  Search
 } from "lucide-react";
 import Link from "next/link";
 import { CompanyLogo } from "@/components/CompanyLogo";
@@ -139,13 +136,13 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
 
   const kinds: TrackerDocumentKind[] = ["resume", "cover_letter"];
   return (
-    <div className="mt-3 grid gap-2 xl:grid-cols-2" aria-label={`Documents for ${application.job.title}`}>
+    <div role="group" className="grid grid-cols-1 gap-3" aria-label={`Documents for ${application.job.title}`}>
       {kinds.map((kind) => {
         const doc = application.documents?.[kind] ?? null;
         const label = DOCUMENT_LABEL[kind];
         if (!doc) {
           return (
-            <div key={kind} className="rounded-control border border-line-default px-3 py-2 text-xs text-foreground-muted">
+            <div key={kind} className="rounded-control border border-line-default px-3 py-2.5 text-xs text-foreground-muted">
               <span className="font-medium capitalize text-foreground-secondary">{label}</span>: Not available
               {application.documents_unavailable_reason && UNAVAILABLE_REASON[application.documents_unavailable_reason] && (
                 <span className="block">{UNAVAILABLE_REASON[application.documents_unavailable_reason]}</span>
@@ -155,7 +152,7 @@ function TrackerDocuments({ application }: { application: TrackerApplication }) 
         }
         const loading = busy?.startsWith(`${kind}:`) ?? false;
         return (
-          <div key={kind} className="rounded-control border border-line-default px-3 py-2">
+          <div key={kind} className="rounded-control border border-line-default px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -227,8 +224,8 @@ const FILTERS: { value: TrackerFilter; label: string }[] = [
 ];
 
 /**
- * The shared card contract for this screen — border-first, no shadow. The
- * Tracker is a list you scan, and a page of shadowed panels reads as noise
+ * The shared card contract for this screen: border-first, no shadow, no gradient.
+ * The Tracker is a list you scan, and a page of shadowed panels reads as noise
  * long before it reads as depth.
  */
 const CARD = "rounded-card border border-line-default bg-surface-card";
@@ -246,10 +243,43 @@ const CARD = "rounded-card border border-line-default bg-surface-card";
 const LOAD_ERROR = "We couldn’t load your applications.";
 const UPDATE_ERROR = "We couldn’t update that application. Please try again.";
 
+type TrackerSort = "recent" | "oldest";
+const SELECTED_STORAGE_KEY = "xa-tracker-selected";
+
+/** The date an application is ordered and shown by: when it was applied, else when it was added. */
+function applicationTime(application: TrackerApplication): number {
+  const value = application.applied_at ?? application.created_at ?? application.updated_at ?? null;
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function readStoredSelection(): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(SELECTED_STORAGE_KEY);
+    const id = raw ? Number(raw) : Number.NaN;
+    return Number.isInteger(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeSelection(id: number): void {
+  try {
+    window.sessionStorage.setItem(SELECTED_STORAGE_KEY, String(id));
+  } catch {
+    /* selection simply is not remembered across reloads */
+  }
+}
+
 export function TrackerClient() {
   const [applications, setApplications] = useState<TrackerApplication[]>([]);
   const [filter, setFilter] = useState<TrackerFilter>("all");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<TrackerSort>("recent");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Below the desktop breakpoint only one panel is on screen: the list, or the
+  // chosen application's details with a way back.
+  const [detailOpen, setDetailOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -262,6 +292,10 @@ export function TrackerClient() {
         if (!active) return;
         setError("");
         setApplications(result.applications);
+        const remembered = readStoredSelection();
+        if (remembered !== null && result.applications.some((row) => row.id === remembered)) {
+          setSelectedId(remembered);
+        }
       })
       .catch(() => {
         if (!active) return;
@@ -310,64 +344,66 @@ export function TrackerClient() {
     }
   }
 
-  const counts = useMemo(
-    () => ({
-      all: applications.length,
-      applied: applications.filter((row) => row.status === "applied").length,
-      interview: applications.filter((row) => row.status === "interview").length,
-      offer: applications.filter((row) => row.status === "offer").length
-    }),
-    [applications]
-  );
-
   const visible = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return applications.filter((application) => {
-      const matchesFilter =
-        filter === "all"
-          ? true
-          : application.status === filter;
+    const rows = applications.filter((application) => {
+      const matchesFilter = filter === "all" ? true : application.status === filter;
       const matchesQuery =
         !normalizedQuery ||
-        `${application.job.title} ${application.job.company}`
-          .toLowerCase()
-          .includes(normalizedQuery);
+        `${application.job.title} ${application.job.company}`.toLowerCase().includes(normalizedQuery);
       return matchesFilter && matchesQuery;
     });
-  }, [applications, filter, query]);
+    // Stable for equal dates: the server's order breaks ties.
+    return rows
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const delta = applicationTime(b.row) - applicationTime(a.row);
+        return (sort === "recent" ? delta : -delta) || a.index - b.index;
+      })
+      .map(({ row }) => row);
+  }, [applications, filter, query, sort]);
+
+  // The chosen application when it is still listed; otherwise the first one, so
+  // a filter or a search never leaves the details pointing at something hidden.
+  const selected = visible.find((row) => row.id === selectedId) ?? visible[0] ?? null;
+
+  function choose(application: TrackerApplication) {
+    setSelectedId(application.id);
+    storeSelection(application.id);
+    setDetailOpen(true);
+  }
 
   // Skeletons in the shape of the real thing, rather than a spinner that
-  // occupies none of the eventual space: the summary row, the toolbar and the
-  // first cards all land where their placeholder sat, so nothing jumps. The
+  // occupies none of the eventual space: the toolbar, the list rows and the
+  // details panel all land where their placeholder sat, so nothing jumps. The
   // request itself is untouched.
   if (loading) {
     return (
       <section aria-busy="true">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((card) => (
-            <div key={card} className={`${CARD} p-4`}>
-              <div className="flex items-center justify-between">
-                <Skeleton className="h-9 w-9 rounded-control" />
-                <Skeleton className="h-7 w-10" />
-              </div>
-              <Skeleton className="mt-3 h-4 w-24" />
-            </div>
+        <div className="flex flex-wrap gap-2">
+          {[0, 1, 2, 3, 4].map((chip) => (
+            <Skeleton key={chip} className="h-9 w-20 rounded-pill" />
           ))}
         </div>
-        <Skeleton className="mt-5 h-16 w-full rounded-card" />
-        <div className="mt-4 grid gap-3">
-          {[0, 1, 2].map((row) => (
-            <div key={row} className={`${CARD} p-4 sm:p-5`}>
-              <div className="flex items-start gap-3">
-                <Skeleton className="h-10 w-10 shrink-0 rounded-control" />
+        <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:gap-6">
+          <div className={`${CARD} divide-y divide-line-subtle`}>
+            {[0, 1, 2, 3].map((row) => (
+              <div key={row} className="flex items-center gap-3 px-4 py-3">
+                <Skeleton className="h-9 w-9 shrink-0 rounded-control" />
                 <div className="min-w-0 flex-1">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="mt-2 h-5 w-64 max-w-full" />
-                  <Skeleton className="mt-2 h-3.5 w-48 max-w-full" />
+                  <Skeleton className="h-4 w-48 max-w-full" />
+                  <Skeleton className="mt-2 h-3.5 w-28" />
                 </div>
+                <Skeleton className="h-6 w-20 rounded-pill" />
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className={`${CARD} hidden p-6 md:block`}>
+            <Skeleton className="h-6 w-64 max-w-full" />
+            <Skeleton className="mt-3 h-4 w-40" />
+            <Skeleton className="mt-8 h-10 w-full rounded-control" />
+            <Skeleton className="mt-6 h-24 w-full rounded-control" />
+          </div>
         </div>
         <span className="sr-only" role="status">Loading your applications…</span>
       </section>
@@ -376,108 +412,141 @@ export function TrackerClient() {
 
   return (
     <section>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <SummaryCard
-          icon={<BriefcaseBusiness className="h-5 w-5" />}
-          label="Total tracked"
-          value={counts.all}
-        />
-        <SummaryCard
-          icon={<CheckCircle2 className="h-5 w-5" />}
-          label="Applied"
-          value={counts.applied}
-        />
-        <SummaryCard
-          icon={<CalendarDays className="h-5 w-5" />}
-          label="Interviews"
-          value={counts.interview}
-        />
-        <SummaryCard icon={<Trophy className="h-5 w-5" />} label="Offers" value={counts.offer} />
-      </div>
+      {/* The stage-move confirmation is announced politely and the region is
+          always present, so a screen reader hears the change as well as sees it. */}
+      <p role="status" aria-live="polite" className={message ? "mb-3 text-sm font-medium text-status-success" : "sr-only"}>
+        {message}
+      </p>
 
-      <div className={`mt-5 flex flex-col gap-3 ${CARD} p-3 lg:flex-row lg:items-center lg:justify-between`}>
-        {/* Chips, not custom buttons: a filter is a toggle, and the primitive
-            carries `aria-pressed` plus the canonical selected treatment, so the
-            active stage is announced rather than only coloured. */}
-        <div
-          role="group"
-          aria-label="Application status filters"
-          className="scroll-strip flex gap-1 overflow-x-auto"
-        >
-          {FILTERS.map((item) => (
-            <Chip
-              key={item.value}
-              selected={filter === item.value}
-              onClick={() => setFilter(item.value)}
-              className="whitespace-nowrap"
-            >
-              {item.label}
-            </Chip>
-          ))}
+      {applications.length > 0 && (
+        // On a phone the filters belong to the list; while one application's details are open they would only push it down.
+        <div className={`${detailOpen && selected ? "hidden" : "flex"} flex-col gap-3 md:flex md:flex-row md:items-center md:justify-between`}>
+          {/* Chips, not custom buttons: a filter is a toggle, and the primitive
+              carries `aria-pressed` plus the canonical selected treatment, so the
+              active stage is announced rather than only coloured. */}
+          <div
+            role="group"
+            aria-label="Application status filters"
+            className="scroll-strip flex gap-1.5 overflow-x-auto"
+          >
+            {FILTERS.map((item) => (
+              <Chip
+                key={item.value}
+                selected={filter === item.value}
+                onClick={() => setFilter(item.value)}
+                className="whitespace-nowrap"
+              >
+                {item.label}
+              </Chip>
+            ))}
+          </div>
+          {/* The icon sits inside the control, which the Input primitive's chrome
+              does not express — so this keeps its own markup and borrows the
+              field's visual contract instead. */}
+          <label className="relative block w-full md:max-w-xs">
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
+            />
+            <span className="sr-only">Search applications</span>
+            <input
+              aria-label="Search applications"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search company or role"
+              className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
+            />
+          </label>
         </div>
-        {/* The icon sits inside the control, which the Input primitive's chrome
-            does not express — so this keeps its own markup and borrows the
-            field's visual contract instead. */}
-        <label className="relative block w-full lg:max-w-xs">
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
-          />
-          <span className="sr-only">Search applications</span>
-          <input
-            aria-label="Search applications"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search company or role"
-            className="ds-field ds-focus-ring h-10 w-full rounded-field border border-line-interactive bg-surface-card pl-9 pr-3 text-sm text-foreground transition duration-fast ease-standard placeholder:text-foreground-muted hover:border-line-strong"
-          />
-        </label>
-      </div>
+      )}
 
-      {error ? (
+      {error && (
         <Alert tone="danger" className="mt-4">
           {error}
         </Alert>
-      ) : message ? (
-        // A stage move is a genuine positive outcome, so the confirmation is
-        // allowed the success tone the badges use.
-        <p role="status" className="mt-3 text-sm font-medium text-status-success">
-          {message}
-        </p>
-      ) : null}
+      )}
 
-      <div className="mt-4 grid gap-3">
-        {visible.map((application) => (
-          <ApplicationCard
-            key={application.id}
-            application={application}
-            updating={updatingId === application.id}
-            onUpdate={(status) => update(application, status)}
-          />
-        ))}
-      </div>
-
-      {visible.length === 0 && (
+      {applications.length === 0 ? (
         <div className="mt-4 rounded-card border border-dashed border-line-default bg-surface-card px-6 py-14 text-center">
           <BriefcaseBusiness aria-hidden className="mx-auto h-9 w-9 text-foreground-muted" />
-          <h2 className="mt-3 font-semibold text-foreground">
-            {applications.length === 0 ? "No applications yet" : "No applications found"}
-          </h2>
+          <h2 className="mt-3 font-semibold text-foreground">No applications yet</h2>
           <p className="mx-auto mt-1 max-w-md text-sm text-foreground-muted">
-            {applications.length === 0
-              ? "Applications appear here after you confirm that you submitted them."
-              : "Try another status or search term."}
+            Applications appear here after you confirm that you submitted them.
           </p>
           {/* Only the genuinely empty tracker gets a call to action — a search
               that matched nothing needs a different query, not a new job. */}
-          {applications.length === 0 && (
-            <Link
-              className="ds-focus-ring mt-4 inline-flex h-10 items-center rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground shadow-subtle transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
-              href="/jobs"
-            >
-              Find jobs
-            </Link>
-          )}
+          <Link
+            className="ds-focus-ring mt-4 inline-flex h-10 items-center rounded-control bg-action-primary px-5 text-sm font-semibold text-action-primary-foreground transition duration-fast ease-standard hover:bg-action-primary-hover active:translate-y-px"
+            href="/jobs"
+          >
+            Find jobs
+          </Link>
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-4 md:grid-cols-2 md:items-start lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:gap-6">
+          <section
+            aria-labelledby="tracked-applications-heading"
+            className={`${detailOpen && selected ? "hidden" : ""} min-w-0 md:block`}
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <h2 id="tracked-applications-heading" className="whitespace-nowrap text-sm font-semibold text-foreground">
+                Tracked applications{" "}
+                <span className="font-normal text-foreground-muted">({visible.length})</span>
+              </h2>
+              <label className="flex items-center gap-2 text-sm text-foreground-muted">
+                <span className="hidden sm:inline">Sort by</span>
+                <select
+                  aria-label="Sort applications"
+                  value={sort}
+                  onChange={(event) => setSort(event.target.value as TrackerSort)}
+                  className="ds-field ds-focus-ring h-9 rounded-field border border-line-interactive bg-surface-card px-2 pr-7 text-sm font-medium text-foreground transition duration-fast ease-standard hover:border-line-strong"
+                >
+                  <option value="recent">Most recent</option>
+                  <option value="oldest">Oldest first</option>
+                </select>
+              </label>
+            </div>
+
+            {visible.length === 0 ? (
+              <div className={`${CARD} px-6 py-12 text-center`}>
+                <h3 className="font-semibold text-foreground">No applications found</h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-foreground-muted">
+                  Try another status or search term.
+                </p>
+              </div>
+            ) : (
+              <ul aria-label="Tracked applications" className={`${CARD} divide-y divide-line-subtle overflow-hidden`}>
+                {visible.map((application) => (
+                  <li key={application.id}>
+                    <ApplicationRow
+                      application={application}
+                      selected={selected?.id === application.id}
+                      onSelect={() => choose(application)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section
+            aria-label="Selected application"
+            className={`${detailOpen && selected ? "" : "hidden"} min-w-0 md:sticky md:top-6 md:block`}
+          >
+            {selected ? (
+              <ApplicationDetail
+                key={selected.id}
+                application={selected}
+                updating={updatingId === selected.id}
+                onUpdate={(status) => update(selected, status)}
+                onBack={() => setDetailOpen(false)}
+              />
+            ) : (
+              <div className={`${CARD} px-6 py-12 text-center text-sm text-foreground-muted`}>
+                Select an application to see its details.
+              </div>
+            )}
+          </section>
         </div>
       )}
     </section>
@@ -485,151 +554,213 @@ export function TrackerClient() {
 }
 
 /**
- * A count, not a colour. These four are the same kind of object as the
- * Dashboard's metric row and get the same restraint: the number carries the
- * hierarchy and the icon stays muted. The old green tile spent the success
- * palette on "Total tracked", which is not an achievement.
+ * One compact row. The whole row is a single button (no nested controls), so it is
+ * one tab stop, one accessible name and one hit target; `aria-current` marks the
+ * application whose details are open.
  */
-function SummaryCard({
-  icon,
-  label,
-  value
+function ApplicationRow({
+  application,
+  selected,
+  onSelect
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
+  application: TrackerApplication;
+  selected: boolean;
+  onSelect: () => void;
 }) {
+  const { job } = application;
+  const when = application.applied_at ?? application.created_at ?? null;
   return (
-    <div className={`${CARD} p-3 sm:p-4`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="rounded-control border border-line-default bg-surface-subtle p-1.5 text-foreground-muted sm:p-2">
-          {icon}
-        </span>
-        <span className="text-2xl font-semibold tabular-nums text-foreground">{value}</span>
-      </div>
-      <p className="mt-2 text-sm font-medium text-foreground-secondary sm:mt-3">{label}</p>
-    </div>
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      className={`ds-focus-ring flex w-full items-center gap-3 border-l-2 px-3 py-3 text-left transition-colors duration-fast ease-standard sm:px-4 ${
+        selected
+          ? "border-line-selected bg-surface-selected"
+          : "border-transparent hover:bg-surface-subtle"
+      }`}
+    >
+      {/* Decorative here: the company name is the adjacent text, so a screen reader
+          should not also read "<company> generated company mark" in front of it. */}
+      <span aria-hidden="true" className="shrink-0">
+        <CompanyLogo
+          company={job.company}
+          logoUrl={job.company_logo_url}
+          proxyPath={job.company_logo_proxy_path}
+          companyDomain={job.company_domain}
+          size={36}
+        />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-semibold leading-snug text-foreground">{job.title}</span>
+        {/* Secondary, not muted, on the selected row: the tint behind it lowers the contrast of the muted role below AA in dark mode. */}
+        <span className={`block truncate text-sm ${selected ? "text-foreground-secondary" : "text-foreground-muted"}`}>{job.company}</span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-1">
+        {/* Tone from the shared domain module, wording from this screen. */}
+        <StatusBadge tone={getApplicationStatusTone(application.status)}>
+          {statusLabel(application.status)}
+        </StatusBadge>
+        {when && (
+          <span className={`text-xs ${selected ? "text-foreground-secondary" : "text-foreground-muted"}`}>{formatDate(when)}</span>
+        )}
+      </span>
+    </button>
   );
 }
 
-function ApplicationCard({
+function ApplicationDetail({
   application,
   updating,
-  onUpdate
+  onUpdate,
+  onBack
 }: {
   application: TrackerApplication;
   updating: boolean;
   onUpdate: (status: TrackerStatus) => void;
+  onBack: () => void;
 }) {
   const { job } = application;
   const fitScore = job.match?.fit_score;
+  const statusId = `application-status-${application.id}`;
+  const appliedLink = application.application_url;
   return (
-    <article
-      className={`${CARD} p-4 transition-colors duration-fast ease-standard hover:border-line-interactive sm:p-5`}
-    >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+    <article aria-labelledby={`application-title-${application.id}`} className={`${CARD} p-4 sm:p-6 md:p-4 lg:p-6`}>
+      <button
+        type="button"
+        onClick={onBack}
+        className="ds-focus-ring -ml-1 mb-3 inline-flex h-9 items-center gap-1.5 rounded-control px-2 text-sm font-medium text-foreground-link hover:bg-surface-subtle md:hidden"
+      >
+        <ArrowLeft aria-hidden className="h-4 w-4" /> All applications
+      </button>
+
+      <header className="flex items-start gap-3">
+        <span aria-hidden="true" className="shrink-0">
           <CompanyLogo
             company={job.company}
             logoUrl={job.company_logo_url}
             proxyPath={job.company_logo_proxy_path}
             companyDomain={job.company_domain}
+            size={44}
           />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="font-semibold text-foreground-secondary">{job.company}</p>
-              {/* Tone from the shared domain module, wording from this screen. */}
-              <StatusBadge tone={getApplicationStatusTone(application.status)}>
-                {statusLabel(application.status)}
-              </StatusBadge>
-            </div>
-            <h2 className="mt-1 text-lg font-semibold leading-snug text-foreground">{job.title}</h2>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-foreground-muted">
-              {job.location && (
-                <span className="inline-flex items-center gap-1">
-                  <MapPin aria-hidden className="h-3.5 w-3.5" />
-                  {job.location}
-                </span>
-              )}
-              {application.applied_at && (
-                <span className="inline-flex items-center gap-1">
-                  <CalendarDays aria-hidden className="h-3.5 w-3.5" />
-                  Applied {formatDate(application.applied_at)}
-                </span>
-              )}
-              {/* Fit stays plain metadata here. The score's colour bands are a
-                  Jobs/Dashboard signal; in a dense tracker row the stage is the
-                  thing being scanned, and a second coloured chip competes. */}
-              {fitScore != null && <span>{Math.round(fitScore)}% fit</span>}
-            </div>
-            {/* What was actually prepared and how the submission was confirmed.
-              * These come from the one application record, so the Tracker never
-              * needs a second copy of the job. */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-muted">
-              {application.applied_source && (
-                <span>{APPLIED_SOURCE_LABEL[application.applied_source]}</span>
-              )}
-              {application.application_url && (
-                <a
-                  className="ds-focus-ring inline-flex items-center gap-1 rounded-control font-medium text-foreground-link underline"
-                  href={application.application_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink aria-hidden className="h-3 w-3" /> Application
-                </a>
-              )}
-            </div>
-            <TrackerDocuments application={application} />
-          </div>
+        </span>
+        <div className="min-w-0">
+          <h2
+            id={`application-title-${application.id}`}
+            className="text-xl font-semibold leading-snug tracking-[-0.02em] text-foreground"
+          >
+            {job.title}
+          </h2>
+          <p className="mt-0.5 text-foreground-muted">{job.company}</p>
         </div>
+      </header>
 
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <label className="relative">
-            <span className="sr-only">Update status for {job.title}</span>
-            <select
-              aria-label={`Update status for ${job.title}`}
-              value={application.status}
-              disabled={updating}
-              onChange={(event) => onUpdate(event.target.value as TrackerStatus)}
-              className="ds-field ds-focus-ring h-10 rounded-field border border-line-interactive bg-surface-card px-3 pr-8 text-sm font-medium text-foreground transition duration-fast ease-standard hover:border-line-strong"
-            >
-              {/* A tracked application can sit in a state this control cannot
-                * move it *to* — saved, applying, withdrawn, or something a
-                * later backend adds. Without an option carrying that value the
-                * native select falls back to rendering its first option, so a
-                * withdrawn application silently read as "Applied".
-                *
-                * The real state is added as its own option so the control tells
-                * the truth, and disabled so it stays a description of where the
-                * application is rather than an offer to move it there. The set
-                * of permitted destinations below is unchanged. */}
-              {!isTransitionTarget(application.status) && (
-                <option value={application.status} disabled>
-                  {statusLabel(application.status)}
-                </option>
-              )}
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* Secondary, not primary: leaving for the posting is a normal step,
-              and a card full of filled buttons has no hierarchy left. */}
+      <dl className="mt-5 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2 md:grid-cols-1 xl:grid-cols-2">
+        {job.location && (
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Location</dt>
+            <dd className="mt-0.5 text-foreground">{job.location}</dd>
+          </div>
+        )}
+        {(application.applied_at ?? application.created_at) && (
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+              {application.applied_at ? "Applied" : "Added"}
+            </dt>
+            <dd className="mt-0.5 text-foreground">
+              {formatDate((application.applied_at ?? application.created_at) as string)}
+            </dd>
+          </div>
+        )}
+        {/* Fit stays plain metadata. The score's colour bands are a Jobs/Dashboard
+            signal, and only an existing score is shown: nothing is computed here. */}
+        {fitScore != null && (
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Fit score</dt>
+            <dd className="mt-0.5 text-foreground">{Math.round(fitScore)}% fit</dd>
+          </div>
+        )}
+        {application.applied_source && (
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Recorded by</dt>
+            <dd className="mt-0.5 text-foreground">{APPLIED_SOURCE_LABEL[application.applied_source]}</dd>
+          </div>
+        )}
+      </dl>
+
+      <div className="mt-6 border-t border-line-subtle pt-5">
+        <label htmlFor={statusId} className="block text-sm font-semibold text-foreground">
+          Application status
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <select
+            id={statusId}
+            aria-label={`Update status for ${job.title}`}
+            value={application.status}
+            disabled={updating}
+            onChange={(event) => onUpdate(event.target.value as TrackerStatus)}
+            className="ds-field ds-focus-ring h-10 rounded-field border border-line-interactive bg-surface-card px-3 pr-8 text-sm font-medium text-foreground transition duration-fast ease-standard hover:border-line-strong"
+          >
+            {/* A tracked application can sit in a state this control cannot
+              * move it *to* — saved, applying, withdrawn, or something a
+              * later backend adds. Without an option carrying that value the
+              * native select falls back to rendering its first option, so a
+              * withdrawn application silently read as "Applied".
+              *
+              * The real state is added as its own option so the control tells
+              * the truth, and disabled so it stays a description of where the
+              * application is rather than an offer to move it there. The set
+              * of permitted destinations below is unchanged. */}
+            {!isTransitionTarget(application.status) && (
+              <option value={application.status} disabled>
+                {statusLabel(application.status)}
+              </option>
+            )}
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <StatusBadge tone={getApplicationStatusTone(application.status)}>
+            {statusLabel(application.status)}
+          </StatusBadge>
+          {updating && <Loader2 aria-hidden className="h-4 w-4 animate-spin text-foreground-muted" />}
+        </div>
+        {/* What this status does and does not mean. Nothing here claims the employer received anything. */}
+        <p className="mt-3 text-xs leading-relaxed text-foreground-muted">
+          This status comes from what you or the XpertApply extension confirmed. Employers don’t confirm
+          submissions to XpertApply, so it is not an employer receipt.
+        </p>
+      </div>
+
+      <div className="mt-6 border-t border-line-subtle pt-5">
+        <h3 className="text-sm font-semibold text-foreground">Prepared documents</h3>
+        <div className="mt-3">
+          <TrackerDocuments application={application} />
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line-subtle pt-5">
+        {/* Secondary, not primary: leaving for the posting is a normal step. */}
+        <a
+          href={job.application_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ds-focus-ring inline-flex h-10 items-center gap-1.5 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
+        >
+          View job posting <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+        </a>
+        {appliedLink && (
           <a
-            href={job.application_url}
+            className="ds-focus-ring inline-flex items-center gap-1 rounded-control text-sm font-medium text-foreground-link underline"
+            href={appliedLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="ds-focus-ring inline-flex h-10 items-center gap-1.5 rounded-control border border-action-secondary-border bg-action-secondary px-3 text-sm font-semibold text-action-secondary-foreground transition duration-fast ease-standard hover:bg-action-ghost-hover"
           >
-            View job <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+            <ExternalLink aria-hidden className="h-3.5 w-3.5" /> Application link
           </a>
-          {updating && (
-            <Loader2 aria-hidden className="h-4 w-4 animate-spin text-foreground-muted" />
-          )}
-        </div>
+        )}
       </div>
     </article>
   );

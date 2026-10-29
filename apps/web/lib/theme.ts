@@ -2,8 +2,9 @@
  * Theme preference: "light", "dark" or "system" (follow the OS).
  *
  * The stored choice lives in localStorage under one key and belongs to the
- * signed-in application. The public website (homepage, pricing, login, signup,
- * info and auth pages) is ALWAYS light: `data-theme` on <html> is resolved from
+ * signed-in application. With no stored choice the app is light; "system" is an
+ * explicit, stored choice like the others. The public website (homepage, pricing,
+ * login, signup, info and auth pages) is ALWAYS light: `data-theme` on <html> is resolved from
  * the route first and the preference second, and the stored choice is never
  * rewritten by visiting a public page.
  *
@@ -45,14 +46,20 @@ export function themeForPath(pathname: string, preference: ThemePreference): "li
 }
 const QUERY = "(prefers-color-scheme: dark)";
 
+/**
+ * The approved appearance is light: with no stored choice (a new user, or storage
+ * that is unavailable) the app is light. "system" is an explicit, stored choice.
+ */
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "light";
+
 export function readThemePreference(): ThemePreference {
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
+    if (stored === "light" || stored === "dark" || stored === "system") return stored;
   } catch {
-    /* storage unavailable: follow the OS */
+    /* storage unavailable: the default applies */
   }
-  return "system";
+  return DEFAULT_THEME_PREFERENCE;
 }
 
 export function resolveTheme(preference: ThemePreference): "light" | "dark" {
@@ -75,8 +82,7 @@ export function applyThemePreference(
 
 export function storeThemePreference(preference: ThemePreference): void {
   try {
-    if (preference === "system") window.localStorage.removeItem(THEME_STORAGE_KEY);
-    else window.localStorage.setItem(THEME_STORAGE_KEY, preference);
+    window.localStorage.setItem(THEME_STORAGE_KEY, preference);
   } catch {
     /* the choice still applies for this page view */
   }

@@ -11,10 +11,10 @@ import {
   type ThemePreference
 } from "@/lib/theme";
 
-const OPTIONS: { value: ThemePreference; label: string; Icon: typeof Sun }[] = [
-  { value: "light", label: "Light theme", Icon: Sun },
-  { value: "system", label: "Match system theme", Icon: Monitor },
-  { value: "dark", label: "Dark theme", Icon: Moon }
+const OPTIONS: { value: ThemePreference; label: string; text: string; Icon: typeof Sun }[] = [
+  { value: "light", label: "Light theme", text: "Light", Icon: Sun },
+  { value: "system", label: "Match system theme", text: "System", Icon: Monitor },
+  { value: "dark", label: "Dark theme", text: "Dark", Icon: Moon }
 ];
 
 /**
@@ -22,22 +22,22 @@ const OPTIONS: { value: ThemePreference; label: string; Icon: typeof Sun }[] = [
  *
  * A radio group, because exactly one choice is always selected and the arrow
  * keys move between them. The server and the first client render both show
- * "system" selected, then the stored choice is read after mount, so there is no
+ * the default ("light") selected, then the stored choice is read after mount, so there is no
  * hydration mismatch; the page itself was already themed by theme-init.js.
  */
-export function ThemeControl({ className = "" }: { className?: string }) {
-  // The server snapshot is "system", so hydration matches; the stored choice
+export function ThemeControl({ className = "", showLabels = false }: { className?: string; showLabels?: boolean }) {
+  // The server snapshot is the default ("light"), so hydration matches; the stored choice
   // replaces it right after, and every control re-renders on a change event.
   const preference = useSyncExternalStore<ThemePreference>(
     (notify) => watchTheme(notify),
     readThemePreference,
-    () => "system"
+    () => "light"
   );
   const choose = setThemePreference;
 
   return (
-    <div role="radiogroup" aria-label="Theme" className={`theme-ctl ${className}`}>
-      {OPTIONS.map(({ value, label, Icon }, index) => (
+    <div role="radiogroup" aria-label="Theme" className={`theme-ctl ${showLabels ? "theme-ctl--labeled" : ""} ${className}`}>
+      {OPTIONS.map(({ value, label, text, Icon }, index) => (
         <button
           key={value}
           type="button"
@@ -59,6 +59,8 @@ export function ThemeControl({ className = "" }: { className?: string }) {
           }}
         >
           <Icon aria-hidden width={15} height={15} />
+          {/* The accessible name stays the aria-label above ("Light theme" contains the visible "Light"). */}
+          {showLabels && <span aria-hidden="true">{text}</span>}
         </button>
       ))}
     </div>

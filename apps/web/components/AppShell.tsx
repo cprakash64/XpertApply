@@ -12,7 +12,6 @@ import {
 } from "react";
 import Link from "next/link";
 import { BrandMark } from "@/components/BrandLogo";
-import { ThemeControl } from "@/components/ThemeControl";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BriefcaseBusiness,
@@ -519,10 +518,6 @@ function NavigationFooter({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <div className="app-navigation-footer mt-auto space-y-1 border-t border-line-subtle pt-4">
-      <div className="app-theme-row">
-        <span className="text-xs font-medium text-foreground-muted">Theme</span>
-        <ThemeControl />
-      </div>
       <NavItem
         {...settingsItem}
         active={isItemActive(pathname, settingsItem.activeRoots)}

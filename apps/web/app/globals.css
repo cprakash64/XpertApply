@@ -934,6 +934,17 @@ html:has(.landing-page) {
   transition: background-color var(--duration-fast) var(--easing-standard), color var(--duration-fast) var(--easing-standard);
 }
 .theme-ctl__option:hover { color: var(--color-text-primary); }
+/* Settings > Appearance: the same control with visible words, since it is the only place the choice lives. */
+.theme-ctl--labeled .theme-ctl__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: auto;
+  min-height: 36px;
+  padding: 0 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
 .theme-ctl__option[aria-checked="true"] {
   background: var(--color-surface-card);
   color: var(--color-brand-accent-text);
@@ -964,12 +975,3 @@ html:has(.landing-page) {
 .brand-logo__xpert { color: var(--color-text-primary); }
 .brand-logo__apply { color: var(--brand-logo-accent); }
 
-/* Sidebar theme row: shown wherever the nav labels are shown (expanded states). */
-.app-theme-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.25rem 0.75rem 0.5rem; }
-@media (min-width: 640px) {
-  .app-sidebar .app-theme-row { display: none; }
-  .app-sidebar[data-tablet-expanded="true"] .app-theme-row { display: flex; }
-}
-@media (min-width: 1024px) {
-  .app-shell:not([data-desktop-collapsed="true"]) .app-sidebar .app-theme-row { display: flex; }
-}
