@@ -240,6 +240,34 @@ test.describe("Jobs", () => {
     expect(await overflow(page)).toBeLessThanOrEqual(0);
   });
 
+  test("navbar: full-width, borderless filters, search expands on focus and keeps its query", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("console", (message) => { if (message.type() === "error" && !/Content Security Policy/.test(message.text())) errors.push(message.text()); });
+    await install(page);
+    await page.goto("/jobs");
+    await expect(page.getByTestId("job-card").first()).toBeVisible();
+    const search = page.getByLabel("Role or skill");
+    const collapsed = (await search.boundingBox())!.width;
+    const sort = (await page.getByLabel("Sort jobs").boundingBox())!;
+    const find = (await page.getByRole("button", { name: "Find fresh jobs" }).boundingBox())!;
+    const card = (await page.getByTestId("job-card").first().boundingBox())!;
+    expect(sort.y).toBeLessThan(find.y + find.height);                                      // one row on desktop
+    expect(find.x).toBeGreaterThan(sort.x + sort.width);                                    // actions sit at the right end
+    expect(card.width).toBeGreaterThan(1000);                                               // rows use the workspace width
+    for (const label of ["Workplace type", "Minimum fit score", "Posted within days", "Sort jobs"]) {
+      expect(await page.getByLabel(label).evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe("0px");   // no per-filter box
+    }
+    await search.click();
+    await expect.poll(async () => (await search.boundingBox())!.width).toBeGreaterThan(collapsed + 40);
+    await search.fill("python");
+    await page.keyboard.press("Escape");
+    await expect(search).not.toBeFocused();
+    await expect(search).toHaveValue("python");                                             // a typed query is kept
+    await expect(page.getByLabel("Sort jobs")).toHaveValue("best_recent");                  // nothing else was reset
+    expect(await overflow(page)).toBeLessThanOrEqual(0);
+    expect(errors).toEqual([]);
+  });
+
   test("one filled action per card; the others are quiet", async ({ page }) => {
     await install(page);
     await page.goto("/jobs");
@@ -373,5 +401,44 @@ test.describe("screenshots", () => {
     await dark.locator("article").first().waitFor(); await dark.waitForTimeout(500);
     await dark.screenshot({ path: `${dir}/dashboard-mobile-dark.png`, fullPage: true });
     await dark.context().close();
+  });
+
+  test("capture jobs navigation", async ({ browser }) => {
+    mkdirSync(dir, { recursive: true });
+    const open = async (width: number, height: number, scheme: "light" | "dark") => {
+      const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
+      await install(page); await prefer(page, scheme); await page.goto("/jobs");
+      await page.locator("[data-testid='job-card']").first().waitFor(); await page.waitForTimeout(400);
+      return page;
+    };
+    const dark = await open(1440, 900, "dark");
+    await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-collapsed.png` });
+    await dark.getByLabel("Role or skill").click();
+    await dark.waitForTimeout(300);
+    await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-expanded.png` });
+    await dark.keyboard.press("Tab");
+    await dark.keyboard.press("Tab");
+    await dark.waitForTimeout(200);
+    await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-focus.png`, clip: { x: 0, y: 0, width: 1440, height: 160 } });
+    await dark.mouse.wheel(0, 900); await dark.waitForTimeout(300);
+    await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-scrolled.png` });
+    await dark.context().close();
+
+    const light = await open(1440, 900, "light");
+    await light.screenshot({ path: `${dir}/jobs-nav-desktop-light.png` });
+    await light.context().close();
+
+    for (const width of [1920, 1024, 768]) {
+      const page = await open(width, 900, "light");
+      await page.screenshot({ path: `${dir}/jobs-nav-${width}-light.png` });
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    }
+    for (const width of [390, 320]) {
+      const page = await open(width, 844, "light");
+      await page.screenshot({ path: `${dir}/jobs-nav-${width}-light.png` });
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    }
   });
 });

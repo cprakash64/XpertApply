@@ -653,10 +653,12 @@ export function JobDiscovery() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-4 pb-16 pt-4 sm:px-6">
+    <div className="w-full pb-16">
       {/* The active navigation item already names this page; the h1 stays for screen readers and the document outline. */}
       <h1 className="sr-only">Jobs</h1>
 
+      {/* The navbar spans the whole workspace; everything below it shares one deliberate max width (wide enough for
+        * the rows, capped so a 4K display does not stretch a job across the room). */}
       <JobsFilterBar
         query={query}
         onChange={onFilterChange}
@@ -664,16 +666,17 @@ export function JobDiscovery() {
         summary={resultSummary}
         actions={
           <>
-            <Button type="button" variant="secondary" size="md" onClick={findFreshJobs} disabled={busy}>
+            <Button type="button" variant="primary" size="sm" className="whitespace-nowrap max-sm:gap-1.5 max-sm:px-1.5 max-sm:text-[13px]" onClick={findFreshJobs} disabled={busy}>
               {discovering ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Search aria-hidden className="h-4 w-4" />} Find fresh jobs
             </Button>
-            <Button type="button" variant="ghost" size="md" onClick={refreshMatches} disabled={busy}>
+            <Button type="button" variant="ghost" size="sm" className="whitespace-nowrap max-sm:gap-1.5 max-sm:px-1.5 max-sm:text-[13px]" onClick={refreshMatches} disabled={busy}>
               {refreshing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden className="h-4 w-4" />} Refresh matches
             </Button>
           </>
         }
       />
 
+      <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8">
       {(message || error) && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           {message && <p className="text-sm text-foreground-muted">{message}</p>}
@@ -800,6 +803,7 @@ export function JobDiscovery() {
             )}
           </div>
         )}
+      </div>
       </div>
       {modals}
     </div>
