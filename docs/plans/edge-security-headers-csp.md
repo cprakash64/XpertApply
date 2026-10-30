@@ -41,32 +41,17 @@ Rendering: Every route except `/jobs/[id]` and `/matches/[id]` is a static prere
 ## 5. Corrections made
 1. `apps/web/lib/securityPolicy.mjs`: `apiOrigin()` resolves `NEXT_PUBLIC_API_URL` exactly as `lib/api.ts` does (same variable, same `http://localhost:8000` fallback), strips any path, accepts `https` or loopback `http`, and throws at build time otherwise (a malformed value can no longer inject a directive). `reportOnlyPolicy(env)` uses it for `img-src` and `connect-src`. Production output is **byte-identical** to the live production header (verified), so production behaviour is unchanged.
 2. `apps/web/__tests__/securityPolicy.test.ts`: per-environment, normalisation, fail-closed and local-dev cases.
-3. `docs/release/pui-s1s2/`: staging nginx patch (headers), snippets, a Docker nginx test, and a read-only live validator. Not applied anywhere.
+3. `docs/release/pui-s1s2/`: the S1 staging nginx patch, a checksum-guarded `staging-nginx-s1.sh` (preflight/apply/verify/rollback) with a Docker end-to-end test, and a read-only validator. Not applied anywhere. Superseded by the guarded release: the earlier snippet-based draft was removed (it was built on a sanitized copy and added Permissions-Policy, which is out of scope for this release).
 
 nginx design points proven in the test:
-- Headers live in snippets included at server level **and** inside the two `location =` blocks, because a location that has its own `add_header` drops inherited ones.
+- Headers are written inline at server level **and** repeated inside the two `location =` blocks (single-file change, single rollback), because a location that has its own `add_header` drops inherited ones.
 - `always` so 404/500/502/301 carry them.
 - **Referrer-Policy conflict avoided.** Adding the production value in nginx would put a second, weaker `Referrer-Policy` next to the recovery pages' `no-referrer`; with duplicate headers the browser combines them and the last valid one wins, which could re-enable Referer on the reset-token page. The patch hides the upstream value and re-emits it once through a `map`, so the app's value wins and everything else (including nginx-generated errors) gets `strict-origin-when-cross-origin`. **The same hazard applies when the web release with recovery pages reaches production** (production web currently 404s `/forgot-password`, so it is not live yet): production nginx needs the same `map` before that release. Not changed here.
 - `proxy_hide_header X-Robots-Tag` on staging removes the existing identical duplicate on the recovery pages.
 - HSTS is `max-age=300`, no `includeSubDomains`, no `preload` (the parent domain also serves production, www and api; audit before widening). COOP/COEP not added.
 
 ## 6. Operator runbook (staging nginx; nothing here has been run)
-Read-only evidence first (also closes the gap that the live file was not read):
-```bash
-ssh <staging-host> 'sudo sha256sum /etc/nginx/sites-available/xpertapply-staging /etc/nginx/sites-enabled/* ; sudo nginx -T 2>/dev/null | grep -n -i -E "add_header|proxy_hide_header|^# configuration file"'
-```
-Compare the sha256 with the noindex-applied file the patch was built against (`xpertapply-staging.noindex-applied.conf`); if it differs, stop and rebase the patch.
-
-Apply:
-```bash
-sudo cp /etc/nginx/sites-available/xpertapply-staging /etc/nginx/sites-available/xpertapply-staging.bak-$(date +%Y%m%d%H%M)
-sudo mkdir -p /etc/nginx/snippets
-sudo install -m 0644 snippets/xpertapply-staging-headers-web.conf snippets/xpertapply-staging-headers-api.conf /etc/nginx/snippets/
-sudo patch /etc/nginx/sites-available/xpertapply-staging < xpertapply-staging-security-headers.patch
-sudo nginx -t && sudo systemctl reload nginx
-bash validate-staging-security-headers.sh   # the web CSP row stays FAIL until the new web build ships
-```
-Rollback: restore the `.bak-*` file, `sudo nginx -t && sudo systemctl reload nginx`; snippets are inert unless included.
+See `docs/release/PUI-S1-STAGING-NGINX_RUNBOOK.md` (modes `preflight`, `apply`, `verify`, `rollback` of `docs/release/pui-s1s2/staging-nginx-s1.sh`). It pins the verified live SHA-256 `c7f40f8b…`, refuses anything else, shows the exact diff, requires a typed approval, backs up, tests with `nginx -t` (restoring automatically on failure), reloads gracefully, verifies live headers and reverts automatically if verification fails.
 
 ## 7. Live header comparison (anonymous, 2026-10-30)
 | Response | staging web | production web | staging API | production API |
@@ -85,7 +70,7 @@ Same results for `/`, `/login`, `/dashboard` (static shell, no user data), 404, 
 - `npm run lint`, `npm run typecheck`: clean. `npm test`: 62 files, 1214 tests pass. `npm run build`: succeeds for staging, default-local and production-origin configurations.
 - Real Chromium: staging-origin build reports only the inline-script violation; the `connect-src` violation is gone.
 - Playwright (9 specs, local production build, no live API): 59 passed, 19 skipped, 12 failed. The same 12 (Apply dialog x9, jobs workspace x3) fail identically on the unmodified baseline build, so they are environmental (specs expect a live stack at the configured API address), not caused by this change. They need a run against a live stack before staging acceptance.
-- `bash docs/release/pui-s1s2/test-security-headers-nginx-local.sh`: 12/12 PASS on nginx 1.24 (200/404/500/502/301, robots/sitemap, recovery page, API, exactly-once assertions).
+- `bash docs/release/pui-s1s2/test-s1-nginx-local.sh`: 33/33 PASS against real nginx 1.24 with TLS (preflight refusals, approval gate, nginx -t failure restore, post-reload duplicate-header auto-revert, success path, verify fail-closed, rollback).
 - Not run: `make test-api`/`test-extension` (no API or extension change), Alembic (no migration), `docker compose config` (no compose change), authenticated browser flows.
 
 ## 9. Rollout and rollback
@@ -100,7 +85,7 @@ CSP and these headers apply to pages, not to the MV3 service worker or content-s
 - Inline-script strategy undecided; CSP cannot be enforced until it is.
 - Production HSTS is only 24 h and has no `includeSubDomains`/preload; production API sends no XFO/Referrer-Policy (low for JSON).
 - Production nginx needs the Referrer-Policy `map` before the recovery pages ship there.
-- Live staging nginx file hash unverified; patch built on the documented noindex-applied copy.
+- The live staging file is pinned by SHA-256 (`c7f40f8b…`, verified by the operator); the reviewed copy in the repo masks only the SSL lines, and preflight proves the live file matches it everywhere else.
 - Authenticated-route headers and caching were not probed live.
 
 ## 12. Recommendation

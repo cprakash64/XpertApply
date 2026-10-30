@@ -1,0 +1,54 @@
+--- a/etc/nginx/sites-available/xpertapply-staging
++++ b/etc/nginx/sites-available/xpertapply-staging
+@@ -3,2 +3,9 @@
+ 
++# S1: Referrer-Policy keeps the app's own value (the recovery pages send no-referrer so a reset token never leaks in a
++# Referer) and falls back to the production value for everything else, including nginx-generated responses.
++map $upstream_http_referrer_policy $xa_staging_referrer_policy {
++    default $upstream_http_referrer_policy;
++    ""      "strict-origin-when-cross-origin";
++}
++
+ server {
+@@ -26,2 +33,8 @@
+ 
++    # S1 security headers. HSTS is short, host-only (no includeSubDomains, no preload).
++    add_header Strict-Transport-Security "max-age=300" always;
++    add_header X-Content-Type-Options "nosniff" always;
++    add_header X-Frame-Options "DENY" always;
++    add_header Referrer-Policy $xa_staging_referrer_policy always;
++
+     # Staging must not advertise itself: keep robots.txt and sitemap.xml as 404 (as the current build does) so crawlers
+@@ -29,4 +42,18 @@
+     # so the header is repeated here.
+-    location = /robots.txt  { add_header X-Robots-Tag "noindex, nofollow" always; return 404; }
+-    location = /sitemap.xml { add_header X-Robots-Tag "noindex, nofollow" always; return 404; }
++    location = /robots.txt {
++        add_header X-Robots-Tag "noindex, nofollow" always;
++        add_header Strict-Transport-Security "max-age=300" always;
++        add_header X-Content-Type-Options "nosniff" always;
++        add_header X-Frame-Options "DENY" always;
++        add_header Referrer-Policy $xa_staging_referrer_policy always;
++        return 404;
++    }
++    location = /sitemap.xml {
++        add_header X-Robots-Tag "noindex, nofollow" always;
++        add_header Strict-Transport-Security "max-age=300" always;
++        add_header X-Content-Type-Options "nosniff" always;
++        add_header X-Frame-Options "DENY" always;
++        add_header Referrer-Policy $xa_staging_referrer_policy always;
++        return 404;
++    }
+ 
+@@ -38,2 +65,4 @@
+         proxy_http_version 1.1;
++        proxy_hide_header Referrer-Policy;   # re-emitted once via $xa_staging_referrer_policy
++        proxy_hide_header X-Robots-Tag;      # the server-level header is the single noindex source on staging
+ 
+@@ -56,2 +85,6 @@
+ 
++    # S1 (JSON API): same HSTS and nosniff the production API host already sends.
++    add_header Strict-Transport-Security "max-age=300" always;
++    add_header X-Content-Type-Options "nosniff" always;
++
+     add_header X-Robots-Tag "noindex, nofollow" always;
