@@ -19,13 +19,15 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
 )
+from app.services import auth_throttle
 from app.services import password_reset as recovery
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/signup", response_model=TokenResponse)
-def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def signup(payload: SignupRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
+    auth_throttle.check_signup_allowed(request)
     try:
         existing = db.scalar(select(User).where(User.email == payload.email.lower()))
         if existing:
@@ -62,7 +64,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> TokenRespon
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
+    # Counted and, past the limit, refused BEFORE the password is checked: unknown and known emails behave identically.
+    account_key = auth_throttle.begin_login_attempt(request, payload.email)
     try:
         user = db.scalar(select(User).where(User.email == payload.email.lower()))
         if (
@@ -71,6 +75,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
             or not verify_password(payload.password, user.hashed_password)
         ):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        auth_throttle.login_succeeded(account_key)
         return TokenResponse(access_token=create_access_token(str(user.id)))
     except HTTPException:
         raise

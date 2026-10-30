@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     # request caps per hour. The recipient cap also stops mail-bombing a victim.
     password_reset_per_email_hourly_limit: int = 3
     password_reset_per_client_hourly_limit: int = 30
+    # Password sign-in and sign-up limits (see app/services/auth_throttle.py). Attempts are counted per account in a
+    # fixed window and cleared by a correct password. Per-address limits apply only when `auth_trusted_proxy_hops` is
+    # set: the number of reverse proxies in front of the API that overwrite/append X-Forwarded-For (1 behind the single
+    # nginx used here); 0 keeps them off, because behind a proxy every request would otherwise look like one client.
+    auth_login_max_attempts: int = Field(default=10, ge=1)
+    auth_login_window_seconds: int = Field(default=900, ge=1)
+    auth_login_max_attempts_per_ip: int = Field(default=60, ge=1)
+    auth_signup_per_ip_hourly_limit: int = Field(default=20, ge=1)
+    auth_trusted_proxy_hops: int = Field(default=0, ge=0, le=5)
     secret_key: str = Field(default="dev-only-change-me", min_length=12)
     jwt_expires_minutes: int = 60 * 24 * 7
     cors_origins: list[str] = ["http://localhost:3000"]

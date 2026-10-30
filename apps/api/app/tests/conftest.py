@@ -43,8 +43,10 @@ def _reset_rate_limiter() -> None:
     it between tests so rate-limit state never leaks between unrelated cases."""
     from app.people.service import _RATE_BUCKETS as people_rate_buckets
     from app.routes.applications import _RATE_BUCKETS
+    from app.services.auth_throttle import reset_auth_throttle
     from app.services.password_reset import reset_rate_limits
 
+    reset_auth_throttle()
     _RATE_BUCKETS.clear()
     people_rate_buckets.clear()
     reset_rate_limits()
