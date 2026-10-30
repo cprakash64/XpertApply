@@ -3,10 +3,11 @@
 Date 2026-10-30. No source change, no deployment, no production access, no SMTP/config change. Authorized scope: **one** synthetic staging account, bounded (about 100-120 requests), deleted afterwards (DELETE returned 204; its token was then rejected).
 Credentials were generated in memory and never printed or stored.
 
-## Verdict
-- **F3 (failed list requests): NOT REPRODUCED. Supportive, not conclusive on its own.** 0 failures in 88 list requests (70 API-level, 18 browser), 0 cancellations, 0 non-200 responses, no user-visible error, no console error. Resource evidence (restart count, OOMKilled) is **UNVERIFIED**: no VPS observability available to me.
-- **F5 (list latency): VERIFIED IMPROVED.** Browser list requests: p50 1592 to 920 ms, p95 4423 to 1433 ms, max 6486 to 1742 ms versus the original staging run.
-- **GO for F3/F5, conditional** on an operator confirming from the VPS that `xpertapply-staging-api` has not restarted and was not OOM-killed during the test window (commands below). No regression was found. This does not make production approved (F2, F4, S1/S2, extension test remain open).
+## Verdict (updated with operator VPS evidence, 2026-10-30 04:22 UTC)
+- **F3 (failed list requests): VERIFIED RESOLVED to the extent a bounded, non-stress test can show.** The cause is now confirmed on staging, and the same scenario no longer triggers it (section 7).
+- **F5 (list latency): VERIFIED IMPROVED**, and the absolute latency is explained by the catalogue size (section 5). Memory headroom is the remaining risk (section 7).
+- **GO for F3/F5.** Not production approval (F2, F4, S1/S2, extension test still open) and not a capacity guarantee: see the 768 MiB risk.
+- **No new authenticated run was made for this update:** the constraint is to use only an existing authorized synthetic account, and none exists (mine was deleted). The results below are the earlier approved run (03:57:34-03:59:17 UTC, inside the new container's lifetime) plus the operator's VPS evidence. A fresh run, if wanted, is BLOCKED until an account is authorized.
 
 ## 1. Exact method
 `live_f3.cjs` (session scratchpad, not in Git), run from `apps/web` with `NODE_PATH=$PWD/node_modules node live_f3.cjs <outdir>`; Node `fetch` for API-level calls and one headless Chromium session (1440x900) against https://staging.xpertapply.com. Sequential API calls; the browser phase uses the UI's natural overlap only (no extra load).
@@ -39,21 +40,26 @@ Totals: 18 list requests, 18 x 200, 0 cancelled (the app does not cancel request
 | BEFORE, original staging browser run (fb6475f API) | 30 | 1592 | 4423 | 6486 |
 | AFTER, API-level sequential (this run) | 70 | 645 | 823 | 1087 |
 | AFTER, browser (this run) | 18 | 920 | 1433 | 1742 |
-Caveats: the before and after scenarios are similar, not identical (the original also included a scoring refresh and my own helper calls); latency includes the network path from this machine (an unauthenticated 401 takes about 50 ms). A sequential list request is still about 0.65 s, so the per-request CPU floor remains (not addressed, as documented).
+Caveats: the before and after scenarios are similar, not identical (the original also included a scoring refresh and my own helper calls); latency includes the network path from this machine (an unauthenticated 401 takes about 50 ms). A sequential list request is still about 0.65 s, so the per-request CPU floor remains (not addressed, as documented). That matches the model: 0.43 s at 3,000 jobs locally x 4,485/3,000 = 0.64 s, against a measured p50 of 0.645 s on staging.
 
 ## 6. Comparison with the original failure
 Original: 2 failed of 56 browser list requests (3.6%), connection-level, no response. Now 0 of 18 in the browser and 0 of 70 API-level. **Honest limit:** a 0-of-18 browser sample would happen by chance about half the time at the original rate, so this alone does not prove F3 is gone; it is consistent with the reproduced root cause (OOM under overlapping whole-catalogue requests) having been removed, and with latencies no longer stacking.
 
-## 7. Resource safety: UNVERIFIED
-No VPS access. Operator commands (read-only), to be run once for the window of this test (about 2026-10-30 around the time of the run) and compared with the earlier baseline:
-```bash
-docker inspect -f 'restarts={{.RestartCount}} oom={{.State.OOMKilled}} started={{.State.StartedAt}}' xpertapply-staging-api
-docker stats --no-stream xpertapply-staging-api
-sudo journalctl -k --since "<test start>" | grep -iE 'out of memory|killed process'
-sudo grep -E ' 50[234] ' /var/log/nginx/api-staging.xpertapply.com.access.log | tail
-docker exec xpertapply-staging-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from job_postings where is_active"
-```
-Expected if fixed: unchanged `StartedAt` since the deployment, `oom=false`, no kernel OOM line, no 50x for the test window.
+## 7. Resource evidence (operator-supplied VPS observations)
+| Time (UTC, 2026-10-30) | Event |
+|---|---|
+| 01:56:17-02:02:12 | my browser pass, run 1, against the OLD API (whole-catalogue list) |
+| **01:57 and 02:00** | **kernel OOM kills of the old API container** |
+| 02:03:51-02:06:18 | my browser pass, run 2 (instrumented), old API |
+| **02:05** | **kernel OOM kill**; my log shows the two connection-level failures (`net::ERR_FAILED`) at **02:05:10 and 02:05:13** |
+| 03:51:58 | new API container (e4797e4) started |
+| 03:57:34-03:59:17 | my post-deployment run: 88 list requests, 0 failures, 0 cancellations, 0 non-200 |
+| 04:22 | operator: zero restarts, `OOMKilled=false`, memory 627.1 / 768 MiB, 4,485 active jobs |
+- **Root cause confirmed on staging:** every kernel OOM kill coincides with one of my two old-API browser passes, and the second coincides to the minute with the two failed requests. The earlier local reproduction (4 overlapping requests exhaust a 768 MB container) is therefore not just plausible, it matches the live timeline.
+- **Fix supported:** the equivalent interaction against the new container produced no failure and no kill, and the container has not restarted since it started at 03:51:58 (it covers my run).
+- **Not verified:** server-side 5xx. No dedicated staging-API access log exists (the repository template defines `/var/log/nginx/api-staging.xpertapply.com.access.log`, but the live configuration apparently does not), and shared nginx lines cannot be attributed. From the client side there were 0 5xx in 88 list requests. Memory "before" the run was not captured, so before/after growth is unknown.
+- **Remaining risk, memory:** 627 MiB of 768 MiB is high for a container that is otherwise idle. Python does not return freed memory to the OS, so this is probably a high-water mark from the bounded run and the one `refresh-matches` call (that path still loads full job rows; it was not optimised). Headroom is about 141 MiB (18%). Staging's 4,485 active jobs is 1.5x my 3,000-job local model, and the list path's per-request footprint scales with the catalogue, so a heavier burst (several tabs, repeated Refresh matches, `/dashboard/summary`) could still approach the limit.
+  Mitigations are infrastructure or design decisions, not done here: raise `mem_limit` (for example to 1.5 GiB if the host allows), add a second worker or an admission cap, and optimise `refresh-matches` and `/dashboard/summary`. Do not read this verification as capacity sign-off.
 
 ## 8. Authentication regression (VERIFIED for the normal case)
 A fresh identity logged in through the real UI with the correct password and was not blocked by the new throttle. Not repeated: the wrong-password burst, and no throttled identity was reused. NOT TESTED: a normal login after some earlier failures (design says a correct login clears the counter; covered by unit tests only).
@@ -65,4 +71,4 @@ A fresh identity logged in through the real UI with the correct password and was
 None found. Not tested: anything outside `/jobs`, auth and the Jobs UI.
 
 ## 11. Status summary
-VERIFIED: pagination correctness, filters, search, authorization and input handling, rapid-interaction correctness, latency improvement, normal login. NOT REPRODUCED: F3 (supportive, not conclusive). UNVERIFIED: VPS resources. NOT TESTED: cross-account isolation re-check, login after prior failures.
+VERIFIED: pagination correctness, filters, search, authorization and input handling, rapid-interaction correctness, latency improvement, normal login, F3 root cause on staging (OOM kills matched to my old-API runs) and no OOM or restart since the fix. UNVERIFIED: server-side 5xx (no attributable log), memory before the run. NOT TESTED: cross-account isolation re-check, login after prior failures, any fresh run for this update (BLOCKED: no authorized account).
