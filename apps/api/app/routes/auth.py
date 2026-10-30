@@ -8,7 +8,7 @@ from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
-from app.models.entities import PasswordResetToken, User, UserProfile
+from app.models.entities import ExtensionCredential, PasswordResetToken, User, UserProfile
 from app.schemas.auth import (
     LoginRequest,
     PasswordResetAvailability,
@@ -218,6 +218,12 @@ def confirm_password_reset(
             raise INVALID_TOKEN
         user.hashed_password = hash_password(payload.new_password)
         user.password_changed_at = now
+        # The extension's refresh credential would otherwise outlive the password it was approved under.
+        db.execute(
+            update(ExtensionCredential)
+            .where(ExtensionCredential.user_id == user.id, ExtensionCredential.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
         db.execute(
             delete(PasswordResetToken).where(
                 PasswordResetToken.user_id == user.id, PasswordResetToken.id != row.id

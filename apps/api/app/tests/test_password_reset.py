@@ -339,6 +339,39 @@ def test_reset_revokes_sessions_issued_before_it(client, outbox) -> None:
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {fresh}"}).status_code == 200
 
 
+def test_reset_ends_extension_connections_made_before_it(client, outbox) -> None:
+    """The extension's refresh credential must not outlive the password it was approved under."""
+    import base64
+    import hashlib
+
+    website = signup(client)
+    verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    redirect = "https://" + "a" * 32 + ".chromiumapp.org/xpertapply"
+    code = client.post(
+        "/extension/auth/code",
+        headers={"Authorization": f"Bearer {website}"},
+        json={"code_challenge": challenge, "redirect_uri": redirect},
+    ).json()["code"]
+    issued = client.post(
+        "/extension/auth/token",
+        json={"grant_type": "authorization_code", "code": code, "code_verifier": verifier, "redirect_uri": redirect},
+    ).json()
+    access = {"Authorization": f"Bearer {issued['access_token']}"}
+    assert client.get("/extension/me", headers=access).status_code == 200
+
+    request_reset(client, "ada@example.com")
+    token = token_from(mails(outbox)[0])
+    done = client.post("/auth/password-reset/confirm", json={"token": token, "new_password": NEW_PASSWORD})
+    assert done.status_code == 200
+
+    assert client.get("/extension/me", headers=access).status_code == 401
+    refresh = client.post(
+        "/extension/auth/token", json={"grant_type": "refresh_token", "refresh_token": issued["refresh_token"]}
+    )
+    assert refresh.status_code == 401
+
+
 def test_tokens_without_iat_are_refused_only_after_a_password_change(client, outbox, session_factory) -> None:
     signup(client)
     with session_factory() as db:
