@@ -243,6 +243,12 @@ test.describe("Jobs", () => {
   test("navbar: full-width, borderless filters, search expands on focus and keeps its query", async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error" && !/Content Security Policy/.test(message.text())) errors.push(message.text()); });
+    // New CSP regressions must fail this test: every securitypolicyviolation event is collected (report-only ones included).
+    await page.addInitScript(() => {
+      (window as unknown as { __csp: string[] }).__csp = [];
+      document.addEventListener("securitypolicyviolation", (event) =>
+        (window as unknown as { __csp: string[] }).__csp.push(`${event.violatedDirective} ${event.blockedURI}`));
+    });
     await install(page);
     await page.goto("/jobs");
     await expect(page.getByTestId("job-card").first()).toBeVisible();
@@ -266,6 +272,10 @@ test.describe("Jobs", () => {
     await expect(page.getByLabel("Sort jobs")).toHaveValue("best_recent");                  // nothing else was reset
     expect(await overflow(page)).toBeLessThanOrEqual(0);
     expect(errors).toEqual([]);
+    // Known report-only baseline, present before this change: Next's inline bootstrap scripts, and the mocked API origin
+    // (the policy allows the deployed API URL, not this test's localhost:8000). Anything else is a new regression.
+    const violations = await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
+    expect(violations.filter((v) => v !== "script-src-elem inline" && !v.startsWith("connect-src http://localhost:8000/"))).toEqual([]);
   });
 
   test("one filled action per card; the others are quiet", async ({ page }) => {
