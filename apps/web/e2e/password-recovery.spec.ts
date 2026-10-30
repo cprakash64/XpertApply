@@ -46,14 +46,17 @@ test("login offers Forgot password? and no longer shows the privacy tagline", as
   await expect(page).toHaveURL(/\/$/);
 });
 
-test("the request page gives the same generic confirmation and a sensible tab order", async ({ page }) => {
+test("the request page gives the same generic confirmation and a sensible tab order", async ({ page, browserName }) => {
   await mockApi(page);
   await page.goto("/forgot-password");
   const email = page.getByLabel("Email address");
   await expect(email).toBeFocused(); // autofocus
-  await page.keyboard.press("Tab");
+  // Safari/WebKit on macOS moves Tab between text fields only; buttons and links are reached with Option+Tab
+  // (the "Press Tab to highlight each item" setting). The assertions are identical; only the traversal key differs.
+  const next = browserName === "webkit" && process.platform === "darwin" ? "Alt+Tab" : "Tab";
+  await page.keyboard.press(next);
   await expect(page.getByRole("button", { name: "Send reset link" })).toBeFocused();
-  await page.keyboard.press("Tab");
+  await page.keyboard.press(next);
   await expect(page.getByRole("link", { name: "Back to sign in" })).toBeFocused();
   await email.fill("nobody@example.com");
   await page.getByRole("button", { name: "Send reset link" }).click();
