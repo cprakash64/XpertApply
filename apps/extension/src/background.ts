@@ -77,6 +77,7 @@ import {
   initialView,
   noticeView,
   isSessionAuthorityActive,
+  StaleAuthorityError,
   patchView,
   putPackage,
   putActive,
@@ -2035,6 +2036,38 @@ async function adoptActivationDestination(
 }
 
 /**
+ * Refusals handleContentReady answers to the page that used to leave the tab's view on its initial "detecting" state:
+ * the page was told no, nobody recorded why, and the assistant kept saying it was detecting. A top-frame refusal now ends the view
+ * in a stated state, but only for the session that still owns the tab (a newer workflow is never overwritten) and only while the
+ * account authority is current (a sign-out or account change tears the view down; there is nothing left to settle).
+ */
+const READY_REFUSAL_CODES = new Set(["DOCUMENT_ID_UNAVAILABLE", "HANDOFF_EXPIRED"]);
+
+async function settleReadyRefusal(
+  tabId: number,
+  pending: PendingLaunch,
+  generation: AuthorityGeneration,
+  code: "DOCUMENT_ID_UNAVAILABLE" | "HANDOFF_EXPIRED" | "HOST_PERMISSION_MISSING",
+  site?: { pattern: string | null; origin: string | null }
+): Promise<void> {
+  try {
+    const current = await getPending(tabId);
+    if (!current || current.sessionId !== pending.sessionId) return;
+    if (code === "HOST_PERMISSION_MISSING") {
+      // The user (or Chrome) withdrew the grant: say so with the button that asks again, not a spinner.
+      await patchView(tabId, {
+        running: false, siteAccess: "site_access_revoked", siteAccessPattern: site?.pattern ?? null,
+        siteAccessOrigin: site?.origin ?? null, siteAccessScope: "page"
+      }, generation);
+      return;
+    }
+    await applyFailure(tabId, code, undefined, undefined, generation);
+  } catch (error) {
+    if (!(error instanceof StaleAuthorityError)) log.info("ready refusal not recorded", { reason: String(error).slice(0, 60) });
+  }
+}
+
+/**
  * The single gate every ATS-page content script frame must pass before it is
  * allowed to touch the DOM. Employer and ATS origins carry no install-time
  * authority (Stage 3C): there is no declarative content script for them, and a
@@ -2193,6 +2226,7 @@ async function handleContentReady(
     : null;
   if (!documentId) {
     sendResponse({ ok: false, matched: false, error: "DOCUMENT_ID_UNAVAILABLE", launch: null });
+    if (isTopFrame) await settleReadyRefusal(tabId, pending, generation, "DOCUMENT_ID_UNAVAILABLE");
     return;
   }
   // DOM evidence is requested only after the Chrome-supplied sender has
@@ -2207,6 +2241,7 @@ async function handleContentReady(
     : false;
   if (!stillGranted) {
     sendResponse({ ok: false, matched: false, error: "HOST_PERMISSION_MISSING", launch: null });
+    if (isTopFrame) await settleReadyRefusal(tabId, pending, generation, "HOST_PERMISSION_MISSING", { pattern: senderPattern, origin: context.frameOrigin?.origin ?? null });
     return;
   }
   if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
@@ -2225,6 +2260,11 @@ async function handleContentReady(
     || currentPending.sessionId !== pending.sessionId
     || Date.now() > currentPending.expiresAt) {
     sendResponse({ ok: false, matched: false, error: "STALE_AUTHORITY", launch: null });
+    // Replaced or removed: another workflow owns the tab, or it was torn down, and there is nothing to settle. Expired: the one
+    // case where this session still owns the view and nobody would say so.
+    if (isTopFrame && currentPending && currentPending.sessionId === pending.sessionId) {
+      await settleReadyRefusal(tabId, pending, generation, "HANDOFF_EXPIRED");
+    }
     return;
   }
   const permissionStillGranted = senderPattern
@@ -2232,6 +2272,7 @@ async function handleContentReady(
     : false;
   if (!permissionStillGranted) {
     sendResponse({ ok: false, matched: false, error: "HOST_PERMISSION_MISSING", launch: null });
+    if (isTopFrame) await settleReadyRefusal(tabId, pending, generation, "HOST_PERMISSION_MISSING", { pattern: senderPattern, origin: context.frameOrigin?.origin ?? null });
     return;
   }
   if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) {
@@ -2275,14 +2316,19 @@ async function handleContentReady(
   });
   try {
     const pkg = await ensurePackage(tabId, pending, generation);
-    await patchView(tabId, {
+    await patchView(tabId, (view) => ({
+      // A retry that gets this far supersedes a refusal an earlier attempt recorded; nothing else is cleared here.
+      ...(view.failureCode && READY_REFUSAL_CODES.has(view.failureCode)
+        ? { failureCode: null, failureMessage: null, failureRecoverable: null, state: "fetching_package" as const }
+        : {}),
+      ...(view.siteAccess === "site_access_revoked" ? { siteAccess: "site_access_granted" as const } : {}),
       packageLoaded: true,
       company: pkg.session.company,
       jobTitle: pkg.session.jobTitle,
       sessionId: pkg.session.sessionId,
       confirmationRequired: Boolean(pkg.session.confirmationRequiredAt),
       confirmationDismissed: Boolean(pkg.session.confirmationPromptDismissedAt)
-    }, generation);
+    }), generation);
     const rebound = await readPendingActivation();
     if (rebound && (tabId === rebound.sourceTabId || tabId === rebound.destinationTabId)) {
       await writePendingActivation({

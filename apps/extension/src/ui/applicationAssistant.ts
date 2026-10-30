@@ -120,8 +120,25 @@ const FAILURE_LABEL: Record<string, string> = {
   AUTHENTICATED_USER_MISMATCH: "The XpertApply website is signed in as a different account than this extension. Nothing was filled. Sign in to the same account in both, then try again.",
   NO_MATCHING_FRAME: "XpertApply couldn’t read the application on this page. Reload the page and try again.",
   PROTOCOL_MISMATCH: "The extension was updated. Reload this page to continue.",
+  DETECTION_STALLED: "XpertApply is taking longer than expected to read this page. Reload the page, or choose “Fill application” to try again.",
+  DOCUMENT_ID_UNAVAILABLE: "Chrome couldn’t identify this page for XpertApply. Reload the page and try again.",
   INTERNAL_HANDOFF_FAILURE: "XpertApply couldn’t hand this application to the page. Reopen it from XpertApply."
 };
+
+/**
+ * How long a view may sit on a "waiting" state with no news from the worker before the assistant says so. The worker answers a page in
+ * well under a second; anything past this is a suspended or restarted worker, a lost message or a page that never reported back, and
+ * the honest state is "taking longer than expected, try again", not an unbounded Detecting…
+ */
+export const DETECTION_STALL_MS = 45_000;
+const AWAITING_STATES = new Set(["detecting_ats", "preparing", "opening_tab", "waiting_for_tab", "waiting_for_content_script", "fetching_package"]);
+const SITE_ACCESS_STATES = new Set(["site_access_required", "site_access_denied", "site_access_revoked"]);
+
+function awaitingSince(view: LaunchViewState): number | null {
+  const waiting = view.sessionId != null && !view.running && !view.failureCode && AWAITING_STATES.has(view.state)
+    && !SITE_ACCESS_STATES.has(view.siteAccess);
+  return waiting ? view.updatedAt : null;
+}
 
 /**
  * What to say for a failure code with no specific text. "Preparing" is only true while no application is open; once the form has been
@@ -141,6 +158,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   let context: ApplicationAssistantContext = { available: false };
   let view: LaunchViewState | null = null;
   let refreshQueued = false;
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
 
   const element = (id: string): HTMLElement => {
     const found = options.root.getElementById(id);
@@ -259,6 +277,10 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
    */
   function effectiveView(raw: LaunchViewState): LaunchViewState {
     const direct = typeof raw.requestId === "string" && raw.requestId.startsWith("direct-");
+    const since = awaitingSince(raw);
+    if (since != null && Date.now() - since >= DETECTION_STALL_MS) {
+      return { ...raw, state: "failed", failureCode: "DETECTION_STALLED", failureRecoverable: true, running: false } as LaunchViewState;
+    }
     if (!(accountStatus === "signed_out" && direct && raw.sessionId != null)) return raw;
     return {
       ...raw, sessionId: null, state: "failed", failureCode: "DIRECT_SIGNED_OUT", failureRecoverable: true, running: false,
@@ -267,7 +289,18 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     } as LaunchViewState;
   }
 
+  /** Re-render when the current wait crosses the stall limit, so a silent worker still ends in a stated state. */
+  function armStallTimer(): void {
+    if (stallTimer !== undefined) clearTimeout(stallTimer);
+    stallTimer = undefined;
+    const since = view ? awaitingSince(view) : null;
+    if (disposed || since == null) return;
+    const remaining = since + DETECTION_STALL_MS - Date.now();
+    if (remaining > 0) stallTimer = setTimeout(() => { stallTimer = undefined; if (!disposed) render(); }, remaining + 5);
+  }
+
   function render(): void {
+    armStallTimer();
     const current = view ? effectiveView(view) : null;
     if (!current) {
       renderUnavailable();
@@ -464,6 +497,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       return;
     }
     if (disposed || tabId !== context.tabId) return;
+    // Pushes can arrive out of order across a worker restart; an older snapshot of the same workflow never replaces a newer one.
+    if (nextView && view && nextView.requestId === view.requestId && nextView.sessionId === view.sessionId && nextView.updatedAt < view.updatedAt) return;
     view = nextView;
     if (!nextView && context.status === "bound") context = { ...context, status: "unsupported" };
     render();
@@ -475,6 +510,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       if (disposed) return;
       disposed = true;
       refreshGeneration += 1;
+      if (stallTimer !== undefined) clearTimeout(stallTimer);
       for (const remove of ownedListeners.splice(0)) remove();
     }
   };

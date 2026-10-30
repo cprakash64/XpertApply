@@ -25,3 +25,13 @@ describe("which Workday pages ask Chrome for site access", () => {
     expect(applicationProviderForUrl(url) !== null).toBe(asks);
   });
 });
+
+describe("a provider with no fill engine, or an unknown host, never asks Chrome for access", () => {
+  it.each([
+    ["https://www.indeed.com/viewjob?jk=abc", false],
+    ["https://careers.example-employer.test/jobs/1/apply", false],
+    ["http://generalmotors.wd5.myworkdayjobs.com/en-US/Careers_GM/job/x/apply", false]
+  ])("%s -> %s", (url, asks) => {
+    expect(applicationProviderForUrl(url) !== null).toBe(asks);
+  });
+});

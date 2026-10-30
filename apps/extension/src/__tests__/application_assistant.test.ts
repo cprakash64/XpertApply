@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { contentReadyViewPatch, projectWorkflowProgress } from "../content/workflowProgress";
 import type { ProgressPayload } from "../messages";
 import type { LaunchViewState } from "../messages";
 import {
   createApplicationAssistant,
+  DETECTION_STALL_MS,
   type ApplicationAssistantActions,
   type ApplicationAssistantContext,
   type ApplicationAssistantController
@@ -517,6 +518,79 @@ describe("shared application assistant", () => {
     await controller.refresh();
     expect(document.getElementById("ats")?.textContent).toBe("Detecting…");
     expect(document.getElementById("resume")?.textContent).toBe("Preparing…");
+  });
+
+  // EXT-E2C: a view left on its initial waiting state (suspended worker, lost message, refused page) must end in a stated state.
+  describe("bounded waiting", () => {
+    const waiting = (overrides: Partial<LaunchViewState> = {}) => makeView({
+      state: "detecting_ats", fieldsDiscovered: 0, filled: 0, skipped: 0, reviewRequired: 0, atsDisplayName: null, atsId: null,
+      resumeStatus: "pending", coverStatus: "pending", reachedFinalStep: false, running: false, failureCode: null, updatedAt: Date.now(), ...overrides
+    });
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); vi.setSystemTime(1_000_000); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("says Detecting while the wait is young and stops saying it at the limit, with no event arriving", async () => {
+      view = waiting();
+      await controller.refresh();
+      expect(document.getElementById("ats")?.textContent).toBe("Detecting…");
+      expect(document.getElementById("errors")?.hidden).toBe(true);
+      vi.advanceTimersByTime(DETECTION_STALL_MS - 1000);
+      expect(document.getElementById("errors")?.hidden).toBe(true);
+      vi.advanceTimersByTime(1100);
+      expect(document.getElementById("errors")?.textContent).toMatch(/taking longer than expected/);
+      expect(document.getElementById("ats")?.textContent).toBe("—");
+      expect(document.getElementById("resume")?.textContent).toBe("Not started");
+      expect((document.getElementById("fill") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("a fresh snapshot from a retry restarts the wait and never shows the earlier verdict", async () => {
+      view = waiting();
+      await controller.refresh();
+      vi.advanceTimersByTime(DETECTION_STALL_MS + 100);
+      expect(document.getElementById("errors")?.hidden).toBe(false);
+      viewListener?.(42, waiting({ updatedAt: Date.now() }));
+      expect(document.getElementById("errors")?.hidden).toBe(true);
+      expect(document.getElementById("ats")?.textContent).toBe("Detecting…");
+      vi.advanceTimersByTime(DETECTION_STALL_MS + 100);
+      expect(document.getElementById("errors")?.hidden).toBe(false);
+    });
+
+    it("an older snapshot of the same workflow, arriving late, never replaces a newer one", async () => {
+      view = makeView({ updatedAt: 500, state: "completed_with_review" });
+      await controller.refresh();
+      viewListener?.(42, waiting({ updatedAt: 100 }));
+      expect(document.getElementById("stage")?.textContent).toContain("review");
+      expect(document.getElementById("ats")?.textContent).toBe("Greenhouse");
+    });
+
+    it("a wait for the user's decision in Chrome is not a stall", async () => {
+      view = waiting({ siteAccess: "site_access_required", siteAccessPattern: "https://x.test/*", siteAccessOrigin: "https://x.test" });
+      await controller.refresh();
+      vi.advanceTimersByTime(DETECTION_STALL_MS * 3);
+      expect(document.getElementById("errors")?.textContent ?? "").not.toMatch(/taking longer/);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("a running fill is not cut short, and dispose leaves no timer behind", async () => {
+      view = waiting({ running: true, state: "filling" });
+      await controller.refresh();
+      vi.advanceTimersByTime(DETECTION_STALL_MS * 3);
+      expect(document.getElementById("errors")?.hidden).toBe(true);
+      view = waiting();
+      await controller.refresh();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      controller.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each([
+      ["DOCUMENT_ID_UNAVAILABLE", /couldn’t identify this page/],
+      ["DETECTION_STALLED", /taking longer than expected/]
+    ])("%s has its own text", async (code, text) => {
+      view = waiting({ state: "failed", failureCode: code, failureRecoverable: true });
+      await controller.refresh();
+      expect(document.getElementById("errors")?.textContent).toMatch(text);
+    });
   });
 
   it("fails deterministically when a required scoped control is missing", () => {

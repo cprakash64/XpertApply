@@ -217,7 +217,7 @@ export function employerPage(host: string, url: string): string {
   return /\/apply$/.test(p) ? simpleForm("Apply - Workday-shaped") : listing("Workday careers");
 }
 
-export async function employerTls(extraMaps: string[] = []) {
+export async function employerTls(extraMaps: string[] = [], pageFor?: (host: string, url: string) => string | null) {
   const dir = mkdtempSync(path.join(tmpdir(), "xa-core1-tls-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", "/CN=employer.test"], { stdio: "ignore" });
   const requests: string[] = [];
@@ -225,7 +225,7 @@ export async function employerTls(extraMaps: string[] = []) {
     const host = String(rq.headers.host ?? "").split(":")[0];
     requests.push(`${host}${rq.url}`);
     rs.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    rs.end(employerPage(host, rq.url ?? "/"));
+    rs.end(pageFor?.(host, rq.url ?? "/") ?? employerPage(host, rq.url ?? "/"));
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
