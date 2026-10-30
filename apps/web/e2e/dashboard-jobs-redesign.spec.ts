@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { injectAxe } from "./support/axe";
 
 /**
  * The redesigned Dashboard and Jobs pages in a real browser. The API is mocked with synthetic data, including a fake `/jobs`
@@ -7,7 +8,6 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *
  *   SHOT_DIR=/path npx playwright test e2e/dashboard-jobs-redesign.spec.ts -g capture    # also writes review screenshots
  */
-const AXE = require.resolve("axe-core/axe.min.js");
 
 const job = (id: number, over: Record<string, unknown> = {}) => ({
   id, title: `Role ${String(id).padStart(3, "0")}`, company: `Company ${id}`, company_domain: "", company_logo_url: "", company_logo_proxy_path: null,
@@ -75,7 +75,7 @@ const rgb = (value: string) => (value.match(/[\d.]+/g) ?? []).map(Number).slice(
 const colourOf = (page: Page, selector: string) => page.locator(selector).first().evaluate((el) => getComputedStyle(el).color);
 
 async function axeViolations(page: Page) {
-  await page.addScriptTag({ path: AXE });
+  await injectAxe(page);
   return page.evaluate(async () => {
     // @ts-expect-error axe is injected above
     const result = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] } });

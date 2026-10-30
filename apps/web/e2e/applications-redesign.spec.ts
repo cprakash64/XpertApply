@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { injectAxe } from "./support/axe";
 
 /**
  * The redesigned Applications page (master-detail), the removal of the sidebar theme control and the light default,
@@ -10,7 +11,6 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *   SHOT_DIR=/path npx playwright test e2e/applications-redesign.spec.ts -g screenshots   # also writes review screenshots
  */
 const PDF = Buffer.from("%PDF-1.4\n%synthetic\n");
-const AXE = require.resolve("axe-core/axe.min.js");
 
 const job = (id: number, company: string, title: string, fit: number | null) => ({
   id, title, company, company_domain: "", company_logo_url: "", company_logo_proxy_path: null, location: id % 2 ? "Remote" : "New York, NY",
@@ -72,7 +72,7 @@ const luminance = (rgb: string) => { const [r, g, b] = (rgb.match(/[\d.]+/g) ?? 
 const list = (page: Page) => page.getByRole("list", { name: "Tracked applications" });
 
 async function axeViolations(page: Page) {
-  await page.addScriptTag({ path: AXE });
+  await injectAxe(page);
   return page.evaluate(async () => {
     // @ts-expect-error axe is injected above
     const result = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] } });

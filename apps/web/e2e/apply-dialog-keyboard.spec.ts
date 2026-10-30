@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { injectAxe } from "./support/axe";
 
 /**
  * Keyboard behaviour of the Apply dialog (finding F4), in a real browser against a mocked API. Escape must close it exactly like the
@@ -9,7 +10,6 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *   npx playwright test e2e/apply-dialog-keyboard.spec.ts      (run against a production build)
  */
 const API = process.env.API_BASE_URL ?? "http://localhost:8000";
-const AXE = require.resolve("axe-core/axe.min.js");
 
 const job = (id: number) => ({
   id, title: `Role ${String(id).padStart(3, "0")}`, company: `Company ${id}`, company_domain: "", company_logo_url: "", company_logo_proxy_path: null,
@@ -55,6 +55,14 @@ const cardOne = (page: Page) => page.locator('[data-job-id="1"]');
 const dialog = (page: Page) => page.getByRole("dialog", { name: "Assisted application" });
 const insideDialog = (page: Page) => page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]'));
 const activeIsApplyOnCardOne = (page: Page) => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return !!a && a.tagName === "BUTTON" && /Apply on official site/.test(a.textContent || "") && !!a.closest('[data-job-id="1"]'); });
+/**
+ * macOS Safari/WebKit moves plain Tab between text fields only; buttons and links are reached with Option+Tab (the "Press Tab to
+ * highlight each item" convention). The assertions are identical in every browser; only the traversal key differs.
+ */
+const traversal = (browserName: string) => {
+  const mac = browserName === "webkit" && process.platform === "darwin";
+  return { next: mac ? "Alt+Tab" : "Tab", prev: mac ? "Alt+Shift+Tab" : "Shift+Tab" };
+};
 async function openByMouse(page: Page) { await cardOne(page).getByRole("button", { name: /Apply on official site/ }).click(); await expect(dialog(page)).toBeVisible(); await expect(page.getByText("Tailored resume")).toBeVisible(); }
 
 for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "mobile", width: 390, height: 844 }]) {
@@ -81,15 +89,16 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "
       expect(popups).toBe(0); expect(page.url()).toBe(url);                              // no employer-site navigation
     });
 
-    test("opens by keyboard; Tab and Shift+Tab stay inside; the page behind is unreachable; Escape closes", async ({ page }) => {
+    test("opens by keyboard; Tab and Shift+Tab stay inside; the page behind is unreachable; Escape closes", async ({ page, browserName }) => {
+      const key = traversal(browserName);
       await install(page);
       await page.goto("/jobs"); await expect(page.getByTestId("job-card").first()).toBeVisible();
       await cardOne(page).getByRole("button", { name: /Apply on official site/ }).focus();
       await page.keyboard.press("Enter");
       await expect(dialog(page)).toBeVisible(); await expect(page.getByText("Tailored resume")).toBeVisible();
       expect(await insideDialog(page)).toBe(true);
-      for (let i = 0; i < 14; i += 1) { await page.keyboard.press("Tab"); expect(await insideDialog(page)).toBe(true); }
-      for (let i = 0; i < 14; i += 1) { await page.keyboard.press("Shift+Tab"); expect(await insideDialog(page)).toBe(true); }
+      for (let i = 0; i < 14; i += 1) { await page.keyboard.press(key.next); expect(await insideDialog(page)).toBe(true); }
+      for (let i = 0; i < 14; i += 1) { await page.keyboard.press(key.prev); expect(await insideDialog(page)).toBe(true); }
       // The page behind cannot be clicked while the dialog is open.
       await expect(page.getByRole("button", { name: "Save" }).first().click({ trial: true, timeout: 1500 })).rejects.toThrow();
       await page.keyboard.press("Escape");
@@ -113,7 +122,7 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 900 }, { name: "
       await install(page);
       await page.goto("/jobs"); await expect(page.getByTestId("job-card").first()).toBeVisible();
       await openByMouse(page);
-      await page.addScriptTag({ path: AXE });
+      await injectAxe(page);
       const violations = await page.evaluate(async () => {
         // Colour contrast is excluded on purpose: the muted "job · company" line in the header measures 4.49:1 (needs 4.5:1) on the
         // mobile glass background. That is a pre-existing design-token finding, separate from this keyboard fix; every other rule applies.
