@@ -1,6 +1,6 @@
 import clsx from "clsx";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive" | "sapphire";
 export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 type SharedButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -22,6 +22,10 @@ const variantClasses: Record<ButtonVariant, string> = {
     "border border-action-secondary-border bg-action-secondary text-action-secondary-foreground hover:bg-action-ghost-hover active:bg-surface-subtle",
   ghost:
     "bg-transparent text-action-ghost-foreground hover:bg-action-ghost-hover hover:text-foreground active:bg-surface-subtle",
+  // Scoped emphasis for one page-level action (Jobs: "Find fresh jobs"): a stronger Sapphire with white text in both themes.
+  // The default primary is untouched.
+  sapphire:
+    "bg-action-sapphire text-action-sapphire-foreground shadow-subtle hover:bg-action-sapphire-hover active:translate-y-px",
   destructive:
     "bg-action-destructive text-action-destructive-foreground shadow-subtle hover:bg-action-destructive-hover active:translate-y-px"
 };

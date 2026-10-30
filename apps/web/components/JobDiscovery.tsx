@@ -666,7 +666,7 @@ export function JobDiscovery() {
         summary={resultSummary}
         actions={
           <>
-            <Button type="button" variant="primary" size="sm" className="whitespace-nowrap max-sm:gap-1.5 max-sm:px-1.5 max-sm:text-[13px]" onClick={findFreshJobs} disabled={busy}>
+            <Button type="button" variant="sapphire" size="sm" className="whitespace-nowrap max-sm:gap-1.5 max-sm:px-1.5 max-sm:text-[13px]" onClick={findFreshJobs} disabled={busy}>
               {discovering ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Search aria-hidden className="h-4 w-4" />} Find fresh jobs
             </Button>
             <Button type="button" variant="ghost" size="sm" className="whitespace-nowrap max-sm:gap-1.5 max-sm:px-1.5 max-sm:text-[13px]" onClick={refreshMatches} disabled={busy}>

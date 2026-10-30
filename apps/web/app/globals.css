@@ -57,6 +57,10 @@
   --color-action-primary-background: var(--xa-navy);
   --color-action-primary-foreground: var(--xa-light-card);
   --color-action-primary-hover: var(--xa-navy-hover);
+  /* Sapphire emphasis action: white text, 5.8:1 (hover 7.3:1). */
+  --color-action-sapphire-background: #2a6a9a;
+  --color-action-sapphire-foreground: #ffffff;
+  --color-action-sapphire-hover: #235a85;
   --color-action-secondary-background: var(--xa-light-card);
   --color-action-secondary-foreground: var(--xa-ink);
   --color-action-secondary-border: var(--xa-light-border-strong);
@@ -251,6 +255,10 @@
   --color-action-primary-background: #8db6d8;
   --color-action-primary-foreground: #101a28;
   --color-action-primary-hover: #a6c7e2;
+  /* Sapphire emphasis action: white text, 5.6:1 (hover 4.6:1). */
+  --color-action-sapphire-background: #2868b8;
+  --color-action-sapphire-foreground: #ffffff;
+  --color-action-sapphire-hover: #2f76c9;
   --color-action-secondary-background: #243449;
   --color-action-secondary-foreground: #edf3fa;
   --color-action-secondary-border: #52667f;

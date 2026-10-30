@@ -151,11 +151,11 @@ describe("Jobs list: server ranking and paging", () => {
     expect(window.location.search).not.toContain("sort=");        // the default is not written to the URL
   });
 
-  it("offers Best & recent, Best fit and Newest first, in that order", async () => {
+  it("offers Best & Recent, Best Fit and Newest First, in that order", async () => {
     render(React.createElement(JobDiscovery));
     await screen.findAllByTestId("job-card");
     const options = within(screen.getByLabelText("Sort jobs")).getAllByRole("option").map((o) => o.textContent);
-    expect(options).toEqual(["Best & recent", "Best fit", "Newest first"]);
+    expect(options).toEqual(["Best & Recent", "Best Fit", "Newest First"]);
     expect((screen.getByLabelText("Sort jobs") as HTMLSelectElement).value).toBe("best_recent");
   });
 

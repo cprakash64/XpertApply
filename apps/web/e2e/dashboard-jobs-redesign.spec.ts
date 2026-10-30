@@ -278,6 +278,35 @@ test.describe("Jobs", () => {
     expect(violations.filter((v) => v !== "script-src-elem inline" && !v.startsWith("connect-src http://localhost:8000/"))).toEqual([]);
   });
 
+  test("match-score panel: real score, band colour, bar width; sapphire primary action", async ({ page }) => {
+    await install(page);
+    await page.goto("/jobs");
+    const panels = page.getByTestId("match-score-panel");
+    await expect(panels.first()).toBeVisible();
+    // Mock scores are [92, 66, 38][id % 3] and the list is ranked best-first, so the first three cards are 66 (id 1), 38 (id 2), 92 (id 3).
+    const read = async (id: number) => {
+      const panel = page.locator(`[data-job-id="${id}"] [data-testid="match-score-panel"]`);
+      return { tone: await panel.getAttribute("data-fit-tone"), text: await panel.innerText(), width: await panel.locator("div.h-full").evaluate((el) => (el as HTMLElement).style.width) };
+    };
+    const expected: Array<[number, string, string, string]> = [[3, "strong", "92", "92%"], [1, "good", "66", "66%"], [2, "low", "38", "38%"]];
+    for (const [id, tone, score, width] of expected) {
+      const panel = await read(id);
+      expect(panel.tone).toBe(tone);
+      expect(panel.text).toContain("MATCH SCORE");
+      expect(panel.text).toContain(score);
+      expect(panel.width).toBe(width);
+    }
+    const box = (await panels.first().boundingBox())!;
+    const card = (await page.getByTestId("job-card").first().boundingBox())!;
+    expect(box.x + box.width).toBeGreaterThan(card.x + card.width - 40);                  // right-aligned in the card
+    expect(card.height).toBeLessThan(230);
+    const find = page.getByRole("button", { name: "Find fresh jobs" });
+    const [bg, fg] = await find.evaluate((el) => [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]);
+    expect(rgb(fg)).toEqual([255, 255, 255]);
+    expect(rgb(bg)).not.toEqual(rgb(await page.getByRole("button", { name: /Apply on official site/ }).first().evaluate((el) => getComputedStyle(el).backgroundColor)));        // distinct from the card's primary
+    expect(await overflow(page)).toBeLessThanOrEqual(0);
+  });
+
   test("one filled action per card; the others are quiet", async ({ page }) => {
     await install(page);
     await page.goto("/jobs");
@@ -294,12 +323,12 @@ test.describe("Jobs", () => {
   test("fit chips are green, amber and red, with the number and the label", async ({ page }) => {
     await install(page);
     await page.goto("/jobs");
-    const chips = page.locator("[data-testid='job-card'] [data-fit-tone]");
+    const chips = page.locator("[data-testid='match-score-panel']");
     const colours = new Map<string, number[]>();
     for (let i = 0; i < 3; i++) {
       const chip = chips.nth(i);
       const tone = (await chip.getAttribute("data-fit-tone"))!;
-      colours.set(tone, rgb(await chip.evaluate((el) => getComputedStyle(el).color)));
+      colours.set(tone, rgb(await chip.locator(".tabular-nums").evaluate((el) => getComputedStyle(el).color)));
       await expect(chip).toContainText(/\d+/);
       await expect(chip).toContainText(/Strong fit|Good fit|Low fit/);
     }
@@ -327,12 +356,12 @@ test.describe("Jobs", () => {
     expect(hits.filter((h) => h.path === "/jobs")).toHaveLength(3);                        // and it stopped asking
   });
 
-  test("the sort control offers Best & recent (default), Best fit and Newest first and reloads from the server", async ({ page }) => {
+  test("the sort control offers Best & Recent (default), Best Fit and Newest First and reloads from the server", async ({ page }) => {
     const hits = await install(page);
     await page.goto("/jobs");
     await expect(page.getByTestId("job-card").first()).toBeVisible();
     await expect(page.getByLabel("Sort jobs")).toHaveValue("best_recent");
-    await expect(page.getByLabel("Sort jobs").locator("option")).toHaveText(["Best & recent", "Best fit", "Newest first"]);
+    await expect(page.getByLabel("Sort jobs").locator("option")).toHaveText(["Best & Recent", "Best Fit", "Newest First"]);
     await page.getByLabel("Sort jobs").selectOption("newest");
     await expect.poll(() => hits.filter((h) => h.path === "/jobs").at(-1)?.params.get("sort")).toBe("newest");
     await expect(page).toHaveURL(/sort=newest/);
@@ -423,6 +452,11 @@ test.describe("screenshots", () => {
     };
     const dark = await open(1440, 900, "dark");
     await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-collapsed.png` });
+    await dark.screenshot({ path: `${dir}/jobs-final-desktop-dark-full.png`, fullPage: true });
+    await dark.screenshot({ path: `${dir}/jobs-final-closeup-navbar-and-score.png`, clip: { x: 256, y: 0, width: 1184, height: 330 } });
+    await dark.locator("[data-job-id='3']").screenshot({ path: `${dir}/jobs-final-fit-high-dark.png` });
+    await dark.locator("[data-job-id='1']").screenshot({ path: `${dir}/jobs-final-fit-medium-dark.png` });
+    await dark.locator("[data-job-id='2']").screenshot({ path: `${dir}/jobs-final-fit-low-dark.png` });
     await dark.getByLabel("Role or skill").click();
     await dark.waitForTimeout(300);
     await dark.screenshot({ path: `${dir}/jobs-nav-desktop-dark-expanded.png` });
@@ -436,6 +470,10 @@ test.describe("screenshots", () => {
 
     const light = await open(1440, 900, "light");
     await light.screenshot({ path: `${dir}/jobs-nav-desktop-light.png` });
+    await light.screenshot({ path: `${dir}/jobs-final-desktop-light-full.png`, fullPage: true });
+    await light.locator("[data-job-id='3']").screenshot({ path: `${dir}/jobs-final-fit-high-light.png` });
+    await light.locator("[data-job-id='1']").screenshot({ path: `${dir}/jobs-final-fit-medium-light.png` });
+    await light.locator("[data-job-id='2']").screenshot({ path: `${dir}/jobs-final-fit-low-light.png` });
     await light.context().close();
 
     for (const width of [1920, 1024, 768]) {

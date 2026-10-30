@@ -25,7 +25,8 @@ import {
   formatApplicationStatus,
   getApplicationStatusTone
 } from "@/lib/applicationStatus";
-import { FitPill, FitScoreChip, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
+import { FitPill, Meta, SalaryChip, SourceBadge } from "@/components/jobs/badges";
+import { MatchScoreInline, MatchScorePanel } from "@/components/jobs/MatchScore";
 import { AssistedApplyButton } from "@/components/jobs/ApplyButton";
 import {
   capitalize,
@@ -104,6 +105,9 @@ export const JobCard = memo(function JobCard({
       // gave the document a horizontal scrollbar.
       className="group relative min-w-0 cursor-pointer rounded-card border border-line-default bg-surface-card p-4 transition-[border-color,background-color] duration-fast ease-standard hover:border-line-interactive hover:bg-surface-subtle has-[:focus-visible]:border-line-selected sm:p-5"
     >
+      {/* From `lg` the match score is a panel in a second column beside the whole card body; below it, a compact inline readout. */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-x-5">
+      <div className="min-w-0">
       <div className="flex min-w-0 items-start gap-3">
         <CompanyLogo
           company={job.company}
@@ -135,7 +139,7 @@ export const JobCard = memo(function JobCard({
               <p className="truncate text-sm text-foreground-muted">{job.company}</p>
             </div>
             {/* Beside the title from `sm`, under it on a phone; always text as well as colour. */}
-            <FitScoreChip score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
+            <MatchScoreInline className="lg:hidden" score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-foreground-muted">
@@ -195,6 +199,9 @@ export const JobCard = memo(function JobCard({
           onClick={() => actions.onGenerate(job.id, "cover_letter")}
         />
         <PeopleAction jobId={job.id} onOpen={() => actions.onOpenPeople(job.id)} />
+      </div>
+      </div>
+      <MatchScorePanel className="hidden lg:flex" score={fit} label={job.match?.fit_label ?? null} scoreState={job.match?.score_state ?? null} />
       </div>
     </article>
   );

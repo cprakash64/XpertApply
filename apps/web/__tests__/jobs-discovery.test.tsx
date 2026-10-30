@@ -208,8 +208,11 @@ describe("JobDiscovery", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Find fresh jobs/ }));
 
     const card = cardOf("Machine Learning Engineer");
-    expect(within(card).getByText("92")).toBeInTheDocument();
-    expect(within(card).getByText("Strong fit")).toBeInTheDocument();
+    // The panel (lg and up) and the compact readout (phone) both render; CSS shows one. Check the panel.
+    const panel = within(card).getByTestId("match-score-panel");
+    expect(within(panel).getByText("92")).toBeInTheDocument();
+    expect(within(panel).getByText("Strong fit")).toBeInTheDocument();
+    expect(within(panel).getByText("Match score", { selector: "p" })).toBeInTheDocument();
     expect(within(card).getByText("Posted 2 days ago")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: /Apply on official site/ })).toBeInTheDocument();
     // Source badge shows the ATS provider name.
@@ -637,24 +640,30 @@ describe("JobDiscovery", () => {
     render(React.createElement(JobDiscovery));
     await userEvent.click(await screen.findByRole("button", { name: /Find fresh jobs/ }));
 
-    const badge = async (title: string) => {
+    const panel = async (title: string) => {
       const card = (await screen.findByText(title)).closest("article") as HTMLElement;
-      return card.querySelector("[data-fit-tone]") as HTMLElement;
+      return within(card).getByTestId("match-score-panel");
     };
-    const strong = await badge("Strong Role");
+    const numberOf = (el: HTMLElement, text: string) => within(el).getByText(text);
+    const barOf = (el: HTMLElement) => el.querySelector("div.h-full") as HTMLElement;
+    const strong = await panel("Strong Role");
+    const good = await panel("Good Role");
+    const low = await panel("Low Role");
     expect(strong).toHaveAttribute("data-fit-tone", "strong");
-    expect(strong.className).toContain("fit-strong");
-    const good = await badge("Good Role");
     expect(good).toHaveAttribute("data-fit-tone", "good");
-    expect((await badge("Stretch Role"))).toHaveAttribute("data-fit-tone", "stretch");
-    expect((await badge("Low Role"))).toHaveAttribute("data-fit-tone", "low");
-    // Colour is semantic (green strong, amber good/stretch, red low) and the band is ALSO carried by the label and number.
-    expect(good.className).toContain("status-warning");
-    expect((await badge("Low Role")).className).toContain("status-danger");
-    expect(within(strong).getByText("88")).toBeInTheDocument();
-    // No colored top strip element inside any badge.
-    expect(strong.querySelector("[class*='h-1.5']")).toBeNull();
-    expect(good.querySelector("[aria-hidden]")).toBeNull();
+    expect(await panel("Stretch Role")).toHaveAttribute("data-fit-tone", "stretch");
+    expect(low).toHaveAttribute("data-fit-tone", "low");
+    // Colour is semantic (green strong, amber good/stretch, red low) on the number AND the bar; the band is ALSO carried by the label and number.
+    expect(numberOf(strong, "88").className).toContain("fit-strong");
+    expect(barOf(strong).className).toContain("bg-fit-strong");
+    expect(numberOf(good, "79").className).toContain("status-warning");
+    expect(barOf(good).className).toContain("bg-status-warning");
+    expect(numberOf(low, "30").className).toContain("status-danger");
+    expect(barOf(low).className).toContain("bg-status-danger");
+    // The bar's fill is the real score.
+    expect(barOf(strong).style.width).toBe("88%");
+    expect(barOf(low).style.width).toBe("30%");
+    expect(within(strong).getByText("Strong fit")).toBeInTheDocument();
   });
 
   it("shows a company logo image on the card when a logo URL is provided", async () => {

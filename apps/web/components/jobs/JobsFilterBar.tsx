@@ -98,9 +98,9 @@ export function JobsFilterBar({
             isDefault={query.sort === JOBS_QUERY_DEFAULTS.sort}
             onChange={(value) => onChange({ sort: value as JobSort })}
             options={[
-              { value: "best_recent", label: "Best & recent" },
-              { value: "fit", label: "Best fit" },
-              { value: "newest", label: "Newest first" }
+              { value: "best_recent", label: "Best & Recent" },
+              { value: "fit", label: "Best Fit" },
+              { value: "newest", label: "Newest First" }
             ]}
           />
 
