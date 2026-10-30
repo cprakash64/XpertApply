@@ -121,3 +121,6 @@ Rollout: staging only, with the section 6 nginx patch and web release. Rollback:
 1. Staging nginx header patch (section 5/6): fixes the confirmed staging gap and is independent of any web build.
 2. Production nginx `Referrer-Policy` map (section 5): required before the web release that includes the recovery pages reaches production, otherwise `/reset-password` gets a conflicting second `Referrer-Policy`. Production nginx file not read or changed.
 3. Optional hardening, not needed now: production API `X-Frame-Options`/`Referrer-Policy` (JSON only), longer production HSTS after a hostname audit.
+
+## 14. S2 staging web release (PREPARED, NOT EXECUTED)
+Runbook `docs/release/PUI-S2_RUNBOOK.md`; script and tests in `docs/release/pui-s2/`. Image `xpertapply-staging-web:s2-95de977-amd64` (revision `95de9778…`, fingerprint `ff8c29c3…`). Web-only, after S1; rollback target is the verified F4 web (`baf0817`), not F2. Safari/WebKit Apply-dialog findings and the F4 deployment anomaly analysis are recorded in the runbook (sections 7 and 9).
