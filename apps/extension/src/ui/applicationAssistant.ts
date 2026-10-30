@@ -113,6 +113,13 @@ const FAILURE_LABEL: Record<string, string> = {
   APPLICATION_CTA_AMBIGUOUS: "Click Apply now to continue. XpertApply will follow you to the application form.",
   APPLICATION_CTA_NOT_FOUND: "Click Apply now to continue. XpertApply will follow you to the application form.",
   SITE_ACCESS_DENIED: "XpertApply can’t fill this application without access to the site.",
+  // The run was refused before it read the form; each of these needs the user to do one specific thing.
+  RUNTIME_MISMATCH: "XpertApply’s extension parts are from different versions. Reload this page, or reload the extension in chrome://extensions, then try again.",
+  RUNTIME_WORKER_UNREACHABLE: "The XpertApply extension did not respond. Reload this page and try again.",
+  API_BASE_MISMATCH: "This extension and the XpertApply site you used point at different environments, so nothing was filled. Use the same environment for both.",
+  AUTHENTICATED_USER_MISMATCH: "The XpertApply website is signed in as a different account than this extension. Nothing was filled. Sign in to the same account in both, then try again.",
+  NO_MATCHING_FRAME: "XpertApply couldn’t read the application on this page. Reload the page and try again.",
+  PROTOCOL_MISMATCH: "The extension was updated. Reload this page to continue.",
   INTERNAL_HANDOFF_FAILURE: "XpertApply couldn’t hand this application to the page. Reopen it from XpertApply."
 };
 
@@ -270,7 +277,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const activation = deriveActivationState(current);
     setText("stage", activationLabel(activation, current.siteAccessOrigin) ?? STAGE_LABEL[current.state] ?? current.state);
     renderSummary(current);
-    setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : current.sessionId == null ? "—" : "Detecting…");
+    // Detecting and Preparing are only true while a run is under way: a failed run that never read the form is neither.
+    const stalled = current.failureCode != null && !current.running;
+    setText("ats", current.atsDisplayName ? (current.limited ? `${current.atsDisplayName} (limited)` : current.atsDisplayName) : current.sessionId == null || stalled ? "—" : "Detecting…");
     setText("discovered", String(current.fieldsDiscovered));
     setText("filled", String(current.filled));
     setText("skipped", String(current.skipped));
@@ -284,8 +293,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
       ? "The employer’s submit step is on this page, but the application is not complete. XpertApply never submits for you."
       : "You’ve reached the employer’s submit step. Review everything, then submit yourself — XpertApply never submits for you.");
     // Documents belong to a prepared application; with none open there is nothing to prepare.
-    setText("resume", current.sessionId == null ? "—" : documentLabel(current.resumeStatus));
-    setText("cover", current.sessionId == null ? "—" : documentLabel(current.coverStatus));
+    setText("resume", current.sessionId == null ? "—" : documentLabel(current.resumeStatus, stalled));
+    setText("cover", current.sessionId == null ? "—" : documentLabel(current.coverStatus, stalled));
     const errorBox = element("errors");
     if (current.failureCode) {
       errorBox.hidden = false;
@@ -471,11 +480,11 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
   };
 }
 
-function documentLabel(status: LaunchViewState["resumeStatus"]): string {
+function documentLabel(status: LaunchViewState["resumeStatus"], stalled: boolean): string {
   switch (status) {
     case "uploaded": return "Uploaded ✓";
     case "review": return "Attach manually";
-    case "pending": return "Preparing…";
+    case "pending": return stalled ? "Not started" : "Preparing…";
     case "unavailable": return "Unavailable";
     default: return "—";
   }

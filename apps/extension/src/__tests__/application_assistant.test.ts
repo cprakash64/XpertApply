@@ -487,6 +487,38 @@ describe("shared application assistant", () => {
     expect(actions.completeSession).not.toHaveBeenCalled();
   });
 
+  // EXT-E2B: on a Reddit application the assistant read "Application form: Detecting…", "Resume: Preparing…" and the generic
+  // preparation error. The run had been refused by the runtime handshake before it read the form, with a code that had no text.
+  it.each([
+    ["RUNTIME_MISMATCH", /different versions/],
+    ["RUNTIME_WORKER_UNREACHABLE", /did not respond/],
+    ["API_BASE_MISMATCH", /different environments/],
+    ["AUTHENTICATED_USER_MISMATCH", /different account/],
+    ["NO_MATCHING_FRAME", /couldn’t read the application/],
+    ["PROTOCOL_MISMATCH", /extension was updated/]
+  ])("says what to do about %s instead of the generic preparation error", async (code, text) => {
+    view = makeView({ state: "failed", fieldsDiscovered: 0, filled: 0, atsDisplayName: null, atsId: null, resumeStatus: "pending", coverStatus: "pending", failureCode: code, failureRecoverable: true });
+    await controller.refresh();
+    const errors = document.getElementById("errors")!;
+    expect(errors.textContent).toMatch(text);
+    expect(errors.textContent).not.toContain("Something went wrong while preparing");
+  });
+
+  it("does not claim to be detecting or preparing once the run has failed before reading the form", async () => {
+    view = makeView({ state: "failed", fieldsDiscovered: 0, filled: 0, atsDisplayName: null, atsId: null, resumeStatus: "pending", coverStatus: "pending", failureCode: "API_BASE_MISMATCH", failureRecoverable: true });
+    await controller.refresh();
+    expect(document.getElementById("ats")?.textContent).toBe("—");
+    expect(document.getElementById("resume")?.textContent).toBe("Not started");
+    expect(document.getElementById("cover")?.textContent).toBe("Not started");
+  });
+
+  it("still says Detecting and Preparing while a run is genuinely under way", async () => {
+    view = makeView({ state: "detecting_ats", fieldsDiscovered: 0, filled: 0, atsDisplayName: null, atsId: null, resumeStatus: "pending", coverStatus: "pending", failureCode: null, running: true });
+    await controller.refresh();
+    expect(document.getElementById("ats")?.textContent).toBe("Detecting…");
+    expect(document.getElementById("resume")?.textContent).toBe("Preparing…");
+  });
+
   it("fails deterministically when a required scoped control is missing", () => {
     document.getElementById("fill")?.remove();
     expect(() => createController()).toThrow("Missing application assistant element: fill");

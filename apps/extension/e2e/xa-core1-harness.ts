@@ -244,7 +244,7 @@ export async function startDirectApi() {
   const log: ApiLogEntry[] = [];
   const sessions = new Map<number, { userId: number; url: string }>();
   let nextId = 7000;
-  const state = { revoked: false, refreshes: 0, failDirect: false, failSessions: false };
+  const state = { revoked: false, refreshes: 0, failDirect: false, failSessions: false, directStatus: 500, sessionStatus: 401 };
   const json = (res: import("node:http").ServerResponse, status: number, body: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
   const server: HttpServer = createHttp(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -262,7 +262,7 @@ export async function startDirectApi() {
     };
     if (url.pathname === "/extension/direct-sessions" && req.method === "POST") {
       if (!access || state.revoked) return json(res, 401, { detail: "Invalid token" });
-      if (state.failDirect) return json(res, 500, { detail: "preparation failed" });
+      if (state.failDirect) return json(res, state.directStatus, { detail: "preparation failed" });
       const userId = Number(access[1]);
       const u = new URL(String(body.url));
       if (u.search || u.hash) return json(res, 400, { detail: "query must not be sent" });
@@ -279,7 +279,7 @@ export async function startDirectApi() {
     const m = /^\/application-sessions\/(\d+)(\/.*)?$/.exec(url.pathname);
     if (m) {
       const id = Number(m[1]);
-      if (state.failSessions) return json(res, 401, { detail: "session revoked" });
+      if (state.failSessions) return json(res, state.sessionStatus, { detail: "session revoked" });
       const owner = sessions.get(id);
       if (!owner || !sess || Number(sess[2]) !== id || Number(sess[1]) !== owner.userId) return json(res, 403, { detail: "Token not valid for this session" });
       const rest = m[2] ?? "";

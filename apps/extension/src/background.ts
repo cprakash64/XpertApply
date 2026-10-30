@@ -1339,7 +1339,9 @@ function routeRuntimeMessage(
           sidePanelIdentity,
           // The environment of the XpertApply web app that launched this
           // application, recorded at launch. `null` when nothing launched it.
-          ...(await launchWebRuntime())
+          // A direct draft was not launched by the website: the record belongs to some EARLIER website launch (another
+          // account, another deployment) and must not be held against a draft the extension opened for its own account.
+          ...(await directDraftSender(sender) ? { webEnvironment: null, webApiBase: null, webAuthenticatedUserId: null } : await launchWebRuntime())
         });
       })();
       return true;
@@ -3125,6 +3127,11 @@ async function rememberWebRuntime(
   } catch {
     // Non-fatal: the check degrades to "unknown", which never blocks.
   }
+}
+
+async function directDraftSender(sender: chrome.runtime.MessageSender): Promise<boolean> {
+  const tabId = sender.tab?.id;
+  return tabId != null && (await getPending(tabId))?.source === "direct";
 }
 
 async function launchWebRuntime(): Promise<{
