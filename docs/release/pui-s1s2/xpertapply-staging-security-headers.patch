@@ -1,0 +1,49 @@
+--- a/etc/nginx/sites-available/xpertapply-staging
++++ b/etc/nginx/sites-available/xpertapply-staging
+@@ -1,6 +1,13 @@
+ # XpertApply staging only.
+ # Production virtual hosts are configured separately.
+ 
++# Referrer-Policy: keep the app's own value (the recovery pages send no-referrer so a reset token never leaks in a
++# Referer), and fall back to the production value for everything else, including nginx-generated responses.
++map $upstream_http_referrer_policy $xa_referrer_policy {
++    default $upstream_http_referrer_policy;
++    ""      "strict-origin-when-cross-origin";
++}
++
+ server {
+     listen 80;
+     server_name staging.xpertapply.com api-staging.xpertapply.com;
+@@ -23,12 +30,13 @@
+     server_name staging.xpertapply.com;
+ 
+     add_header X-Robots-Tag "noindex, nofollow" always;
++    include /etc/nginx/snippets/xpertapply-staging-headers-web.conf;
+ 
+     # Staging must not advertise itself: keep robots.txt and sitemap.xml as 404 (as the current build does) so crawlers
+     # can still fetch pages and see the noindex header. An add_header inside a location REPLACES the inherited ones,
+     # so the header is repeated here.
+-    location = /robots.txt  { add_header X-Robots-Tag "noindex, nofollow" always; return 404; }
+-    location = /sitemap.xml { add_header X-Robots-Tag "noindex, nofollow" always; return 404; }
++    location = /robots.txt  { add_header X-Robots-Tag "noindex, nofollow" always; include /etc/nginx/snippets/xpertapply-staging-headers-web.conf; return 404; }
++    location = /sitemap.xml { add_header X-Robots-Tag "noindex, nofollow" always; include /etc/nginx/snippets/xpertapply-staging-headers-web.conf; return 404; }
+ 
+     ssl_certificate /etc/letsencrypt/live/xpertapply-staging/fullchain.pem;
+     ssl_certificate_key <KEYPATH>;
+@@ -36,6 +44,8 @@
+     location / {
+         proxy_pass http://127.0.0.1:3001;
+         proxy_http_version 1.1;
++        proxy_hide_header Referrer-Policy;   # re-emitted once via $xa_referrer_policy
++        proxy_hide_header X-Robots-Tag;      # staging is always noindex: the server-level header is the single source
+ 
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+@@ -55,6 +65,7 @@
+     server_name api-staging.xpertapply.com;
+ 
+     add_header X-Robots-Tag "noindex, nofollow" always;
++    include /etc/nginx/snippets/xpertapply-staging-headers-api.conf;
+ 
+     ssl_certificate /etc/letsencrypt/live/xpertapply-staging/fullchain.pem;
+     ssl_certificate_key <KEYPATH>;

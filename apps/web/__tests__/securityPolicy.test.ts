@@ -4,13 +4,17 @@ const configPath = "../next.config.mjs";
 const policyPath = "../lib/securityPolicy.mjs";
 type HeaderRule = { source: string; headers: Array<{ key: string; value: string }> };
 const config = (await import(configPath)).default as { poweredByHeader: boolean; headers(): Promise<HeaderRule[]> };
-const { CSP_HEADER, CSP_PAGE_SOURCE, reportOnlyHeaders, reportOnlyPolicy, serializePolicy } = await import(policyPath) as {
+const { CSP_HEADER, CSP_PAGE_SOURCE, apiOrigin, reportOnlyHeaders, reportOnlyPolicy, serializePolicy } = await import(policyPath) as {
   CSP_HEADER: string;
   CSP_PAGE_SOURCE: string;
+  apiOrigin(env?: Record<string, string | undefined>): string;
   reportOnlyHeaders(): HeaderRule[];
-  reportOnlyPolicy(): string;
+  reportOnlyPolicy(env?: Record<string, string | undefined>): string;
   serializePolicy(directives: Array<[string, string[]]>): string;
 };
+
+const PRODUCTION = { NEXT_PUBLIC_API_URL: "https://api.xpertapply.com" };
+const STAGING = { NEXT_PUBLIC_API_URL: "https://api-staging.xpertapply.com" };
 
 describe("static-safe CSP observation", () => {
   it("uses only Report-Only and suppresses the powered-by header", async () => {
@@ -34,7 +38,7 @@ describe("static-safe CSP observation", () => {
   });
 
   it("serializes an ordered strict production candidate without broad script/connect sources", () => {
-    const policy = reportOnlyPolicy();
+    const policy = reportOnlyPolicy(PRODUCTION);
     const entries = policy.split("; ").map(d => d.split(" "));
     const directives = Object.fromEntries(entries.map(([name, ...values]) => [name, values]));
     expect(entries.map(([name]) => name)).toEqual([
@@ -65,6 +69,29 @@ describe("static-safe CSP observation", () => {
     const match = new RegExp(`^${CSP_PAGE_SOURCE}$`);
     for (const path of ["/", "/privacy", "/login", "/auth/google/callback", "/dashboard", "/missing-page"]) expect(match.test(path), path).toBe(true);
     for (const path of ["/_next/static/a.js", "/_next/image", "/api/test", "/brand/logo.png", "/favicon.ico", "/asset.css"]) expect(match.test(path), path).toBe(false);
-    expect(reportOnlyPolicy()).not.toMatch(/nonce-|localhost/);
+    expect(reportOnlyPolicy(PRODUCTION)).not.toMatch(/nonce-|localhost/);
+  });
+
+  it("derives the API origin per environment, so staging is not pointed at the production API", () => {
+    const staging = reportOnlyPolicy(STAGING);
+    expect(staging).toContain("connect-src 'self' https://api-staging.xpertapply.com;");
+    expect(staging).toContain("img-src 'self' https://api-staging.xpertapply.com data: blob:;");
+    expect(staging).not.toContain("https://api.xpertapply.com");
+    expect(reportOnlyPolicy(PRODUCTION)).not.toContain("api-staging");
+    expect(staging).toMatch(/; upgrade-insecure-requests$/);
+  });
+
+  it("normalises the origin and fails closed on an unsafe or malformed API URL", () => {
+    expect(apiOrigin({ NEXT_PUBLIC_API_URL: " https://api.xpertapply.com/some/path?x=1 " })).toBe("https://api.xpertapply.com");
+    expect(apiOrigin({})).toBe("http://localhost:8000"); // same fallback as lib/api.ts
+    for (const bad of ["not a url", "http://api.xpertapply.com", "ftp://x.example", "javascript:alert(1)", "https://a.example;script-src *"]) {
+      expect(() => apiOrigin({ NEXT_PUBLIC_API_URL: bad }), bad).toThrow();
+    }
+  });
+
+  it("allows a local http API for development and drops upgrade-insecure-requests there", () => {
+    const local = reportOnlyPolicy({});
+    expect(local).toContain("connect-src 'self' http://localhost:8000;");
+    expect(local).not.toContain("upgrade-insecure-requests");
   });
 });
