@@ -17,7 +17,7 @@ Loaded with `--load-extension` into a new empty user-data directory in Chrome fo
 Worker started and stayed alive through the observation window; the only log line was `service worker active`; no page or worker errors; extension storage empty (nothing configured, no credential). I started the browser with every hostname forced to fail DNS, so nothing could leave this machine, and recorded request attempts: **0 non-extension requests, 0 failed requests, 0 requests of any kind to any host, production or staging.** Initialization makes no network call.
 
 ## 5. Backend `EXTENSION_ALLOWED_IDS`
-Implementation: `extension_allowed_ids: list[str] = []` in pydantic-settings; a list field is read from the environment as JSON. `_redirect_allowed` lower-cases and compares the id exactly. Existing tests monkeypatch the Python list and never parse an environment value, so I tested the real path (environment string, `Settings`, `_redirect_allowed`, API code at the staging lineage):
+Implementation: `extension_allowed_ids: list[str] = []` in pydantic-settings; a list field is read from the environment as JSON. `_redirect_allowed` lower-cases the allowlist entries and compares the id exactly. Existing tests monkeypatch the Python list and never parse an environment value, so I tested the real path (environment string, `Settings`, `_redirect_allowed`, API code at the staging lineage):
 
 | Environment value | Parsed | Chosen ID | Other ID | Stranger |
 |---|---|---|---|---|
@@ -26,7 +26,7 @@ Implementation: `extension_allowed_ids: list[str] = []` in pydantic-settings; a 
 | bare ID or comma list | startup error (fails closed) | | | |
 | `[]` or unset, production | empty | rejected | rejected | rejected |
 | `[]` or unset, non-production | empty | **all accepted** | | |
-| uppercase ID | stored as given | allowed (matching lower-cases the ID, not the list entry; a list entry in uppercase still matches) | | |
+| uppercase ID | stored as given | allowed (entries are lower-cased when compared) | rejected | rejected |
 
 Conclusion: the JSON value `["cglmdonbfbadfbggkpajpkjgpekhkall"]` represents exactly one allowed ID at runtime. Compose passes it through unchanged (`docker compose config` with a temp env file renders `EXTENSION_ALLOWED_IDS: '["cglm…"]'`, `APP_ENV: staging`). The only unsafe case, an empty list outside production, is excluded for staging by `compose.staging.yml` (`${EXTENSION_ALLOWED_IDS:?}`) and by `staging_guard.py`, which requires a JSON list of 1 to 5 distinct valid IDs. **I cannot see the staging host's actual value;** the operator read-only check from E1 section 2 is still required and must show exactly the one ID.
 
