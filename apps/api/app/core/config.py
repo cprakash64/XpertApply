@@ -385,6 +385,11 @@ class Settings(BaseSettings):
     people_recruiter_enrichment_reserve: int = 3
     people_manager_enrichment_reserve: int = 3
     people_referrer_enrichment_reserve: int = 2
+    # Initial/incremental fit scoring driven by the Jobs page (app/jobs/initial_scoring.py). Per call: at most this many
+    # pending jobs and this long; at most this many users scored at once in one API process.
+    scoring_advance_batch_size: int = Field(default=200, ge=1, le=1000)
+    scoring_advance_time_budget_seconds: float = Field(default=4.0, gt=0, le=30)
+    scoring_advance_max_concurrent: int = Field(default=2, ge=1, le=8)
     people_discovery_rate_limit_per_hour: int = 10
     people_email_rate_limit_per_hour: int = 10
     # --- User discovery quota ------------------------------------------------

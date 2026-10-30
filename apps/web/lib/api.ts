@@ -297,12 +297,25 @@ export type JobsPage = {
   next_cursor: string | null;
 };
 
+/** Progress of fit scoring over the jobs the user can see (server-computed; see `apps/api/app/jobs/initial_scoring.py`). */
+export type ScoringProgress = {
+  state: "complete" | "scoring" | "failed" | "profile_incomplete";
+  total: number;
+  scored: number;
+  pending: number;
+  failed: number;
+};
+
+export type ScoringAdvance = { scoring: ScoringProgress; advanced: number; busy: boolean; retry_after_seconds?: number };
+
 export type JobsResponse = {
   profile_complete: boolean;
   criteria: { role_queries: string[]; skills: string[]; seniority_targets: string[] };
   profile_filters: ProfileFilters;
   jobs: Job[];
   page?: JobsPage;
+  /** Absent from an older API: the page then falls back to polling the list. */
+  scoring?: ScoringProgress;
   discovery?: DiscoverySummary;
 };
 

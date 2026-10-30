@@ -38,6 +38,14 @@ from app.jobs.company_logo_service import (
     normalize_company_key,
     resolve_company_logo,
 )
+from app.jobs.initial_scoring import (
+    AdvanceResult,
+    advance,
+    advance_slot,
+    classify,
+    match_infos,
+    progress_of,
+)
 from app.jobs.job_eligibility_service import evaluate_eligibility
 from app.jobs.job_ingestion_service import (
     _job_view,  # noqa: PLC2701 - internal shared mapper
@@ -50,6 +58,7 @@ from app.jobs.job_normalization_service import DEMO_COMPANIES, is_placeholder_ur
 from app.jobs.job_search_criteria_service import build_search_criteria
 from app.jobs.ranking import DEFAULT_SORT, InvalidCursor, page_of, rank_cards
 from app.jobs.safe_fetch import FetchFailedError, UnsafeUrlError, safe_fetch_image
+from app.jobs.scoring_service import compute_profile_version
 from app.models.entities import (
     ApplicationStatus,
     ApplicationTracker,
@@ -307,10 +316,7 @@ def _list_payload(
     # and CPU per request: with a few thousand jobs, four concurrent requests exceeded the API container's 768 MB and got it
     # killed (see docs/plans/jobs-list-efficiency.md). Phase 1 streams only the columns that eligibility, the filters and the
     # ranking read and keeps a light rank item per surviving job. Phase 2 loads the full rows for the ids on the page only.
-    match_scores = {
-        job_id: fit_score
-        for job_id, fit_score in db.execute(select(JobMatch.job_id, JobMatch.fit_score).where(JobMatch.user_id == user.id))
-    }
+    infos = match_infos(db, user.id)
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
     # One indexed query (ix_tracker_user_status) returns every job this user has
     # already dealt with, as a set. The per-job check below is then a hash
@@ -340,48 +346,40 @@ def _list_payload(
     }
     # Counted, then emitted once per request. A metric per filtered row would
     # put one log line per applied job on every Jobs load.
-    filtered_as_applied = 0
-    listing_rows = db.execute(
-        select(*_LIST_COLUMNS).where(JobPosting.is_active.is_(True)).execution_options(yield_per=_LIST_FETCH_SIZE)
-    )
-    for job in listing_rows:
-        if _is_demo_posting(job, sources.get(job.source_id)):
-            continue  # never surface fake/demo/placeholder jobs, even if in the DB
-        if job.id in tracked_job_ids:
-            # Applied (and later-lifecycle) jobs live only in the Tracker. This
-            # runs server-side on every list, so the job cannot come back after
-            # a refresh, a new session, a re-login, or provider rediscovery —
-            # rediscovery updates the JobPosting row, which this filter does not
-            # consult.
-            filtered_as_applied += 1
-            continue
-        if not _passes_freshness(job.posted_at, cutoff, include_unknown):
-            continue
-        counts["fresh"] += 1
-
-        # Hard eligibility gate: runs before any scoring/soft filters.
-        eligibility = None
-        if profile_view is not None:
-            eligibility = evaluate_eligibility(
-                profile_view, _job_view(job), include_unknown_location=include_unknown_location
-            )
-            if not eligibility.eligible:
-                _tally_exclusion(counts, eligibility.reason_codes)
-                if not include_ineligible:
-                    continue
-            else:
-                counts["eligible"] += 1
-
+    tally = {"filtered_as_applied": 0}
+    scorable = profile_view is not None and _profile_complete(profile)
+    profile_hash = compute_profile_version(profile_view) if scorable else ""
+    scoring_total = scoring_pending = scoring_failed = 0
+    for job, eligibility in _iter_candidates(
+        db,
+        profile_view=profile_view,
+        cutoff=cutoff,
+        include_unknown=include_unknown,
+        include_unknown_location=include_unknown_location,
+        include_ineligible=include_ineligible,
+        sources=sources,
+        tracked_job_ids=tracked_job_ids,
+        counts=counts,
+        tally=tally,
+    ):
+        info = infos.get(job.id)
+        if eligibility is None or eligibility.eligible:
+            # Progress is over everything the user could see in this window, before the text and fit filters.
+            scoring_total += 1
+            kind = classify(info, profile_hash)
+            scoring_pending += kind == "pending"
+            scoring_failed += kind == "failed"
         if not _passes_filters(job, role, company, location, workplace_type):
             continue
-        has_match = job.id in match_scores
-        fit_score = match_scores.get(job.id)
+        has_match = info is not None
+        fit_score = info.fit_score if info is not None else None
         if min_fit_score is not None and (fit_score is None or fit_score < min_fit_score):
             continue
         if eligibility is not None:
             eligibility_by_id[job.id] = eligibility
         # The same three inputs the rank key reads from a full card: id, posted_at and the match's fit score.
         rank_items.append({"id": job.id, "posted_at": job.posted_at, "match": {"fit_score": fit_score} if has_match else None})
+    filtered_as_applied = tally["filtered_as_applied"]
 
     try:
         page_items, paging = page_of(rank_cards(rank_items, sort), sort, limit=limit, cursor=cursor)  # type: ignore[arg-type]
@@ -401,6 +399,8 @@ def _list_payload(
             continue  # deactivated or removed between the two phases: the page is one shorter, the cursor still holds
         card = _serialize_card(job, full_matches.get(job_id), sources.get(job.source_id), eligibility_by_id.get(job_id))
         card.pop("_posted_key", None)
+        if card["match"] is None and not scorable:
+            card["match"] = _profile_incomplete_match()  # a state, never a number: the page says so instead of "Calculating"
         page.append(card)
     paging["returned"] = len(page)
 
@@ -414,7 +414,149 @@ def _list_payload(
         "profile_filters": _profile_filter_payload(profile),
         "jobs": page,
         "page": paging,
+        "scoring": progress_of(scorable=scorable, total=scoring_total, pending=scoring_pending, failed=scoring_failed),
     }
+
+
+def _iter_candidates(
+    db: Session,
+    *,
+    profile_view,
+    cutoff: datetime,
+    include_unknown: bool,
+    include_unknown_location: bool,
+    include_ineligible: bool,
+    sources: dict,
+    tracked_job_ids: set,
+    counts: dict[str, int],
+    tally: dict[str, int],
+):
+    """The jobs the user can be shown in a window, with their eligibility: the single definition shared by the list and the
+    scoring progress, so "scored" always means "scored for what the list shows". Streams light rows (see ``_LIST_COLUMNS``)."""
+    rows = db.execute(
+        select(*_LIST_COLUMNS).where(JobPosting.is_active.is_(True)).execution_options(yield_per=_LIST_FETCH_SIZE)
+    )
+    for job in rows:
+        if _is_demo_posting(job, sources.get(job.source_id)):
+            continue  # never surface fake/demo/placeholder jobs, even if in the DB
+        if job.id in tracked_job_ids:
+            # Applied (and later-lifecycle) jobs live only in the Tracker. This
+            # runs server-side on every list, so the job cannot come back after
+            # a refresh, a new session, a re-login, or provider rediscovery —
+            # rediscovery updates the JobPosting row, which this filter does not
+            # consult.
+            tally["filtered_as_applied"] += 1
+            continue
+        if not _passes_freshness(job.posted_at, cutoff, include_unknown):
+            continue
+        counts["fresh"] += 1
+
+        # Hard eligibility gate: runs before any scoring/soft filters.
+        eligibility = None
+        if profile_view is not None:
+            eligibility = evaluate_eligibility(
+                profile_view, _job_view(job), include_unknown_location=include_unknown_location
+            )
+            if not eligibility.eligible:
+                _tally_exclusion(counts, eligibility.reason_codes)
+                if not include_ineligible:
+                    continue
+            else:
+                counts["eligible"] += 1
+        yield job, eligibility
+
+
+def _profile_incomplete_match() -> dict:
+    """What a card carries when the profile is too thin to score: an explicit state and no number."""
+    return {
+        "fit_score": None,
+        "fit_label": None,
+        "score_state": "profile_incomplete",
+        "scoring_error_code": None,
+        "match_reasons": [],
+        "missing_skills": [],
+        "risk_factors": [],
+        "recommended_resume_angle": None,
+        "confidence": None,
+        "explanation_source": None,
+        "fit_summary": None,
+    }
+
+
+@router.post("/scoring/advance")
+def advance_scoring(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    posted_within_days: int = Query(default=7, ge=1, le=60),
+    include_unknown_dates: bool = Query(default=False),
+    include_unknown_location: bool = Query(default=False),
+    retry_failed: bool = Query(default=False),
+) -> dict:
+    """Score the next bounded batch of THIS user's pending jobs (eligible, fresh, visible in the list) and report progress.
+
+    Idempotent and safe to call repeatedly or from several tabs: one advance per user at a time, a small process-wide cap (a
+    refused call answers ``busy`` and does nothing), at most ``scoring_advance_batch_size`` jobs and a time budget per call, and
+    already-current scores are never recomputed. Only the caller's own rows are read or written."""
+    profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user.id))
+    built = build_profile_view(db, user.id) if _profile_complete(profile) else None
+    if built is None:
+        return {"scoring": progress_of(scorable=False, total=0, pending=0, failed=0), "advanced": 0, "busy": False}
+    profile_view, criteria = built
+    profile_hash = compute_profile_version(profile_view)
+    cutoff = datetime.now(UTC) - timedelta(days=posted_within_days)
+    sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
+    tracked_job_ids = set(
+        db.scalars(
+            select(ApplicationTracker.job_id).where(
+                (ApplicationTracker.user_id == user.id)
+                & (ApplicationTracker.status.in_(tuple(DISCOVERY_HIDDEN_STATUSES)))
+            )
+        ).all()
+    )
+    candidates = [
+        (job.id, job.posted_at)
+        for job, eligibility in _iter_candidates(
+            db,
+            profile_view=profile_view,
+            cutoff=cutoff,
+            include_unknown=include_unknown_dates,
+            include_unknown_location=include_unknown_location,
+            include_ineligible=False,
+            sources=sources,
+            tracked_job_ids=tracked_job_ids,
+            counts={"fresh": 0, "excluded_location": 0, "excluded_seniority": 0, "excluded_role": 0, "excluded_other": 0, "eligible": 0},
+            tally={"filtered_as_applied": 0},
+        )
+        if eligibility is None or eligibility.eligible
+    ]
+    infos = match_infos(db, user.id)
+    with advance_slot(user.id) as granted:
+        result = (
+            advance(
+                db,
+                user.id,
+                candidates=candidates,
+                infos=infos,
+                profile_view=profile_view,
+                criteria=criteria,
+                profile_hash=profile_hash,
+                retry_failed=retry_failed,
+            )
+            if granted
+            else AdvanceResult(busy=True)
+        )
+    infos = match_infos(db, user.id, [job_id for job_id, _ in candidates])
+    kinds = [classify(infos.get(job_id), profile_hash) for job_id, _ in candidates]
+    body = {
+        "scoring": progress_of(
+            scorable=True, total=len(kinds), pending=kinds.count("pending"), failed=kinds.count("failed")
+        ),
+        "advanced": result.scored,
+        "busy": result.busy,
+    }
+    if result.busy:
+        body["retry_after_seconds"] = 2
+    return body
 
 
 def _passes_freshness(posted_at: datetime | None, cutoff: datetime, include_unknown: bool) -> bool:
@@ -883,8 +1025,9 @@ def refresh_matches(
 def _stale_count(db: Session, posted_within_days: int, include_unknown: bool) -> int:
     cutoff = datetime.now(UTC) - timedelta(days=posted_within_days)
     stale = 0
-    for job in db.scalars(select(JobPosting)):
-        if not _passes_freshness(job.posted_at, cutoff, include_unknown):
+    # Only the posting date is read: the old form loaded every column of every job row (about 150 MB on 4,500 jobs).
+    for (posted_at,) in db.execute(select(JobPosting.posted_at)):
+        if not _passes_freshness(posted_at, cutoff, include_unknown):
             stale += 1
     return stale
 

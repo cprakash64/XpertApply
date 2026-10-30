@@ -304,11 +304,13 @@ def _fresh_active_job_ids(
     db: Session, *, days: int, include_unknown: bool
 ) -> list[int]:
     ids: list[int] = []
-    for job in db.scalars(
-        select(JobPosting).where(JobPosting.is_active.is_(True)).order_by(JobPosting.id)
+    # Only the id and posting date are needed to decide freshness; loading whole rows here cost about 150 MB per call
+    # on a 4,500-job catalogue (full text and raw provider JSON included).
+    for job_id, posted_at in db.execute(
+        select(JobPosting.id, JobPosting.posted_at).where(JobPosting.is_active.is_(True)).order_by(JobPosting.id)
     ):
-        if is_fresh(job.posted_at, days, include_unknown=include_unknown):
-            ids.append(job.id)
+        if is_fresh(posted_at, days, include_unknown=include_unknown):
+            ids.append(job_id)
     return ids
 
 

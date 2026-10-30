@@ -18,6 +18,7 @@ export function LoadMore({
   loadedCount,
   total,
   compact = false,
+  paused = false,
   scrollRoot
 }: {
   hasMore: boolean;
@@ -27,6 +28,8 @@ export function LoadMore({
   loadedCount: number;
   total: number | null;
   compact?: boolean;
+  /** Fit scores are still being calculated: page boundaries are not final, so continuing is held until they are. */
+  paused?: boolean;
   /** The scrolling element when the list scrolls inside a panel rather than the page. */
   scrollRoot?: React.RefObject<HTMLElement | null>;
 }) {
@@ -39,7 +42,7 @@ export function LoadMore({
   useEffect(() => {
     const node = sentinel.current;
     // No observer, nothing left, a request running or a failed page waiting for an explicit retry: do not auto-request.
-    if (!node || !hasMore || loading || error || typeof IntersectionObserver === "undefined") return;
+    if (!node || !hasMore || loading || error || paused || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) callback.current();
@@ -48,7 +51,7 @@ export function LoadMore({
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, loading, error, scrollRoot, loadedCount]);
+  }, [hasMore, loading, error, paused, scrollRoot, loadedCount]);
 
   if (!hasMore && !loading && !error) {
     if (loadedCount === 0) return null;
@@ -69,11 +72,11 @@ export function LoadMore({
       <button
         type="button"
         onClick={onLoadMore}
-        disabled={loading}
+        disabled={loading || paused}
         className="ds-focus-ring inline-flex h-9 items-center gap-2 rounded-control border border-line-interactive bg-surface-card px-4 text-sm font-medium text-foreground-secondary transition duration-fast ease-standard hover:border-line-strong hover:bg-surface-subtle disabled:opacity-60"
       >
         {loading && <Loader2 aria-hidden className="h-4 w-4 animate-spin" />}
-        {loading ? "Loading more jobs…" : error ? "Try again" : "Show more jobs"}
+        {loading ? "Loading more jobs…" : paused ? "Waiting for fit scores…" : error ? "Try again" : "Show more jobs"}
       </button>
       <span role="status" aria-live="polite" className="sr-only">
         {loading ? "Loading more jobs" : ""}

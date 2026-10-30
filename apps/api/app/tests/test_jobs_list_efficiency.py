@@ -198,7 +198,8 @@ def seed(db: Session, count: int, *, heavy: int = 1) -> User:
 
 
 def canonical(payload: dict) -> str:
-    return json.dumps(payload, sort_keys=True, default=str)
+    # `scoring` (progress, finding F2) is new and has no counterpart in the old implementation; it is tested in test_initial_scoring.py.
+    return json.dumps({key: value for key, value in payload.items() if key != "scoring"}, sort_keys=True, default=str)
 
 
 CASES = [

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type Job, type JobsResponse } from "@/lib/api";
+import { api, type Job, type JobsResponse, type ScoringAdvance, type ScoringProgress } from "@/lib/api";
 import type { JobsQuery } from "@/lib/jobsQuery";
 
 /**
@@ -18,6 +18,10 @@ export const JOBS_PAGE_SIZE = 25;
 /** The server's own ceiling for `limit`. */
 const MAX_LIMIT = 100;
 const QUERY_DEBOUNCE_MS = 250;
+/** Upper bound on advance calls for one list, so a stuck server can never keep the page scoring forever (each call scores a batch). */
+const MAX_ADVANCE_CALLS = 60;
+const DEFAULT_BUSY_WAIT_MS = 2000;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export type JobsFeedStatus = "bootstrapping" | "error" | "loaded";
 
@@ -59,6 +63,9 @@ export function useJobsFeed(query: FeedQuery) {
   const [profileComplete, setProfileComplete] = useState(true);
   // The key whose results are on screen, and the key being asked for. They differ while a changed filter is loading.
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  // Fit scoring progress for the list on screen, and whether the last attempt to advance it failed outright.
+  const [scoring, setScoring] = useState<ScoringProgress | null>(null);
+  const [scoringError, setScoringError] = useState("");
 
   // Typing in the search box must not fire a request per keystroke.
   const [debouncedQ, setDebouncedQ] = useState(query.q);
@@ -83,6 +90,8 @@ export function useJobsFeed(query: FeedQuery) {
     setJobs(result.jobs);
     setPage(readPage(result));
     setProfileComplete(result.profile_complete);
+    setScoring(result.scoring ?? null);
+    setScoringError("");
     setError("");
     setMoreError("");
   }, []);
@@ -166,6 +175,65 @@ export function useJobsFeed(query: FeedQuery) {
     }
   }, [effective, jobs.length]);
 
+  const reloadRef = useRef(reload);
+  useEffect(() => {
+    reloadRef.current = reload;
+  }, [reload]);
+  // Each scoring run takes a new generation; an older run notices it was superseded and stops without side effects.
+  const generation = useRef(0);
+
+  /**
+   * Drive fit scoring to completion, one bounded batch per call (`POST /jobs/scoring/advance`), strictly one call at a time.
+   * Ends when scoring is complete (then the list is reloaded ONCE so its ranking uses the new scores), when it has failed, when
+   * the filters change, or after MAX_ADVANCE_CALLS. A server that answers `busy` is waited on, never hammered.
+   */
+  const runScoring = useCallback(
+    async (retryFailed: boolean, requestKey: string, postedWithin: number, cancelled: () => boolean) => {
+      generation.current += 1;
+      const mine = generation.current;
+      const isCancelled = () => cancelled() || generation.current !== mine;
+      try {
+        for (let call = 0; call < MAX_ADVANCE_CALLS && !isCancelled(); call += 1) {
+          const result = await api<ScoringAdvance>(
+            `/jobs/scoring/advance?posted_within_days=${postedWithin}${retryFailed ? "&retry_failed=true" : ""}`,
+            { method: "POST" }
+          );
+          if (isCancelled() || requestKey !== keyRef.current) return;
+          setScoring(result.scoring);
+          if (result.scoring.state === "complete") {
+            await reloadRef.current();
+            return;
+          }
+          if (result.scoring.state !== "scoring") return;
+          retryFailed = false;
+          if (result.busy) await sleep((result.retry_after_seconds ?? 2) * 1000 || DEFAULT_BUSY_WAIT_MS);
+        }
+      } catch {
+        if (!isCancelled()) setScoringError("We couldn’t finish scoring your matches.");
+      }
+    },
+    []
+  );
+
+  const scoringState = scoring?.state ?? null;
+  useEffect(() => {
+    if (scoringState !== "scoring" || !initialLoaded) return;
+    let cancelled = false;
+    // Started from a microtask: the run sets state as responses arrive, never synchronously inside the effect.
+    void Promise.resolve().then(() => runScoring(false, key, effective.postedWithin, () => cancelled));
+    return () => {
+      cancelled = true;
+    };
+    // `effective` is derived from `key`; the key and the state are the only things that should restart scoring.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoringState, initialLoaded, key, runScoring]);
+
+  /** The user's explicit retry after a failure: includes pairs that used their automatic attempts. */
+  const retryScoring = useCallback(async () => {
+    setScoringError("");
+    await runScoring(true, keyRef.current, effective.postedWithin, () => false);
+  }, [runScoring, effective.postedWithin]);
+
   /** Show a full list that has no paging block (discover/refresh against an older API). */
   const showLegacyList = useCallback((list: Job[], complete: boolean) => {
     setJobs(list);
@@ -187,6 +255,10 @@ export function useJobsFeed(query: FeedQuery) {
     refetching: initialLoaded && loadedKey !== key,
     loadingMore,
     moreError,
+    /** Null from an older API. */
+    scoring,
+    scoringError,
+    retryScoring,
     profileComplete,
     setProfileComplete,
     loadMore,

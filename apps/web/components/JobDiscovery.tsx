@@ -10,7 +10,8 @@ import {
   type GeneratedDocument,
   type Job,
   type JobsResponse,
-  type RefreshSummary
+  type RefreshSummary,
+  type ScoringProgress
 } from "@/lib/api";
 import { useJobsQuery, type JobsQuery } from "@/lib/jobsQuery";
 import { useJobsFeed } from "@/lib/useJobsFeed";
@@ -125,14 +126,16 @@ export function JobDiscovery() {
     [jobs]
   );
 
+  // Fallback only: a response WITHOUT a `scoring` block is from an older API that cannot score on demand, so the page keeps
+  // re-reading the list. With the block, the feed drives scoring itself (and stops), and never polls forever.
   const { refreshScores } = feed;
   useEffect(() => {
-    if (!hasPendingScores) {
+    if (!hasPendingScores || feed.scoring !== null) {
       return;
     }
     const timer = setTimeout(() => void refreshScores(), 4000);
     return () => clearTimeout(timer);
-  }, [hasPendingScores, refreshScores, jobs]);
+  }, [hasPendingScores, refreshScores, jobs, feed.scoring]);
 
   /**
    * The one explicit state the workspace is in. Every branch below renders from
@@ -600,6 +603,7 @@ export function JobDiscovery() {
               onSelect={(jobId) => openJob(jobId)}
               foot={
                 <LoadMore
+                  paused={feed.scoring?.state === "scoring"}
                   compact
                   hasMore={feed.hasMore}
                   loading={feed.loadingMore}
@@ -677,6 +681,7 @@ export function JobDiscovery() {
       />
 
       <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8">
+      <ScoringNotice scoring={feed.scoring} error={feed.scoringError} onRetry={() => void feed.retryScoring()} />
       {(message || error) && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           {message && <p className="text-sm text-foreground-muted">{message}</p>}
@@ -747,6 +752,7 @@ export function JobDiscovery() {
 
         {!bootstrapping && workspaceState === "loaded" && (
           <LoadMore
+            paused={feed.scoring?.state === "scoring"}
             hasMore={feed.hasMore}
             loading={feed.loadingMore}
             error={feed.moreError}
@@ -807,6 +813,43 @@ export function JobDiscovery() {
       </div>
       {modals}
     </div>
+  );
+}
+
+/**
+ * Truthful scoring progress. While scores are being calculated it says so with real numbers (and the list's "Show more" is
+ * held); when scoring fails, or a request to continue it fails, it says that and offers a retry instead of leaving the cards in
+ * "Calculating" forever. Complete and incomplete-profile states show nothing here: the cards carry their own state.
+ */
+function ScoringNotice({
+  scoring,
+  error,
+  onRetry
+}: {
+  scoring: ScoringProgress | null;
+  error: string;
+  onRetry: () => void;
+}) {
+  if (!scoring) return null;
+  if (error || scoring.state === "failed") {
+    const text = error || `We couldn’t score ${scoring.failed} job${scoring.failed === 1 ? "" : "s"}.`;
+    return (
+      <div role="alert" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-medium text-status-danger">
+        <span>{text}</span>
+        <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
+          <RefreshCw aria-hidden className="h-4 w-4" /> Retry scoring
+        </Button>
+      </div>
+    );
+  }
+  if (scoring.state !== "scoring") return null;
+  return (
+    <p role="status" aria-live="polite" className="mt-3 flex items-center gap-2 text-sm text-foreground-muted">
+      <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
+      <span>
+        Scoring your matches… {scoring.scored} of {scoring.total} jobs scored. The order updates when it finishes.
+      </span>
+    </p>
   );
 }
 
