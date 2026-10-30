@@ -56,4 +56,5 @@ Web only: `rollback-web` re-creates the web from alias `xpertapply-staging-rollb
 Proceed to step 1 once the founder confirms staging web is still `95de977` and S2 acceptance is recorded. Production promotion needs its own plan and approval; the production web also needs the nginx Referrer-Policy map noted in the S1 runbook before the recovery pages ship.
 
 ## 9. Progress log
-- 2026-10-30: plan written. Fix `fb913fb` committed locally. Steps 1 to 7 not started.
+- 2026-10-30: plan written. Fix `fb913fb` committed locally.
+- 2026-10-30: steps 1 to 7 done locally. Release commit `1b26947` (apps tree identical to `fb913fb`; gates from that commit reused). Image `xpertapply-staging-web:s3-1b26947-amd64`, fingerprint `18524747…dfd86d`, archive SHA `0fff3ff1…50f6`. Smoke 117/117, stub script tests 33/33. Runbook `docs/release/PUI-S3_RUNBOOK.md`. Deviations from plan: (a) the S2 host image id is unrecorded, so the previous-web check matches fingerprint plus revision, with optional `XA_S3_PREV_WEB_ID`; (b) the bundle check uses the hook's selector literal, which survives minification. Nothing pushed, uploaded or deployed.
