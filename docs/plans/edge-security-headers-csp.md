@@ -106,18 +106,33 @@ CSP and these headers apply to pages, not to the MV3 service worker or content-s
 ## 12. Recommendation
 S1 staging: **GO to apply** the nginx patch on staging after operator verification. S2: **GO for the origin fix on staging**; **NO-GO for enforcement** (any environment). Production: **NO-GO** pending explicit approval.
 
-## 13. Interim enforced CSP (PLANNED, not implemented, not approved for any environment)
-Goal: close clickjacking and `<base>`/form-hijack/plugin vectors in the browser without touching scripts, so it cannot break hydration.
+## 13. Enforced CSP baseline (IMPLEMENTED LOCALLY, staging-only candidate; decision on f86b6c6)
+Decision: do not enforce the four-directive policy. Enforce only `frame-ancestors 'none'; object-src 'none'; base-uri 'self'`. `form-action 'self'` is deferred until cross-browser auth and integration flows are verified. The Report-Only policy is unchanged; `X-Frame-Options: DENY` stays at nginx (production) and is added on staging by section 5 (same value, different mechanism, no conflict). No `script-src` enforcement, no rendering change.
 
-Policy (a second header, `Content-Security-Policy`, alongside the unchanged Report-Only one):
-`frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'`
+Implementation: `enforcedPolicy()` / `enforcedHeaders()` in `lib/securityPolicy.mjs`, emitted from `next.config.mjs` on the same page source as the Report-Only header (so never on `/_next`, `/api`, `/brand` or files with an extension). It contains no origin, so it is identical in every environment.
 
-Evidence so far: injected as an enforced header in Chromium on a local production build, `/`, `/login`, `/signup`, `/forgot-password`, `/pricing` and `/dashboard` produced 0 enforced violations and the client-side API calls still fired. Not yet covered: Google sign-in redirect (`form-action` also applies to redirects after a form POST in Chromium; confirm the login/Google flow), the extension connect page, the tracker download, and Safari/Firefox.
+Legitimate-use review (code search): no `<iframe>`, `<object>`, `<embed>` or `<base>` anywhere in `apps/web`; the extension never frames the web app (its UI is the side panel and content scripts on third-party pages, whose CSPs are theirs); `window.open` uses `noopener,noreferrer`; Google sign-in is a top-level `window.location.href` navigation to the API, not a form post, so it does not involve `form-action` or `frame-ancestors`.
 
-Steps:
-1. Code: add `enforcedHeaders()` to `lib/securityPolicy.mjs` (same serializer and page source; exported constants), emit it from `next.config.mjs`, and extend `securityPolicy.test.ts` (exact directives, no script/connect sources, never both headers carrying the same enforced script-src).
-2. Stage first: ship to staging behind the existing web release, watch console and collected reports for a week of normal use, run the Playwright suite against the live stack, and manually run Google sign-in, extension connect and a tracker download.
-3. Production only with separate explicit approval after staging evidence. `X-Frame-Options: DENY` stays at nginx as defence in depth (different mechanism, same value, no conflict).
-4. Rollback: remove the header from `next.config.mjs` and redeploy the previous web image; no data or API impact.
+Evidence (`docs/release/pui-s1s2/crossbrowser-baseline.mjs`, API mocked, local production build):
+| Check | Chromium | WebKit | Firefox |
+|---|---|---|---|
+| One enforced + one Report-Only header on `/`, `/login`, `/signup`, `/forgot-password`, `/extension/connect`, a 404; none on a static file | pass | pass | **not run** |
+| Cross-origin iframe of `/login` blocked; control frame of a CSP-less file loads | pass | pass | **not run** |
+| Cross-origin `<base>` refused, same-origin `<base>` allowed | pass | pass | **not run** |
+| `<object>`/`<embed>` raise enforced `object-src` violations | pass | pass | **not run** |
+| Login hydrates and calls the API; Continue with Google navigates to `/auth/google/start`; signup POSTs; extension connect page has 0 enforced violations; same-origin `postMessage` works | pass | pass | **not run** |
+Firefox could not start in the session sandbox (the browser's helper-process sandbox is denied by the host); run the script for Firefox on a normal machine before staging acceptance:
+```bash
+cd apps/web && npm run build && npx next start -p 3055 &   # then, in another shell:
+node ../../docs/release/pui-s1s2/crossbrowser-baseline.mjs firefox
+```
+Also: Chromium 44/44 and WebKit 14/15 on the mocked specs (tracker downloads incl. filename/bytes and 404/409/500 errors, auth-session expiry, password recovery, public pages, applied-to-tracker, applications). The one WebKit failure is a Tab-order `toBeFocused` assertion on `/forgot-password`; it is a keyboard-focus check not related to CSP (Safari does not Tab to every control by default), but I did not run it on the unmodified baseline, so treat it as unconfirmed rather than proven unrelated. Firefox for the specs was not run. A live Google round trip, a real extension install and a real tracker download against a live API were not performed.
 
-Open question for approval: whether the extra header is worth shipping before the script-src strategy (section 4) is decided. Production already has `X-Frame-Options: DENY`, so the marginal gain there is `object-src`, `base-uri` and `form-action`; on staging the nginx patch already covers framing.
+Validation: lint and typecheck clean; Vitest 1216 passed (62 files); build succeeds.
+
+Rollout: staging only, with the section 6 nginx patch and web release. Rollback: redeploy the previous web image (the header is emitted only from `next.config.mjs`). Production: separate approval after staging evidence and the Firefox run.
+
+### Independent S1 items (can ship without the CSP)
+1. Staging nginx header patch (section 5/6): fixes the confirmed staging gap and is independent of any web build.
+2. Production nginx `Referrer-Policy` map (section 5): required before the web release that includes the recovery pages reaches production, otherwise `/reset-password` gets a conflicting second `Referrer-Policy`. Production nginx file not read or changed.
+3. Optional hardening, not needed now: production API `X-Frame-Options`/`Referrer-Policy` (JSON only), longer production HSTS after a hostname audit.

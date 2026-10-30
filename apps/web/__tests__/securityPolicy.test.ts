@@ -4,9 +4,12 @@ const configPath = "../next.config.mjs";
 const policyPath = "../lib/securityPolicy.mjs";
 type HeaderRule = { source: string; headers: Array<{ key: string; value: string }> };
 const config = (await import(configPath)).default as { poweredByHeader: boolean; headers(): Promise<HeaderRule[]> };
-const { CSP_HEADER, CSP_PAGE_SOURCE, apiOrigin, reportOnlyHeaders, reportOnlyPolicy, serializePolicy } = await import(policyPath) as {
+const { CSP_HEADER, CSP_PAGE_SOURCE, ENFORCED_CSP_HEADER, apiOrigin, enforcedHeaders, enforcedPolicy, reportOnlyHeaders, reportOnlyPolicy, serializePolicy } = await import(policyPath) as {
   CSP_HEADER: string;
   CSP_PAGE_SOURCE: string;
+  ENFORCED_CSP_HEADER: string;
+  enforcedHeaders(): HeaderRule[];
+  enforcedPolicy(): string;
   apiOrigin(env?: Record<string, string | undefined>): string;
   reportOnlyHeaders(): HeaderRule[];
   reportOnlyPolicy(env?: Record<string, string | undefined>): string;
@@ -22,8 +25,11 @@ describe("static-safe CSP observation", () => {
     const headers = await config.headers();
     // Every page carries the Report-Only CSP; the two recovery pages add, never replace, headers.
     expect(headers.slice(0, reportOnlyHeaders().length)).toEqual(reportOnlyHeaders());
-    expect(headers.filter(h => h.headers.some(x => x.key.toLowerCase() === "content-security-policy"))).toEqual([]);
+    // The only enforced CSP is the minimal baseline, and it follows the Report-Only rule.
+    expect(headers.filter(h => h.headers.some(x => x.key.toLowerCase() === "content-security-policy"))).toEqual(enforcedHeaders());
+    expect(headers.slice(reportOnlyHeaders().length, reportOnlyHeaders().length + 1)).toEqual(enforcedHeaders());
     expect(CSP_HEADER).toBe("Content-Security-Policy-Report-Only");
+    expect(ENFORCED_CSP_HEADER).toBe("Content-Security-Policy");
     expect(config).not.toHaveProperty("experimental");
     expect(config).not.toHaveProperty("cacheComponents");
   });
@@ -93,5 +99,24 @@ describe("static-safe CSP observation", () => {
     const local = reportOnlyPolicy({});
     expect(local).toContain("connect-src 'self' http://localhost:8000;");
     expect(local).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("enforces only frame-ancestors, object-src and base-uri", () => {
+    expect(enforcedPolicy()).toBe("frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+    // No script/style/img/connect/form-action control, no origins, no report endpoint.
+    expect(enforcedPolicy()).not.toMatch(/script-src|style-src|img-src|connect-src|default-src|form-action|font-src|frame-src|https?:|\*|nonce-|report/);
+  });
+
+  it("emits each CSP header name exactly once per page, on the same pages, never on assets", async () => {
+    const headers = await config.headers();
+    const pageRules = headers.filter(h => h.source === CSP_PAGE_SOURCE);
+    const names = pageRules.flatMap(h => h.headers.map(x => x.key));
+    expect(names.sort()).toEqual(["Content-Security-Policy", "Content-Security-Policy-Report-Only"]);
+    expect(enforcedHeaders()[0].source).toBe(reportOnlyHeaders()[0].source);
+    const match = new RegExp(`^${CSP_PAGE_SOURCE}$`);
+    for (const path of ["/_next/static/a.js", "/api/test", "/brand/logo.png", "/robots.txt"]) expect(match.test(path), path).toBe(false);
+    // The recovery rule adds other headers only and never a CSP header.
+    const recovery = headers.find(h => /forgot-password/.test(h.source));
+    expect(recovery?.headers.some(x => /content-security/i.test(x.key))).toBe(false);
   });
 });

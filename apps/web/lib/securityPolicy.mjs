@@ -6,6 +6,7 @@
  * the payload differs per page, so this policy must not be enforced until that is resolved (see
  * docs/plans/edge-security-headers-csp.md). */
 export const CSP_HEADER = "Content-Security-Policy-Report-Only";
+export const ENFORCED_CSP_HEADER = "Content-Security-Policy";
 export const CSP_PAGE_SOURCE = "/((?!_next(?:/|$)|api(?:/|$)|brand(?:/|$)|.*\\.[^/]+$).*)";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -69,4 +70,19 @@ export function reportOnlyPolicy(env = process.env) {
 /** @param {Record<string, string | undefined>} [env] */
 export function reportOnlyHeaders(env = process.env) {
   return [{ source: CSP_PAGE_SOURCE, headers: [{ key: CSP_HEADER, value: reportOnlyPolicy(env) }] }];
+}
+
+/** Minimal ENFORCED baseline, independent of the Report-Only policy above. It governs no script, style, image or
+ * connection, so it cannot affect rendering or hydration, and it carries no per-environment origin.
+ * `form-action` is deliberately absent until cross-browser auth/integration flows are verified. */
+export function enforcedPolicy() {
+  return serializePolicy([
+    ["frame-ancestors", ["'none'"]],
+    ["object-src", ["'none'"]],
+    ["base-uri", ["'self'"]]
+  ]);
+}
+
+export function enforcedHeaders() {
+  return [{ source: CSP_PAGE_SOURCE, headers: [{ key: ENFORCED_CSP_HEADER, value: enforcedPolicy() }] }];
 }

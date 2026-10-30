@@ -1,4 +1,4 @@
-import { reportOnlyHeaders } from "./lib/securityPolicy.mjs";
+import { enforcedHeaders, reportOnlyHeaders } from "./lib/securityPolicy.mjs";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -7,6 +7,7 @@ const nextConfig = {
   async headers() {
     return [
       ...reportOnlyHeaders(),
+      ...enforcedHeaders(),
       {
         // Recovery pages carry or handle a one-time credential: no Referer, no caching.
         source: "/:page(forgot-password|reset-password)",
