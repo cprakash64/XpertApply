@@ -105,3 +105,19 @@ CSP and these headers apply to pages, not to the MV3 service worker or content-s
 
 ## 12. Recommendation
 S1 staging: **GO to apply** the nginx patch on staging after operator verification. S2: **GO for the origin fix on staging**; **NO-GO for enforcement** (any environment). Production: **NO-GO** pending explicit approval.
+
+## 13. Interim enforced CSP (PLANNED, not implemented, not approved for any environment)
+Goal: close clickjacking and `<base>`/form-hijack/plugin vectors in the browser without touching scripts, so it cannot break hydration.
+
+Policy (a second header, `Content-Security-Policy`, alongside the unchanged Report-Only one):
+`frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'`
+
+Evidence so far: injected as an enforced header in Chromium on a local production build, `/`, `/login`, `/signup`, `/forgot-password`, `/pricing` and `/dashboard` produced 0 enforced violations and the client-side API calls still fired. Not yet covered: Google sign-in redirect (`form-action` also applies to redirects after a form POST in Chromium; confirm the login/Google flow), the extension connect page, the tracker download, and Safari/Firefox.
+
+Steps:
+1. Code: add `enforcedHeaders()` to `lib/securityPolicy.mjs` (same serializer and page source; exported constants), emit it from `next.config.mjs`, and extend `securityPolicy.test.ts` (exact directives, no script/connect sources, never both headers carrying the same enforced script-src).
+2. Stage first: ship to staging behind the existing web release, watch console and collected reports for a week of normal use, run the Playwright suite against the live stack, and manually run Google sign-in, extension connect and a tracker download.
+3. Production only with separate explicit approval after staging evidence. `X-Frame-Options: DENY` stays at nginx as defence in depth (different mechanism, same value, no conflict).
+4. Rollback: remove the header from `next.config.mjs` and redeploy the previous web image; no data or API impact.
+
+Open question for approval: whether the extra header is worth shipping before the script-src strategy (section 4) is decided. Production already has `X-Frame-Options: DENY`, so the marginal gain there is `object-src`, `base-uri` and `form-action`; on staging the nginx patch already covers framing.
