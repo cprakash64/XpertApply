@@ -30,6 +30,8 @@ let calls: Call[];
 let orders: Record<string, number[]>;
 let failCursor: string | null;
 let gate: Promise<void> | null;
+/** First-page responses held per sort, to make a slow response arrive after a newer one. */
+let holdFirst: Partial<Record<string, Promise<void>>>;
 
 function install(total = 60) {
   const all = Array.from({ length: total }, (_, index) => index + 1);
@@ -48,6 +50,7 @@ function install(total = 60) {
       return json({ detail: "boom" }, 500);
     }
     if (gate && cursor) await gate;
+    if (!cursor && holdFirst[sort]) await holdFirst[sort];
     const start = cursor ? Number(cursor.replace("c:", "")) : 0;
     let ids = orders[sort];
     const workplace = url.searchParams.get("workplace_type");
@@ -78,6 +81,7 @@ beforeEach(() => {
   calls = [];
   failCursor = null;
   gate = null;
+  holdFirst = {};
   install();
 });
 afterEach(() => {
@@ -200,6 +204,51 @@ describe("Jobs list: server ranking and paging", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     const seen = titles();
     expect(seen).toEqual(orders.newest.slice(0, 25).map((id) => `Role ${String(id).padStart(3, "0")}`)); // nothing from the old list leaked in
+  });
+
+  it("a slow first page for an old filter that arrives AFTER the new filter's page never replaces it", async () => {
+    render(React.createElement(JobDiscovery));
+    await screen.findAllByTestId("job-card");
+    let release: () => void = () => undefined;
+    holdFirst.fit = new Promise<void>((resolve) => { release = resolve; });
+    await userEvent.selectOptions(screen.getByLabelText("Sort jobs"), "fit");            // slow: held
+    await userEvent.selectOptions(screen.getByLabelText("Sort jobs"), "newest");         // fast: answers first
+    await waitFor(() => expect(titles()[0]).toBe(`Role ${String(orders.newest[0]).padStart(3, "0")}`));
+    release();                                                                           // the stale `fit` page lands now
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(titles()).toEqual(orders.newest.slice(0, 25).map((id) => `Role ${String(id).padStart(3, "0")}`));
+    expect(screen.queryByText("Could not load more jobs.")).not.toBeInTheDocument();
+  });
+
+  it("several quick filter changes end on the last one, and every request carries the filters it was made for", async () => {
+    render(React.createElement(JobDiscovery));
+    await screen.findAllByTestId("job-card");
+    await userEvent.selectOptions(screen.getByLabelText("Workplace type"), "remote");
+    await userEvent.selectOptions(screen.getByLabelText("Minimum fit score"), "70");
+    await userEvent.selectOptions(screen.getByLabelText("Sort jobs"), "fit");
+    await userEvent.selectOptions(screen.getByLabelText("Posted within days"), "14");
+    await waitFor(() => {
+      const last = jobsCalls().at(-1)!.params;
+      expect([last.get("workplace_type"), last.get("min_fit_score"), last.get("sort"), last.get("posted_within_days")]).toEqual(["remote", "70", "fit", "14"]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const expected = orders.fit.filter((id) => id % 4 !== 0 && (90 - (id % 40)) >= 70).slice(0, 25).map((id) => `Role ${String(id).padStart(3, "0")}`);
+    expect(titles()).toEqual(expected);
+    expect(jobsCalls().every((call) => !call.params.has("cursor"))).toBe(true);          // no stale cursor was ever reused across filters
+  });
+
+  it("a double click on Show more sends exactly one request for the next page", async () => {
+    render(React.createElement(JobDiscovery));
+    await screen.findAllByTestId("job-card");
+    const before = jobsCalls().length;
+    let release: () => void = () => undefined;
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    const more = screen.getByRole("button", { name: "Show more jobs" });
+    await userEvent.dblClick(more);
+    release();
+    await waitFor(() => expect(screen.getAllByTestId("job-card")).toHaveLength(50));
+    expect(jobsCalls().length - before).toBe(1);
+    expect(new Set(titles()).size).toBe(50);                                              // and nothing repeated
   });
 
   it("a failed page shows a retry that continues from the same cursor", async () => {

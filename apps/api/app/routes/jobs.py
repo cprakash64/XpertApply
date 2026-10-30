@@ -241,6 +241,39 @@ def list_jobs(
     )
 
 
+# The columns phase 1 reads: eligibility and matching read the title, description, skills, location, workplace type, seniority
+# and work-authorization notes; the demo guard reads the company and URLs; the filters and ranking read the rest.
+# Deliberately NOT here: description_raw, raw_json, responsibilities and everything else only the card needs.
+_LIST_COLUMNS = (
+    JobPosting.id,
+    JobPosting.source_id,
+    JobPosting.title,
+    JobPosting.company,
+    JobPosting.location,
+    JobPosting.remote_type,
+    JobPosting.seniority_level,
+    JobPosting.posted_at,
+    JobPosting.application_url,
+    JobPosting.source_url,
+    JobPosting.description_clean,
+    JobPosting.required_skills,
+    JobPosting.preferred_skills,
+    JobPosting.work_authorization_notes,
+)
+_LIST_FETCH_SIZE = 500
+_IN_CHUNK = 500
+
+
+def _load_by_ids(db: Session, model, id_column, ids: list[int], *where) -> dict:
+    """Full rows for the given ids, in chunks so an unpaged list never builds one enormous IN clause."""
+    loaded: dict = {}
+    for start in range(0, len(ids), _IN_CHUNK):
+        chunk = ids[start : start + _IN_CHUNK]
+        for row in db.scalars(select(model).where(id_column.in_(chunk), *where)):
+            loaded[getattr(row, id_column.key)] = row
+    return loaded
+
+
 def _list_payload(
     db: Session,
     user: User,
@@ -268,10 +301,15 @@ def _list_payload(
     # Expired jobs (disappeared from the official source past the grace period)
     # are hidden from discovery by default. Saved jobs stay discoverable; jobs
     # whose application has started or finished live only in the tracker.
-    jobs = db.scalars(select(JobPosting).where(JobPosting.is_active.is_(True))).all()
-    matches = {
-        match.job_id: match
-        for match in db.scalars(select(JobMatch).where(JobMatch.user_id == user.id)).all()
+    #
+    # Two phases, because this endpoint used to load EVERY column of EVERY active job (including the full source text and raw
+    # provider JSON) and build a complete card for every eligible one, only to return one page. That is O(catalogue) memory
+    # and CPU per request: with a few thousand jobs, four concurrent requests exceeded the API container's 768 MB and got it
+    # killed (see docs/plans/jobs-list-efficiency.md). Phase 1 streams only the columns that eligibility, the filters and the
+    # ranking read and keeps a light rank item per surviving job. Phase 2 loads the full rows for the ids on the page only.
+    match_scores = {
+        job_id: fit_score
+        for job_id, fit_score in db.execute(select(JobMatch.job_id, JobMatch.fit_score).where(JobMatch.user_id == user.id))
     }
     sources = {source.id: source for source in db.scalars(select(JobSource)).all()}
     # One indexed query (ix_tracker_user_status) returns every job this user has
@@ -289,7 +327,8 @@ def _list_payload(
         ).all()
     )
 
-    cards: list[dict] = []
+    rank_items: list[dict] = []
+    eligibility_by_id: dict[int, object] = {}
     # Debug counts of why fresh jobs were excluded (shown only in dev on the UI).
     counts = {
         "fresh": 0,
@@ -302,7 +341,10 @@ def _list_payload(
     # Counted, then emitted once per request. A metric per filtered row would
     # put one log line per applied job on every Jobs load.
     filtered_as_applied = 0
-    for job in jobs:
+    listing_rows = db.execute(
+        select(*_LIST_COLUMNS).where(JobPosting.is_active.is_(True)).execution_options(yield_per=_LIST_FETCH_SIZE)
+    )
+    for job in listing_rows:
         if _is_demo_posting(job, sources.get(job.source_id)):
             continue  # never surface fake/demo/placeholder jobs, even if in the DB
         if job.id in tracked_job_ids:
@@ -332,19 +374,35 @@ def _list_payload(
 
         if not _passes_filters(job, role, company, location, workplace_type):
             continue
-        match = matches.get(job.id)
-        if min_fit_score is not None and (
-            match is None or match.fit_score is None or match.fit_score < min_fit_score
-        ):
+        has_match = job.id in match_scores
+        fit_score = match_scores.get(job.id)
+        if min_fit_score is not None and (fit_score is None or fit_score < min_fit_score):
             continue
-        cards.append(_serialize_card(job, match, sources.get(job.source_id), eligibility))
+        if eligibility is not None:
+            eligibility_by_id[job.id] = eligibility
+        # The same three inputs the rank key reads from a full card: id, posted_at and the match's fit score.
+        rank_items.append({"id": job.id, "posted_at": job.posted_at, "match": {"fit_score": fit_score} if has_match else None})
 
-    for card in cards:
-        card.pop("_posted_key", None)
     try:
-        page, paging = page_of(rank_cards(cards, sort), sort, limit=limit, cursor=cursor)  # type: ignore[arg-type]
+        page_items, paging = page_of(rank_cards(rank_items, sort), sort, limit=limit, cursor=cursor)  # type: ignore[arg-type]
     except InvalidCursor as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor.") from error
+
+    page_ids = [item["id"] for item in page_items]
+    full_jobs = _load_by_ids(db, JobPosting, JobPosting.id, page_ids)
+    full_matches = {
+        match.job_id: match
+        for match in _load_by_ids(db, JobMatch, JobMatch.job_id, page_ids, JobMatch.user_id == user.id).values()
+    }
+    page: list[dict] = []
+    for job_id in page_ids:
+        job = full_jobs.get(job_id)
+        if job is None:
+            continue  # deactivated or removed between the two phases: the page is one shorter, the cursor still holds
+        card = _serialize_card(job, full_matches.get(job_id), sources.get(job.source_id), eligibility_by_id.get(job_id))
+        card.pop("_posted_key", None)
+        page.append(card)
+    paging["returned"] = len(page)
 
     if filtered_as_applied:
         metric("applied_job_filtered_from_discovery", filtered_as_applied)
