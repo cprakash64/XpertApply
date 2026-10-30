@@ -14,6 +14,7 @@ import {
   startAssistedApply
 } from "@/lib/autoApply";
 import { ApiError, api } from "@/lib/api";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 import { PRODUCT_NAME, chromeExtensionUrl } from "@/lib/siteConfig";
 
 /**
@@ -135,6 +136,11 @@ export function AutoApplyModal({
   const requestId = useId();
   // Guards against overlapping preparation requests (double-click / retry spam).
   const inFlight = useRef(false);
+  // Keyboard behaviour for a modal dialog, shared with the other dialogs: Escape closes (exactly like the Close button, which
+  // never submits anything or changes the application's status), focus moves in, Tab wraps inside, and focus returns to the
+  // Apply button when it closes.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(dialogRef, onClose);
 
   const prepare = useCallback(async () => {
     if (inFlight.current) return;
@@ -244,6 +250,7 @@ export function AutoApplyModal({
       data-testid="assisted-application-backdrop"
     >
       <div
+        ref={dialogRef}
         className="assisted-application-dialog flex max-h-[min(88vh,780px)] w-full max-w-[610px] flex-col overflow-hidden rounded-[28px]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"

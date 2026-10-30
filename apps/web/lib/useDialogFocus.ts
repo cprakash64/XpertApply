@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -33,6 +33,12 @@ if (typeof document !== "undefined") {
  * The listener is on `document` so a keystroke still lands while focus is momentarily on <body>.
  */
 export function useDialogFocus(ref: RefObject<HTMLElement | null>, onClose: () => void) {
+  // Escape must run the CURRENT close handler, not the one from the render that opened the dialog: a handler that reads
+  // state (the filters the list is showing, for instance) would otherwise act on stale values.
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
   useEffect(() => {
     const active = document.activeElement as HTMLElement | null;
     const opener = active && active !== document.body ? active : lastFocused;
@@ -43,7 +49,7 @@ export function useDialogFocus(ref: RefObject<HTMLElement | null>, onClose: () =
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== "Tab" || !ref.current) return;
@@ -65,7 +71,6 @@ export function useDialogFocus(ref: RefObject<HTMLElement | null>, onClose: () =
       document.removeEventListener("keydown", onKeyDown);
       if (opener?.isConnected) opener.focus?.();
     };
-    // Runs once per open: `onClose` is read through the latest render only for the Escape path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Runs once per open; the close handler is read through `closeRef`.
+  }, [ref]);
 }
