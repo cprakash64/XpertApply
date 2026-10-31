@@ -9,6 +9,9 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+# A resume is a few pages. Page-extraction cost grows with page count, not file size (a 2.4 MB file of blank pages takes
+# ~12 s of CPU and this runs on the API event loop), so cap pages before extracting anything.
+MAX_PDF_PAGES = 30
 MIN_EXTRACTED_TEXT_CHARS = 100
 NO_TEXT_ERROR = (
     "We could not extract text from this file. Please upload a text-based PDF/DOCX "
@@ -46,7 +49,16 @@ def validate_uploaded_file(file: UploadFile, content: bytes | None = None) -> No
 def extract_text_from_pdf(content: bytes) -> str:
     try:
         reader = PdfReader(BytesIO(content))
+        # The declared page count is O(1) but untrusted; len(reader.pages) walks the real page tree (~2 s for 20,000
+        # pages) and is authoritative. Check the cheap one first so an honest page bomb costs ~0.1 s to refuse.
+        declared = reader.root_object.get("/Pages", {}).get("/Count", 0)
+        if (isinstance(declared, int) and declared > MAX_PDF_PAGES) or len(reader.pages) > MAX_PDF_PAGES:
+            raise DocumentParserError(
+                f"This PDF has too many pages. Upload a resume of at most {MAX_PDF_PAGES} pages or paste your resume text."
+            )
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except DocumentParserError:
+        raise
     except (PdfReadError, OSError, ValueError) as exc:
         raise DocumentParserError(NO_TEXT_ERROR) from exc
     return normalize_extracted_text(text)

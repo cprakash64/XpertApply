@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.jobs.job_eligibility_service import evaluate_eligibility
@@ -242,6 +243,10 @@ def score_pair(
     if match is not None and match.score_version > SCORE_VERSION:
         return ScoreOutcome(state=ScoreState(match.score_state), changed=False)
 
+    # A concurrent writer (the worker's rematch, another request) can insert this (user, job) row between our SELECT
+    # and our INSERT. A new row is therefore written inside a savepoint (opened BEFORE the add, because opening it
+    # flushes pending work) so losing that race costs only this pair, not the caller's whole transaction.
+    savepoint = db.begin_nested() if (match is None and flush) else None
     if match is None:
         match = JobMatch(user_id=user_id, job_id=job.id, score_state=ScoreState.scoring.value)
         db.add(match)
@@ -267,13 +272,28 @@ def score_pair(
         match.scored_at = datetime.now(UTC)
         if flush:
             db.flush()
+        if savepoint is not None:
+            savepoint.commit()
         return ScoreOutcome(state=ScoreState.scored, changed=True)
+    except IntegrityError:
+        if savepoint is None:
+            raise
+        savepoint.rollback()
+        # Lost the insert race: the row now exists (committed by the other writer) and is that writer's result.
+        # Adopt it instead of failing the whole batch.
+        existing = db.scalar(select(JobMatch).where((JobMatch.user_id == user_id) & (JobMatch.job_id == job.id)))
+        if existing is None:
+            raise
+        logger.info("Scoring insert race for user=%s job=%s: adopted the concurrent row", user_id, job.id)
+        return ScoreOutcome(state=ScoreState(existing.score_state), changed=False)
     except Exception as exc:  # noqa: BLE001 - isolate per-pair failures
         logger.exception("Scoring failed for user=%s job=%s", user_id, job.id)
         match.score_state = ScoreState.failed.value
         match.scoring_error_code = type(exc).__name__[:60]
         if flush:
             db.flush()
+        if savepoint is not None and savepoint.is_active:
+            savepoint.commit()
         return ScoreOutcome(state=ScoreState.failed, changed=True)
 
 
