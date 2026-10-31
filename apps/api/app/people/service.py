@@ -4942,6 +4942,27 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             # row is shared by every user. Report it to this caller only; the
             # stored state stays as it was so the next attempt really happens.
             db.rollback()
+            spent = int(getattr(provider, "credits", 0))
+            if spent > 0:
+                # A finder call that already cost a credit before the verifier
+                # failed is real spend. Count it against the daily budget so a
+                # retry loop cannot drain the provider account unnoticed.
+                db.add(
+                    PeopleDiscoveryRun(
+                        job_id=job_id,
+                        user_id=user.id,
+                        status="email_provider_unavailable",
+                        provider="hunter",
+                        query_fingerprint=hashlib.sha256(
+                            f"email:{user.id}:{person.id}:{_now().isoformat()}".encode()
+                        ).hexdigest(),
+                        records_searched=1,
+                        records_enriched=0,
+                        provider_credits_used=spent,
+                        completed_at=_now(),
+                    )
+                )
+                db.commit()
             return {
                 "status": _transient_email_status(exc.reason),
                 "professional_email": None,

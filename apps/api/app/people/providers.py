@@ -1637,7 +1637,13 @@ class HunterEmailProvider(_HttpProvider):
             raise
         self._raise_if_pending()
         self.credits += 1
-        email = (data.get("data") or {}).get("email")
+        body = data.get("data") or {}
+        email = body.get("email")
+        if str(body.get("provenance") or "").lower() == "inferred":
+            # Hunter builds "inferred" addresses from the company's usual
+            # pattern. That is a guess about this person, so it is never shown
+            # and the paid verifier call is not spent on it.
+            return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
         return WorkEmailResult(
             status="unknown" if email else "not_found",
             email=email if isinstance(email, str) else None,

@@ -370,3 +370,50 @@ def test_unparseable_provider_body_is_a_recoverable_state(
     out = _run(db, user, job, rec)
     assert out["status"] in {"provider_unavailable", "provider_error", "not_found"}
     assert out["professional_email"] is None
+
+
+def test_credit_spent_before_a_verifier_failure_counts_against_the_budget(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import func, select
+
+    from app.models.entities import PeopleDiscoveryRun
+
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 3)
+    fake = FakeHunter(_found(), (503, {}))
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "provider_unavailable"
+    used = db.scalar(select(func.sum(PeopleDiscoveryRun.provider_credits_used)).where(PeopleDiscoveryRun.provider == "hunter"))
+    assert used == 1
+    # Repeated retries are bounded by the budget instead of repeating the paid finder forever.
+    for _ in range(6):
+        _run(db, user, job, rec)
+    assert fake.count("finder") <= 3
+    assert _run(db, user, job, rec)["status"] == "budget_exceeded"
+
+
+def test_inferred_pattern_address_is_never_shown_and_never_verified(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(
+        (200, {"data": {"email": GOOD, "score": 90, "provenance": "inferred"}}),
+        (200, {"data": {"status": "valid"}}),
+    )
+    fake.install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] == "not_found"
+    assert out["professional_email"] is None
+    assert fake.count("verifier") == 0
+
+
+def test_sourced_address_with_found_provenance_is_still_verified(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(
+        (200, {"data": {"email": GOOD, "provenance": "found"}}),
+        (200, {"data": {"status": "valid"}}),
+    ).install(monkeypatch)
+    assert _run(db, user, job, rec)["professional_email"] == GOOD
