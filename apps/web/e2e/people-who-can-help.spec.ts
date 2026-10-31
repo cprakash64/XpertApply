@@ -270,7 +270,7 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
 
   expect(emailCount).toBe(0);
   await page.getByRole("button", { name: "Find work email" }).first().click();
-  await expect(page.getByText("Verified work email: rita@acme.example")).toBeVisible();
+  await expect(page.getByText("Deliverable work email: rita@acme.example")).toBeVisible();
   expect(emailCount).toBe(1);
 
   // Switching to the other job in the compact list starts nothing for it.
@@ -397,7 +397,7 @@ test("complete people workflow remains manual, grounded, cached, and user-scoped
   await expect(page.getByRole("heading", { name: "Potential Referral Candidates" })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Find work email/ }).click();
-  await expect(page.getByText(/Verified work email: rita@acme.example/)).toBeVisible();
+  await expect(page.getByText(/Deliverable work email: rita@acme.example/)).toBeVisible();
 
   await page.getByRole("button", { name: "Draft message" }).click();
   const dialog = page.getByRole("dialog", { name: "Review outreach draft" });

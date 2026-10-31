@@ -416,7 +416,7 @@ describe("Email handoff from the contact card", () => {
     installVerified();
     render(<PeopleWhoCanHelp jobId={JOB_ID} />);
 
-    expect(await screen.findByText(/Verified work email: morgan@l3harris.example/)).toBeInTheDocument();
+    expect(await screen.findByText(/Deliverable work email: morgan@l3harris.example/)).toBeInTheDocument();
     // The second contact has no verified address, so it gets a lookup action
     // rather than a mailto built from a name and a domain.
     expect(screen.getAllByRole("button", { name: "Email" })).toHaveLength(1);

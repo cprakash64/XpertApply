@@ -417,3 +417,17 @@ def test_sourced_address_with_found_provenance_is_still_verified(
         (200, {"data": {"status": "valid"}}),
     ).install(monkeypatch)
     assert _run(db, user, job, rec)["professional_email"] == GOOD
+
+
+@pytest.mark.parametrize("scripted", [(503, {}), (200, {"data": {"status": "valid"}})])
+def test_the_provider_key_never_reaches_the_logs(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, scripted
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(), scripted).install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        _run(db, user, job, rec)
+    assert "synthetic-test-key" not in caplog.text
+    assert GOOD not in caplog.text

@@ -976,7 +976,12 @@ function PersonCard({
         <p className="mt-2.5 text-xs text-foreground-muted">{emailNote}</p>
       ) : null}
       {verifiedEmail ? (
-        <p className="mt-2.5 truncate text-xs text-foreground-muted">Verified work email: {verifiedEmail}</p>
+        <p
+          className="mt-2.5 truncate text-xs text-foreground-muted"
+          title="Checked as deliverable at the employer's domain. This does not confirm the address belongs to this person."
+        >
+          Deliverable work email: {verifiedEmail}
+        </p>
       ) : null}
       {status ? (
         <p aria-live="polite" className="mt-2 text-xs text-foreground-muted">

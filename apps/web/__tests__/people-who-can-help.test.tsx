@@ -710,7 +710,7 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/email"))).toBe(false);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Find work email" })[0]);
-    expect(await screen.findByText(/Verified work email: rita@acme.example/)).toBeInTheDocument();
+    expect(await screen.findByText(/Deliverable work email: rita@acme.example/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/jobs/731/people/11/email",
       expect.objectContaining({ method: "POST" })

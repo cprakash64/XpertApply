@@ -190,9 +190,9 @@ describe("Networking categories and Get Email (NET-01)", () => {
     }]);
     render(<PeopleWhoCanHelp jobId={9104} />);
     await screen.findByText("Rita Recruiter");
-    expect(screen.queryByText(/Verified work email/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deliverable work email/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Find work email/ }));
-    expect(await screen.findByText(/Verified work email: rita.recruiter@acme.example/)).toBeInTheDocument();
+    expect(await screen.findByText(/Deliverable work email: rita.recruiter@acme.example/)).toBeInTheDocument();
     expect(emailCalls(fetchMock)).toHaveLength(1);
   });
 
@@ -220,10 +220,10 @@ describe("Networking categories and Get Email (NET-01)", () => {
     await screen.findByText("Rita Recruiter");
     fireEvent.click(screen.getByRole("button", { name: "Find work email" }));
     expect(await screen.findByText(note)).toBeInTheDocument();
-    expect(screen.queryByText(/Verified work email/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deliverable work email/)).not.toBeInTheDocument();
     const retry = screen.getByRole("button", { name: "Retry work email" });
     fireEvent.click(retry);
-    expect(await screen.findByText(/Verified work email: rita.recruiter@acme.example/)).toBeInTheDocument();
+    expect(await screen.findByText(/Deliverable work email: rita.recruiter@acme.example/)).toBeInTheDocument();
     expect(emailCalls(fetchMock)).toHaveLength(2);
   });
 
@@ -243,7 +243,7 @@ describe("Networking categories and Get Email (NET-01)", () => {
     await screen.findByText("Rita Recruiter");
     fireEvent.click(screen.getByRole("button", { name: /Find work email/ }));
     expect(await screen.findByText(/Work-email lookup is temporarily unavailable\. No email was displayed\./)).toBeInTheDocument();
-    expect(screen.queryByText(/Verified work email/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deliverable work email/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Find work email/ })).toBeEnabled();
   });
 

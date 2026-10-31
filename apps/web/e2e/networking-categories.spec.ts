@@ -225,7 +225,7 @@ test("verified, stored not-found and service-problem answers read differently", 
   });
   const cards = page.getByRole("tabpanel").locator("article");
   await cards.nth(0).getByRole("button", { name: "Find work email" }).click();
-  await expect(cards.nth(0).getByText(/Verified work email: morgan\.manager@acme\.example/)).toBeVisible();
+  await expect(cards.nth(0).getByText(/Deliverable work email: morgan\.manager@acme\.example/)).toBeVisible();
   await cards.nth(1).getByRole("button", { name: "Find work email" }).click();
   await expect(cards.nth(1).getByText(/No work email was found when last checked on/)).toBeVisible();
   await expect(cards.nth(1).getByRole("button", { name: /work email/i })).toHaveCount(0);
@@ -241,11 +241,11 @@ test("a rejected request or a credential failure never shows an address", async 
   });
   const card = page.getByRole("tabpanel").locator("article").first();
   await card.getByRole("button", { name: "Find work email" }).click();
-  await expect(page.getByText(/Verified work email/)).toHaveCount(0);
+  await expect(page.getByText(/Deliverable work email/)).toHaveCount(0);
   await expect(card.getByRole("button", { name: /work email/i })).toBeVisible();
   await card.getByRole("button", { name: /work email/i }).click();
   await expect(card.getByText(/service problem/)).toBeVisible();
-  await expect(page.getByText(/Verified work email/)).toHaveCount(0);
+  await expect(page.getByText(/Deliverable work email/)).toHaveCount(0);
 });
 
 for (const theme of ["light", "dark"] as const) {
