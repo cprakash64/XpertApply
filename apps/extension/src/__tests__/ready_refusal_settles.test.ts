@@ -380,3 +380,45 @@ describe("the handshake still refuses a direct draft's incoherent runtime", asyn
     expect(evaluateHandshake({ contentScript: self, serviceWorker: null, widget: self, sidePanel: null, ...direct }).reason).toBe("worker_unreachable");
   });
 });
+
+/**
+ * PROD-GONOGO: a failure recorded earlier in a run (a frame that had no form yet, a probe that missed) was never cleared when a later
+ * scan of the same application succeeded, so the assistant showed a warning beside "24 detected, 3 filled".
+ */
+describe("a recorded failure does not outlive a later successful scan of the same application", () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const progress = (over: Record<string, unknown> = {}) => ({
+    state: "completed_with_review", atsId: "greenhouse", atsDisplayName: "Greenhouse", limited: false, fieldsDiscovered: 24, filled: 3,
+    skipped: 0, reviewRequired: 21, reachedFinalStep: true, documentsUploaded: [], reviewDocuments: ["resume"], ...over
+  });
+
+  async function boundTab(tabId: number) {
+    installFakeFetch();
+    const harness = installFakeChrome();
+    const state = await import("../state");
+    await state.putActive(seedHandoff());
+    await import("../background");
+    const ready = (await dispatch(harness.messageListeners, READY, SENDER(tabId))) as { matched: boolean };
+    expect(ready.matched).toBe(true);
+    return { ...harness, state };
+  }
+
+  it.each(["FORM_NOT_RENDERED", "NO_MATCHING_FRAME", "APPLICATION_DISCOVERY_TIMEOUT"])("%s, then a scan that reads the form", async (code) => {
+    const { messageListeners, state } = await boundTab(80);
+    await dispatch(messageListeners, { type: "JOBPILOT_AUTOFILL_FAILED", reasonCode: code }, SENDER(80));
+    expect((await state.getView(80))?.failureCode).toBe(code);
+    await dispatch(messageListeners, { type: "JOBPILOT_AUTOFILL_PROGRESS", payload: progress() }, SENDER(80));
+    const view = await state.getView(80);
+    expect(view?.fieldsDiscovered).toBe(24);
+    expect(view?.failureCode ?? null).toBeNull();
+  });
+
+  it("a run that ends in a failure keeps it (the new progress is itself a failure)", async () => {
+    const { messageListeners, state } = await boundTab(81);
+    await dispatch(messageListeners, { type: "JOBPILOT_AUTOFILL_FAILED", reasonCode: "FORM_NOT_RENDERED" }, SENDER(81));
+    await dispatch(messageListeners, { type: "JOBPILOT_AUTOFILL_PROGRESS", payload: progress({ state: "failed", fieldsDiscovered: 0, filled: 0, reviewRequired: 0 }) }, SENDER(81));
+    expect((await state.getView(81))?.failureCode).toBe("FORM_NOT_RENDERED");
+  });
+});

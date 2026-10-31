@@ -2043,6 +2043,13 @@ async function adoptActivationDestination(
  */
 const READY_REFUSAL_CODES = new Set(["DOCUMENT_ID_UNAVAILABLE", "HANDOFF_EXPIRED"]);
 
+/** Failures that describe finding the application, not filling it: a later scan that reads the form ends them. */
+const DETECTION_STAGE_FAILURES = new Set([
+  "FORM_NOT_RENDERED", "NO_MATCHING_FRAME", "NO_APPLICATION_FORM", "APPLICATION_FORM_AMBIGUOUS", "APPLICATION_DISCOVERY_TIMEOUT",
+  "NO_FIELDS_DISCOVERED", "ADAPTER_NOT_DETECTED", "CONSENT_OVERLAY_BLOCKING",
+  ...READY_REFUSAL_CODES, "HANDOFF_URL_MISMATCH", "APPLICATION_CTA_AMBIGUOUS", "NAVIGATION_NEEDS_USER_GESTURE", "APPLICATION_CTA_NOT_FOUND"
+]);
+
 async function settleReadyRefusal(
   tabId: number,
   pending: PendingLaunch,
@@ -3527,11 +3534,19 @@ async function applyProgress(
     : p.state === "completed_with_review" ? "review_required"
     : p.state === "completed" ? "ready"
     : p.state === "filling" ? "filling" : "detecting";
-  await updatePending(tabId, { status: durableStatus, state: p.state }, generation);
+  // A failure from the DETECTION stage (a frame with no form yet, a probe that missed, a discovery that timed out) describes a moment
+  // before this scan. A scan that has now read the form supersedes it; any other failure stays until its own cause is gone.
+  const earlier = (await getView(tabId))?.failureCode;
+  const superseded = p.state !== "failed" && p.fieldsDiscovered > 0 && typeof earlier === "string" && DETECTION_STAGE_FAILURES.has(earlier);
+  await updatePending(tabId, {
+    status: durableStatus, state: p.state,
+    ...(superseded ? { failureCode: undefined, lastError: undefined } : {})
+  }, generation);
   const resumeUploaded = p.documentsUploaded.includes("resume");
   const coverUploaded = p.documentsUploaded.includes("cover_letter");
   const finished = p.state === "completed" || p.state === "completed_with_review" || p.state === "failed";
   await patchView(tabId, {
+    ...(superseded ? { failureCode: null, failureMessage: null, failureRecoverable: null } : {}),
     state: p.state,
     atsId: p.atsId,
     atsDisplayName: p.atsDisplayName,
