@@ -34,7 +34,7 @@ REQUIRED = (
 # Settings that must never equal the production value.
 MUST_DIFFER_FROM_PRODUCTION = (
     "SECRET_KEY", "POSTGRES_PASSWORD", "REDIS_PASSWORD", "WORKDAY_CREDENTIALS_ENCRYPTION_KEY",
-    "PEOPLE_DATA_ENCRYPTION_KEY", "DEMOGRAPHICS_ENCRYPTION_KEY", "OPENAI_API_KEY",
+    "PEOPLE_DATA_ENCRYPTION_KEY", "DEMOGRAPHICS_ENCRYPTION_KEY", "OPENAI_API_KEY", "HUNTER_API_KEY",
 )
 
 
@@ -52,6 +52,51 @@ def parse_env(path: str) -> dict[str, str]:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _testers(raw: str) -> list[str]:
+    raw = (raw or "").strip()
+    if raw.startswith("["):
+        try:
+            items = json.loads(raw)
+        except ValueError:
+            return []
+    else:
+        items = raw.split(",")
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def check_email_discovery(values: dict[str, str]) -> list[str]:
+    """Work-email discovery is off unless every control that bounds its spend and audience is set.
+
+    `0` means unlimited in the application, so a zero or missing cap is refused. A different key on the same
+    provider account still spends the same shared credit pool; the caps are the only spend control.
+    """
+    problems: list[str] = []
+    if not _truthy(values.get("PEOPLE_EMAIL_DISCOVERY_ENABLED", "false")):
+        return problems
+    if not values.get("HUNTER_API_KEY"):
+        problems.append("PEOPLE_EMAIL_DISCOVERY_ENABLED=true needs HUNTER_API_KEY (a staging-only key or test-api-key)")
+    if not _truthy(values.get("PEOPLE_RECOMMENDATIONS_ENABLED", "false")):
+        problems.append("email discovery needs PEOPLE_RECOMMENDATIONS_ENABLED=true")
+    if values.get("PEOPLE_ROLLOUT_MODE", "disabled").lower() != "internal":
+        problems.append("email discovery in staging needs PEOPLE_ROLLOUT_MODE=internal (named testers only)")
+    testers = _testers(values.get("PEOPLE_INTERNAL_EMAILS", ""))
+    if not 1 <= len(testers) <= 3 or not all("@" in t and "*" not in t for t in testers):
+        problems.append("PEOPLE_INTERNAL_EMAILS must list 1-3 explicit tester email addresses")
+    for key, upper in (
+        ("PEOPLE_EMAIL_DAILY_CREDIT_BUDGET", 10),
+        ("PEOPLE_EMAIL_PER_USER_DAILY_LIMIT", 10),
+        ("PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR", 5),
+    ):
+        value = values.get(key, "")
+        if not value.isdigit() or not 1 <= int(value) <= upper:
+            problems.append(f"{key} must be an integer from 1 to {upper} (0 means unlimited)")
+    return problems
 
 
 def check_env_file(path: str, production_env: str | None) -> list[str]:
@@ -112,6 +157,7 @@ def check_env_file(path: str, production_env: str | None) -> list[str]:
         problems.append("STAGING_AI_MODE=capped needs OPENAI_API_KEY and STAGING_AI_CAP_NOTE (the provider-side spend cap)")
     elif mode_ai not in {"disabled", "capped"}:
         problems.append("STAGING_AI_MODE must be 'disabled' or 'capped'")
+    problems.extend(check_email_discovery(env))
     joined = "\n".join(env.values())
     if PROD_ROOT + "/" in joined or "@postgres:5432/jobpilot" in joined or "api.xpertapply.com" in joined.replace(
         "api-staging.xpertapply.com", ""
@@ -191,6 +237,11 @@ def check_rendered(config: dict) -> list[str]:
         problems.append("api APP_ENV is not staging")
     if str(api_env.get("RUN_MIGRATIONS_ON_STARTUP", "")).lower() != "false":
         problems.append("api startup migrations must be disabled")
+    problems.extend(check_email_discovery({k: str(v) for k, v in api_env.items()}))
+    if str(api_env.get("EMAIL_BACKEND", "disabled")).lower() != "disabled":
+        problems.append("api EMAIL_BACKEND must stay disabled (no password-recovery email from staging)")
+    if str(api_env.get("GOOGLE_OAUTH_ENABLED", "false")).lower() != "false":
+        problems.append("api GOOGLE_OAUTH_ENABLED must stay false in staging")
     db = api_env.get("DATABASE_URL", "")
     if "@postgres:5432/" not in db or db.rstrip("/").endswith("/jobpilot"):
         problems.append("api DATABASE_URL does not point at the staging database")

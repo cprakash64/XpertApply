@@ -27,13 +27,20 @@ x-staging-app-env: &app-env
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   # Every external data provider and the scheduled job-board ingestion stay off in staging.
   JOB_INGESTION_ENABLED: "false"
-  PEOPLE_RECOMMENDATIONS_ENABLED: "false"
-  PEOPLE_ROLLOUT_MODE: disabled
+  # People features stay off unless the operator sets these in the staging env file (internal rollout = named testers only).
+  PEOPLE_RECOMMENDATIONS_ENABLED: ${PEOPLE_RECOMMENDATIONS_ENABLED:-false}
+  PEOPLE_ROLLOUT_MODE: ${PEOPLE_ROLLOUT_MODE:-disabled}
+  PEOPLE_INTERNAL_EMAILS: ${PEOPLE_INTERNAL_EMAILS:-}
   PEOPLE_ROLLOUT_PERCENTAGE: "0"
+  # Work-email discovery: off, keyless and tightly capped unless explicitly configured with a staging-only key.
+  PEOPLE_EMAIL_DISCOVERY_ENABLED: ${PEOPLE_EMAIL_DISCOVERY_ENABLED:-false}
+  PEOPLE_EMAIL_DAILY_CREDIT_BUDGET: ${PEOPLE_EMAIL_DAILY_CREDIT_BUDGET:-4}
+  PEOPLE_EMAIL_PER_USER_DAILY_LIMIT: ${PEOPLE_EMAIL_PER_USER_DAILY_LIMIT:-4}
+  PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR: ${PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR:-2}
   PEOPLE_OUTREACH_AI_ENABLED: "false"
   PEOPLE_OPENAI_WEB_DISCOVERY_ENABLED: "false"
   APOLLO_API_KEY: ""
-  HUNTER_API_KEY: ""
+  HUNTER_API_KEY: ${HUNTER_API_KEY:-}
   PDL_API_KEY: ""
   BRIGHTDATA_API_TOKEN: ""
   UPLOAD_DIR: /app/uploads

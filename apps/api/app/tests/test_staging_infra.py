@@ -241,6 +241,9 @@ MUTATIONS = {
     "no memory limit": lambda c: c["services"]["redis"].pop("mem_limit"),
     "capability added": lambda c: c["services"]["api"].update(cap_add=["SYS_ADMIN"]),
     "non-internal db network": lambda c: c["networks"]["internal"].update(internal=False),
+    "discovery on without a key": lambda c: c["services"]["api"]["environment"].update(PEOPLE_EMAIL_DISCOVERY_ENABLED="true"),
+    "password recovery email on": lambda c: c["services"]["api"]["environment"].update(EMAIL_BACKEND="smtp"),
+    "google oauth on": lambda c: c["services"]["api"]["environment"].update(GOOGLE_OAUTH_ENABLED="true"),
 }
 
 
@@ -307,3 +310,99 @@ def test_host_preflight_is_read_only_and_reports_a_verdict(tmp_path: Path) -> No
     result = subprocess.run(["bash", str(STAGING / "host-preflight.sh")], capture_output=True, text=True, timeout=120)
     assert result.returncode in (0, 1, 2)
     assert re.search(r"^(OK|STOP|NOT VERIFIED): ", result.stdout, re.M)
+
+
+# ---- NET-03B: work-email discovery stays off, keyless and capped unless every control is set -------------------------
+SAFE_DISCOVERY = {
+    "PEOPLE_EMAIL_DISCOVERY_ENABLED": "true",
+    "HUNTER_API_KEY": "synthetic-staging-key-not-a-secret",
+    "PEOPLE_RECOMMENDATIONS_ENABLED": "true",
+    "PEOPLE_ROLLOUT_MODE": "internal",
+    "PEOPLE_INTERNAL_EMAILS": "tester@example.test",
+    "PEOPLE_EMAIL_DAILY_CREDIT_BUDGET": "4",
+    "PEOPLE_EMAIL_PER_USER_DAILY_LIMIT": "4",
+    "PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR": "2",
+}
+
+
+def test_discovery_is_disabled_and_keyless_by_default(tree: Path) -> None:
+    values = guard.parse_env(str(make_env(tree)))
+    assert values["PEOPLE_EMAIL_DISCOVERY_ENABLED"] == "false"
+    assert values["HUNTER_API_KEY"] == ""
+    assert values["PEOPLE_ROLLOUT_MODE"] == "disabled"
+    assert guard.check_email_discovery(values) == []
+    assert "EMAIL_BACKEND" not in (STAGING / "compose.staging.yml").read_text()
+
+
+def test_a_complete_internal_discovery_setup_is_accepted() -> None:
+    assert guard.check_email_discovery(SAFE_DISCOVERY) == []
+    assert guard.check_email_discovery({**SAFE_DISCOVERY, "PEOPLE_INTERNAL_EMAILS": '["a@example.test","b@example.test"]'}) == []
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"HUNTER_API_KEY": ""}, "HUNTER_API_KEY"),
+        ({"PEOPLE_RECOMMENDATIONS_ENABLED": "false"}, "PEOPLE_RECOMMENDATIONS_ENABLED"),
+        ({"PEOPLE_ROLLOUT_MODE": "all"}, "PEOPLE_ROLLOUT_MODE"),
+        ({"PEOPLE_ROLLOUT_MODE": "disabled"}, "PEOPLE_ROLLOUT_MODE"),
+        ({"PEOPLE_INTERNAL_EMAILS": ""}, "PEOPLE_INTERNAL_EMAILS"),
+        ({"PEOPLE_INTERNAL_EMAILS": "*"}, "PEOPLE_INTERNAL_EMAILS"),
+        ({"PEOPLE_INTERNAL_EMAILS": "a@x.test,b@x.test,c@x.test,d@x.test"}, "PEOPLE_INTERNAL_EMAILS"),
+        ({"PEOPLE_EMAIL_DAILY_CREDIT_BUDGET": "0"}, "PEOPLE_EMAIL_DAILY_CREDIT_BUDGET"),
+        ({"PEOPLE_EMAIL_DAILY_CREDIT_BUDGET": "50"}, "PEOPLE_EMAIL_DAILY_CREDIT_BUDGET"),
+        ({"PEOPLE_EMAIL_PER_USER_DAILY_LIMIT": "0"}, "PEOPLE_EMAIL_PER_USER_DAILY_LIMIT"),
+        ({"PEOPLE_EMAIL_PER_USER_DAILY_LIMIT": ""}, "PEOPLE_EMAIL_PER_USER_DAILY_LIMIT"),
+        ({"PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR": "0"}, "PEOPLE_EMAIL_RATE_LIMIT_PER_HOUR"),
+    ],
+)
+def test_partial_or_uncapped_discovery_is_refused(override: dict, message: str) -> None:
+    problems = guard.check_email_discovery({**SAFE_DISCOVERY, **override})
+    assert any(message in p for p in problems), problems
+
+
+def test_the_wrapper_refuses_an_uncapped_enablement_and_prints_no_key(tree: Path) -> None:
+    path = make_env(tree, **{**SAFE_DISCOVERY, "PEOPLE_EMAIL_DAILY_CREDIT_BUDGET": "0"})
+    problems = guard.check_env_file(str(path), None)
+    assert any("PEOPLE_EMAIL_DAILY_CREDIT_BUDGET" in p for p in problems)
+    result = run(tree, "preflight")
+    assert result.returncode != 0 and "refused" in result.stderr
+    assert SAFE_DISCOVERY["HUNTER_API_KEY"] not in result.stdout + result.stderr
+
+
+def test_a_staging_key_equal_to_the_production_key_is_refused_without_printing_it(tree: Path) -> None:
+    path = make_env(tree, **SAFE_DISCOVERY)
+    fake_prod = tree.parent / "prod.env"
+    fake_prod.write_text(f"HUNTER_API_KEY={SAFE_DISCOVERY['HUNTER_API_KEY']}\n")
+    problems = guard.check_env_file(str(path), str(fake_prod))
+    assert problems == ["HUNTER_API_KEY equals the production value"]
+    assert SAFE_DISCOVERY["HUNTER_API_KEY"] not in " ".join(problems)
+
+
+@pytest.mark.skipif(not HAS_DOCKER, reason="docker CLI not available")
+def test_enabling_discovery_renders_only_staging_values_and_changes_no_other_service(tree: Path) -> None:
+    def render(env_path: Path) -> dict:
+        out = subprocess.run(
+            ["docker", "compose", "--project-name", "xpertapply-staging", "--project-directory", str(tree / "infra" / "staging"),
+             "--env-file", str(env_path), "-f", str(tree / "infra" / "staging" / "compose.staging.yml"),
+             "--profile", "workers", "--profile", "web", "config", "--format", "json"],
+            capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]},
+        )
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)
+
+    off = render(make_env(tree))
+    on_path = tree / "infra" / "staging" / ".env.staging"
+    on_path.write_text(on_path.read_text() + "".join(f"{k}={v}\n" for k, v in SAFE_DISCOVERY.items()))
+    # Later assignments win in an env file, so the appended block is the effective one.
+    on = render(on_path)
+    assert guard.check_rendered(on) == []
+    api = on["services"]["api"]["environment"]
+    assert api["PEOPLE_EMAIL_DISCOVERY_ENABLED"] == "true" and api["PEOPLE_ROLLOUT_MODE"] == "internal"
+    assert "api.xpertapply.com" not in json.dumps(on).replace("api-staging.xpertapply.com", "")
+    for name in ("postgres", "redis", "worker", "scheduler", "web"):
+        if name == "worker" or name == "scheduler":
+            continue  # these share the API environment block by design; the guard checks them as the API
+        assert on["services"][name] == off["services"][name], name
+    assert off["services"]["api"]["environment"]["PEOPLE_EMAIL_DISCOVERY_ENABLED"] == "false"
+    assert off["services"]["api"]["environment"]["HUNTER_API_KEY"] == ""
