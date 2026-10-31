@@ -201,7 +201,7 @@ describe("Networking categories and Get Email (NET-01)", () => {
     render(<PeopleWhoCanHelp jobId={9105} />);
     await screen.findByText("Rita Recruiter");
     fireEvent.click(screen.getByRole("button", { name: /Find work email/ }));
-    expect(await screen.findByText("No work email was found.")).toBeInTheDocument();
+    expect(await screen.findByText(/No work email was found when last checked on/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /work email/i })).not.toBeInTheDocument();
     expect(emailCalls(fetchMock)).toHaveLength(1);
   });
@@ -209,7 +209,7 @@ describe("Networking categories and Get Email (NET-01)", () => {
   it.each([
     ["rate_limited", /rate limit has been reached/],
     ["provider_unavailable", /temporarily unavailable/],
-    ["provider_error", /temporarily unavailable/],
+    ["provider_error", /service problem/],
     ["searching", /already running/]
   ])("keeps a retry available after a %s answer and never shows an email", async (status, note) => {
     const fetchMock = install(payload(), [
@@ -225,6 +225,16 @@ describe("Networking categories and Get Email (NET-01)", () => {
     fireEvent.click(retry);
     expect(await screen.findByText(/Verified work email: rita.recruiter@acme.example/)).toBeInTheDocument();
     expect(emailCalls(fetchMock)).toHaveLength(2);
+  });
+
+  it("treats a usage-limit answer as final for now and offers no retry", async () => {
+    const fetchMock = install(payload(), [{ status: 200, body: { status: "budget_exceeded", professional_email: null, verified_at: null } }]);
+    render(<PeopleWhoCanHelp jobId={9107} />);
+    await screen.findByText("Rita Recruiter");
+    fireEvent.click(screen.getByRole("button", { name: "Find work email" }));
+    expect(await screen.findByText(/daily limit was reached/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /work email/i })).not.toBeInTheDocument();
+    expect(emailCalls(fetchMock)).toHaveLength(1);
   });
 
   it("shows a recoverable error when the request itself fails", async () => {

@@ -1590,6 +1590,9 @@ def split_person_name(full_name: str | None) -> tuple[str, str] | None:
 # Hunter answers 202 while a verification is still running and 222 when the
 # remote mail server gave an unusable reply. Neither is an answer about the
 # address, so neither may be stored as one.
+# Hunter documents 403 as the request rate limit (retry shortly) and 429 as the
+# account usage limit (retrying cannot help until the plan renews).
+_HUNTER_STATUS_REASONS = {403: "provider_rate_limited", 429: "provider_budget_exceeded"}
 _HUNTER_PENDING_STATUSES = frozenset({202, 222})
 # Hunter's `status` field is current; `result` is documented as deprecated.
 _HUNTER_STATUS_MAP = {
@@ -1624,6 +1627,7 @@ class HunterEmailProvider(_HttpProvider):
             data = await self._request(
                 "GET", "https://api.hunter.io/v2/email-finder",
                 operation_type="email_discovery",
+                status_reason_overrides=_HUNTER_STATUS_REASONS,
                 params={"domain": request.company_domain, "first_name": name[0], "last_name": name[1], "api_key": self.api_key},
             )
         except ProviderUnavailable as exc:
@@ -1648,6 +1652,7 @@ class HunterEmailProvider(_HttpProvider):
             data = await self._request(
                 "GET", "https://api.hunter.io/v2/email-verifier",
                 operation_type="email_verification",
+                status_reason_overrides=_HUNTER_STATUS_REASONS,
                 params={"email": email, "api_key": self.api_key},
             )
         except ProviderUnavailable as exc:

@@ -157,8 +157,7 @@ def test_claimed_email_451_is_a_permanent_do_not_process(
     "scripted,expected",
     [
         ((401, {"errors": [{"id": "authentication_failed"}]}), "provider_error"),
-        ((403, {"errors": []}), "provider_error"),
-        ((429, {"errors": []}), "rate_limited"),
+        ((403, {"errors": []}), "rate_limited"),  # Hunter: 403 = request rate limit
         ((503, {}), "provider_unavailable"),
         (httpx.RemoteProtocolError("boom"), "provider_unavailable"),
         (httpx.ReadTimeout("slow"), "provider_unavailable"),
@@ -297,3 +296,77 @@ def test_legacy_transient_status_is_not_shown_as_a_final_state(
     payload = service.recommendations_payload(db, user, job.id)
     shown = [p for items in payload["categories"].values() for p in items]
     assert shown and shown[0]["email_status"] == "not_requested"
+
+
+def test_suppression_451_purges_a_previously_stored_address(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["professional_email"] == GOOD
+    assert person.professional_email_ciphertext is not None
+    # The cache window passes and Hunter now reports the address as claimed.
+    person.email_verified_at = person.email_verified_at.replace(year=2000)
+    db.commit()
+    fake.finder = (451, {"errors": [{"id": "claimed_email"}]})
+    out = _run(db, user, job, rec)
+    assert out["status"] == "not_found"
+    assert out["professional_email"] is None
+    db.refresh(person)
+    assert person.professional_email_ciphertext is None
+    assert person.professional_email_hash is None
+
+
+def test_verifier_451_also_clears_and_never_shows_the_address(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(), (451, {"errors": [{"id": "claimed_email"}]})).install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] == "not_found"
+    assert out["professional_email"] is None
+    assert person.professional_email_ciphertext is None
+
+
+def test_quota_exhaustion_is_not_reported_as_a_retryable_rate_limit(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter((429, {"errors": [{"id": "usage_limit"}]}), _found())
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "budget_exceeded"
+    assert person.email_verification_status == "not_requested"
+    # The budget circuit now holds paid calls; a retry must not reach Hunter.
+    before = fake.count("finder")
+    _run(db, user, job, rec)
+    assert fake.count("finder") == before
+
+
+def test_cached_results_are_marked_cached_and_fresh_ones_are_not(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(None), _found()).install(monkeypatch)
+    assert _run(db, user, job, rec)["cached"] is False
+    assert _run(db, user, job, rec)["cached"] is True
+
+
+def test_unrecognised_verifier_status_is_unknown_and_hidden(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(), (200, {"data": {"status": "brand_new_value"}})).install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] == "unknown"
+    assert out["professional_email"] is None
+
+
+def test_unparseable_provider_body_is_a_recoverable_state(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter((200, ["not", "an", "object"]), _found()).install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] in {"provider_unavailable", "provider_error", "not_found"}
+    assert out["professional_email"] is None

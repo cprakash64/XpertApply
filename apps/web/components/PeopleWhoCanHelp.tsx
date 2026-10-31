@@ -1060,9 +1060,15 @@ function emailStateNote(person: PeopleRecommendation): string | null {
     case "risky":
     case "unknown":
       return "A work email could not be verified, so none is shown.";
-    case "not_found":
-      return "No work email was found.";
+    case "not_found": {
+      // A stored answer is a past check, not a fresh provider query.
+      const checked = person.email_verified_at ? new Date(person.email_verified_at) : null;
+      return checked && !Number.isNaN(checked.getTime())
+        ? `No work email was found when last checked on ${checked.toLocaleDateString()}.`
+        : "No work email was found.";
+    }
     case "provider_error":
+      return "Work-email lookup is not available right now because of a service problem, not because of this contact. Retrying may not help until it is fixed.";
     case "provider_unavailable":
       return "The work-email provider is temporarily unavailable.";
     case "rate_limited":

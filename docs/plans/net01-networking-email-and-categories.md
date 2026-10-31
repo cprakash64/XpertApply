@@ -32,3 +32,20 @@ and that a second click makes no provider call.
 
 ## Rollback
 Redeploy the previous API/web images (production-rollback.sh). No migration, so no database rollback.
+
+## NET-02 qualification (2026-10-31)
+
+- Hunter mapping corrected to the documented semantics: HTTP 403 is the request rate limit
+  (retryable, `rate_limited`); HTTP 429 is the account usage limit (`budget_exceeded`, no retry,
+  budget circuit holds paid calls). 401 stays `provider_error`.
+- A not-found answer (including 451 claimed_email) now clears any previously stored address and hash
+  on the shared person row.
+- `find_email` responses carry `cached`; the UI states "No work email was found when last checked on
+  <date>" for stored negatives and gives credential failures their own wording.
+- Not changed: finder-verification skip of the verifier call (billing behaviour; needs real-provider
+  evidence), 30-day cache window (a 451 on an already-cached verified address is noticed only when the
+  window expires).
+- Validation: API 2348 passed / 11 skipped (full suite); web typecheck + eslint clean, vitest 1233/1234
+  on first full run with one unrelated timing flake (jobs-scoring, 3/3 pass in isolation); Playwright
+  9/9 against a production build (`next start`), including the test that failed under `next dev`.
+- Operator check: `operator-net-config-check.sh` (booleans only) for the live flag and key.

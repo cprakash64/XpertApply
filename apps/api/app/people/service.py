@@ -1637,6 +1637,9 @@ _TRANSIENT_EMAIL_STATUSES = frozenset({
 def _transient_email_status(reason: str) -> str:
     if reason == "provider_rate_limited":
         return "rate_limited"
+    if reason == "provider_budget_exceeded":
+        # Provider usage limit: not temporary, so it must not offer a retry.
+        return "budget_exceeded"
     if reason in {"provider_unauthorized", "provider_forbidden", "provider_not_configured"}:
         # Credentials or account access: retrying cannot fix it, but it is not
         # "temporarily unavailable" either, and the operator needs to see it.
@@ -4817,6 +4820,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                 else None
             ),
             "verified_at": person.email_verified_at,
+            "cached": True,
         }
     if split_person_name(person.canonical_full_name) is None:
         # A single token or an honorific-only string cannot identify anyone; the
@@ -4876,6 +4880,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                     else None
                 ),
                 "verified_at": person.email_verified_at,
+                "cached": True,
             }
         provider = get_email_provider()
         metric("people_email_find_requests_total", provider="hunter")
@@ -4889,6 +4894,10 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             if not found.email or not is_professional_email(found.email, domain):
                 person.email_verification_status = "not_found"
                 person.email_verified_at = _now()
+                # A suppression (451) or a changed answer must not leave an
+                # earlier address stored on the shared row.
+                person.professional_email_ciphertext = None
+                person.professional_email_hash = None
             else:
                 verified = await provider.verify_work_email(found.email)
                 person.email_verification_status = verified.status
@@ -4947,6 +4956,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             if person.email_verification_status == "verified" else None
         ),
         "verified_at": person.email_verified_at,
+        "cached": False,
     }
 
 
