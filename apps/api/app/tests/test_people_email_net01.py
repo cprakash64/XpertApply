@@ -431,3 +431,119 @@ def test_the_provider_key_never_reaches_the_logs(
         _run(db, user, job, rec)
     assert "synthetic-test-key" not in caplog.text
     assert GOOD not in caplog.text
+
+
+# ---- production limit semantics (NET-PROD-01): what the numbers actually mean ----------------------------------------
+def _expire_cache(db: Session, person) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    person.email_verified_at = datetime.now(UTC) - timedelta(days=settings.people_email_result_ttl_days + 1)
+    db.commit()
+
+
+def test_per_user_daily_limit_counts_credits_so_two_means_one_found_lookup(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 2)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 5)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "verified"  # finder + verifier = 2 credits counted
+    _expire_cache(db, person)
+    assert _run(db, user, job, rec)["status"] == "budget_exceeded"
+    assert fake.count("finder") == 1
+
+
+def test_per_user_daily_limit_of_three_allows_exactly_two_found_lookups(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 3)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 0)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    statuses = []
+    for _ in range(3):
+        statuses.append(_run(db, user, job, rec)["status"])
+        _expire_cache(db, person)
+    assert statuses == ["verified", "verified", "budget_exceeded"]
+    assert fake.count("finder") == 2
+
+
+def test_global_daily_budget_of_five_stops_after_at_most_three_found_lookups(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 0)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 5)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    statuses = []
+    for _ in range(5):
+        statuses.append(_run(db, user, job, rec)["status"])
+        _expire_cache(db, person)
+    # The check runs before each call, so the budget can be overshot by one lookup (6 counted, ~4.5 real credits).
+    assert statuses == ["verified", "verified", "verified", "budget_exceeded", "budget_exceeded"]
+    assert fake.count("finder") == 3
+
+
+def test_hourly_limit_of_two_blocks_the_third_uncached_attempt(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 2)
+    fake = FakeHunter((503, {}), _found())
+    fake.install(monkeypatch)
+    first = _run(db, user, job, rec)["status"]
+    second = _run(db, user, job, rec)["status"]
+    third = _run(db, user, job, rec)["status"]
+    assert (first, second) == ("provider_unavailable", "provider_unavailable")
+    assert third == "rate_limited"
+    assert fake.count("finder") <= 2
+    service._RATE_BUCKETS.clear()
+
+
+def test_cached_answers_do_not_consume_the_hourly_allowance(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 2)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    results = [_run(db, user, job, rec)["status"] for _ in range(6)]
+    assert results == ["verified"] * 6
+    assert fake.count("finder") == 1
+    service._RATE_BUCKETS.clear()
+
+
+def test_email_route_is_closed_to_users_outside_the_internal_rollout_and_open_to_the_listed_one(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.core.security import create_access_token, hash_password
+    from app.main import app
+
+    user, job, person, rec = _persist_recommendation(db)
+    outsider = User(email="outsider@example.com", hashed_password=hash_password("password123"))
+    db.add(outsider)
+    db.commit()
+    monkeypatch.setattr(settings, "people_recommendations_enabled", True)
+    monkeypatch.setattr(settings, "people_rollout_mode", "internal")
+    monkeypatch.setattr(settings, "people_internal_emails", [user.email])
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    client = TestClient(app)
+    out_headers = {"Authorization": f"Bearer {create_access_token(str(outsider.id))}"}
+    in_headers = {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
+    path = f"/jobs/{job.id}/people/{rec.id}/email"
+
+    assert client.post(path).status_code == 401                       # unauthenticated
+    assert client.post(path, headers=out_headers).status_code == 404  # authenticated but outside the rollout
+    assert fake.calls == []                                           # no provider request, no credit
+    ok = client.post(path, headers=in_headers)
+    assert ok.status_code == 200 and ok.json()["status"] == "verified"
+    assert fake.count("finder") == 1
