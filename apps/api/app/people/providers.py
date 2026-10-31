@@ -110,6 +110,24 @@ class ProviderUnavailable(RuntimeError):
         return is_request_scoped(self.code)
 
 
+# Documented Hunter error ids. Only a value from this fixed set is ever kept, so a provider response can never smuggle free text
+# (a name, an address, a domain) into metadata or logs.
+_PROVIDER_ERROR_IDS = frozenset({
+    "wrong_params", "invalid_first_name", "invalid_last_name", "invalid_full_name", "invalid_domain", "invalid_email",
+    "invalid_max_duration", "claimed_email", "authentication_failed", "usage_limit", "rate_limit",
+})
+
+
+def _safe_provider_error_id(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    errors = payload.get("errors")
+    if not isinstance(errors, list) or not errors or not isinstance(errors[0], dict):
+        return None
+    value = errors[0].get("id")
+    return value if isinstance(value, str) and value in _PROVIDER_ERROR_IDS else None
+
+
 def _retry_after_seconds(response: httpx.Response) -> int | None:
     """Honour Retry-After when the provider sends one, in either RFC format."""
 
@@ -315,6 +333,7 @@ class _HttpProvider:
         status_reason_overrides: dict[int, str] | None = None,
         malformed_response_reason: str = "provider_schema_error",
         pdl_endpoint: PdlEndpoint | None = None,
+        timeout_seconds: float | None = None,
         **kwargs,
     ) -> dict:
         """Issue one provider request.
@@ -327,7 +346,9 @@ class _HttpProvider:
         self._circuit_gate(operation_type)
         usage_key = self._start_usage(operation_type)
         self.requests += 1
-        timeout = httpx.Timeout(settings.people_provider_timeout_seconds)
+        base_timeout = settings.people_provider_timeout_seconds
+        # Only the READ phase may wait longer (the provider is working, not unreachable); connect, write and pool keep the safe limit.
+        timeout = httpx.Timeout(base_timeout, read=max(base_timeout, timeout_seconds or 0.0))
         started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
@@ -482,6 +503,7 @@ class _HttpProvider:
             # An ordinary 400/404 describes this request, not provider health.
             code = code_for_http_status(response.status_code)
             self._failure(code, operation_type=operation_type)
+            error_id = _safe_provider_error_id(parsed_payload)
             raise ProviderUnavailable(
                 reason_for_code(code),
                 provider=self.provider_name,
@@ -489,6 +511,7 @@ class _HttpProvider:
                 duration_ms=duration_ms,
                 code=code,
                 retry_after_seconds=retry_after,
+                safe_metadata={"provider_error_id": error_id} if error_id else None,
             )
         if parsed_payload is None or not isinstance(parsed_payload, dict):
             self._failure(
@@ -1594,6 +1617,10 @@ def split_person_name(full_name: str | None) -> tuple[str, str] | None:
 # account usage limit (retrying cannot help until the plan renews).
 _HUNTER_STATUS_REASONS = {403: "provider_rate_limited", 429: "provider_budget_exceeded"}
 _HUNTER_PENDING_STATUSES = frozenset({202, 222})
+# Hunter answers the Email Finder after up to its default max_duration of 10 s and holds the Email Verifier for up to 20 s before
+# returning 202. The generic 8 s provider timeout cut both off, so a working provider looked "temporarily unavailable".
+_HUNTER_FINDER_TIMEOUT_SECONDS = 15.0
+_HUNTER_VERIFIER_TIMEOUT_SECONDS = 25.0
 # Hunter's `status` field is current; `result` is documented as deprecated.
 _HUNTER_STATUS_MAP = {
     "valid": "verified", "accept_all": "accept_all", "invalid": "not_found",
@@ -1627,6 +1654,7 @@ class HunterEmailProvider(_HttpProvider):
             data = await self._request(
                 "GET", "https://api.hunter.io/v2/email-finder",
                 operation_type="email_discovery",
+                timeout_seconds=_HUNTER_FINDER_TIMEOUT_SECONDS,
                 status_reason_overrides=_HUNTER_STATUS_REASONS,
                 params={"domain": request.company_domain, "first_name": name[0], "last_name": name[1], "api_key": self.api_key},
             )
@@ -1658,6 +1686,7 @@ class HunterEmailProvider(_HttpProvider):
             data = await self._request(
                 "GET", "https://api.hunter.io/v2/email-verifier",
                 operation_type="email_verification",
+                timeout_seconds=_HUNTER_VERIFIER_TIMEOUT_SECONDS,
                 status_reason_overrides=_HUNTER_STATUS_REASONS,
                 params={"email": email, "api_key": self.api_key},
             )

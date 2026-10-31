@@ -1634,13 +1634,34 @@ _TRANSIENT_EMAIL_STATUSES = frozenset({
 })
 
 
+_NAME_REJECTED_PROVIDER_IDS = frozenset({"invalid_first_name", "invalid_last_name", "invalid_full_name"})
+_SAFE_LOG_TOKEN = re.compile(r"[a-z0-9_]{1,60}")
+
+
+def _log_token(value: object) -> str:
+    """Only short lowercase identifiers from code constants reach the log; anything else is reduced to 'other'."""
+    text = str(value or "").lower()
+    return text if _SAFE_LOG_TOKEN.fullmatch(text) else "other"
+
+
+def _email_failure_status(exc: ProviderUnavailable) -> str:
+    # Hunter rejected the NAME itself: the existing non-retryable "identity uncertain" state is accurate, and needs no frontend change.
+    if exc.safe_metadata.get("provider_error_id") in _NAME_REJECTED_PROVIDER_IDS:
+        return "identity_uncertain"
+    return _transient_email_status(exc.reason)
+
+
 def _transient_email_status(reason: str) -> str:
     if reason == "provider_rate_limited":
         return "rate_limited"
     if reason == "provider_budget_exceeded":
         # Provider usage limit: not temporary, so it must not offer a retry.
         return "budget_exceeded"
-    if reason in {"provider_unauthorized", "provider_forbidden", "provider_not_configured"}:
+    if reason in {
+        "provider_unauthorized", "provider_forbidden", "provider_not_configured",
+        # A rejected request (HTTP 400/404): repeating the same request cannot succeed, so it is not "temporarily unavailable".
+        "provider_request_invalid", "provider_route_invalid",
+    }:
         # Credentials or account access: retrying cannot fix it, but it is not
         # "temporarily unavailable" either, and the operator needs to see it.
         return "provider_error"
@@ -4884,6 +4905,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             }
         provider = get_email_provider()
         metric("people_email_find_requests_total", provider="hunter")
+        stage = "finder"
         try:
             found = await provider.find_work_email(
                 WorkEmailRequest(
@@ -4899,6 +4921,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                 person.professional_email_ciphertext = None
                 person.professional_email_hash = None
             else:
+                stage = "verifier"
                 verified = await provider.verify_work_email(found.email)
                 person.email_verification_status = verified.status
                 person.email_verified_at = verified.verified_at or _now()
@@ -4942,6 +4965,15 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             # row is shared by every user. Report it to this caller only; the
             # stored state stays as it was so the next attempt really happens.
             db.rollback()
+            # WARNING level so it reaches the container log. Only the stage, the sanitised reason and typed code, the upstream
+            # HTTP status, the number of provider requests made and the elapsed time: never a name, address, domain or key.
+            logger.warning(
+                "people_email_lookup_failed stage=%s reason=%s code=%s http_status=%s provider_error=%s attempts=%d duration_ms=%d",
+                stage if stage in {"finder", "verifier"} else "other", _log_token(exc.reason), _log_token(exc.code.value),
+                exc.http_status if isinstance(exc.http_status, int) else "none",
+                _log_token(exc.safe_metadata.get("provider_error_id") or "none"),
+                int(getattr(provider, "requests", 0)), int(exc.duration_ms or 0),
+            )
             spent = int(getattr(provider, "credits", 0))
             if spent > 0:
                 # A finder call that already cost a credit before the verifier
@@ -4964,7 +4996,7 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                 )
                 db.commit()
             return {
-                "status": _transient_email_status(exc.reason),
+                "status": _email_failure_status(exc),
                 "professional_email": None,
                 "verified_at": None,
             }

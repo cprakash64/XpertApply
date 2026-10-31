@@ -9,6 +9,7 @@ Hunter account is configured or working in production.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -35,13 +36,14 @@ class FakeHunter:
         self.finder = finder
         self.verifier = verifier
         self.calls: list[tuple[str, dict]] = []
+        self.timeouts: dict[str, object] = {}
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         outer = self
 
         class Client:
             def __init__(self, *args, **kwargs) -> None:
-                pass
+                self.timeout = kwargs.get("timeout")
 
             async def __aenter__(self):
                 return self
@@ -52,6 +54,7 @@ class FakeHunter:
             async def request(self, method, url, **kwargs):
                 path = "finder" if "email-finder" in url else "verifier"
                 outer.calls.append((path, dict(kwargs.get("params") or {})))
+                outer.timeouts[path] = self.timeout
                 scripted = outer.finder if path == "finder" else outer.verifier
                 if isinstance(scripted, Exception):
                     raise scripted
@@ -547,3 +550,237 @@ def test_email_route_is_closed_to_users_outside_the_internal_rollout_and_open_to
     ok = client.post(path, headers=in_headers)
     assert ok.status_code == 200 and ok.json()["status"] == "verified"
     assert fake.count("finder") == 1
+
+
+# ---- NET-PROD-04: the production "temporarily unavailable" with no Hunter usage ---------------------------------------------
+def test_client_timeouts_outlast_hunters_documented_processing_windows(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hunter's finder may work for its default 10 s and the verifier for up to 20 s before it answers (202). The generic 8 s
+    provider timeout cut both off, which the service reported as 'provider_unavailable' while Hunter recorded no usage."""
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_provider_timeout_seconds", 8.0)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    _run(db, user, job, rec)
+    finder, verifier = fake.timeouts["finder"], fake.timeouts["verifier"]
+    assert finder.read >= 12.0 and verifier.read >= 22.0
+    # Only the READ phase waits longer; connecting, writing and pool acquisition keep the existing safe limit.
+    for t in (finder, verifier):
+        assert (t.connect, t.write, t.pool) == (8.0, 8.0, 8.0)
+
+
+def test_a_hunter_400_is_a_rejected_request_not_a_temporary_outage(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter((400, {"errors": [{"id": "invalid_domain"}]}), _found())
+    fake.install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] == "provider_error"        # not "provider_unavailable": retrying the same request cannot help
+    assert out["professional_email"] is None
+    assert person.email_verification_status == "not_requested"
+
+
+@pytest.mark.parametrize(
+    "finder,verifier,stage,reason,attempts,status",
+    [
+        (httpx.ReadTimeout("slow"), (200, {"data": {"status": "valid"}}), "finder", "provider_timeout", 1, None),
+        (_found(), httpx.ReadTimeout("slow"), "verifier", "provider_timeout", 2, None),
+        ((503, {}), _found(), "finder", "provider_unavailable", 1, 503),
+        (_found(), (202, {"data": {}}), "verifier", "provider_unavailable", 2, 202),
+        ((400, {"errors": [{"id": "wrong_params"}]}), _found(), "finder", "provider_request_invalid", 1, 400),
+    ],
+)
+def test_a_failed_lookup_logs_only_stage_status_code_and_attempts(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, finder, verifier, stage, reason, attempts, status
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(finder, verifier).install(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        _run(db, user, job, rec)
+    lines = [r.getMessage() for r in caplog.records if "people_email_lookup_failed" in r.getMessage()]
+    assert len(lines) == 1, caplog.text
+    line = lines[0]
+    assert f"stage={stage}" in line and f"reason={reason}" in line and f"attempts={attempts}" in line
+    assert f"http_status={status if status is not None else 'none'}" in line
+    for secret in ("synthetic-test-key", GOOD, DOMAIN, person.canonical_full_name, "Rita"):
+        assert secret not in caplog.text
+
+
+# ---- delayed provider responses over a real socket, so httpx's own read timeout is what is being exercised --------------------
+class _SlowHunter:
+    """A tiny local HTTP server standing in for api.hunter.io, with per-endpoint delays. Counts the requests it receives."""
+
+    def __init__(self, finder_delay: float, verifier_delay: float, finder_body=None, verifier_body=None) -> None:
+        self.delays = {"email-finder": finder_delay, "email-verifier": verifier_delay}
+        self.bodies = {"email-finder": finder_body or {"data": {"email": GOOD, "score": 90}},
+                       "email-verifier": verifier_body or {"data": {"status": "valid"}}}
+        self.hits: list[str] = []
+
+    async def _handle(self, reader, writer) -> None:
+        try:
+            head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
+            kind = "email-finder" if "email-finder" in head.split("\r\n")[0] else "email-verifier"
+            self.hits.append(kind)
+            await asyncio.sleep(self.delays[kind])
+            body = json.dumps(self.bodies[kind]).encode()
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                         + str(len(body)).encode() + b"\r\n\r\n" + body)
+            await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError):
+            pass
+        finally:
+            writer.close()
+
+    def run(self, monkeypatch: pytest.MonkeyPatch, coro_factory):
+        real = httpx.AsyncClient
+
+        async def scenario():
+            server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+
+            class Local(real):
+                async def request(self, method, url, **kwargs):
+                    return await super().request(method, url.replace("https://api.hunter.io", f"http://127.0.0.1:{port}"), **kwargs)
+
+            monkeypatch.setattr(providers.httpx, "AsyncClient", Local)
+            try:
+                return await coro_factory()
+            finally:
+                server.close()
+                await server.wait_closed()
+
+        return asyncio.run(scenario())
+
+
+def _scaled(monkeypatch: pytest.MonkeyPatch, base: float, finder: float, verifier: float) -> None:
+    monkeypatch.setattr(settings, "people_provider_timeout_seconds", base)
+    monkeypatch.setattr(providers, "_HUNTER_FINDER_TIMEOUT_SECONDS", finder)
+    monkeypatch.setattr(providers, "_HUNTER_VERIFIER_TIMEOUT_SECONDS", verifier)
+
+
+def test_a_slow_but_working_provider_succeeds_instead_of_timing_out(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    _scaled(monkeypatch, base=0.3, finder=3.0, verifier=3.0)      # answers take 0.8 s: longer than the base limit, inside Hunter's window
+    server = _SlowHunter(finder_delay=0.8, verifier_delay=0.8)
+    out = server.run(monkeypatch, lambda: find_email(db, user, job.id, rec.id))
+    assert out["status"] == "verified" and out["professional_email"] == GOOD
+    assert server.hits == ["email-finder", "email-verifier"]       # exactly one request each, no retries
+
+
+def test_the_base_timeout_alone_would_have_cut_the_same_answer_off(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    _scaled(monkeypatch, base=0.3, finder=0.0, verifier=0.0)      # no extra read time: what production ran before
+    server = _SlowHunter(finder_delay=0.8, verifier_delay=0.8)
+    out = server.run(monkeypatch, lambda: find_email(db, user, job.id, rec.id))
+    assert out["status"] == "provider_unavailable"
+    assert server.hits == ["email-finder"]
+
+
+def test_a_real_finder_timeout_is_reported_once_with_its_stage_and_never_retried(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    _scaled(monkeypatch, base=0.3, finder=0.6, verifier=3.0)
+    server = _SlowHunter(finder_delay=1.5, verifier_delay=0.1)
+    with caplog.at_level(logging.WARNING):
+        out = server.run(monkeypatch, lambda: find_email(db, user, job.id, rec.id))
+    assert out["status"] == "provider_unavailable" and out["professional_email"] is None
+    assert server.hits == ["email-finder"]
+    lines = [r.getMessage() for r in caplog.records if "people_email_lookup_failed" in r.getMessage()]
+    assert len(lines) == 1 and "stage=finder" in lines[0] and "reason=provider_timeout" in lines[0] and "attempts=1" in lines[0]
+    assert person.email_verification_status == "not_requested"
+
+
+def test_a_real_verifier_timeout_keeps_the_finder_credit_in_the_budget_and_is_not_retried(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from sqlalchemy import func, select
+
+    from app.models.entities import PeopleDiscoveryRun
+
+    user, job, person, rec = _persist_recommendation(db)
+    _scaled(monkeypatch, base=0.3, finder=3.0, verifier=0.6)
+    server = _SlowHunter(finder_delay=0.1, verifier_delay=1.5)
+    with caplog.at_level(logging.WARNING):
+        out = server.run(monkeypatch, lambda: find_email(db, user, job.id, rec.id))
+    assert out["status"] == "provider_unavailable"
+    assert server.hits == ["email-finder", "email-verifier"]
+    assert any("stage=verifier" in r.getMessage() and "attempts=2" in r.getMessage() for r in caplog.records)
+    assert db.scalar(select(func.sum(PeopleDiscoveryRun.provider_credits_used)).where(PeopleDiscoveryRun.provider == "hunter")) == 1
+
+
+# ---- error classification and the diagnostic line -------------------------------------------------------------------------------
+@pytest.mark.parametrize("error_id", ["invalid_first_name", "invalid_last_name", "invalid_full_name"])
+def test_a_name_hunter_refuses_becomes_identity_uncertain_a_state_with_no_retry_button(
+    db: Session, monkeypatch: pytest.MonkeyPatch, error_id: str
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter((400, {"errors": [{"id": error_id, "details": "Rita Recruiter is not a name"}]}), _found()).install(monkeypatch)
+    out = _run(db, user, job, rec)
+    assert out["status"] == "identity_uncertain" and out["professional_email"] is None
+    assert person.email_verification_status == "not_requested"
+
+
+@pytest.mark.parametrize("status,error_id", [(400, "invalid_domain"), (400, "wrong_params"), (404, None)])
+def test_other_rejected_requests_are_a_service_problem_not_a_temporary_outage(
+    db: Session, monkeypatch: pytest.MonkeyPatch, status: int, error_id
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    body = {"errors": [{"id": error_id}]} if error_id else {}
+    fake = FakeHunter((status, body), _found())
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "provider_error"
+    assert fake.count("finder") == 1                              # one request, no automatic retry
+
+
+def test_the_failure_line_carries_an_allowlisted_provider_error_id_and_never_free_text(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    hostile = {"errors": [{"id": "rita.recruiter@acme.example", "details": "Rita Recruiter at acme.example"}]}
+    FakeHunter((400, hostile), _found()).install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        _run(db, user, job, rec)
+    line = next(r.getMessage() for r in caplog.records if "people_email_lookup_failed" in r.getMessage())
+    assert "provider_error=none" in line
+    for forbidden in ("rita", "Rita", "acme", "@", "synthetic-test-key"):
+        assert forbidden not in caplog.text
+    caplog.clear()
+    FakeHunter((400, {"errors": [{"id": "invalid_domain"}]}), _found()).install(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        _run(db, user, job, rec)
+    assert "provider_error=invalid_domain" in next(r.getMessage() for r in caplog.records if "people_email_lookup_failed" in r.getMessage())
+
+
+def test_a_successful_lookup_writes_no_failure_line_and_nothing_sensitive(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(), (200, {"data": {"status": "valid"}})).install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        assert _run(db, user, job, rec)["status"] == "verified"
+    assert "people_email_lookup_failed" not in caplog.text
+    for forbidden in (GOOD, "Rita", DOMAIN, "synthetic-test-key"):
+        assert forbidden not in caplog.text
+
+
+def test_log_tokens_are_reduced_to_a_safe_alphabet() -> None:
+    assert service._log_token("provider_timeout") == "provider_timeout"
+    for hostile in ("a@b.c", "Rita Recruiter", "x" * 200, "domain.example", "", None):
+        assert service._log_token(hostile) in {"other"}
