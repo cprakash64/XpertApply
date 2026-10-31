@@ -1,6 +1,6 @@
 # EXT-E2 Phase B: staging account connection acceptance
 
-Status: **Stages 1 and 2 executed. Stage 3 (real desktop Chrome with staging accounts) NOT executed.** The brief allows Stage 3 only after the founder explicitly authorizes disposable test accounts; this brief does not contain that authorization, so no account was created, no sign-in was performed, and desktop Chrome was not operated. Nothing was pushed, deployed, migrated, published or changed on any server. Production was not contacted. Every browser check below was run in **Chrome for Testing 149 under Playwright, which is not desktop Chrome**, and is labelled as such.
+Status: **Stages 1 and 2 executed. Stage 3 split: the server side of the connection was exercised over HTTPS after the founder authorized disposable accounts (section 3A); every desktop-Chrome test (C1 to C14) is still NOT RUN because desktop Chrome and its native sign-in window cannot be operated from this session.** The founder authorized up to two disposable staging accounts after the first version of this report; two were created (3A). Nothing was pushed, deployed, migrated, published or changed on any server. Production was not contacted. Every browser check below was run in **Chrome for Testing 149 under Playwright, which is not desktop Chrome**, and is labelled as such.
 
 ## 1. Stage 1: artifact (executed)
 | | |
@@ -27,14 +27,37 @@ Source gate on the clean archive: typecheck clean; 1,596 unit tests pass (sectio
 | CORS | preflight from `chrome-extension://cglmdonbfbadfbggkpajpkjgpekhkall` is allowed for `authorization, content-type`; a preflight from `https://evil.example` returns 400 |
 | Web | `https://staging.xpertapply.com/extension/connect` 200; enforced CSP `frame-ancestors 'none'; object-src 'none'; base-uri 'self'`, Report-Only CSP naming only `api-staging`, HSTS `max-age=300`, `X-Frame-Options: DENY`. The connect page takes the redirect from the request and validates its shape; it needs no extension ID in the web build |
 | Compatibility with the build | the routes the staging build uses (`/extension/auth/*`, `/extension/direct-sessions`, `/application-sessions/*`) all exist; `extension.py` is byte-identical between the premium branch and line C (E1); no migration is needed |
-| **Extension allowlist** | **NOT verifiable from here.** `POST /extension/auth/code` needs a signed-in user before it checks the redirect, and no unauthenticated route reveals `EXTENSION_ALLOWED_IDS`. Staging compose requires the variable and `staging_guard` validates 1 to 5 IDs, so it is set; whether it contains the pinned ID needs either the operator's read-only `sudo docker exec xpertapply-staging-api printenv EXTENSION_ALLOWED_IDS`, or test C4 below (which proves it from the browser) |
+| **Extension allowlist** | Not readable unauthenticated, but **proven behaviorally after authorization (3A)**: with a signed-in staging user, a code request for the pinned ID was issued and a request for another well-formed ID was refused (400), so `EXTENSION_ALLOWED_IDS` is non-empty and contains `cglmdonbfbadfbggkpajpkjgpekhkall`. The operator's `printenv` would only add the exact list |
 Staging web and API *image* identities (`1b26947`, `aa5bc2fa`) cannot be read from outside the host; they were taken from the S3 and API release records. Nothing was deployed or changed.
 
 ## 3. Stage 3: real desktop Chrome (NOT RUN; protocol ready)
+## 3A. Accounts and API-level connection flow (executed after authorization; HTTPS only, not desktop Chrome)
+Accounts, staging only, created through the application's own `/auth/signup` and profile routes, synthetic identities, deliverable plus-aliases of the founder's mailbox (chosen by the founder):
+| | Account A | Account B |
+|---|---|---|
+| Staging user id | 23 | 24 |
+| Email | `cprakash.work+xa-stg-a@gmail.com` | `cprakash.work+xa-stg-b@gmail.com` |
+| Synthetic identity | Riley Testcase, +1 602 555 0143, Phoenix AZ | Jordan Testcase, +1 480 555 0177, Phoenix AZ |
+| Profile | name confirmed, application email set, phone, location, three skills, LinkedIn. No work authorization, sponsorship or demographic answer was entered, so those must stay unfilled | same |
+Passwords were generated randomly and are stored **only** in the private file `/private/tmp/claude-501/-Users-cprakash-Documents-Jobs-XpertApply/1c58020f-faa8-4586-8961-6ea6a0a780c9/scratchpad/phaseb/accounts.json` (mode 600). They are not in this repository, in this report or in chat. Email recovery is off on staging, so a lost password cannot be reset. Remove the accounts' data through the site when finished; no account was touched on production.
+Connection flow exercised for account A against `https://api-staging.xpertapply.com` (the same calls the website and the extension make):
+| Step | Result |
+|---|---|
+| Code request with another extension ID (`aaaa…`) | 400 "Invalid extension authorization request": refused |
+| Code request with the pinned ID | 200, code issued |
+| Exchange code + PKCE verifier for the pinned redirect | 200, access token (30 min, `expires_in` 1800), refresh token, user id 23 |
+| `/extension/me` with the access token | 200, account A |
+| Extension access token on the website's `/auth/me` | 401 (token types are not interchangeable) |
+| Website token on `/extension/me` | 401 |
+| Replay of the same code | 400 |
+| Refresh, then replay of the old refresh credential | refresh 200; replay 401, and the whole family is then dead (next refresh 401) |
+| Revoke | 204 |
+This proves the server half of C2, C4, C7, C9 and most of C8. It does **not** exercise Chrome's native window, the real grant prompt, persistence in the extension's IndexedDB, the worker, or any browser behavior. Account B has no extension credential yet. Nothing was submitted and no employer was contacted.
+
 ### Preconditions (founder)
-1. Explicit written authorization for up to **two** disposable staging accounts (A and B), synthetic names, controlled deliverable aliases, no real documents.
+1. Done: authorization given and accounts A and B created (3A). Use their private credentials file; no real documents.
 2. A dedicated desktop Chrome profile, Chrome 133 or newer; **record the exact version** (`chrome://version`). No other extensions.
-3. Operator confirms `EXTENSION_ALLOWED_IDS` (command above), or accepts test C4 as the proof.
+3. Allowlist: settled in 3A. C4 remains useful as the browser-side check.
 
 ### Install
 Remove any old XpertApply card; `chrome://extensions`, Developer mode, **Load unpacked**, choose the artifact folder above. Expect name `XpertApply (STAGING)`, ID `cglmdonbfbadfbggkpajpkjgpekhkall`, version `0.3.0 (nogit-4df4b86 …; staging)`, Errors 0. In the service-worker console, `chrome.runtime.getManifest().host_permissions` must list only the two staging hosts.
@@ -63,7 +86,7 @@ Send a screenshot or copied text for each; **never send tokens, passwords or raw
 Chrome version: _not recorded_. C1 to C14: **NOT RUN**.
 
 ## 4. Failures and root causes
-None observed. Nothing in Stages 1 and 2 failed. The only open item is that the allowlist content could not be confirmed (section 2).
+None observed in Stages 1, 2 or 3A. The earlier open item (allowlist content) is closed by 3A.
 
 ## 5. Verification detail and automated stand-ins
 Automated real-Chromium evidence from earlier gates still applies to this source (same tree as `647c57c` plus the stale-failure fix): `xa-e2c-isolation` (disconnect, account change, worker stopped, expired token, forged messages), `xa-core1-direct` G1 to G3, H, `xa-direct-entry` B2 (native sign-in invoked with the staging site and the staging redirect). These are **Chrome for Testing**; Chrome's own consent window cannot be automated and has never been exercised against the staging hostnames, which is why C1 to C4 are mandatory.
@@ -71,10 +94,10 @@ Clean-archive source gate for `212aee3`: typecheck clean; unit suite **106 files
 
 ## 6. Remaining risks
 - Stage 3 not run: the native sign-in window, the real grant prompt, the `!` badge, token refresh against the real API and Chrome restart persistence are unproven in desktop Chrome.
-- Allowlist content unverified (C4 or the operator command settles it).
 - The embedded-form limitation, an unbounded quiet fill, Workday auto-advance (F3), Greenhouse phone and location widgets, and the Reddit email/phone/location/documents rows from the production report remain open.
 - Line C is unpushed; candidate `ec714fd` is unmerged (not merged here, as instructed).
-- Password recovery stays unavailable on staging, so A and B cannot recover a forgotten password; use passwords the tester records.
+- Password recovery stays unavailable on staging, so A and B cannot recover a forgotten password; credentials are only in the private file.
+- The accounts remain on staging until removed; the Gmail plus-aliases are the founder's own and appear only in the staging database.
 
 ## 7. GO / NO-GO for subsequent ATS testing
-**NO-GO until Stage 3 passes in desktop Chrome.** What Phase B has established: the artifact is the intended source, pinned ID, staging-only permissions, no production traffic at start, and staging is healthy and route-compatible. What it has not: any real account connection. After C1 to C14 pass (C1 to C4 and C13 are the gating ones), ATS testing may begin with Greenhouse and Lever first, Workday at the review step only, none submitted.
+**NO-GO until C1 to C14 pass in desktop Chrome.** Established: the artifact is the intended source with the pinned ID and staging-only permissions, no production traffic at start, staging is healthy and route-compatible, the allowlist contains the pinned ID, and the server-side connection, rotation, replay-revocation and token-separation behaviors work for a real staging account. Not established: anything that needs Chrome itself. After C1 to C14 pass (C1 to C4 and C13 are the gating ones), ATS testing may begin with Greenhouse and Lever first, Workday at the review step only, none submitted.
