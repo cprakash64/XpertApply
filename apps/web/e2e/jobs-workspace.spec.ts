@@ -279,10 +279,11 @@ test("the whole card opens a master-detail workspace with manual networking", as
   expect(peopleRequests).toEqual(["GET /jobs/2/people"]);
 
   await page.getByRole("button", { name: "Find people" }).click();
-  await expect(page.getByText("Rita Recruiter")).toBeVisible();
   await expect(page.getByText("Morgan Manager")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Likely Recruiters" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toBeVisible();
+  await page.getByRole("tab", { name: /Recruiters/ }).click();
+  await expect(page.getByText("Rita Recruiter")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Likely Recruiters" })).toBeVisible();
   await expect(page.getByText(/not confirmed|has not been confirmed/i).first()).toBeVisible();
   // Bookkeeping actions are gone; the two channels are what remain.
   await expect(page.getByRole("button", { name: /Save contact/ })).toHaveCount(0);

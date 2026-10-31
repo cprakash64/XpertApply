@@ -88,6 +88,7 @@ from app.people.providers import (
     ProviderUnavailable,
     get_email_provider,
     get_people_provider,
+    split_person_name,
 )
 from app.people.providers import (
     account_fingerprint as provider_account_fingerprint,
@@ -1623,6 +1624,29 @@ def _pdl_budget_allows_call(
         and user_used + requested_maximum
         <= settings.people_pdl_per_user_daily_limit
     )
+
+
+# States that describe the provider at one moment, not the person. They are
+# never stored; rows written before that rule existed are read as unrequested.
+_TRANSIENT_EMAIL_STATUSES = frozenset({
+    "searching", "rate_limited", "budget_exceeded",
+    "provider_unavailable", "provider_error",
+})
+
+
+def _transient_email_status(reason: str) -> str:
+    if reason == "provider_rate_limited":
+        return "rate_limited"
+    if reason in {"provider_unauthorized", "provider_forbidden", "provider_not_configured"}:
+        # Credentials or account access: retrying cannot fix it, but it is not
+        # "temporarily unavailable" either, and the operator needs to see it.
+        return "provider_error"
+    return "provider_unavailable"
+
+
+def _stored_email_status(person: ProfessionalPerson) -> str:
+    status_value = person.email_verification_status
+    return "not_requested" if status_value in _TRANSIENT_EMAIL_STATUSES else status_value
 
 
 def _email_budget_exceeded(db: Session, user_id: int) -> bool:
@@ -4494,7 +4518,7 @@ def recommendations_payload(db: Session, user: User, job_id: int) -> dict:
                 "last_checked_at": candidate.discovered_at,
                 "professional_profile_url": safe_profile_url(person.linkedin_url),
                 "email_status": (
-                    person.email_verification_status
+                    _stored_email_status(person)
                     if email_lookup_allowed
                     else "employment_conflict"
                 ),
@@ -4794,6 +4818,14 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             ),
             "verified_at": person.email_verified_at,
         }
+    if split_person_name(person.canonical_full_name) is None:
+        # A single token or an honorific-only string cannot identify anyone; the
+        # finder would be asked to guess, so it is not asked at all.
+        return {
+            "status": "identity_uncertain",
+            "professional_email": None,
+            "verified_at": None,
+        }
     try:
         rate_limit(f"email:{user.id}", settings.people_email_rate_limit_per_hour)
     except HTTPException:
@@ -4897,12 +4929,15 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             )
             db.commit()
         except ProviderUnavailable as exc:
-            person.email_verification_status = (
-                "rate_limited"
-                if exc.reason == "provider_rate_limited"
-                else "provider_unavailable"
-            )
-            db.commit()
+            # Provider trouble says nothing about this person, and the person
+            # row is shared by every user. Report it to this caller only; the
+            # stored state stays as it was so the next attempt really happens.
+            db.rollback()
+            return {
+                "status": _transient_email_status(exc.reason),
+                "professional_email": None,
+                "verified_at": None,
+            }
     if person.email_verification_status == "not_found":
         metric("people_email_not_found_total", provider="hunter")
     return {

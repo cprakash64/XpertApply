@@ -243,8 +243,10 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
   expect(peopleRequests).toEqual([`GET /jobs/${persistedJobId}/people`]);
 
   await findPeople.click();
-  await expect(page.getByText("Rita Recruiter")).toBeVisible();
   await expect(page.getByText("Morgan Manager")).toBeVisible();
+  await page.getByRole("tab", { name: /Recruiters/ }).click();
+  await expect(page.getByText("Rita Recruiter")).toBeVisible();
+  await page.getByRole("tab", { name: /Referral Candidates/ }).click();
   await expect(page.getByText("Pat Referrer")).toBeVisible();
   // Category counts were removed from the tab; the contacts are the summary.
   await expect(page.getByText(/1 recruiter · /)).toHaveCount(0);
@@ -254,6 +256,7 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
   ]);
   expect(peopleRequests.some((request) => request.includes("/jobs/732/people"))).toBe(false);
 
+  await page.getByRole("tab", { name: /Recruiters/ }).click();
   const profile = page.getByRole("link", { name: /LinkedIn/ }).first();
   await expect(profile).toHaveAttribute("href", "https://www.linkedin.com/in/rita-recruiter");
   await expect(profile).toHaveAttribute("target", "_blank");
@@ -278,6 +281,7 @@ test("people discovery is explicit, persisted-ID scoped, and cached across the w
   // Returning to the first job re-uses the cached search: still one discovery.
   await page.getByTestId("compact-job-card").filter({ hasText: "Machine Learning Engineer" }).click();
   await page.getByRole("tab", { name: "Networking" }).click();
+  await page.getByRole("tab", { name: /Recruiters/ }).click();
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
   expect(discoveryCount).toBe(1);
   expect(emailCount).toBe(1);
@@ -386,7 +390,7 @@ test("complete people workflow remains manual, grounded, cached, and user-scoped
   await expect(page.getByText(/Find recruiters and referral candidates/)).toBeVisible();
   await page.getByRole("button", { name: "Find people" }).click();
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
-  // Empty categories are no longer rendered at all.
+  // Empty categories keep their tab (with a zero count) but show no heading until opened.
   await expect(page.getByText("No potential manager met XpertApply’s confidence threshold.")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toHaveCount(0);
   await expect(page.getByText("No relevant employee met XpertApply’s referral threshold.")).toHaveCount(0);

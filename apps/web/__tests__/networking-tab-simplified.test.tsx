@@ -153,9 +153,12 @@ describe("Networking tab — simplified surface", () => {
     );
     render(<PeopleWhoCanHelp jobId={9003} />);
 
-    expect(await screen.findByRole("heading", { name: "Likely Recruiters" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Potential Hiring Managers" })).toBeInTheDocument();
-    // The empty third category contributes neither a heading nor a paragraph.
+    // The first category with people is selected; the others stay one click away.
+    expect(await screen.findByRole("heading", { name: "Potential Hiring Managers" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Hiring Managers/ })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: /Recruiters/ }));
+    expect(screen.getByRole("heading", { name: "Likely Recruiters" })).toBeInTheDocument();
+    // The empty third category is explained only if the user opens it.
     expect(
       screen.queryByRole("heading", { name: "Potential Referral Candidates" })
     ).not.toBeInTheDocument();
@@ -212,8 +215,9 @@ describe("Networking tab — simplified surface", () => {
     );
     render(<PeopleWhoCanHelp jobId={9006} />);
 
-    expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
-    expect(screen.getByText("Morgan Manager")).toBeInTheDocument();
+    expect(await screen.findByText("Morgan Manager")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Recruiters/ }));
+    expect(screen.getByText("Rita Recruiter")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/unavailable|budget|rate limit/i)).not.toBeInTheDocument();
   });

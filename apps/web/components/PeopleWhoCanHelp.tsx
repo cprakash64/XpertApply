@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   CircleAlert,
   Copy,
@@ -102,6 +102,28 @@ const CATEGORY_HEADINGS: Array<[keyof PeopleResponse["categories"], string]> = [
   ["likely_recruiters", "Likely Recruiters"],
   ["potential_hiring_managers", "Potential Hiring Managers"],
   ["potential_referrers", "Potential Referral Candidates"]
+];
+
+type CategoryKey = keyof PeopleResponse["categories"];
+
+/** Compact tab labels, in the order a job seeker usually works: the owner of the role first. */
+const CATEGORY_TABS: Array<{ key: CategoryKey; label: string; empty: string }> = [
+  {
+    key: "potential_hiring_managers",
+    label: "Hiring Managers",
+    empty:
+      "No potential hiring managers were found for this role. Public data rarely names who owns a specific opening."
+  },
+  {
+    key: "likely_recruiters",
+    label: "Recruiters",
+    empty: "No recruiters were found at this employer in the data sources searched."
+  },
+  {
+    key: "potential_referrers",
+    label: "Referral Candidates",
+    empty: "No referral candidates were found at this employer in the data sources searched."
+  }
 ];
 
 function safeExternalUrl(value: string | null): string | null {
@@ -476,9 +498,27 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
     ["no_reliable_matches", "complete", "partial"].includes(currentStatus);
   // Only categories that actually returned someone get a heading. A heading
   // over a sentence explaining an absence is noise the reader did not ask for.
-  const populated = results
-    ? CATEGORY_HEADINGS.filter(([key]) => renderableContacts(data.categories[key]).length > 0)
-    : [];
+  const [pickedTab, setPickedTab] = useState<CategoryKey | null>(null);
+  const tabsId = useId();
+  const tabRefs = useRef<Partial<Record<CategoryKey, HTMLButtonElement | null>>>({});
+  const countFor = (key: CategoryKey) => (results ? renderableContacts(data.categories[key]).length : 0);
+  // Until the user chooses, show the first category that actually has people.
+  const activeTab: CategoryKey =
+    pickedTab ?? CATEGORY_TABS.find((tab) => countFor(tab.key) > 0)?.key ?? CATEGORY_TABS[0].key;
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = CATEGORY_TABS.length - 1;
+    const next =
+      event.key === "ArrowRight" ? (index + 1) % (last + 1)
+      : event.key === "ArrowLeft" ? (index + last) % (last + 1)
+      : event.key === "Home" ? 0
+      : event.key === "End" ? last
+      : null;
+    if (next === null) return;
+    event.preventDefault();
+    const key = CATEGORY_TABS[next].key;
+    setPickedTab(key);
+    tabRefs.current[key]?.focus();
+  };
 
   return (
     <section aria-labelledby={titleId} className="mt-0">
@@ -568,32 +608,77 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
       </div>
 
       {results ? (
-        <div className="mt-5 space-y-7">
-          {populated.map(([key, heading]) => (
-            <section key={key} aria-labelledby={`${titleId}-${key}`}>
-              <h3
-                id={`${titleId}-${key}`}
-                className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted"
+        <div className="mt-5">
+          <div
+            role="tablist"
+            aria-label="Contact category"
+            className="flex w-full gap-1 rounded-control border border-line-default bg-surface-subtle p-1 sm:inline-flex sm:w-auto"
+          >
+            {CATEGORY_TABS.map((tab, index) => {
+              const selected = tab.key === activeTab;
+              return (
+                <button
+                  key={tab.key}
+                  ref={(node) => { tabRefs.current[tab.key] = node; }}
+                  type="button"
+                  role="tab"
+                  id={`${tabsId}-${tab.key}-tab`}
+                  aria-selected={selected}
+                  aria-controls={`${tabsId}-${tab.key}-panel`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setPickedTab(tab.key)}
+                  onKeyDown={(event) => onTabKeyDown(event, index)}
+                  className={`ds-focus-ring flex min-h-8 flex-1 flex-col items-center justify-center rounded-[6px] px-2 py-1.5 text-center text-[13px] font-medium leading-tight transition-colors sm:inline-flex sm:flex-none sm:flex-row sm:gap-1.5 sm:px-3 sm:py-0 sm:text-sm ${
+                    selected
+                      ? "bg-surface-card text-foreground shadow-card"
+                      : "text-foreground-muted hover:text-foreground-secondary"
+                  }`}
+                >
+                  {tab.label}
+                  <span className="text-xs tabular-nums text-foreground-muted">{countFor(tab.key)}</span>
+                </button>
+              );
+            })}
+          </div>
+          {CATEGORY_TABS.map((tab) => {
+            const people = renderableContacts(data.categories[tab.key]);
+            const heading = CATEGORY_HEADINGS.find(([key]) => key === tab.key)?.[1] ?? tab.label;
+            return (
+              <section
+                key={tab.key}
+                role="tabpanel"
+                id={`${tabsId}-${tab.key}-panel`}
+                aria-labelledby={`${tabsId}-${tab.key}-tab`}
+                hidden={tab.key !== activeTab}
+                className="mt-4"
               >
-                {heading}
-              </h3>
-              {/* One column: categories usually hold one to three people, and
-                * a two-column grid left ragged half-empty rows. */}
-              <div className="mt-3 grid gap-3">
-                {renderableContacts(data.categories[key]).map((person) => (
-                  <PersonCard
-                    key={person.recommendation_id}
-                    person={person}
-                    busy={controller.actionId === person.recommendation_id}
-                    emailEnabled={data.controls.email_discovery}
-                    outreachEnabled={data.controls.outreach_drafting}
-                    onAction={controller.personAction}
-                    onDraft={controller.draftOutreach}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+                {/* Only the selected category mounts its cards, so a hidden tab
+                  * never holds focusable controls or fires hover prefetches. */}
+                {tab.key !== activeTab ? null : (
+                  <h3 className="text-xs font-medium uppercase tracking-[0.08em] text-foreground-muted">
+                    {heading}
+                  </h3>
+                )}
+                {tab.key !== activeTab ? null : people.length === 0 ? (
+                  <p className="mt-3 text-sm text-foreground-muted">{tab.empty}</p>
+                ) : (
+                  <div className="mt-3 grid gap-3">
+                    {people.map((person) => (
+                      <PersonCard
+                        key={person.recommendation_id}
+                        person={person}
+                        busy={controller.actionId === person.recommendation_id}
+                        emailEnabled={data.controls.email_discovery}
+                        outreachEnabled={data.controls.outreach_drafting}
+                        onAction={controller.personAction}
+                        onDraft={controller.draftOutreach}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
       ) : null}
 
@@ -620,6 +705,24 @@ export function PeopleWhoCanHelp({ jobId }: { jobId: JobId }) {
 function AboutTheseResults({ data }: { data: PeopleResponse | null }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  // The panel floats over the category tabs below it, so it must be easy to
+  // dismiss: Escape, or a press anywhere outside it.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
   // Reading the allowance costs nothing, so this is available before a search
   // too — it is just never the first thing on the tab.
   if (!data || data.status === "disabled") {
@@ -637,7 +740,7 @@ function AboutTheseResults({ data }: { data: PeopleResponse | null }) {
     : null;
 
   return (
-    <span className="relative inline-flex">
+    <span ref={wrapperRef} className="relative inline-flex">
       <button
         type="button"
         aria-expanded={open}
@@ -743,8 +846,9 @@ function PersonCard({
   const canLookUpEmail =
     emailEnabled &&
     person.email_lookup_allowed &&
-    ["not_requested", "provider_error", "provider_unavailable"].includes(person.email_status);
-  const emailNote = emailStateNote(person);
+    ["not_requested", "searching", "rate_limited", "provider_error", "provider_unavailable"].includes(person.email_status);
+  const retryingEmail = ["searching", "rate_limited", "provider_error", "provider_unavailable"].includes(person.email_status);
+  const emailNote = emailEnabled ? emailStateNote(person) : "Work-email lookup is not enabled right now.";
 
   /**
    * Hands the draft to the user's own mail client. The address is only ever the
@@ -843,14 +947,14 @@ function PersonCard({
             className="ds-focus-ring group inline-flex h-9 items-center gap-2 rounded-control border border-line-default bg-surface-card px-3 text-sm font-medium text-foreground-secondary transition-colors hover:border-[var(--email-action)] hover:bg-[var(--email-action-surface)] hover:text-[var(--email-action)] focus-visible:border-[var(--email-action)] focus-visible:bg-[var(--email-action-surface)] focus-visible:text-[var(--email-action)] disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden />}
-            {person.email_status === "provider_error" ? "Retry work email" : "Find work email"}
+            {retryingEmail ? "Retry work email" : "Find work email"}
           </button>
         ) : (
           <span
             className="inline-flex h-9 cursor-not-allowed items-center gap-2 rounded-control border border-line-subtle px-3 text-sm text-foreground-muted opacity-70"
-            title={emailNote ?? "No verified work email is available for this contact."}
+            title={emailNote ?? (emailEnabled ? "No verified work email is available for this contact." : "Work-email lookup is not enabled.")}
           >
-            <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden /> No email
+            <Mail className="h-4 w-4 transition-colors group-hover:text-[var(--email-action)] group-focus-visible:text-[var(--email-action)]" aria-hidden /> {emailEnabled ? "No email" : "Email unavailable"}
           </span>
         )}
 
@@ -951,7 +1055,7 @@ function evidenceLine(person: PeopleRecommendation): string {
 function emailStateNote(person: PeopleRecommendation): string | null {
   switch (person.email_status) {
     case "searching":
-      return "Searching for a verified work email…";
+      return "Another lookup for this contact is already running. Try again in a moment.";
     case "accept_all":
     case "risky":
     case "unknown":
@@ -962,7 +1066,7 @@ function emailStateNote(person: PeopleRecommendation): string | null {
     case "provider_unavailable":
       return "The work-email provider is temporarily unavailable.";
     case "rate_limited":
-      return "The work-email provider rate limit has been reached.";
+      return "The work-email provider rate limit has been reached. Try again shortly.";
     case "budget_exceeded":
       return "Work-email lookup is unavailable because its daily limit was reached.";
     case "employment_conflict":

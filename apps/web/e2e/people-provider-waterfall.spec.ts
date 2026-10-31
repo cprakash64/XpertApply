@@ -187,13 +187,15 @@ test("a PDL budget stop is invisible when Apollo carries the discovery", async (
   await page.getByRole("button", { name: "Find people" }).click();
 
   // The contacts render normally.
+  await expect(page.getByText("Morgan Manager")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toBeVisible();
+  await page.getByRole("tab", { name: /Recruiters/ }).click();
   await expect(page.getByText("Rita Recruiter")).toBeVisible();
   await expect(page.getByText("Sam Sourcer")).toBeVisible();
-  await expect(page.getByText("Morgan Manager")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Likely Recruiters" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Potential Hiring Managers" })).toBeVisible();
-  // The empty referral category is simply absent.
-  await expect(page.getByRole("heading", { name: "Potential Referral Candidates" })).toHaveCount(0);
+  // The empty referral category is explained, not silently absent.
+  await page.getByRole("tab", { name: /Referral Candidates/ }).click();
+  await expect(page.getByText(/No referral candidates were found/)).toBeVisible();
 
   // No trace of the upstream PDL budget stop, and no provider named anywhere.
   await expect(page.getByText(/temporarily unavailable/i)).toHaveCount(0);

@@ -237,11 +237,14 @@ describe("PeopleWhoCanHelp", () => {
     expect(await screen.findByText(/Find recruiters and referral candidates/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Find people" }));
 
-    expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
-    expect(screen.getByText("Morgan Manager")).toBeInTheDocument();
-    expect(screen.getByText("Pat Referrer")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Likely Recruiters" })).toBeInTheDocument();
+    // Hiring managers is the first populated tab, so its contact is visible first.
+    expect(await screen.findByText("Morgan Manager")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Potential Hiring Managers" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Recruiters/ }));
+    expect(screen.getByText("Rita Recruiter")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Likely Recruiters" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Referral Candidates/ }));
+    expect(screen.getByText("Pat Referrer")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Potential Referral Candidates" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
@@ -691,7 +694,9 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Find people" }));
 
     expect(await screen.findByText("Rita Recruiter")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Referral Candidates/ }));
     expect(screen.getByText("Pat Referrer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Recruiters/ }));
     expect(screen.queryByText(/potential managers ·/)).not.toBeInTheDocument();
     // Every rendered contact now carries a LinkedIn action, so there is one
     // link per card rather than one on the whole panel.
@@ -1034,11 +1039,14 @@ describe("PeopleWhoCanHelp in the job workspace", () => {
     }));
     render(<PeopleWhoCanHelp jobId={7800} />);
 
-    expect(await screen.findByText("Recruiter One")).toBeInTheDocument();
+    // Hiring managers is the first populated tab; every person in each tab renders.
+    expect(await screen.findByText("Manager One")).toBeInTheDocument();
+    expect(screen.getByText("Manager Two")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Recruiters/ }));
+    expect(screen.getByText("Recruiter One")).toBeInTheDocument();
     expect(screen.getByText("Recruiter Two")).toBeInTheDocument();
     expect(screen.getByText("Recruiter Three")).toBeInTheDocument();
-    expect(screen.getByText("Manager One")).toBeInTheDocument();
-    expect(screen.getByText("Manager Two")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Referral Candidates/ }));
     expect(screen.getByText("Referrer One")).toBeInTheDocument();
     expect(screen.queryByText(/recruiters ·/)).not.toBeInTheDocument();
   });

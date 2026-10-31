@@ -362,6 +362,23 @@ class _HttpProvider:
                 duration_ms=(time.monotonic() - started) * 1000,
                 code=PeopleErrorCode.NETWORK_ERROR,
             ) from exc
+        except httpx.RequestError as exc:
+            # Protocol violations, undecodable bodies and redirect loops are
+            # still the provider failing, not a reason to surface an HTTP 500.
+            self._finish_usage(
+                usage_key,
+                http_outcome="provider_network_error",
+                operation_type=operation_type,
+            )
+            self._failure(
+                PeopleErrorCode.NETWORK_ERROR, operation_type=operation_type
+            )
+            raise ProviderUnavailable(
+                "provider_network_error",
+                provider=self.provider_name,
+                duration_ms=(time.monotonic() - started) * 1000,
+                code=PeopleErrorCode.NETWORK_ERROR,
+            ) from exc
         except asyncio.CancelledError:
             # A cancelled request — the client disconnected, or the caller gave
             # up — says nothing about provider health, so no failure counter
@@ -1540,20 +1557,81 @@ class PDLPeopleProvider(_HttpProvider):
         return ProviderUsage(provider="pdl", credits_used=self.credits, requests=self.requests)
 
 
+_NAME_HONORIFICS = frozenset({
+    "mr", "mrs", "ms", "miss", "mx", "dr", "prof", "professor", "sir", "madam",
+})
+_NAME_SUFFIXES = frozenset({
+    "jr", "sr", "ii", "iii", "iv", "phd", "md", "mba", "cpa", "pmp", "esq",
+    "msc", "ms", "ma", "bsc", "dds", "rn", "pe", "cfa", "shrm", "scp",
+})
+
+
+def split_person_name(full_name: str | None) -> tuple[str, str] | None:
+    """First and last name for the finder, or None when no one is identified.
+
+    Titles, trailing credentials and middle initials are dropped. A single
+    token (or only initials) is refused: the finder would be guessing.
+    """
+
+    head = (full_name or "").split(",", 1)[0]
+    tokens = [t.strip(".") for t in head.split() if t.strip(".")]
+    while tokens and tokens[0].lower() in _NAME_HONORIFICS:
+        tokens.pop(0)
+    while tokens and tokens[-1].lower() in _NAME_SUFFIXES:
+        tokens.pop()
+    words = [t for t in tokens if len(t) > 1 and any(c.isalpha() for c in t)]
+    if len(words) < 2 or not all(
+        re.fullmatch(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*", w) for w in (words[0], words[-1])
+    ):
+        return None
+    return words[0], words[-1]
+
+
+# Hunter answers 202 while a verification is still running and 222 when the
+# remote mail server gave an unusable reply. Neither is an answer about the
+# address, so neither may be stored as one.
+_HUNTER_PENDING_STATUSES = frozenset({202, 222})
+# Hunter's `status` field is current; `result` is documented as deprecated.
+_HUNTER_STATUS_MAP = {
+    "valid": "verified", "accept_all": "accept_all", "invalid": "not_found",
+    "webmail": "risky", "disposable": "risky", "unknown": "unknown",
+}
+_HUNTER_RESULT_MAP = {
+    "deliverable": "verified", "undeliverable": "not_found", "risky": "risky",
+}
+
+
 class HunterEmailProvider(_HttpProvider):
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or settings.hunter_api_key
         super().__init__("hunter", self.api_key)
 
+    def _raise_if_pending(self) -> None:
+        if self.last_http_status in _HUNTER_PENDING_STATUSES:
+            raise ProviderUnavailable(
+                "provider_unavailable",
+                provider=self.provider_name,
+                http_status=self.last_http_status,
+            )
+
     async def find_work_email(self, request: WorkEmailRequest) -> WorkEmailResult:
         if not self.api_key:
             raise ProviderUnavailable("provider_not_configured", provider=self.provider_name)
-        parts = request.full_name.strip().split()
-        data = await self._request(
-            "GET", "https://api.hunter.io/v2/email-finder",
-            operation_type="email_discovery",
-            params={"domain": request.company_domain, "first_name": parts[0], "last_name": parts[-1], "api_key": self.api_key},
-        )
+        name = split_person_name(request.full_name)
+        if name is None:
+            return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
+        try:
+            data = await self._request(
+                "GET", "https://api.hunter.io/v2/email-finder",
+                operation_type="email_discovery",
+                params={"domain": request.company_domain, "first_name": name[0], "last_name": name[1], "api_key": self.api_key},
+            )
+        except ProviderUnavailable as exc:
+            if exc.http_status == 451:
+                # The person asked not to be processed. Final, and not retried.
+                return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
+            raise
+        self._raise_if_pending()
         self.credits += 1
         email = (data.get("data") or {}).get("email")
         return WorkEmailResult(
@@ -1566,14 +1644,26 @@ class HunterEmailProvider(_HttpProvider):
     async def verify_work_email(self, email: str) -> EmailVerificationResult:
         if not self.api_key:
             raise ProviderUnavailable("provider_not_configured", provider=self.provider_name)
-        data = await self._request(
-            "GET", "https://api.hunter.io/v2/email-verifier",
-            operation_type="email_verification",
-            params={"email": email, "api_key": self.api_key},
-        )
+        try:
+            data = await self._request(
+                "GET", "https://api.hunter.io/v2/email-verifier",
+                operation_type="email_verification",
+                params={"email": email, "api_key": self.api_key},
+            )
+        except ProviderUnavailable as exc:
+            if exc.http_status == 451:
+                return EmailVerificationResult(status="not_found", provider="hunter", verified_at=datetime.now(UTC))
+            raise
+        self._raise_if_pending()
         self.credits += 1
-        result = str((data.get("data") or {}).get("result") or "unknown").lower()
-        status = {"deliverable": "verified", "accept_all": "accept_all", "risky": "risky", "undeliverable": "not_found"}.get(result, "unknown")
+        body = data.get("data") or {}
+        status_field = str(body.get("status") or "").lower()
+        result_field = str(body.get("result") or "").lower()
+        status = (
+            _HUNTER_STATUS_MAP.get(status_field)
+            or _HUNTER_RESULT_MAP.get(result_field)
+            or "unknown"
+        )
         return EmailVerificationResult(status=status, provider="hunter", verified_at=datetime.now(UTC))
 
 
