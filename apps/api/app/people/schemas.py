@@ -131,6 +131,8 @@ class WorkEmailResult(BaseModel):
     email: str | None = None
     professional: bool = False
     provider: str
+    # Set when the provider RETURNED (and billed) an address that was then refused. One of a fixed set of tokens, never free text.
+    discard_reason: str | None = None
 
 
 class EmailVerificationResult(BaseModel):

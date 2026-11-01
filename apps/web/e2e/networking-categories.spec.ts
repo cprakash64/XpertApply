@@ -204,7 +204,7 @@ test("every email state is distinct, retries are one click each, and a usage lim
   });
   const card = page.getByRole("tabpanel").locator("article").first();
   await card.getByRole("button", { name: "Find work email" }).click();
-  await expect(card.getByText(/lookups are limited per hour/)).toBeVisible();
+  await expect(card.getByText(/Too many email lookup requests right now/)).toBeVisible();
   // Nothing retries on its own.
   await page.waitForTimeout(500);
   expect(emailCalls).toHaveLength(1);
@@ -275,7 +275,7 @@ for (const theme of ["light", "dark"] as const) {
         });
       expect(await run()).toEqual([]);
       await page.getByRole("tabpanel").locator("article").first().getByRole("button", { name: "Find work email" }).click();
-      await expect(page.getByText(/lookups are limited per hour/)).toBeVisible();
+      await expect(page.getByText(/Too many email lookup requests right now/)).toBeVisible();
       expect(await run()).toEqual([]);
       await tab(page, "Recruiters").click();
       expect(await run()).toEqual([]);

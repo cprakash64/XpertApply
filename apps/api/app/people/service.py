@@ -4916,6 +4916,14 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                 )
             )
             if not found.email or not is_professional_email(found.email, domain):
+                reason = found.discard_reason or ("off_domain" if found.email else None)
+                if reason:
+                    # A PAID address was refused: say so (WARNING reaches the container log) with a fixed token and the credit
+                    # count, never the address, the name or the domain.
+                    logger.warning(
+                        "people_email_result_discarded reason=%s credits=%d attempts=%d",
+                        _log_token(reason), int(getattr(provider, "credits", 0)), int(getattr(provider, "requests", 0)),
+                    )
                 person.email_verification_status = "not_found"
                 person.email_verified_at = _now()
                 # A suppression (451) or a changed answer must not leave an

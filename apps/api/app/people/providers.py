@@ -1619,6 +1619,9 @@ _HUNTER_STATUS_REASONS = {403: "provider_rate_limited", 429: "provider_budget_ex
 _HUNTER_PENDING_STATUSES = frozenset({202, 222})
 # Hunter answers the Email Finder after up to its default max_duration of 10 s and holds the Email Verifier for up to 20 s before
 # returning 202. The generic 8 s provider timeout cut both off, so a working provider looked "temporarily unavailable".
+# The "found" endpoint returns only addresses seen on public web pages (provenance is always "found") and never the pattern-guessed
+# ones the plain /v2/email-finder bills for. Hunter documents no charge when no found address exists.
+_HUNTER_FINDER_URL = "https://api.hunter.io/v2/email-finder/found"
 _HUNTER_FINDER_TIMEOUT_SECONDS = 15.0
 _HUNTER_VERIFIER_TIMEOUT_SECONDS = 25.0
 # Hunter's `status` field is current; `result` is documented as deprecated.
@@ -1629,6 +1632,26 @@ _HUNTER_STATUS_MAP = {
 _HUNTER_RESULT_MAP = {
     "deliverable": "verified", "undeliverable": "not_found", "risky": "risky",
 }
+
+
+def _hunter_discard_reason(body: dict, email: object) -> str | None:
+    """Why a returned address may NOT be used, as a fixed token; None when it is publicly found and may go on to verification.
+
+    Policy: only an address Hunter says it found on public pages (provenance exactly "found") and can point to at least one public
+    source is acceptable. Inferred, missing or unrecognised provenance (Hunter says new values may appear) and an address with no
+    public source are all refused, so a guess is never presented as a professional contact.
+    """
+    if not isinstance(email, str) or "@" not in email:
+        return "malformed_address"
+    provenance = str(body.get("provenance") or "").strip().lower()
+    if provenance == "inferred":
+        return "inferred"
+    if provenance != "found":
+        return "provenance_missing_or_unrecognised"
+    sources = body.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return "no_public_source"
+    return None
 
 
 class HunterEmailProvider(_HttpProvider):
@@ -1652,7 +1675,7 @@ class HunterEmailProvider(_HttpProvider):
             return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
         try:
             data = await self._request(
-                "GET", "https://api.hunter.io/v2/email-finder",
+                "GET", _HUNTER_FINDER_URL,
                 operation_type="email_discovery",
                 timeout_seconds=_HUNTER_FINDER_TIMEOUT_SECONDS,
                 status_reason_overrides=_HUNTER_STATUS_REASONS,
@@ -1666,20 +1689,16 @@ class HunterEmailProvider(_HttpProvider):
         self._raise_if_pending()
         body = data.get("data") or {}
         email = body.get("email")
-        # Hunter charges nothing when no address is found, so only a returned address counts against the application's budget.
-        if email:
-            self.credits += 1
-        if str(body.get("provenance") or "").lower() == "inferred":
-            # Hunter builds "inferred" addresses from the company's usual
-            # pattern. That is a guess about this person, so it is never shown
-            # and the paid verifier call is not spent on it.
+        if not email:
+            # No address: Hunter documents no charge, and the application records none.
             return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
-        return WorkEmailResult(
-            status="unknown" if email else "not_found",
-            email=email if isinstance(email, str) else None,
-            professional=bool(email),
-            provider="hunter",
-        )
+        # An address WAS returned, so Hunter billed it. Count it before deciding whether it may be used, so a refused address can
+        # never become an invisible paid charge.
+        self.credits += 1
+        discard = _hunter_discard_reason(body, email)
+        if discard:
+            return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter", discard_reason=discard)
+        return WorkEmailResult(status="unknown", email=email, professional=True, provider="hunter")
 
     async def verify_work_email(self, email: str) -> EmailVerificationResult:
         if not self.api_key:

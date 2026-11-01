@@ -37,6 +37,7 @@ class FakeHunter:
         self.verifier = verifier
         self.calls: list[tuple[str, dict]] = []
         self.timeouts: dict[str, object] = {}
+        self.urls: dict[str, str] = {}
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         outer = self
@@ -55,6 +56,7 @@ class FakeHunter:
                 path = "finder" if "email-finder" in url else "verifier"
                 outer.calls.append((path, dict(kwargs.get("params") or {})))
                 outer.timeouts[path] = self.timeout
+                outer.urls[path] = url
                 scripted = outer.finder if path == "finder" else outer.verifier
                 if isinstance(scripted, Exception):
                     raise scripted
@@ -82,8 +84,12 @@ def _run(db: Session, user, job, recommendation) -> dict:
     return asyncio.run(find_email(db, user, job.id, recommendation.id))
 
 
+SOURCES = [{"domain": "acme.example", "uri": "https://acme.example/team", "extracted_on": "2026-01-01", "still_on_page": True}]
+
+
 def _found(email: str | None = GOOD):
-    return 200, {"data": {"email": email, "score": 91}}
+    # What /v2/email-finder/found returns for an address seen on a public page: provenance "found" and at least one source.
+    return 200, {"data": {"email": email, "score": 91, "provenance": "found", "sources": SOURCES if email else []}}
 
 
 def test_verified_email_is_returned_when_hunter_uses_the_current_status_field(
@@ -416,7 +422,7 @@ def test_sourced_address_with_found_provenance_is_still_verified(
 ) -> None:
     user, job, person, rec = _persist_recommendation(db)
     FakeHunter(
-        (200, {"data": {"email": GOOD, "provenance": "found"}}),
+        (200, {"data": {"email": GOOD, "provenance": "found", "sources": SOURCES}}),
         (200, {"data": {"status": "valid"}}),
     ).install(monkeypatch)
     assert _run(db, user, job, rec)["professional_email"] == GOOD
@@ -616,7 +622,7 @@ class _SlowHunter:
 
     def __init__(self, finder_delay: float, verifier_delay: float, finder_body=None, verifier_body=None) -> None:
         self.delays = {"email-finder": finder_delay, "email-verifier": verifier_delay}
-        self.bodies = {"email-finder": finder_body or {"data": {"email": GOOD, "score": 90}},
+        self.bodies = {"email-finder": finder_body or {"data": {"email": GOOD, "score": 90, "provenance": "found", "sources": SOURCES}},
                        "email-verifier": verifier_body or {"data": {"status": "valid"}}}
         self.hits: list[str] = []
 
@@ -820,6 +826,30 @@ def test_an_exhausted_budget_does_not_use_the_hourly_allowance(
     service._RATE_BUCKETS.clear()
 
 
+def test_a_duplicate_lock_miss_contacts_nobody_and_uses_no_hourly_slot(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 2)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    real_lock = service._redis_lock
+
+    @contextmanager
+    def busy(*args, **kwargs):
+        yield False                                                  # another request already holds this contact
+
+    monkeypatch.setattr(service, "_redis_lock", busy)
+    assert [_run(db, user, job, rec)["status"] for _ in range(4)] == ["searching"] * 4
+    assert fake.calls == [] and _credits(db) == 0
+    monkeypatch.setattr(service, "_redis_lock", real_lock)           # the lock is released: the first real attempt keeps its full allowance
+    assert _run(db, user, job, rec)["status"] == "verified"
+    service._RATE_BUCKETS.clear()
+
+
 def test_real_attempts_still_use_the_allowance_and_the_third_is_blocked_without_contacting_hunter(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -859,3 +889,142 @@ def test_a_found_address_still_costs_two_credits_finder_plus_verifier(db: Sessio
     FakeHunter(_found(), (200, {"data": {"status": "valid"}})).install(monkeypatch)
     assert _run(db, user, job, rec)["status"] == "verified"
     assert db.scalar(select(func.sum(PeopleDiscoveryRun.provider_credits_used)).where(PeopleDiscoveryRun.provider == "hunter")) == 2
+
+
+# ---- NET-PROD-07: the found-only Finder endpoint, strict acceptance and honest billing -----------------------------------------
+from sqlalchemy import func as _func, select as _select  # noqa: E402
+
+from app.models.entities import PeopleDiscoveryRun as _Run  # noqa: E402
+
+
+def _credits(db: Session) -> int:
+    return int(db.scalar(_select(_func.coalesce(_func.sum(_Run.provider_credits_used), 0)).where(_Run.provider == "hunter")) or 0)
+
+
+def test_the_found_only_endpoint_is_used_with_unchanged_name_and_domain_parameters(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    _run(db, user, job, rec)
+    assert fake.urls["finder"] == "https://api.hunter.io/v2/email-finder/found"          # never the plain endpoint that bills guesses
+    assert fake.urls["verifier"] == "https://api.hunter.io/v2/email-verifier"
+    params = next(p for k, p in fake.calls if k == "finder")
+    assert set(params) == {"domain", "first_name", "last_name", "api_key"} and params["domain"] == DOMAIN
+
+
+@pytest.mark.parametrize(
+    "body,token",
+    [
+        ({"email": GOOD, "provenance": "inferred", "sources": SOURCES}, "inferred"),
+        ({"email": GOOD, "sources": SOURCES}, "provenance_missing_or_unrecognised"),
+        ({"email": GOOD, "provenance": "", "sources": SOURCES}, "provenance_missing_or_unrecognised"),
+        ({"email": GOOD, "provenance": "previously_found", "sources": SOURCES}, "provenance_missing_or_unrecognised"),
+        ({"email": GOOD, "provenance": "something_new", "sources": SOURCES}, "provenance_missing_or_unrecognised"),
+        ({"email": GOOD, "provenance": "found"}, "no_public_source"),
+        ({"email": GOOD, "provenance": "found", "sources": []}, "no_public_source"),
+        ({"email": GOOD, "provenance": "found", "sources": "https://x.example"}, "no_public_source"),
+        ({"email": 12345, "provenance": "found", "sources": SOURCES}, "malformed_address"),
+        ({"email": "no-at-sign", "provenance": "found", "sources": SOURCES}, "malformed_address"),
+    ],
+)
+def test_an_address_hunter_returns_but_xpertapply_refuses_is_never_shown_never_verified_and_is_accounted_as_paid(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, body: dict, token: str
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter((200, {"data": body}), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        out = _run(db, user, job, rec)
+    assert out["status"] == "not_found" and out["professional_email"] is None
+    assert fake.count("finder") == 1 and fake.count("verifier") == 0       # no retry, and no Verifier credit spent on a refused address
+    assert _credits(db) == 1                                                # Hunter billed the returned address: it is on the books
+    assert person.professional_email_ciphertext is None
+    line = next(r.getMessage() for r in caplog.records if "people_email_result_discarded" in r.getMessage())
+    assert f"reason={token}" in line and "credits=1" in line
+    for forbidden in (GOOD, "Rita", DOMAIN, "synthetic-test-key", "no-at-sign"):
+        assert forbidden not in caplog.text
+
+
+def test_an_address_on_another_employer_domain_is_refused_and_still_accounted_as_paid(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(_found("rita@other-company.example"), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    with caplog.at_level(logging.WARNING):
+        out = _run(db, user, job, rec)
+    assert out["status"] == "not_found" and fake.count("verifier") == 0 and _credits(db) == 1
+    assert any("people_email_result_discarded reason=off_domain credits=1" in r.getMessage() for r in caplog.records)
+    assert "other-company" not in caplog.text
+
+
+def test_a_publicly_sourced_on_domain_address_is_verified_and_costs_finder_plus_verifier(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        out = _run(db, user, job, rec)
+    assert out["status"] == "verified" and out["professional_email"] == GOOD
+    assert (fake.count("finder"), fake.count("verifier")) == (1, 1) and _credits(db) == 2
+    assert "people_email_result_discarded" not in caplog.text and GOOD not in caplog.text
+
+
+def test_a_genuinely_empty_answer_is_free_and_leaves_no_discard_notice(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter((200, {"data": {"email": None, "provenance": "found", "sources": []}}), _found())
+    fake.install(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        out = _run(db, user, job, rec)
+    assert out["status"] == "not_found" and _credits(db) == 0 and fake.count("verifier") == 0
+    assert "people_email_result_discarded" not in caplog.text
+
+
+def test_refused_but_paid_results_count_against_the_budget_and_the_per_user_limit(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 2)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 0)
+    fake = FakeHunter((200, {"data": {"email": GOOD, "provenance": "inferred", "sources": SOURCES}}), _found())
+    fake.install(monkeypatch)
+    statuses = []
+    for _ in range(4):
+        statuses.append(_run(db, user, job, rec)["status"])
+        _expire_cache(db, person)
+    assert statuses == ["not_found", "not_found", "budget_exceeded", "budget_exceeded"]    # two paid-and-discarded results used the 2 credits
+    assert fake.count("finder") == 2 and _credits(db) == 2
+
+
+def test_a_refused_paid_result_is_cached_so_the_same_contact_is_not_billed_again(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter((200, {"data": {"email": GOOD, "provenance": "inferred", "sources": SOURCES}}), _found())
+    fake.install(monkeypatch)
+    for _ in range(3):
+        assert _run(db, user, job, rec)["status"] == "not_found"
+    assert fake.count("finder") == 1 and _credits(db) == 1
+
+
+def test_a_pending_verifier_after_a_good_finder_result_keeps_both_the_finder_credit_and_a_single_attempt(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    fake = FakeHunter(_found(), (202, {"data": {}}))
+    fake.install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "provider_unavailable"
+    assert (fake.count("finder"), fake.count("verifier")) == (1, 1) and _credits(db) == 1

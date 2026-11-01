@@ -1077,7 +1077,7 @@ function emailStateNote(person: PeopleRecommendation): string | null {
     case "provider_unavailable":
       return "The work-email provider is temporarily unavailable.";
     case "rate_limited":
-      return "Work-email lookups are limited per hour. Try again later.";
+      return "Too many email lookup requests right now. Please try again later.";
     case "budget_exceeded":
       return "Work-email lookup is unavailable because its daily limit was reached.";
     case "employment_conflict":
