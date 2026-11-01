@@ -1,0 +1,45 @@
+XpertApply EXT-FINAL-03 release bundle: let Chrome extension 0.3.0 connect to production (prepared; NOT executed by the preparation stage)
+Two INDEPENDENT guarded releases. Either, both, or neither may be applied; each has its own check, confirmation phrase and rollback.
+
+release id        extfinal03-extension-connect-273f975
+source commit     273f975a3123babc50d55fdc39faa8c81160e0c5  (direct child of the NET-PROD-08 commit 32a7d54; local, not pushed)
+trees             source 92e2dae4f964f328c5d6908693a8540567ee2a0a  web 15ea918cf78342a39ac8fb38096a624b8d3f2dda (NET-PROD-08 web tree was 54b47a8e39a16aa03970349ed3e599547e539d01)
+                  api 2c9f4f6a4b00730c5c46cd644f4f301dbbc01397 (IDENTICAL to NET-PROD-08; the API image is not rebuilt)
+production now    API sha256:12eb76af8610a7e9f723e5997b05ef59784d9d5df4208f24150a4663ebd75541  web sha256:0e6c28d056ebd134d386aaeb9ceb0ec26708e068b16007165e1e5bd29684b488  DB 0034_password_reset
+production extension id (Chrome Web Store item, Draft)   gnibjomjfdobadlockphjiibbpmiehcj      NOT the staging id cglmdonbfbadfbggkpajpkjgpekhkall
+
+WEB release       new web image  xpertapply-web:extfinal03-273f975-prod-amd64  sha256:ef03408595cc433ba783be4a93acbfc0fe208f2b04ec8ddc859892a2ce422b1d  (amd64, built on the VPS from `git archive 273f975:apps/web`)
+                  archive        /home/luna/xpertapply-release-candidates/extfinal03-273f975-20261101T091352Z/xpertapply-web-extfinal03-273f975-prod-amd64.tar
+                                 sha256 bce9bbf1efd8ef3e0fed2864c5a0991ccb205cfc3743e2eefeec2027383c32e2
+                  build          build args: API https://api.xpertapply.com, site https://xpertapply.com, extension id gnibjomjfdobadlockphjiibbpmiehcj, extension URL EMPTY (no install link; the item is unpublished)
+                  rollback       NET-PROD-08 web image, archive /home/luna/xpertapply-release-candidates/netprod08-32a7d54-20261101T043704Z/xpertapply-web-netprod08-32a7d54-prod-amd64.tar
+                                 sha256 4e8bc9be82ddd01820840755712024f1981c9d65fe9de547ae0a97afcbf9d84c (verified on the host)
+                  change vs NET-PROD-08 web (exactly 8 files, nothing removed that was deployed):
+                    lib/extensionRuntime.ts (new)   Chrome-routed extension presence and teardown channel, by the configured public id
+                    lib/authSession.ts              sign-out and account change tell the extension to end its session (storeAuthToken becomes async; clearAuthSession(reason))
+                    lib/autoApply.ts                presence detection uses the Chrome-routed channel instead of the old page postMessage PING (the PING handshake is the only code removed)
+                    app/support/page.tsx (new), app/sitemap.ts, components/PublicPage.tsx   /support page, sitemap entry, footer link
+                    __tests__/auth-session.test.ts, __tests__/support-page.test.tsx          tests
+                  containers      xpertapply-web-1 only
+
+API release       CONFIGURATION ONLY. No image change (keeps 12eb76af8610). Adds exactly one environment variable through a root-owned Compose override:
+                    EXTENSION_ALLOWED_IDS=["gnibjomjfdobadlockphjiibbpmiehcj"]      (JSON list: a bare id would crash API startup; the gate enforces the exact string)
+                  Today the variable is NOT set in the running API (checked read-only: 0 occurrences), so the allowlist is empty and, with APP_ENV=production, Connect refuses every extension.
+                  The production .env is NOT edited. Hunter, Networking (discovery on for the internal tester, 5/3/2 limits, internal rollout), EMAIL_BACKEND=disabled and
+                  answer drafting (APPLICATION_ANSWER_DRAFTING_ENABLED unset = off) are compared before and after; the rendered api environment delta must be exactly [EXTENSION_ALLOWED_IDS].
+                  containers      xpertapply-api-1 only
+
+state dir         /var/lib/xpertapply-release/extfinal03 (root:root 0700, two files root:root 0600, pinned SHA-256):
+                    compose.extfinal03-web-image.yml        243912e1d4ac160592c281eb166d9978847a658771062e24ae6863ed98f92da7
+                    compose.extfinal03-extension-id.yml     2905e3d625c47c4e45fc38905e84c3215f495d6207985a25d8c88d2c291449a0
+                  netprod03 and netprod08 states are verified too and never modified.
+compose list      live API/web label today: docker-compose.yml, compose.production.yml, compose.redis-preserve.yml (production checkout) then netprod03/compose.netprod01-release.yml,
+                  netprod03/compose.netprod03-activate.yml, netprod08/compose.netprod08-images.yml.  Target = that list + compose.extfinal03-web-image.yml (web) and/or + compose.extfinal03-extension-id.yml (api).
+scripts           production-release.sh   web|api  check|apply   (root, exact phrase extfinal03-release-web / extfinal03-release-api, installed copy only)
+                  production-rollback.sh  web|api  check|apply   (phrase extfinal03-rollback-web / extfinal03-rollback-api)
+                  extfinal03-common.sh, extfinal03_state.py, extfinal03_delta.py, init-extfinal03-state.sh, install-extfinal03.sh, production-monitor.sh (unchanged from NET-PROD-08), test_extfinal03.py
+no backup gate    neither release changes data or schema (no migration, no image change for the API); every other container's id and start time is fingerprinted before and after instead.
+                  The NET-PROD-08 production-backup.sh remains available if the operator wants a fresh backup anyway.
+caution           the nightly "docker image prune -af --filter until=24h" removes images no container uses: apply the web release within 24 hours of loading the candidate, or re-load it
+                  from the pinned archive (check refuses a missing image and prints the command). apply loads it itself when the pinned archive hash matches.
+procedure         see README.txt
