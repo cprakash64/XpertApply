@@ -12,7 +12,8 @@ import { PRODUCT_NAME } from "@/lib/siteConfig";
 const LINKS = [
   { href: "/pricing", label: "Pricing" },
   { href: "/opensource", label: "Open source" },
-  { href: "/privacy", label: "Privacy" }
+  { href: "/privacy", label: "Privacy" },
+  { href: "/support", label: "Support" }
 ];
 
 export function PublicPage({

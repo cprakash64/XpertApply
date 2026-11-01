@@ -15,7 +15,8 @@
     "package": "node package.mjs",
     "test:e2e": "playwright test",
     "test:all": "vitest run && npm run test:e2e",
-    "smoke:dropdowns": "node e2e/build-harness.mjs && node e2e/smoke.mjs"
+    "smoke:dropdowns": "node e2e/build-harness.mjs && node e2e/smoke.mjs",
+    "store-id:unpacked": "node scripts/store-id-unpacked.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

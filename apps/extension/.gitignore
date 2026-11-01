@@ -13,3 +13,4 @@ dist-e2e-granted/
 dist-development/
 dist-granted-*/
 dist-staging-granted/
+dist-store-id/
