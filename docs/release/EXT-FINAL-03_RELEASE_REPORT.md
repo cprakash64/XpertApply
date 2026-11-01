@@ -67,7 +67,7 @@ Caution: the nightly `docker image prune -af --filter until=24h` can delete the 
 
 ## 7. Support, privacy, Terms
 - `/privacy` 200 and accurate for the extension (checked in EXT-FINAL-01/02). `/support` will return 200 after the web release (verified in the built image; the apply step asserts it).
-- `/support` names `privacy@xpertapply.com` as its only contact (you confirmed it). **Operator acceptance item: send a test message to that address and confirm someone receives and reads it.** Do not rely on the DNS MX records as proof. If it does not receive mail, give me the correct address and I will update the page before the web release.
+- `/support` names `privacy@xpertapply.com` as its only contact (you confirmed it). **Operator confirmed (2026-11-01) that this mailbox receives mail.** DNS MX records alone were not treated as proof; an end-to-end test message remains a good final check after launch. If it does not receive mail, give me the correct address and I will update the page before the web release.
 - `/terms`: no approved text exists and nothing links to it, so none was created. The Store listing does not require it.
 
 ## 8. Native Chrome acceptance (C1 to C14): prepared, PENDING
@@ -96,7 +96,7 @@ Evidence to record per step: Chrome version, extension version and ID, PASS/FAIL
 8. Resolve the Dashboard's "Why can't I submit?" list (screenshots and any missing fields), then **Submit for review yourself**. After approval and publication, send me the canonical Store URL; only then set `NEXT_PUBLIC_CHROME_EXTENSION_URL` in a separate web rebuild.
 
 ## 10. Remaining operator actions
-1. Confirm the `privacy@xpertapply.com` mailbox receives mail (or supply another address).
+1. (Done: operator confirmed `privacy@xpertapply.com` receives mail.)
 2. Install the bundle, run both `check`s as luna and root, then authorize and run the web apply, then the API apply.
 3. Upload the ZIP as a draft; copy the public key; build `dist-store-id`; run C1 to C14 and the site checks on a disposable account; capture screenshots.
 4. Complete the Store fields, choose visibility, submit.
@@ -109,6 +109,6 @@ Evidence to record per step: Chrome version, extension version and ID, PASS/FAIL
 | API configuration release | PREPARED, verified in rehearsal (13/13 non-root checks) |
 | Rollback, both | PREPARED; rollback checks rehearsed |
 | Root-only checks, apply, post-checks | NOT RUN (operator) |
-| Support URL | READY after web release; mailbox acceptance PENDING |
+| Support URL | READY after web release; mailbox confirmed by operator |
 | Native Chrome C1 to C14 | PENDING (needs the public key, both releases, and you) |
 | Store submission | NOT READY: screenshots and the Dashboard submission checklist |
