@@ -6,9 +6,10 @@
  * in the extension background). Pure and DOM-only — unit-testable under jsdom.
  */
 
+import { answerMapFor } from "./answerMap";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FillOutcome } from "../types";
 import { discoverFields } from "./discovery";
-import { fillField, highlight } from "./fill";
+import { fillField, highlight, isJobPilotRepeater } from "./fill";
 import { buildMappings } from "./mapping";
 import { UPLOAD_FIELDS } from "./taxonomy";
 
@@ -123,7 +124,7 @@ const PHONE_COUNTRY_LABELS: Record<string, string> = {
  * one starts, so options from two different open dropdowns can never be
  * confused with each other. */
 export async function applyFill(fields: DiscoveredField[], mappings: FieldMapping[], session: ApplicationSessionData): Promise<FillSummary> {
-  const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
+  const answers = answerMapFor(session);
   const fieldByUid = new Map(fields.map((f) => [f.uid, f]));
   const summary: FillSummary = { filled: 0, skipped: 0, reviewRequired: 0, errors: [], uploadTargets: [], mappings, outcomes: new Map() };
   // Does THIS form ask for the dialing country separately? If so the phone
@@ -136,7 +137,7 @@ export async function applyFill(fields: DiscoveredField[], mappings: FieldMappin
     if (!field?.element) {
       continue;
     }
-    if (field.element.hasAttribute("data-jobpilot-repeater")) {
+    if (isJobPilotRepeater(field.element)) {
       summary.skipped += 1;
       summary.outcomes.set(mapping.uid, {
         uid: mapping.uid,
@@ -177,7 +178,10 @@ export async function applyFill(fields: DiscoveredField[], mappings: FieldMappin
     }
     const isPhoneNumber = mapping.canonicalKey === "phone" || mapping.canonicalKey === "phone_national";
     const outcome = await fillField(field, answer.value, {
-      status: mapping.requiresReview ? "review" : "verified",
+      // The final outline is derived from the ledger after the fill result has
+      // been classified. Keeping mapping confidence out of this presentation
+      // path prevents a second, contradictory status system (XA-11).
+      status: "verified",
       dropdownSearchValue: mapping.canonicalKey === "city"
         ? String(answer.value).split(",")[0]?.trim()
         : mapping.canonicalKey === "phone_country"
@@ -224,7 +228,11 @@ function resolveApplicationAnswer(
 ): SessionAnswer | undefined {
   const answer = resolvePhoneAnswer(answers, key, splitsPhoneCountry);
   if (!answer && key === "referral_source") {
-    return syntheticAnswer(key, "__jobpilot_company_careers_page__");
+    // The sentinel is resolved against a dropdown's own options. Typed into a free-text
+    // box it would reach the employer verbatim, so a text control is left for the user.
+    return ["select", "combobox", "listbox", "radio"].includes(field.control)
+      ? syntheticAnswer(key, "__jobpilot_company_careers_page__")
+      : undefined;
   }
   if (!answer && key === "privacy_policy_acknowledgement") {
     // Deliberately NOT answered.
@@ -236,13 +244,11 @@ function resolveApplicationAnswer(
     // the user ticks it themselves.
     return undefined;
   }
-  if (
-    !answer &&
-    field.required &&
-    ["select", "combobox", "listbox", "radio"].includes(field.control)
-  ) {
-    return syntheticAnswer(key, "__jobpilot_required_singleton_affirmation__");
-  }
+  // A required choice control with no verified answer used to be given a
+  // synthesised affirmation here, on the reasoning that a single substantive
+  // "I agree" option could not mean anything else. It can: it means the user
+  // agreed, and they had not. Nothing is invented for an unanswered question
+  // any more — the field is left blank and surfaced for review.
   if (
     key === "city" &&
     answer &&

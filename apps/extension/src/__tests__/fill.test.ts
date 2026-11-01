@@ -24,6 +24,7 @@ describe("fill engine", () => {
     expect(el.value).toBe("cp@example.com");
     expect(onInput).toHaveBeenCalled();
     expect(isJobPilotFilled(el)).toBe(true);
+    expect(Array.from(el.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
   });
 
   it("does not overwrite a value the user already typed", async () => {
@@ -86,11 +87,43 @@ describe("fill engine", () => {
     // b keeps the user value (skip), so it must not be cleared.
     await fillField(field(fields, "b"), "jobpilot");
 
-    const cleared = clearJobPilotFields(document);
-    expect(cleared).toBe(1); // only the field XpertApply actually filled
+    const cleared = await clearJobPilotFields(document);
+    expect(cleared).toEqual({ cleared: 1, failed: 0 }); // only the field XpertApply actually filled
     expect((document.getElementById("a") as HTMLInputElement).value).toBe("");
     expect((document.getElementById("b") as HTMLInputElement).value).toBe("user-typed");
     expect(document.querySelectorAll("[data-jobpilot-filled]").length).toBe(0);
+  });
+
+  it("restores pre-existing native select and radio selections", async () => {
+    const fields = mount(
+      `<label for="country">Country</label>
+       <select id="country"><option value="">Select</option><option selected>Canada</option><option>United States</option></select>
+       <fieldset><legend>Source</legend>
+         <input id="referral" type="radio" name="source" value="referral"><label for="referral">Referral</label>
+         <input id="board" type="radio" name="source" value="board" checked><label for="board">Job board</label>
+       </fieldset>`
+    );
+    await fillField(field(fields, "country"), "United States", { force: true });
+    await fillField(field(fields, "referral"), "Referral", { force: true });
+
+    expect(await clearJobPilotFields(document)).toEqual({ cleared: 2, failed: 0 });
+    expect((document.getElementById("country") as HTMLSelectElement).value).toBe("Canada");
+    expect((document.getElementById("referral") as HTMLInputElement).checked).toBe(false);
+    expect((document.getElementById("board") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("preserves the first snapshot across repeated fills and makes duplicate Clear idempotent", async () => {
+    const fields = mount(
+      `<label for="country">Country</label><select id="country">
+        <option value="">Select</option><option>Canada</option><option>United States</option>
+       </select>`
+    );
+    await fillField(field(fields, "country"), "Canada", { force: true });
+    await fillField(field(fields, "country"), "United States", { force: true });
+
+    expect(await clearJobPilotFields(document)).toEqual({ cleared: 1, failed: 0 });
+    expect((document.getElementById("country") as HTMLSelectElement).value).toBe("");
+    expect(await clearJobPilotFields(document)).toEqual({ cleared: 0, failed: 0 });
   });
 
   it("reports review_required when a select has no matching option", async () => {
@@ -128,6 +161,17 @@ describe("custom dropdown / combobox filling", () => {
     });
     return discoverFields(document.querySelector("form")!);
   }
+
+  it("keeps private ownership when a custom control cannot be safely restored", async () => {
+    const fields = mountCombobox(["Canada", "United States"]);
+    const control = document.getElementById("country")!;
+    expect((await fillField(field(fields, "country"), "United States")).status).toBe("filled");
+
+    expect(await clearJobPilotFields(document)).toEqual({ cleared: 0, failed: 1 });
+    expect(isJobPilotFilled(control)).toBe(true);
+    expect(Array.from(control.attributes).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
+    expect(document.querySelector("#country .select__value")!.textContent).toBe("United States");
+  });
 
   it("opens a real component and selects the requested option (never the first)", async () => {
     const fields = mountCombobox(["Canada", "United States", "India"]);

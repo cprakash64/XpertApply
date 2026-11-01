@@ -55,6 +55,7 @@ export type CanonicalField =
   | "work_authorization_us"
   | "sponsorship_required_now"
   | "sponsorship_required_future"
+  | "sponsorship_required_now_or_future"
   // Workday account creation. These answers exist only in the live session;
   // the extension never persists or logs them.
   | "application_account_password"

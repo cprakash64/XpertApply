@@ -3,9 +3,12 @@
  * the wrong field — the caller passes the field already classified as a
  * resume/cover-letter upload. */
 
+import { fillAuthorityActive } from "./fill";
+
 export type UploadOutcome = { status: "uploaded" | "error"; reason?: string; filename?: string };
 
 export function uploadFileToInput(input: HTMLInputElement, file: File): UploadOutcome {
+  if (!fillAuthorityActive()) return { status: "error", reason: "authorization withdrawn" };
   try {
     const accept = (input.getAttribute("accept") || "").toLowerCase();
     if (accept && !acceptsFile(accept, file)) {

@@ -6,6 +6,9 @@
 import type { LedgerCounts } from "../fields/ledger";
 import type { AuthoritativeReviewItem } from "./reviewItems";
 import { answerNotesFor, overrideFailureMessage, type OverrideRequest } from "./reviewActions";
+import { registerApplicationOverlayWorkflowSurface } from "./applicationOverlayAssistant";
+import { APPLICATION_OVERLAY_HOST_ID } from "./applicationOverlay";
+import { createPrivateEntry } from "./privateEntry";
 
 export type WidgetStage = "preparing" | "opening" | "detecting" | "filling" | "uploading" | "review" | "ready" | "failed";
 
@@ -177,7 +180,7 @@ const CATEGORY_LABEL: Record<ReviewCategory, string> = {
 export function createWidget(actions: {
   retry: () => void;
   rescan?: () => void;
-  clear: () => void;
+  clear: () => void | Promise<void>;
   complete: () => void;
   /** Manual fallback: activate the already-validated Apply control. Offered
    * only after automatic activation failed to produce any transition. */
@@ -188,6 +191,8 @@ export function createWidget(actions: {
   captureControl?: () => void;
   /** Toggle "Teach XpertApply" observation. */
   teach?: (enabled: boolean) => void;
+  confirmSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
+  confirmNotSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
 }): {
   update: (value: WidgetUpdate) => void;
   showReview: (items: ReviewItem[], handlers: ReviewHandlers, counts?: LedgerCounts) => void;
@@ -207,15 +212,37 @@ export function createWidget(actions: {
   setInteractionMode: (active: boolean) => void;
   /** Ask the user whether (and at what scope) to remember a learned answer. */
   askToRemember: (prompt: RememberPrompt) => void;
+  showSubmissionConfirmation: () => void;
+  hideSubmissionConfirmation: () => void;
   destroy: () => void;
 } {
+  // Child ATS contexts report progress through the worker; they never own
+  // the canonical overlay or its action/subscription lifecycle.
+  if (window.top !== window) {
+    const ignore = () => undefined;
+    return {
+      update: ignore, showReview: ignore, showActions: ignore,
+      refreshCounts: ignore, showTransactions: ignore,
+      setInteractionMode: ignore, askToRemember: ignore,
+      showSubmissionConfirmation: ignore, hideSubmissionConfirmation: ignore,
+      destroy: ignore
+    };
+  }
   // A prior content script can leave a frozen widget behind after the
   // extension is reloaded. The newly connected instance owns the UI and
   // replaces that inert host rather than creating a duplicate panel.
+  // Legacy host cleanup only. The active UI now lives in the one canonical
+  // E4O overlay; this compatibility surface keeps the established workflow API
+  // without creating a second user-facing assistant.
   document.getElementById("jobpilot-assisted-apply")?.remove();
-  const host = document.createElement("div");
-  host.id = "jobpilot-assisted-apply";
-  const root = host.attachShadow({ mode: "closed" });
+  // Workflow registration and passive startup never open the assistant. Keep
+  // this facade detached until an explicit toolbar SHOW mounts the overlay.
+  const legacyHost = document.createElement("div");
+  legacyHost.dataset.overlayWorkflowFacade = "";
+  const host = legacyHost;
+  const disposeSurface = registerApplicationOverlayWorkflowSurface(legacyHost);
+  // Closed, as in 0.2.0: employer page scripts must not be able to reach the widget.
+  const root = legacyHost.attachShadow({ mode: "closed" });
   root.innerHTML = `
     <style>
       :host{all:initial}
@@ -223,7 +250,7 @@ export function createWidget(actions: {
       .box{
         --ink:#17211c;--muted:#657069;--line:rgba(66,84,73,.16);--accent:#176b46;
         position:fixed;right:18px;bottom:18px;z-index:2147483647;
-        width:min(372px,calc(100vw - 24px));max-height:min(82vh,780px);
+        width:min(372px,calc(100vw - 24px));max-height:min(780px,calc(100vh - 36px));max-height:min(780px,calc(100dvh - 36px));
         display:flex;flex-direction:column;overflow:hidden;
         color:var(--ink);border:1px solid rgba(255,255,255,.72);border-radius:22px;
         background:linear-gradient(150deg,rgba(255,255,255,.92),rgba(245,249,246,.78));
@@ -232,11 +259,17 @@ export function createWidget(actions: {
         font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
         letter-spacing:-.006em
       }
-      header{display:flex;align-items:center;gap:10px;min-height:58px;padding:11px 14px 11px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.42);font-size:14px;font-weight:660;cursor:pointer}
+      header{flex-shrink:0;display:flex;align-items:center;gap:10px;min-height:58px;padding:11px 14px 11px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.42);font-size:14px;font-weight:660;cursor:pointer}
       .dot{width:9px;height:9px;border-radius:50%;background:#21a267;box-shadow:0 0 0 4px rgba(33,162,103,.11);flex-shrink:0}
-      .title{letter-spacing:-.01em}
-      .body{padding:14px 14px 12px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(79,96,86,.28) transparent}
+      .heading{min-width:0;flex:1}
+      h2{margin:0;font:inherit;font-size:13px;overflow-wrap:anywhere}
+      .title{letter-spacing:-.01em;font-size:12px;font-weight:500}
+      .body{flex:1 1 auto;min-height:0;padding:14px 14px 12px;overflow:auto;overflow-wrap:anywhere;scroll-padding:6px;scrollbar-width:thin;scrollbar-color:rgba(79,96,86,.28) transparent}
+      .footer{flex:0 0 auto;padding:10px 14px 12px;border-top:1px solid var(--line);background:rgba(245,249,246,.98)}
+      .footer button{width:100%;white-space:normal;overflow-wrap:anywhere}
       .message{font-size:13px;color:#354139}
+      .submission-confirmation{display:none;margin-top:12px;padding:12px;border:1px solid rgba(173,134,45,.25);border-radius:14px;background:rgba(255,249,231,.82)}
+      .submission-confirmation.open{display:block}.submission-confirmation h3{margin:0;font-size:14px}.submission-confirmation p{margin:5px 0 0;color:#53615a;font-size:12px}.submission-confirmation .row{display:flex;gap:7px;margin-top:10px}.submission-confirmation .row button{flex:1}.submission-confirmation [data-confirm="yes"]{background:#1b704a;border-color:#1b704a;color:#fff}
       .count{color:var(--muted);margin-top:3px;font-size:12px}
       .counts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:11px;font-size:11px;color:var(--muted)}
       .counts-row span{padding:7px 9px;border:1px solid rgba(71,92,79,.10);border-radius:10px;background:rgba(255,255,255,.54)}
@@ -248,7 +281,7 @@ export function createWidget(actions: {
       button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid rgba(30,116,76,.22);outline-offset:2px}
       button:disabled{opacity:.42;cursor:default;box-shadow:none;transform:none}
       .collapse{margin-left:auto;width:32px;min-height:32px;border:0;background:rgba(255,255,255,.48);padding:0;border-radius:50%;font-size:18px;font-weight:400;color:#53615a}
-      .collapsed .body{display:none}
+      .collapsed .body,.collapsed .footer{display:none}
       .failed .dot{background:#c85a3e}
       .review .dot{background:#d69416;box-shadow:0 0 0 4px rgba(214,148,22,.12)}
       .review-toggle{position:relative;width:100%;text-align:left;margin-top:12px;padding:10px 34px 10px 12px;border-color:rgba(35,105,69,.20);background:rgba(235,246,239,.72);font-weight:650}
@@ -308,15 +341,33 @@ export function createWidget(actions: {
       .transaction-panel summary{cursor:pointer;font-weight:650}
       .transaction-row{margin-top:6px;padding:7px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}
       .interacting{opacity:.25}
-      .interacting .body{display:none}
-      @media(max-width:520px){.box{right:12px;bottom:12px}.counts-row{grid-template-columns:1fr}}
+      .interacting .body,.interacting .footer{display:none}
+      @media(max-width:520px){.box{right:12px;bottom:12px;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px)}.counts-row{grid-template-columns:1fr}}
+      @media(forced-colors:active){
+        .box{border:1px solid CanvasText;background:Canvas;color:CanvasText;box-shadow:none}
+        header,.footer{background:Canvas;border-color:CanvasText}
+        button{border:1px solid ButtonText;background:ButtonFace;color:ButtonText}
+        [data-a="complete"]{background:ButtonFace;color:ButtonText;border-color:ButtonText}
+        button:disabled{color:GrayText;border-color:GrayText;opacity:1}
+        button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid Highlight}
+        .message,.title{color:CanvasText}
+      }
       @media(prefers-reduced-motion:reduce){button{transition:none}}
+      .box{position:static;right:auto;bottom:auto;z-index:auto;width:auto;max-height:none;overflow:visible;border:0;border-radius:0;background:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+      .box>header,.message,.count,.counts-row,.footer,[data-a="retry"],[data-a="continue"],[data-a="next"],[data-a="clear"],[data-a="rescan"]{display:none!important}
+      .body{padding:0;overflow:visible}.actions{margin-top:12px}.more-actions{margin-top:0}
     </style>
-    <section class="box" aria-live="polite">
-      <header><span class="dot"></span><span class="title">Preparing</span><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
+    <section class="box" aria-labelledby="xpertapply-heading">
+      <header><span class="dot" aria-hidden="true"></span><div class="heading"><h2 id="xpertapply-heading">XpertApply assisted application</h2><span class="title">Preparing</span></div><button class="collapse" type="button" aria-label="Collapse XpertApply" title="Collapse">−</button></header>
       <div class="body">
-        <div class="message">Preparing your application…</div>
-        <div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div>
+        <div class="message" role="status" aria-atomic="true">Preparing your application…</div>
+        <section class="submission-confirmation" aria-labelledby="xpertapply-submission-question">
+          <h3 id="xpertapply-submission-question">Application submitted?</h3>
+          <p>We couldn't confirm whether the employer received your application. Did you submit it?</p>
+          <div class="row"><button type="button" data-confirm="yes">Yes, I applied</button><button type="button" data-confirm="no">Not yet</button></div>
+          <p class="confirmation-status"></p>
+        </section>
+        <details class="tech-details" style="margin-top:8px"><summary style="font-size:11px;color:#5c675f;cursor:pointer">Technical details</summary><div class="lifecycle" style="font-size:11px;color:#5c675f;margin-top:5px"></div></details>
         <div class="count"></div>
         <div class="counts-row"></div>
         <button class="review-toggle" type="button" aria-expanded="false" style="display:none"></button>
@@ -334,7 +385,6 @@ export function createWidget(actions: {
           <button type="button" data-a="retry">Retry autofill</button>
           <button type="button" data-a="continue">Continue filling</button>
           <button type="button" data-a="next">Jump to next issue</button>
-          <button type="button" data-a="complete">Mark application complete</button>
           <details class="more-actions">
             <summary>More options</summary>
             <div class="more-grid">
@@ -349,13 +399,41 @@ export function createWidget(actions: {
           <details class="transaction-panel consent-transactions" style="display:none"><summary>Consent trace</summary><div data-transaction-rows="consent"></div></details>
         </div>
       </div>
+      <footer class="footer">
+        <button type="button" data-a="complete">Mark application complete</button>
+      </footer>
     </section>`;
-  document.documentElement.appendChild(host);
   const box = root.querySelector<HTMLElement>(".box")!;
   const reviewToggle = root.querySelector<HTMLButtonElement>(".review-toggle")!;
   const reviewPanel = root.querySelector<HTMLElement>(".review-panel")!;
   const actionPanel = root.querySelector<HTMLElement>(".action-panel")!;
   const countsRow = root.querySelector<HTMLElement>(".counts-row")!;
+  const submissionConfirmation = root.querySelector<HTMLElement>(".submission-confirmation")!;
+  const confirmationStatus = root.querySelector<HTMLElement>(".confirmation-status")!;
+  const confirmYes = root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!;
+  const confirmNo = root.querySelector<HTMLButtonElement>('[data-confirm="no"]')!;
+  let confirmationBusy = false;
+  async function answerSubmission(answer: "yes" | "no"): Promise<void> {
+    if (confirmationBusy) return;
+    confirmationBusy = true;
+    confirmYes.disabled = true;
+    confirmNo.disabled = true;
+    confirmationStatus.textContent = answer === "yes" ? "Recording your application…" : "Keeping this application open…";
+    const result = answer === "yes"
+      ? await actions.confirmSubmitted?.()
+      : await actions.confirmNotSubmitted?.();
+    confirmationBusy = false;
+    if (!result?.ok) {
+      confirmYes.disabled = false;
+      confirmNo.disabled = false;
+      confirmationStatus.textContent = result?.error ?? "XpertApply couldn't save that choice. Try again.";
+      return;
+    }
+    submissionConfirmation.classList.remove("open");
+    confirmationStatus.textContent = "";
+  }
+  confirmYes.addEventListener("click", () => { void answerSubmission("yes"); });
+  confirmNo.addEventListener("click", () => { void answerSubmission("no"); });
 
   // Keyboard containment. A Space or Enter pressed on a widget button must not
   // continue on to the employer's document, where it could reach a default
@@ -439,14 +517,13 @@ export function createWidget(actions: {
   root.querySelector('[data-a="next"]')?.addEventListener("click", () => {
     const next = items.find((i) => !i.resolved);
     if (!next) {
-      document.querySelector<HTMLElement>('[data-jobpilot-status="review"],[data-jobpilot-status="invalid"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     box.classList.remove("collapsed");
     reviewPanel.classList.add("open");
     reviewToggle.setAttribute("aria-expanded", "true");
     handlers?.onJumpToField(next.id);
-    root.querySelector<HTMLElement>(`[data-item="${cssId(next.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    root.querySelector<HTMLElement>(`[data-item="${cssId(next.id)}"]`)?.scrollIntoView({ behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
   });
 
   function cssId(id: string): string {
@@ -526,39 +603,28 @@ export function createWidget(actions: {
 
     if (item.kind === "name_confirm") {
       const parts = (item.suggestedValue || "").split("|");
-      const given = textInput("First / given name", parts[0] || "");
-      const middle = textInput("Middle name (optional)", parts[1] || "");
-      const family = textInput("Last / family name", parts[2] || "");
-      const prefFirst = textInput("Preferred first name (optional)", parts[3] || "");
-      const prefLast = textInput("Preferred last name (optional)", parts[4] || "");
-      el.appendChild(given);
-      el.appendChild(middle);
-      el.appendChild(family);
-      el.appendChild(prefFirst);
-      el.appendChild(prefLast);
-      const row = document.createElement("div");
-      row.className = "row";
-      const saveBtn = document.createElement("button");
-      saveBtn.type = "button";
-      saveBtn.textContent = "Confirm and fill";
-      saveBtn.addEventListener("click", async () => {
-        saveBtn.disabled = true;
-        // first|middle|last|preferredFirst|preferredLast. Middle may be blank
-        // (many people have none). Blank preferred fields fall back to the legal
-        // name, for the common "enter your legal name" preferred-name field.
-        const value = [
-          given.value.trim(),
-          middle.value.trim(),
-          family.value.trim(),
-          prefFirst.value.trim(),
-          prefLast.value.trim()
-        ].join("|");
-        const ok = given.value.trim() && family.value.trim() ? await handlers?.onFill(item.id, value) : false;
-        if (ok) markResolved(item.id);
-        else saveBtn.disabled = false;
+      const entry = item.resolved ? null : createPrivateEntry({
+        fields: [
+          { placeholder: "First / given name", value: parts[0] || "" },
+          { placeholder: "Middle name (optional)", value: parts[1] || "" },
+          { placeholder: "Last / family name", value: parts[2] || "" },
+          { placeholder: "Preferred first name (optional)", value: parts[3] || "" },
+          { placeholder: "Preferred last name (optional)", value: parts[4] || "" }
+        ],
+        submitLabel: "Confirm and fill",
+        onSubmit: async (values) => {
+          const [given, middle, family, prefFirst, prefLast] = values.map((v) => v.trim());
+          // first|middle|last|preferredFirst|preferredLast. Middle may be blank
+          // (many people have none). Blank preferred fields fall back to the legal
+          // name, for the common "enter your legal name" preferred-name field.
+          if (!given || !family) return false;
+          const ok = await handlers?.onFill(item.id, [given, middle, family, prefFirst, prefLast].join("|"));
+          if (ok) markResolved(item.id);
+          return Boolean(ok);
+        }
       });
-      row.appendChild(saveBtn);
-      el.appendChild(row);
+      // A settled card needs no entry box (and must not stay a keyboard stop).
+      if (entry) el.appendChild(entry);
       if (item.resolved) el.classList.add("resolved");
       return el;
     }
@@ -611,12 +677,36 @@ export function createWidget(actions: {
       readValue = () => select.value.trim();
       displayValue = () => select.options[select.selectedIndex]?.text ?? select.value;
     } else {
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder = inputPlaceholder(item);
-      el.appendChild(input);
-      readValue = () => input.value.trim();
-      displayValue = () => input.value.trim();
+      // Free text is typed in an extension-origin iframe (see privateEntry.ts):
+      // the employer page cannot observe keystrokes or pastes made here.
+      const scopeNote = item.defaultScope === "company" ? " (this employer only)" : "";
+      const entry = item.resolved ? null : createPrivateEntry({
+        fields: [{ placeholder: inputPlaceholder(item), value: "" }],
+        submitLabel: item.reusable ? "Save and fill" : "Use this answer",
+        toggle: item.reusable ? { label: `Save for future applications${scopeNote}`, checked: true } : undefined,
+        onSubmit: async ([raw], toggled) => {
+          const value = raw.trim();
+          if (!value) return false;
+          const filled = await handlers?.onFill(item.id, value);
+          if (filled && toggled) await handlers?.onSave(item.id, value, value);
+          if (filled) markResolved(item.id);
+          return Boolean(filled);
+        }
+      });
+      // A settled card needs no entry box (and must not stay a keyboard stop).
+      if (entry) el.appendChild(entry);
+      if (!item.required) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const skip = document.createElement("button");
+        skip.type = "button";
+        skip.textContent = "Skip";
+        skip.addEventListener("click", () => markResolved(item.id));
+        row.appendChild(skip);
+        el.appendChild(row);
+      }
+      if (item.resolved) el.classList.add("resolved");
+      return el;
     }
 
     let saveCheckbox: HTMLInputElement | null = null;
@@ -736,7 +826,6 @@ export function createWidget(actions: {
     el.innerHTML = `
       <div class="q">${escapeHtml(item.title)}${reqBadge}</div>
       <div class="why">${escapeHtml(item.explanation)}</div>`;
-
     // The stable failure code, on the card itself.
     //
     // It was only ever reachable by expanding the transaction trace, so the one
@@ -947,7 +1036,10 @@ export function createWidget(actions: {
       const labels: Record<WidgetStage, string> = { preparing:"Preparing", opening:"Opening application", detecting:"Detecting fields", filling:"Filling", uploading:"Uploading resume", review:"Needs review", ready:"Ready for review", failed:"Failed" };
       const title = value.stageLabel ?? labels[value.stage];
       root.querySelector<HTMLElement>(".title")!.textContent = title;
-      root.querySelector<HTMLElement>(".message")!.textContent = value.message ?? title;
+      // Keep repeated counter refreshes from re-inserting identical live text.
+      const message = root.querySelector<HTMLElement>(".message")!;
+      const nextMessage = value.message ?? title;
+      if (message.textContent !== nextMessage) message.textContent = nextMessage;
       if (value.requiredFieldsVerified != null) finalRequiredVerified = value.requiredFieldsVerified;
       if (value.requiredFieldsRemaining != null) finalRequiredRemaining = value.requiredFieldsRemaining;
       if (value.manualConsentActions != null) finalManualConsent = value.manualConsentActions;
@@ -1047,14 +1139,25 @@ export function createWidget(actions: {
       teachPanel.appendChild(renderRememberPrompt(prompt));
       box.classList.remove("collapsed");
     },
+    showSubmissionConfirmation() {
+      submissionConfirmation.classList.add("open");
+      confirmYes.disabled = false;
+      confirmNo.disabled = false;
+      confirmationStatus.textContent = "";
+    },
+    hideSubmissionConfirmation() {
+      submissionConfirmation.classList.remove("open");
+      confirmationStatus.textContent = "";
+    },
     setInteractionMode(active) {
       // Collapse to the header and become click-through. The widget is fixed
       // bottom-right, exactly where a dropdown menu often opens; leaving it
       // interactive would let it swallow the option click.
       box.classList.toggle("interacting", active);
-      host.style.pointerEvents = active ? "none" : "";
+      const overlayHost = document.getElementById(APPLICATION_OVERLAY_HOST_ID);
+      if (overlayHost) overlayHost.style.pointerEvents = active ? "none" : "";
     },
-    destroy: () => host.remove()
+    destroy: disposeSurface
   };
 }
 
@@ -1162,13 +1265,6 @@ function renderRememberPrompt(prompt: RememberPrompt): HTMLElement {
   return el;
 }
 
-function textInput(placeholder: string, value: string): HTMLInputElement {
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = placeholder;
-  input.value = value;
-  return input;
-}
 
 function inputPlaceholder(item: ReviewItem): string {
   const question = item.question.toLowerCase();

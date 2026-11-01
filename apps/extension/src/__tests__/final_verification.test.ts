@@ -149,6 +149,26 @@ describe("final live-DOM completion gate", () => {
     expect(result.ledger[0]).toMatchObject({ status: "needs_confirmation", reasonCode: "CONSENT_REQUIRES_USER" });
   });
 
+  it("does not upgrade a technically present low-confidence fill past user confirmation", () => {
+    document.body.innerHTML = '<form><label>First name<input name="first_name" required value="Test"></label></form>';
+    const root = document.querySelector("form")!;
+    const field = discoverFields(root)[0];
+    const ledger = buildLedger([field], [{
+      uid: field.uid,
+      fieldKey: "first_name",
+      question: "First name",
+      status: "filled",
+      reasonCode: "LOW_CONFIDENCE",
+      confidence: 0.93
+    }], () => ({ canonicalKey: "first_name", sensitive: false, reusable: true, fillSource: "profile" }));
+
+    const result = verify(root, { ledger });
+    expect(result.controls[0].verified).toBe(true); // the value stuck technically
+    expect(result.ledger[0]).toMatchObject({ status: "filled_needs_review", verified: false });
+    expect(result.counts).toMatchObject({ filled: 1, needsConfirmation: 1, pending: 1, requiredBlank: 0 });
+    expect(result).toMatchObject({ requiredVerified: 0, requiredRemaining: 1, canEnterReviewReady: false });
+  });
+
   it("allows review readiness only after both legal controls verify, with consent separate", () => {
     document.body.innerHTML = `<form>
       <label>Are you legally authorized to work in the US without restriction?

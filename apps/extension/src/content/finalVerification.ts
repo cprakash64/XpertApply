@@ -262,7 +262,14 @@ export function verifyFinalLiveDom(input: FinalVerificationInput): FinalVerifica
 
   const counts = computeCounts(currentLedger);
   const requiredControls = controls.filter((control) => control.required && !control.consent);
-  const requiredVerified = requiredControls.filter((control) => control.verified).length;
+  const confirmationPending = new Set(
+    currentLedger
+      .filter((entry) => entry.status === "filled_needs_review")
+      .map((entry) => `f_${entry.frameId}_${entry.uid}`)
+  );
+  const requiredVerified = requiredControls.filter((control) =>
+    control.verified && !confirmationPending.has(control.fieldKey)
+  ).length;
   const manualConsentActions = controls.filter((control) => control.consent && !control.displayValuePresent).length;
   const applicationValidationErrors = controls.filter((control) =>
     control.failureCode === "APPLICATION_VALIDATION_ERROR"
@@ -287,6 +294,7 @@ export function verifyFinalLiveDom(input: FinalVerificationInput): FinalVerifica
     && requiredControls.length > 0
     && everyRequiredLiveControlHasLedgerEntry
     && requiredRemaining === 0
+    && confirmationPending.size === 0
     && everyKnownAnswerReachedTerminalState
     && technicalIssues === 0
     && repeatableCandidatesTerminal
@@ -432,8 +440,14 @@ function finalLedgerEntry(
   failureCode: string | null,
   knownAnswerAvailable: boolean
 ): LedgerEntry {
+  // Live DOM verification proves that the value stuck technically; it does not
+  // erase the ledger's requirement for the user to confirm a low-confidence
+  // mapping (XA-11).
+  const filledNeedsReview = verified && prior?.status === "filled_needs_review";
   const status = consent && !valuePresent(field)
     ? "needs_confirmation"
+    : filledNeedsReview
+      ? "filled_needs_review"
     : verified
       ? "filled_verified"
       : required
@@ -456,7 +470,7 @@ function finalLedgerEntry(
     status,
     reasonCode: consent && !valuePresent(field) ? "CONSENT_REQUIRES_USER" : failureCode ?? prior?.reasonCode ?? "",
     fillSource: verified ? prior?.fillSource ?? "live_dom" : null,
-    verified,
+    verified: verified && !filledNeedsReview,
     question: field.label || field.ariaLabel || prior?.question || "Application question",
     reusable: prior?.reusable ?? false,
     defaultScope: prior?.defaultScope

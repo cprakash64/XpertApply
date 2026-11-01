@@ -43,15 +43,35 @@ export async function exchangeLaunchToken(
   return (await res.json()) as { session_token: string; session: RawSession };
 }
 
+/**
+ * Open an independent draft for the page the user is on, authenticated as the
+ * extension's own user. The worker passes only the origin+path it read from
+ * Chrome; the server derives the owner from the access token and returns a token
+ * scoped to that one session, exactly as the website handoff does.
+ */
+export async function createDirectSession(
+  accessToken: string,
+  body: { url: string }
+): Promise<{ session_token: string; session: RawSession }> {
+  const session = await request<RawSession & { session_token: string }>("/extension/direct-sessions", accessToken, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+  const { session_token, ...raw } = session;
+  return { session_token, session: raw as RawSession };
+}
+
 type RawSession = {
   session_id: number;
   authenticated_user_id?: number;
   ats_type: string | null;
   official_application_url: string;
-  job?: { title: string | null; company: string | null };
+  job?: { title: string | null; company: string | null; location?: string | null };
   resume?: { status: string; document_id: number | null; download_url: string | null };
   cover_letter?: { status: string; document_id: number | null; download_url: string | null };
   profile?: Record<string, unknown>;
+  confirmation_required_at?: string | null;
+  confirmation_prompt_dismissed_at?: string | null;
 };
 
 export async function fetchSessionData(token: string, sessionId: number): Promise<ApplicationSessionData> {
@@ -69,6 +89,9 @@ export async function fetchSessionData(token: string, sessionId: number): Promis
     officialUrl: session.official_application_url,
     jobTitle: session.job?.title ?? null,
     company: session.job?.company ?? null,
+    confirmationRequiredAt: session.confirmation_required_at ?? null,
+    confirmationPromptDismissedAt: session.confirmation_prompt_dismissed_at ?? null,
+    jobLocation: session.job?.location ?? null,
     profileData: session.profile ?? {},
     profileRevision: answers.profile_revision ?? null,
     answers: answers.answers,
@@ -196,6 +219,14 @@ export async function completeSession(token: string, sessionId: number): Promise
     method: "POST",
     body: JSON.stringify({ confirmed: true })
   });
+}
+
+export async function requireSubmissionConfirmation(token: string, sessionId: number): Promise<void> {
+  await request(`/application-sessions/${sessionId}/confirmation-required`, token, { method: "POST" });
+}
+
+export async function dismissSubmissionConfirmation(token: string, sessionId: number): Promise<void> {
+  await request(`/application-sessions/${sessionId}/confirmation-dismissed`, token, { method: "POST" });
 }
 
 export interface ConfirmedApplication {
@@ -337,4 +368,37 @@ export async function resolveQuestions(
     { method: "POST", body: JSON.stringify({ schema_version: 3, questions }) }
   );
   return parseResolveQuestionsResponse(response);
+}
+
+export interface DraftedAnswerResponse {
+  field_identifier: string;
+  proposed_answer: string;
+  generation_status: string;
+  missing_information: string[];
+  evidence_count: number;
+}
+
+/** Ask the backend for grounded, editable drafts. The reply is parsed down to the fields the page may use; evidence stays server-side. */
+export async function draftAnswers(token: string, sessionId: number, questions: unknown[]): Promise<DraftedAnswerResponse[]> {
+  const body = (await request<unknown>(
+    `/application-sessions/${sessionId}/draft-answers`,
+    token,
+    { method: "POST", body: JSON.stringify({ questions }) }
+  )) as { drafts?: unknown };
+  if (!Array.isArray(body?.drafts)) return [];
+  const out: DraftedAnswerResponse[] = [];
+  for (const raw of body.drafts) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.field_identifier !== "string") continue;
+    out.push({
+      field_identifier: item.field_identifier,
+      proposed_answer: typeof item.proposed_answer === "string" ? item.proposed_answer.slice(0, 4000) : "",
+      generation_status: typeof item.generation_status === "string" ? item.generation_status.slice(0, 40) : "invalid_response",
+      missing_information: Array.isArray(item.missing_information)
+        ? item.missing_information.filter((m): m is string => typeof m === "string").slice(0, 6).map((m) => m.slice(0, 200)) : [],
+      evidence_count: Array.isArray(item.evidence_references) ? item.evidence_references.length : 0
+    });
+  }
+  return out;
 }

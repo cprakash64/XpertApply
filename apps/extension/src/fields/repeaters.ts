@@ -9,7 +9,7 @@
 
 import type { ApplicationSessionData, DiscoveredField } from "../types";
 import { discoverFields } from "./discovery";
-import { fillField } from "./fill";
+import { fillField, markJobPilotRepeater } from "./fill";
 
 type ExperienceRecord = {
   company?: string;
@@ -170,7 +170,7 @@ async function fillValue(
     dropdownSearchValue: value
   });
   if (outcome.status === "filled" || outcome.status === "skipped") {
-    field.element.setAttribute("data-jobpilot-repeater", "1");
+    markJobPilotRepeater(field.element);
     result.fieldsFilled += outcome.status === "filled" ? 1 : 0;
   } else {
     result.failures.push(`${label(field)}:${outcome.reason ?? "not filled"}`);

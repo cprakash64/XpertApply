@@ -4,9 +4,9 @@
  * background service worker, and the side panel.
  *
  * There are two transports:
- *   • window.postMessage — page ⇆ XpertApply-origin content script (detection +
- *     staging the launch payload; a token is staged into the isolated content
- *     world and never left in the DOM).
+ *   • window.postMessage — page ⇆ XpertApply-origin content script for launch
+ *     staging/results only; extension presence and auth teardown use Chrome's
+ *     externally-connectable runtime channel.
  *   • chrome.runtime messaging — content/side panel ⇆ background.
  *
  * No raw message-type strings are duplicated elsewhere: everything imports the
@@ -14,6 +14,7 @@
  * `parsePageMessage` validate at runtime and reject unknown messages.
  */
 
+import type { SiteAccessState } from "./security/siteAccess";
 import type { ApplicationSessionData } from "./types";
 
 /** Bumped when the web⇆extension contract changes incompatibly. */
@@ -39,6 +40,33 @@ export type LaunchState =
 
 /** Why an autofill run was started — both paths call one canonical runner. */
 export type AutofillReason = "automatic_launch" | "manual_retry" | "continue_after_navigation";
+export type SessionEndReason = "logout" | "account_deleted" | "expired" | "account_changed";
+
+/** Browser-routed Web -> extension protocol. These messages never cross the
+ * page-visible postMessage bridge. */
+export const EXTERNAL_MSG = {
+  PING: "XPERTAPPLY_EXTERNAL_PING",
+  SESSION_END: "XPERTAPPLY_EXTERNAL_SESSION_END"
+} as const;
+
+export type ExternalRuntimeMessage =
+  | { type: typeof EXTERNAL_MSG.PING }
+  | { type: typeof EXTERNAL_MSG.SESSION_END; reason: SessionEndReason };
+
+export function parseExternalRuntimeMessage(raw: unknown): ExternalRuntimeMessage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as { type?: unknown; reason?: unknown };
+  if (data.type === EXTERNAL_MSG.PING && Object.keys(data).length === 1) {
+    return data as ExternalRuntimeMessage;
+  }
+  if (data.type === EXTERNAL_MSG.SESSION_END
+    && typeof data.reason === "string"
+    && SESSION_END_REASONS.includes(data.reason as SessionEndReason)
+    && Object.keys(data).length === 2) {
+    return data as ExternalRuntimeMessage;
+  }
+  return null;
+}
 
 // --------------------------------------------------------------------------- //
 // Field-level result model (Phase 12)
@@ -54,6 +82,8 @@ export type FieldFillStatus =
 export type ReasonCode =
   | "NO_VERIFIED_ANSWER"
   | "LOW_CONFIDENCE"
+  // The value is an AI-drafted answer the applicant has not reviewed yet.
+  | "AI_DRAFT_REVIEW"
   | "USER_VALUE_PRESENT"
   | "UNSUPPORTED_CONTROL"
   | "HIDDEN_FIELD"
@@ -68,7 +98,13 @@ export type ReasonCode =
   // PII — these are structural/permission states only.
   | "HOST_PERMISSION_MISSING"
   | "CONTENT_SCRIPT_NOT_INJECTED"
+  | "FRAME_PERMISSION_GRANTED_PENDING_CONFIRMATION"
   | "HANDOFF_URL_MISMATCH"
+  // Independent (direct) application resolution: structural states only.
+  | "DIRECT_NOT_ELIGIBLE"
+  | "DIRECT_SIGNED_OUT"
+  | "DIRECT_DISABLED"
+  | "DIRECT_UNAVAILABLE"
   | "NO_MATCHING_FRAME"
   | "FORM_NOT_RENDERED"
   | "NO_FIELDS_DISCOVERED"
@@ -149,6 +185,16 @@ export interface PendingLaunch {
   state: LaunchState;
   protocolVersion: number;
   atsType: string | null;
+  /** Set only by an Apply click (LAUNCH_REQUEST). A handoff that was merely staged never has it,
+   * and only a user-started launch may bring up the in-page assistant without a toolbar click. */
+  userStarted?: true;
+  /** "direct" for a draft the extension opened itself for the page the user is on; absent
+   * for a website-prepared launch. A direct binding is tab-bound, owner-bound
+   * (`directUserId`) and never carries a launch token. */
+  source?: "direct";
+  /** The extension account this direct draft belongs to. Compared against the
+   * signed-in account on every use, so a switch can never inherit it. */
+  directUserId?: number;
   /** Last actionable failure reason for the side panel (safe code, not PII). */
   failureCode?: ReasonCode | string;
   lastError?: { code: string; message: string; recoverable: boolean };
@@ -181,6 +227,8 @@ export interface LaunchViewState {
   filled: number;
   skipped: number;
   reviewRequired: number;
+  /** Trusted ledger projection; absent until requiredness has been verified. */
+  requiredReviewRemaining?: number;
   resumeStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
   coverStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
   reachedFinalStep: boolean;
@@ -189,9 +237,28 @@ export interface LaunchViewState {
   running: boolean;
   failureCode: string | null;
   failureMessage: string | null;
+  confirmationRequired: boolean;
+  confirmationDismissed: boolean;
+  submissionGestureAt: number | null;
+  submissionAttempt: number;
   /** false for a terminal failure (expired/consumed handoff, URL mismatch) —
    * the UI must not offer a Retry that will just repeat the same failure. */
   failureRecoverable: boolean | null;
+  /** Chrome host access for this workflow. `site_access_required` means the
+   * side panel must ask; the worker cannot (no user gesture in a service
+   * worker). */
+  siteAccess: SiteAccessState;
+  /** Match pattern the side panel should request, when one can be formed. */
+  siteAccessPattern: string | null;
+  /** Set when Chrome's access prompt was shown for this tab; cleared by any answer. */
+  siteAccessRequestedAt?: number;
+  /** Host shown in the prompt. Never a full URL. */
+  siteAccessOrigin: string | null;
+  /** Whether the page itself or one embedded frame needs the grant. */
+  siteAccessScope: "page" | "frame";
+  /** Redacted path shape observed for a frame-scoped request. It is only a
+   * reconciliation hint; Chrome still supplies the authoritative frame id. */
+  siteAccessFramePathShape?: string | null;
   updatedAt: number;
 }
 
@@ -208,12 +275,11 @@ export interface LaunchViewState {
 // --------------------------------------------------------------------------- //
 export const MSG = {
   // page ⇆ XpertApply-origin content script (postMessage)
-  PING: "JOBPILOT_PING",
-  PONG: "JOBPILOT_PONG",
   STAGE_LAUNCH: "JOBPILOT_STAGE_LAUNCH",
   START_ASSISTED_APPLY: "JOBPILOT_START_ASSISTED_APPLY",
   START_ASSISTED_APPLY_RESULT: "JOBPILOT_START_ASSISTED_APPLY_RESULT",
-  HANDSHAKE: "JOBPILOT_HANDSHAKE",
+  EXTENSION_PRESENCE_PING: "XPERTAPPLY_EXTENSION_PRESENCE_PING",
+  EXTENSION_PRESENCE_READY: "XPERTAPPLY_EXTENSION_PRESENCE_READY",
   // XpertApply-origin content script → background (runtime)
   LAUNCH_REQUEST: "JOBPILOT_LAUNCH_REQUEST",
   LAUNCH_ACCEPTED: "JOBPILOT_LAUNCH_ACCEPTED",
@@ -222,6 +288,7 @@ export const MSG = {
   CONTENT_READY: "JOBPILOT_CONTENT_READY",
   GET_PENDING_LAUNCH: "JOBPILOT_GET_PENDING_LAUNCH",
   PING_CONTENT: "JOBPILOT_PING_CONTENT",
+  CONTENT_RECONNECT: "JOBPILOT_CONTENT_RECONNECT",
   PONG_CONTENT: "JOBPILOT_PONG_CONTENT",
   AUTOFILL_START: "JOBPILOT_AUTOFILL_START",
   AUTOFILL_PROGRESS: "JOBPILOT_AUTOFILL_PROGRESS",
@@ -232,6 +299,9 @@ export const MSG = {
   // side panel → background (runtime)
   START_AUTOFILL: "JOBPILOT_START_AUTOFILL",
   CLEAR_SESSION: "JOBPILOT_CLEAR_SESSION",
+  /** Worker -> employer tab when the authorization behind a session is gone (sign-out, revocation). The page stops
+   * writing and drops its annotations; values already on the employer form are left exactly as they are. */
+  SESSION_DETACH: "XPERTAPPLY_SESSION_DETACH",
   COMPLETE_SESSION: "JOBPILOT_COMPLETE_SESSION",
   /** Content script asks the service worker to navigate to a validated
    * application destination. The content script never touches chrome.tabs. */
@@ -243,9 +313,16 @@ export const MSG = {
   /** Destination page lost its binding and asks the worker to re-establish it.
    * Carries only safe browser context; the worker derives tab, session and job. */
   RECONNECT_APPLICATION_WORKFLOW: "JOBPILOT_RECONNECT_APPLICATION_WORKFLOW",
+  /** Sign the extension out (revokes server-side). Extension pages only. */
+  DIRECT_DISCONNECT: "XPERTAPPLY_DIRECT_DISCONNECT",
+  /** Who, if anyone, the extension is signed in as. Never returns a token. */
+  DIRECT_AUTH_STATE: "XPERTAPPLY_DIRECT_AUTH_STATE",
   /** Content script asks the worker to resolve a batch of employer questions.
    * The worker holds the session token; the page never sees it. */
   RESOLVE_QUESTIONS: "JOBPILOT_RESOLVE_QUESTIONS",
+  /** Content script asks the worker to have the backend DRAFT grounded, editable answers for open-ended questions. The worker holds
+   * the session token; the drafts come back unverified and must be reviewed by the applicant. */
+  DRAFT_ANSWERS: "XPERTAPPLY_DRAFT_ANSWERS",
   /** Which build the service worker is, and which backend it would talk to.
    * Asked BEFORE autofill: a content script talking to a worker from a
    * different build is the most common reason a live page disagrees with a
@@ -265,8 +342,12 @@ export const MSG = {
   // employer content script → background → API (runtime). Sent ONLY when the
   // ATS itself confirmed the submission; see ats/submissionEvidence.ts.
   SUBMISSION_CONFIRMED: "JOBPILOT_SUBMISSION_CONFIRMED",
+  SUBMISSION_GESTURE_CANDIDATE: "JOBPILOT_SUBMISSION_GESTURE_CANDIDATE",
+  SUBMISSION_GESTURE_CANDIDATE_CANCELLED: "JOBPILOT_SUBMISSION_GESTURE_CANDIDATE_CANCELLED",
   /** The extension could not prove the submission — the web app must ask. */
   MANUAL_CONFIRMATION_REQUIRED: "JOBPILOT_MANUAL_CONFIRMATION_REQUIRED",
+  USER_CONFIRMED_SUBMITTED: "JOBPILOT_USER_CONFIRMED_SUBMITTED",
+  USER_CONFIRMED_NOT_SUBMITTED: "JOBPILOT_USER_CONFIRMED_NOT_SUBMITTED",
   /** The employer is asking the user to sign in. Autofill pauses; the
    * application session stays valid across the detour. */
   EMPLOYER_AUTH_REQUIRED: "JOBPILOT_EMPLOYER_AUTH_REQUIRED",
@@ -277,6 +358,59 @@ export const MSG = {
   /** Ask, inside a user gesture, for host permission covering one exact frame
    * origin. Never `<all_urls>`, never a wildcard the user did not see. */
   REQUEST_FRAME_PERMISSION: "JOBPILOT_REQUEST_FRAME_PERMISSION",
+  /** The side panel asks what host access the current workflow is waiting on.
+   * Answered by the worker, which can CHECK permissions but — being a service
+   * worker with no user gesture — can never request them. */
+  GET_SITE_ACCESS: "JOBPILOT_GET_SITE_ACCESS",
+  /** The side panel obtained (or was refused) a host grant inside a real user
+   * gesture and tells the worker, which resumes or stops the workflow. */
+  SITE_ACCESS_RESULT: "JOBPILOT_SITE_ACCESS_RESULT",
+  /** A frame that has resolved a confident application root asks permission to
+   * be the ONE frame in this tab that fills. A tab can contain the real
+   * application plus any number of other application-shaped forms — a
+   * same-origin vendor widget, a second embedded ATS — and filling all of them
+   * puts the user's profile and résumé somewhere they never applied. */
+  REQUEST_FILL_LEASE: "JOBPILOT_REQUEST_FILL_LEASE",
+  ASSISTANT_GET_CONTEXT: "XPERTAPPLY_ASSISTANT_GET_CONTEXT",
+  ASSISTANT_CONTEXT_CHANGED: "XPERTAPPLY_ASSISTANT_CONTEXT_CHANGED",
+  ASSISTANT_START_AUTOFILL: "XPERTAPPLY_ASSISTANT_START_AUTOFILL",
+  ASSISTANT_CLEAR_SESSION: "XPERTAPPLY_ASSISTANT_CLEAR_SESSION",
+  ASSISTANT_COMPLETE_SESSION: "XPERTAPPLY_ASSISTANT_COMPLETE_SESSION",
+  ASSISTANT_SITE_ACCESS_RESULT: "XPERTAPPLY_ASSISTANT_SITE_ACCESS_RESULT",
+  OVERLAY_GET_CONTEXT: "XPERTAPPLY_OVERLAY_GET_CONTEXT",
+  OVERLAY_GET_VIEW: "XPERTAPPLY_OVERLAY_GET_VIEW",
+  OVERLAY_START_AUTOFILL: "XPERTAPPLY_OVERLAY_START_AUTOFILL",
+  OVERLAY_CLEAR_SESSION: "XPERTAPPLY_OVERLAY_CLEAR_SESSION",
+  OVERLAY_COMPLETE_SESSION: "XPERTAPPLY_OVERLAY_COMPLETE_SESSION",
+  OVERLAY_SITE_ACCESS_RESULT: "XPERTAPPLY_OVERLAY_SITE_ACCESS_RESULT",
+  /** Worker -> affected-tab invalidation, consumed by its top-frame overlay.
+   * Carries no business
+   * state; the receiver must fetch the current authoritative context/view. */
+  OVERLAY_VIEW_CHANGED: "XPERTAPPLY_OVERLAY_VIEW_CHANGED",
+  SHOW_APPLICATION_OVERLAY: "XPERTAPPLY_SHOW_APPLICATION_OVERLAY",
+  /** Overlay -> worker, from the user's click on "Allow XpertApply on <site>".
+   * Content scripts cannot call chrome.permissions, so the worker opens an
+   * extension page (side panel, else assistant window) whose own button requests it. */
+  OVERLAY_OPEN_PERMISSION_SURFACE: "XPERTAPPLY_OVERLAY_OPEN_PERMISSION_SURFACE",
+  /** Overlay -> worker: who the extension is signed in as (the overlay shows it; no token is returned). */
+  OVERLAY_AUTH_STATE: "XPERTAPPLY_OVERLAY_AUTH_STATE",
+  /** Overlay -> worker: the user's explicit "Disconnect XpertApply". Revokes server-side, purges local state. */
+  OVERLAY_DISCONNECT: "XPERTAPPLY_OVERLAY_DISCONNECT",
+  /** Overlay -> worker: stop opening the assistant by itself on this origin (the user's off switch). */
+  OVERLAY_DISABLE_AUTO_OPEN: "XPERTAPPLY_OVERLAY_DISABLE_AUTO_OPEN",
+  TOOLBAR_OVERLAY_READY: "XPERTAPPLY_TOOLBAR_OVERLAY_READY",
+  /** Worker -> top frame: show the static first-use disclosure. Carries no page data. */
+  SHOW_TOOLBAR_DISCLOSURE: "XPERTAPPLY_SHOW_TOOLBAR_DISCLOSURE",
+  /** Private text entry (extension-origin iframe inside the assistant). The page
+   * can observe keystrokes in its own DOM, so text is typed in the iframe and
+   * travels only over runtime messaging. REGISTER: content -> worker, before the
+   * iframe loads. CONFIG / SUBMIT: iframe -> worker. DELIVER: worker -> top frame. */
+  FIELD_ENTRY_REGISTER: "XPERTAPPLY_FIELD_ENTRY_REGISTER",
+  FIELD_ENTRY_CONFIG: "XPERTAPPLY_FIELD_ENTRY_CONFIG",
+  FIELD_ENTRY_SUBMIT: "XPERTAPPLY_FIELD_ENTRY_SUBMIT",
+  FIELD_ENTRY_DELIVER: "XPERTAPPLY_FIELD_ENTRY_DELIVER",
+  /** Disclosure Continue -> worker. Carries nothing; the worker records the version. */
+  TOOLBAR_DISCLOSURE_ACCEPT: "XPERTAPPLY_TOOLBAR_DISCLOSURE_ACCEPT",
   /** Sent BY the worker INTO one frame (by frameId) to ask what it can see.
    * Answered by every content-script instance, top or nested. */
   PROBE_FRAME_APPLICATION: "JOBPILOT_PROBE_FRAME_APPLICATION",
@@ -297,6 +431,8 @@ export type ProgressPayload = {
   filled: number;
   skipped: number;
   reviewRequired: number;
+  /** Trusted ledger projection; absent until requiredness has been verified. */
+  requiredReviewRemaining?: number;
   reachedFinalStep: boolean;
   documentsUploaded: ("resume" | "cover_letter")[];
   reviewDocuments: ("resume" | "cover_letter")[];
@@ -304,29 +440,11 @@ export type ProgressPayload = {
 
 export type RuntimeMessage =
   | { type: typeof MSG.LAUNCH_REQUEST; payload: LaunchPayload }
-  | { type: typeof MSG.HANDSHAKE; origin: string; apiBase?: string; protocolVersion: number }
   | { type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
-  | {
-      type: typeof MSG.CONTENT_READY;
-      url: string;
-      title: string;
-      protocolVersion: number;
-      isTopFrame: boolean;
-      topUrl: string | null;
-      detectedAts: string | null;
-      /** Sanitized per-frame application evidence (counts/scores only — see
-       * frames/probe.ts). Lets the background rank frames against each other
-       * instead of letting the top frame speak for the whole tab. */
-      probe?: {
-        isTopFrame: boolean;
-        sanitizedUrl: string;
-        rootConfident: boolean;
-        applicationLabelsFound: string[];
-        bestScore: number;
-      };
-    }
+  | { type: typeof MSG.CONTENT_READY }
   | { type: typeof MSG.GET_PENDING_LAUNCH; url: string }
   | { type: typeof MSG.PING_CONTENT }
+  | { type: typeof MSG.CONTENT_RECONNECT }
   | { type: typeof MSG.PONG_CONTENT; url: string }
   | { type: typeof MSG.AUTOFILL_START; reason: AutofillReason }
   | { type: typeof MSG.AUTOFILL_PROGRESS; payload: ProgressPayload }
@@ -336,9 +454,17 @@ export type RuntimeMessage =
   | { type: typeof MSG.AUDIT_EVENT; sessionId: number; action_type: string; field_key?: string; status?: string }
   | { type: typeof MSG.START_AUTOFILL; tabId?: number; reason: AutofillReason }
   | { type: typeof MSG.CLEAR_SESSION; tabId?: number }
+  | { type: typeof MSG.SESSION_DETACH }
   | { type: typeof MSG.COMPLETE_SESSION; sessionId: number }
+  | { type: typeof MSG.DIRECT_DISCONNECT }
+  | { type: typeof MSG.DIRECT_AUTH_STATE }
   | {
       type: typeof MSG.RESOLVE_QUESTIONS;
+      sessionId: number;
+      questions: unknown[];
+    }
+  | {
+      type: typeof MSG.DRAFT_ANSWERS;
       sessionId: number;
       questions: unknown[];
     }
@@ -422,12 +548,16 @@ export type RuntimeMessage =
       submissionReference: string | null;
       ats: string | null;
     }
+  | { type: typeof MSG.SUBMISSION_GESTURE_CANDIDATE }
+  | { type: typeof MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED }
   | {
       type: typeof MSG.MANUAL_CONFIRMATION_REQUIRED;
       sessionId: number;
       /** Machine reason code from evaluateSubmissionEvidence. Never free text. */
       reason: string;
     }
+  | { type: typeof MSG.USER_CONFIRMED_SUBMITTED; sessionId: number }
+  | { type: typeof MSG.USER_CONFIRMED_NOT_SUBMITTED; sessionId: number }
   | {
       type: typeof MSG.EMPLOYER_AUTH_REQUIRED;
       sessionId: number;
@@ -447,6 +577,45 @@ export type RuntimeMessage =
        * anything broader than `<origin>/*`. */
       origin: string;
     }
+  | { type: typeof MSG.GET_SITE_ACCESS; tabId?: number }
+  | {
+      type: typeof MSG.SITE_ACCESS_RESULT;
+      tabId?: number;
+      /** The pattern the side panel actually asked Chrome for. */
+      pattern: string;
+      granted: boolean;
+    }
+  | {
+      type: typeof MSG.REQUEST_FILL_LEASE;
+      /** This frame's own root verdict — a ranking input, never an identity
+       * claim: the worker takes tab and frame from the sender. */
+      rootConfident: boolean;
+    }
+  | { type: typeof MSG.ASSISTANT_GET_CONTEXT }
+  | { type: typeof MSG.ASSISTANT_CONTEXT_CHANGED }
+  | { type: typeof MSG.ASSISTANT_START_AUTOFILL; tabId: number; reason: AutofillReason }
+  | { type: typeof MSG.ASSISTANT_CLEAR_SESSION; tabId: number }
+  | { type: typeof MSG.ASSISTANT_COMPLETE_SESSION; tabId: number; sessionId: number }
+  | { type: typeof MSG.ASSISTANT_SITE_ACCESS_RESULT; tabId: number; pattern: string; granted: boolean }
+  | { type: typeof MSG.OVERLAY_GET_CONTEXT }
+  | { type: typeof MSG.OVERLAY_GET_VIEW }
+  | { type: typeof MSG.OVERLAY_START_AUTOFILL; reason: AutofillReason }
+  | { type: typeof MSG.OVERLAY_CLEAR_SESSION }
+  | { type: typeof MSG.OVERLAY_COMPLETE_SESSION; sessionId: number }
+  | { type: typeof MSG.OVERLAY_SITE_ACCESS_RESULT; pattern: string; granted: boolean }
+  | { type: typeof MSG.OVERLAY_VIEW_CHANGED }
+  | { type: typeof MSG.SHOW_APPLICATION_OVERLAY; automatic?: boolean }
+  | { type: typeof MSG.OVERLAY_OPEN_PERMISSION_SURFACE }
+  | { type: typeof MSG.OVERLAY_DISABLE_AUTO_OPEN }
+  | { type: typeof MSG.OVERLAY_AUTH_STATE }
+  | { type: typeof MSG.OVERLAY_DISCONNECT }
+  | { type: typeof MSG.TOOLBAR_OVERLAY_READY }
+  | { type: typeof MSG.SHOW_TOOLBAR_DISCLOSURE }
+  | { type: typeof MSG.FIELD_ENTRY_REGISTER; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } }
+  | { type: typeof MSG.FIELD_ENTRY_CONFIG; entryId: string }
+  | { type: typeof MSG.FIELD_ENTRY_SUBMIT; entryId: string; values: string[]; toggled?: boolean }
+  | { type: typeof MSG.FIELD_ENTRY_DELIVER; entryId: string; values: string[]; toggled?: boolean }
+  | { type: typeof MSG.TOOLBAR_DISCLOSURE_ACCEPT }
   | { type: typeof MSG.PROBE_FRAME_APPLICATION };
 
 /** Mirrors frames/frameInventory.ts ObservedFrame; declared here so the message
@@ -465,13 +634,26 @@ export type ObservedFramePayload = {
 };
 
 const RUNTIME_TYPES = new Set<string>([
-  MSG.LAUNCH_REQUEST, MSG.HANDSHAKE, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.PONG_CONTENT,
+  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
-  MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION,
-  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
+  MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION, MSG.SESSION_DETACH,
+  MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.DRAFT_ANSWERS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
   MSG.SET_APPLICATION_OVERRIDE, MSG.GET_APPLICATION_OVERRIDES, MSG.RUNTIME_IDENTITY,
-  MSG.SUBMISSION_CONFIRMED, MSG.MANUAL_CONFIRMATION_REQUIRED, MSG.EMPLOYER_AUTH_REQUIRED,
-  MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION
+  MSG.SUBMISSION_CONFIRMED, MSG.SUBMISSION_GESTURE_CANDIDATE,
+  MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED, MSG.MANUAL_CONFIRMATION_REQUIRED,
+  MSG.USER_CONFIRMED_SUBMITTED, MSG.USER_CONFIRMED_NOT_SUBMITTED, MSG.EMPLOYER_AUTH_REQUIRED,
+  MSG.INSPECT_APPLICATION_FRAMES, MSG.REQUEST_FRAME_PERMISSION, MSG.PROBE_FRAME_APPLICATION,
+  MSG.REQUEST_FILL_LEASE, MSG.GET_SITE_ACCESS, MSG.SITE_ACCESS_RESULT,
+  MSG.DIRECT_DISCONNECT, MSG.DIRECT_AUTH_STATE,
+  MSG.ASSISTANT_GET_CONTEXT, MSG.ASSISTANT_CONTEXT_CHANGED,
+  MSG.ASSISTANT_START_AUTOFILL, MSG.ASSISTANT_CLEAR_SESSION,
+  MSG.ASSISTANT_COMPLETE_SESSION, MSG.ASSISTANT_SITE_ACCESS_RESULT,
+  MSG.OVERLAY_GET_CONTEXT, MSG.OVERLAY_GET_VIEW, MSG.OVERLAY_START_AUTOFILL,
+  MSG.OVERLAY_CLEAR_SESSION, MSG.OVERLAY_COMPLETE_SESSION,
+  MSG.OVERLAY_SITE_ACCESS_RESULT, MSG.OVERLAY_VIEW_CHANGED,
+  MSG.SHOW_APPLICATION_OVERLAY, MSG.OVERLAY_OPEN_PERMISSION_SURFACE, MSG.OVERLAY_DISABLE_AUTO_OPEN, MSG.OVERLAY_AUTH_STATE, MSG.OVERLAY_DISCONNECT, MSG.TOOLBAR_OVERLAY_READY,
+  MSG.SHOW_TOOLBAR_DISCLOSURE, MSG.TOOLBAR_DISCLOSURE_ACCEPT,
+  MSG.FIELD_ENTRY_REGISTER, MSG.FIELD_ENTRY_CONFIG, MSG.FIELD_ENTRY_SUBMIT, MSG.FIELD_ENTRY_DELIVER
 ]);
 
 /** Validate an inbound runtime message; returns null for anything unknown. */
@@ -479,7 +661,292 @@ export function parseRuntimeMessage(raw: unknown): RuntimeMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const type = (raw as { type?: unknown }).type;
   if (typeof type !== "string" || !RUNTIME_TYPES.has(type)) return null;
+  if (!payloadIsValid(type, raw as Record<string, unknown>)) return null;
   return raw as RuntimeMessage;
+}
+
+// --------------------------------------------------------------------------- //
+// Payload schema
+//
+// `parseRuntimeMessage` used to check only that `type` was a name it knew, and
+// every handler then read whatever fields it wanted straight off the object.
+// TypeScript does not survive the message boundary — the union above describes
+// what a WELL-BEHAVED sender sends, not what actually arrives — so a wrong type,
+// a hostile length, or a value outside a closed vocabulary reached the handler
+// (and, for the API-backed messages, the network) unchecked.
+//
+// Two deliberate limits on how strict this is:
+//
+//   • Unknown extra properties are ALLOWED, not rejected. The content script and
+//     the service worker update on independent schedules (a tab keeps its old
+//     content script across an extension reload), so rejecting a field a newer
+//     build added would break the pair rather than protect it. Every handler
+//     reads named fields, so an unrecognised property reaches nothing.
+//   • Presence is required only where a handler could otherwise act on
+//     `undefined` — the ids, keys and closed vocabularies that ADDRESS a
+//     privileged operation. Descriptive fields are validated when present and
+//     tolerated when absent, for the same version-skew reason.
+//
+// Anything that fails is treated exactly like an unknown type: rejected before
+// any handler runs.
+// --------------------------------------------------------------------------- //
+
+/** Generous bounds. These exist to stop unbounded input reaching storage, the
+ * network or a log line — not to second-guess legitimate content. */
+const LIMIT = {
+  /** Identifier-shaped: canonical keys, reason codes, ATS ids, versions. */
+  key: 256,
+  /** URLs and origins. */
+  url: 2048,
+  /** Human-visible short text: titles, labels, CTA text, names. */
+  text: 4096,
+  /** Free-text answers, which legitimately include a drafted cover letter. */
+  answer: 32_768,
+  /** Batched question array — mirrors MAX_QUESTIONS in content/questionBatch. */
+  questions: 100,
+  /** Observed-frame inventory reported by one document. */
+  frames: 200
+} as const;
+
+type FieldSpec =
+  | { kind: "string"; max: number; required?: true; nullable?: true; oneOf?: readonly string[] }
+  | { kind: "integer"; required?: true }
+  | { kind: "number"; required?: true }
+  | { kind: "boolean"; required?: true }
+  | { kind: "object"; required?: true }
+  | { kind: "array"; maxItems: number; required?: true };
+
+const AUTOFILL_REASONS = ["automatic_launch", "manual_retry", "continue_after_navigation"] as const;
+const SESSION_END_REASONS = ["logout", "account_deleted", "expired", "account_changed"] as const;
+const ANSWER_SCOPES = ["global", "company", "application", "sensitive"] as const;
+const DOCUMENT_KINDS = ["resume", "cover-letter"] as const;
+const EVIDENCE_TYPES = ["success_page", "success_response", "success_message"] as const;
+const WEAK_EVIDENCE_REASONS = [
+  "NO_SUCCESS_SIGNAL",
+  "SUBMIT_CLICK_ONLY",
+  "FORM_DISAPPEARED_ONLY",
+  "URL_CHANGED_ONLY",
+  "AMBIGUOUS_CONFIRMATION",
+  "VALIDATION_FAILED"
+] as const;
+
+const SESSION_ID: FieldSpec = { kind: "integer", required: true };
+
+const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
+  [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
+  [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
+  [MSG.CONTENT_READY]: {},
+  [MSG.ASSISTANT_GET_CONTEXT]: {},
+  [MSG.ASSISTANT_CONTEXT_CHANGED]: {},
+  [MSG.ASSISTANT_START_AUTOFILL]: {
+    tabId: { kind: "integer", required: true },
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.ASSISTANT_CLEAR_SESSION]: { tabId: { kind: "integer", required: true } },
+  [MSG.ASSISTANT_COMPLETE_SESSION]: {
+    tabId: { kind: "integer", required: true },
+    sessionId: SESSION_ID
+  },
+  [MSG.ASSISTANT_SITE_ACCESS_RESULT]: {
+    tabId: { kind: "integer", required: true },
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  },
+  [MSG.OVERLAY_GET_CONTEXT]: {},
+  [MSG.OVERLAY_GET_VIEW]: {},
+  [MSG.OVERLAY_START_AUTOFILL]: {
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.OVERLAY_CLEAR_SESSION]: {},
+  [MSG.OVERLAY_COMPLETE_SESSION]: { sessionId: SESSION_ID },
+  [MSG.OVERLAY_SITE_ACCESS_RESULT]: {
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  },
+  [MSG.OVERLAY_VIEW_CHANGED]: {},
+  [MSG.SHOW_APPLICATION_OVERLAY]: { automatic: { kind: "boolean" } },
+  [MSG.OVERLAY_OPEN_PERMISSION_SURFACE]: {},
+  [MSG.OVERLAY_DISABLE_AUTO_OPEN]: {},
+  [MSG.OVERLAY_AUTH_STATE]: {},
+  [MSG.OVERLAY_DISCONNECT]: {},
+  [MSG.TOOLBAR_OVERLAY_READY]: {},
+  [MSG.SHOW_TOOLBAR_DISCLOSURE]: {},
+  [MSG.FIELD_ENTRY_REGISTER]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    fields: { kind: "array", maxItems: 8, required: true },
+    submitLabel: { kind: "string", max: LIMIT.key, required: true },
+    toggle: { kind: "object" }
+  },
+  [MSG.FIELD_ENTRY_CONFIG]: { entryId: { kind: "string", max: LIMIT.key, required: true } },
+  [MSG.FIELD_ENTRY_SUBMIT]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    values: { kind: "array", maxItems: 8, required: true },
+    toggled: { kind: "boolean" }
+  },
+  [MSG.FIELD_ENTRY_DELIVER]: {
+    entryId: { kind: "string", max: LIMIT.key, required: true },
+    values: { kind: "array", maxItems: 8, required: true },
+    toggled: { kind: "boolean" }
+  },
+  [MSG.TOOLBAR_DISCLOSURE_ACCEPT]: {},
+  [MSG.GET_PENDING_LAUNCH]: { url: { kind: "string", max: LIMIT.url } },
+  [MSG.PING_CONTENT]: {},
+  [MSG.CONTENT_RECONNECT]: {},
+  [MSG.PONG_CONTENT]: { url: { kind: "string", max: LIMIT.url } },
+  [MSG.AUTOFILL_START]: {
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.AUTOFILL_PROGRESS]: { payload: { kind: "object", required: true } },
+  [MSG.AUTOFILL_RESULT]: {
+    sessionId: SESSION_ID,
+    result: { kind: "object", required: true },
+    progress: { kind: "object" }
+  },
+  [MSG.AUTOFILL_FAILED]: {
+    reasonCode: { kind: "string", max: LIMIT.key, required: true },
+    message: { kind: "string", max: LIMIT.text }
+  },
+  [MSG.REQUEST_DOCUMENT]: {
+    sessionId: SESSION_ID,
+    kind: { kind: "string", max: LIMIT.key, required: true, oneOf: DOCUMENT_KINDS }
+  },
+  [MSG.AUDIT_EVENT]: {
+    sessionId: SESSION_ID,
+    action_type: { kind: "string", max: LIMIT.key, required: true },
+    field_key: { kind: "string", max: LIMIT.key },
+    status: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.START_AUTOFILL]: {
+    tabId: { kind: "integer" },
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: AUTOFILL_REASONS }
+  },
+  [MSG.CLEAR_SESSION]: { tabId: { kind: "integer" } },
+  [MSG.COMPLETE_SESSION]: { sessionId: SESSION_ID },
+  [MSG.RESOLVE_QUESTIONS]: {
+    sessionId: SESSION_ID,
+    questions: { kind: "array", maxItems: LIMIT.questions, required: true }
+  },
+  [MSG.DRAFT_ANSWERS]: {
+    sessionId: SESSION_ID,
+    questions: { kind: "array", maxItems: 8, required: true }
+  },
+  [MSG.RECONNECT_APPLICATION_WORKFLOW]: {
+    origin: { kind: "string", max: LIMIT.url, required: true },
+    handoffVersion: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.PREPARE_APPLICATION_LAUNCH]: {
+    sessionId: SESSION_ID,
+    sourceUrl: { kind: "string", max: LIMIT.url },
+    normalizedCtaText: { kind: "string", max: LIMIT.text },
+    confidence: { kind: "number" },
+    href: { kind: "string", max: LIMIT.url, nullable: true },
+    target: { kind: "string", max: LIMIT.key, nullable: true },
+    expectedDestinationOrigin: { kind: "string", max: LIMIT.url, nullable: true },
+    jobFingerprint: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.ACTIVATE_APPLICATION_DESTINATION]: {
+    sessionId: SESSION_ID,
+    url: { kind: "string", max: LIMIT.url, required: true },
+    newTab: { kind: "boolean" },
+    source: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.GET_VIEW_STATE]: { tabId: { kind: "integer" } },
+  [MSG.SAVE_ANSWER]: {
+    sessionId: SESSION_ID,
+    canonicalKey: { kind: "string", max: LIMIT.key, required: true },
+    value: { kind: "string", max: LIMIT.answer, required: true },
+    displayValue: { kind: "string", max: LIMIT.answer },
+    scope: { kind: "string", max: LIMIT.key, oneOf: ANSWER_SCOPES },
+    companyKey: { kind: "string", max: LIMIT.key }
+  },
+  [MSG.SET_APPLICATION_OVERRIDE]: {
+    sessionId: SESSION_ID,
+    canonicalKey: { kind: "string", max: LIMIT.key, required: true },
+    value: { kind: "boolean", required: true }
+  },
+  [MSG.GET_APPLICATION_OVERRIDES]: { sessionId: SESSION_ID },
+  [MSG.RUNTIME_IDENTITY]: {},
+  [MSG.CONFIRM_NAME]: {
+    sessionId: SESSION_ID,
+    firstName: { kind: "string", max: LIMIT.text, required: true },
+    lastName: { kind: "string", max: LIMIT.text, required: true },
+    middleName: { kind: "string", max: LIMIT.text },
+    preferredFirstName: { kind: "string", max: LIMIT.text },
+    preferredLastName: { kind: "string", max: LIMIT.text }
+  },
+  [MSG.SUBMISSION_CONFIRMED]: {
+    sessionId: SESSION_ID,
+    evidenceType: { kind: "string", max: LIMIT.key, required: true, oneOf: EVIDENCE_TYPES },
+    submissionTimestamp: { kind: "string", max: LIMIT.key, required: true },
+    submissionReference: { kind: "string", max: LIMIT.text, nullable: true },
+    ats: { kind: "string", max: LIMIT.key, nullable: true }
+  },
+  [MSG.SUBMISSION_GESTURE_CANDIDATE]: {},
+  [MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED]: {},
+  [MSG.MANUAL_CONFIRMATION_REQUIRED]: {
+    sessionId: SESSION_ID,
+    reason: { kind: "string", max: LIMIT.key, required: true, oneOf: WEAK_EVIDENCE_REASONS }
+  },
+  [MSG.USER_CONFIRMED_SUBMITTED]: { sessionId: SESSION_ID },
+  [MSG.USER_CONFIRMED_NOT_SUBMITTED]: { sessionId: SESSION_ID },
+  [MSG.EMPLOYER_AUTH_REQUIRED]: {
+    sessionId: SESSION_ID,
+    emailPrefilled: { kind: "boolean" }
+  },
+  [MSG.INSPECT_APPLICATION_FRAMES]: {
+    observed: { kind: "array", maxItems: LIMIT.frames, required: true }
+  },
+  [MSG.REQUEST_FRAME_PERMISSION]: {
+    origin: { kind: "string", max: LIMIT.url, required: true }
+  },
+  [MSG.PROBE_FRAME_APPLICATION]: {},
+  [MSG.SESSION_DETACH]: {},
+  [MSG.DIRECT_DISCONNECT]: {},
+  [MSG.DIRECT_AUTH_STATE]: {},
+  [MSG.REQUEST_FILL_LEASE]: { rootConfident: { kind: "boolean" } },
+  [MSG.GET_SITE_ACCESS]: { tabId: { kind: "integer" } },
+  [MSG.SITE_ACCESS_RESULT]: {
+    tabId: { kind: "integer" },
+    pattern: { kind: "string", max: LIMIT.url, required: true },
+    granted: { kind: "boolean", required: true }
+  }
+};
+
+function fieldIsValid(spec: FieldSpec, value: unknown): boolean {
+  switch (spec.kind) {
+    case "string":
+      if (value === null) return spec.nullable === true;
+      if (typeof value !== "string" || value.length > spec.max) return false;
+      return !spec.oneOf || spec.oneOf.includes(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    case "array":
+      return Array.isArray(value) && value.length <= spec.maxItems;
+  }
+}
+
+/** True when every known field is well-formed and every addressing field is
+ * present. Unknown properties are ignored by design (see the note above). */
+function payloadIsValid(type: string, raw: Record<string, unknown>): boolean {
+  const schema = RUNTIME_SCHEMA[type];
+  // A type in RUNTIME_TYPES with no schema entry would silently skip validation,
+  // so treat the omission as a failure rather than as permission.
+  if (!schema) return false;
+  for (const [field, spec] of Object.entries(schema)) {
+    const value = raw[field];
+    if (value === undefined) {
+      if (spec.required) return false;
+      continue;
+    }
+    if (!fieldIsValid(spec, value)) return false;
+  }
+  return true;
 }
 
 // --------------------------------------------------------------------------- //
@@ -490,25 +957,45 @@ export const PAGE_SOURCE_EXT = "jobpilot-extension";
 
 export type Capability = "fill" | "upload" | "results" | "ashby" | "greenhouse" | "lever" | "workday" | "generic";
 
-export type ExtensionInfo = {
-  installed: true;
-  version: string;
-  protocolVersion: number;
-  capabilities: Capability[];
-};
+/**
+ * Legacy presence handshake, answered for sites that predate EXTENSION_PRESENCE_*.
+ *
+ * The deployed web app detects the extension by sending JOBPILOT_PING and waiting
+ * for JOBPILOT_PONG. The extension stopped answering both in 1fd837c (the old PING
+ * carried an `apiBase` the page chose), so every site build that had not yet moved
+ * to the presence message reported "Install extension" with the extension installed.
+ * The reply carries capability metadata only, exactly like EXTENSION_PRESENCE_READY,
+ * and a page-supplied `apiBase` is never read.
+ */
+export const LEGACY_PRESENCE_PING = "JOBPILOT_PING";
+export const LEGACY_PRESENCE_PONG = "JOBPILOT_PONG";
 
 export type PageMessage =
-  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.PING; apiBase?: string }
+  | { source: typeof PAGE_SOURCE_WEB; type: typeof LEGACY_PRESENCE_PING }
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof LEGACY_PRESENCE_PONG; info: { installed: true; version: string; protocolVersion: number; capabilities: Capability[] } }
+  | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.EXTENSION_PRESENCE_PING; requestId: string }
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.EXTENSION_PRESENCE_READY; requestId: string; info: { installed: true; version: string; protocolVersion: number; capabilities: Capability[] } }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | { source: typeof PAGE_SOURCE_WEB; type: typeof MSG.START_ASSISTED_APPLY; payload: LaunchPayload }
-  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } }
-  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.PONG; info: ExtensionInfo };
+  | { source: typeof PAGE_SOURCE_EXT; type: typeof MSG.START_ASSISTED_APPLY_RESULT; requestId: string; result: { ok: boolean; applicationId?: string; tabId?: number; code?: string; message?: string } };
 
 export function parsePageMessage(raw: unknown): PageMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as { source?: unknown; type?: unknown };
   if (data.source !== PAGE_SOURCE_WEB && data.source !== PAGE_SOURCE_EXT) return null;
-  if (data.type !== MSG.PING && data.type !== MSG.STAGE_LAUNCH && data.type !== MSG.START_ASSISTED_APPLY && data.type !== MSG.START_ASSISTED_APPLY_RESULT && data.type !== MSG.PONG) return null;
+  if (data.type === LEGACY_PRESENCE_PING) {
+    // Only the page-side source may ask; nothing else in the message is trusted or kept.
+    return data.source === PAGE_SOURCE_WEB ? { source: PAGE_SOURCE_WEB, type: LEGACY_PRESENCE_PING } : null;
+  }
+  if (data.type === MSG.EXTENSION_PRESENCE_PING) {
+    return typeof (data as { requestId?: unknown }).requestId === "string" ? raw as PageMessage : null;
+  }
+  if (data.type === MSG.EXTENSION_PRESENCE_READY) {
+    const ready = data as { requestId?: unknown; info?: unknown };
+    return typeof ready.requestId === "string" && ready.info != null && typeof ready.info === "object"
+      ? raw as PageMessage : null;
+  }
+  if (data.type !== MSG.STAGE_LAUNCH && data.type !== MSG.START_ASSISTED_APPLY && data.type !== MSG.START_ASSISTED_APPLY_RESULT) return null;
   return raw as PageMessage;
 }
 

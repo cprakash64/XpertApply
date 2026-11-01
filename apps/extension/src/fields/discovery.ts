@@ -26,6 +26,7 @@ import {
   scopedElementById,
   scopedQuery
 } from "../dom/deepDom";
+import { inspectControlBudget } from "./controlBudget";
 
 const NATIVE_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image])",
@@ -73,10 +74,24 @@ function currentFrameId(): string {
 export interface DiscoveryResult {
   fields: DiscoveredField[];
   excluded: ExcludedControl[];
+  /** True means discovery refused the whole root; fields were never truncated. */
+  tooLarge?: boolean;
+  controlCount?: number;
+  controlBudget?: number;
 }
 
 /** Full discovery with the exclusion ledger — the canonical entry point. */
 export function discoverAll(root: ParentNode = document, step = 0): DiscoveryResult {
+  const budget = inspectControlBudget(root);
+  if (budget.exceeded) {
+    return {
+      fields: [],
+      excluded: [],
+      tooLarge: true,
+      controlCount: budget.count,
+      controlBudget: budget.limit
+    };
+  }
   const fields: DiscoveredField[] = [];
   const excluded: ExcludedControl[] = [];
   const seenElements = new Set<HTMLElement>();
@@ -102,6 +117,17 @@ export function discoverAll(root: ParentNode = document, step = 0): DiscoveryRes
       const groupKey = input.name || input.id;
       if (groupKey && seenRadioGroups.has(groupKey)) return;
       if (groupKey) seenRadioGroups.add(groupKey);
+    }
+    if (input.type === "checkbox" && input.name) {
+      const members = Array.from((rootNodeOf(input) as ParentNode).querySelectorAll<HTMLInputElement>(
+        `input[type=checkbox][name="${cssEscape(input.name)}"]`
+      ));
+      if (members.length >= 2) {
+        const groupKey = `checkbox:${input.name}`;
+        if (seenRadioGroups.has(groupKey)) return;
+        seenRadioGroups.add(groupKey);
+        checkboxGroups.set(el, members);
+      }
     }
     fields.push(describe(el, custom, step));
   };
@@ -138,6 +164,19 @@ export function discoverAll(root: ParentNode = document, step = 0): DiscoveryRes
     consider(el, true);
   }
   return { fields, excluded };
+}
+
+/** Checkbox sets that are ONE question ("Pronouns", "Select all that apply"): same name, two or more
+ * members. The set is discovered once, represented by its first member, and filled by option label. */
+const checkboxGroups = new WeakMap<HTMLElement, HTMLInputElement[]>();
+
+export function checkboxGroupMembers(el: HTMLElement): HTMLInputElement[] | null {
+  return checkboxGroups.get(el) ?? null;
+}
+
+/** The visible text of one checkbox option, falling back to its value. */
+export function checkboxOptionLabel(member: HTMLInputElement): string {
+  return labelFor(member) || member.value || "";
 }
 
 export function discoverFields(root: ParentNode = document, step = 0): DiscoveredField[] {
@@ -410,7 +449,8 @@ function isMultiple(el: HTMLElement, control: FieldControl): boolean {
 function existingValue(el: HTMLElement, control: FieldControl): string {
   const input = el as HTMLInputElement;
   if (control === "checkbox" || control === "radio") {
-    return input.checked ? "checked" : "";
+    const group = control === "checkbox" ? checkboxGroups.get(el) : undefined;
+    return (group ? group.some((member) => member.checked) : input.checked) ? "checked" : "";
   }
   if (control === "file") {
     return input.files && input.files.length ? input.files[0].name : "";
@@ -456,6 +496,9 @@ function optionsOf(el: HTMLElement, control: FieldControl): string[] {
   }
   if (control === "combobox" || control === "listbox") {
     return customOptions(el).filter((t) => t && !isPlaceholderText(t));
+  }
+  if (control === "checkbox") {
+    return (checkboxGroups.get(el) ?? []).map(checkboxOptionLabel).filter(Boolean);
   }
   return [];
 }
@@ -558,6 +601,16 @@ export function resolveQuestion(el: HTMLElement): { label: string; source: Label
   // ARIA rules would look.
   const hostLabel = clean(hostLabelAttribute(el));
   if (hostLabel) return { label: hostLabel, source: "host_label_attribute" };
+
+  // 1c. A radio/checkbox's wrapping <label> holds only its OPTION text ("Yes"). Lever puts the
+  // question in the enclosing .application-question's .application-label, so a choice
+  // control is labelled by that when it exists, never by its own option.
+  const input = el as HTMLInputElement;
+  if (input.type === "radio" || input.type === "checkbox") {
+    const question = deepClosest<HTMLElement>(el, ".application-question");
+    const text = clean(question ? deepQuery(question, ".application-label")?.textContent : "");
+    if (text) return { label: text, source: "ats_question_wrapper" };
+  }
 
   // 2. Wrapping <label> — minus the control's own rendered text.
   const wrapping = deepClosest(el, "label");

@@ -9,6 +9,7 @@ import { detectAdapter } from "../ats/registry";
 import { runAutofill } from "../content/autofill";
 import { buildReviewModel } from "../content/review";
 import { createWidget } from "../content/widget";
+import { reopenApplicationAssistantOverlay } from "../content/applicationOverlayAssistant";
 import { discoverAll } from "../fields/discovery";
 import { ledgerInvariantHolds, mergeLedger, type LedgerEntry } from "../fields/ledger";
 import { fillField } from "../fields/fill";
@@ -161,7 +162,9 @@ describe("Samsara/Greenhouse field ledger (section M)", () => {
     expect((document.getElementById("city") as HTMLInputElement).value).toBe("San Francisco");
     expect((document.getElementById("zip") as HTMLInputElement).value).toBe("94105");
     expect((document.getElementById("linkedin") as HTMLInputElement).value).toBe("https://linkedin.com/in/x");
-    expect(byLabel(ledger, "Country")!.status).toBe("filled_verified");
+    // Country maps at 0.90 confidence, so the successful fill remains visible
+    // and counted as needing confirmation under the XA-11 status contract.
+    expect(byLabel(ledger, "Country")!.status).toBe("filled_needs_review");
   });
 
   it("M9: single-select options are captured and a select fills from an answer", async () => {
@@ -246,10 +249,12 @@ describe("Samsara/Greenhouse field ledger (section M)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("M20: the widget renders in-page (no side panel required)", () => {
+  it("M20: the widget renders in-page after explicit open (no side panel required)", () => {
     mountFixture(SAMSARA_GREENHOUSE_FIXTURE);
+    reopenApplicationAssistantOverlay(document);
     const widget = mountWidget();
-    expect(document.getElementById("jobpilot-assisted-apply")).toBeTruthy();
+    expect(document.getElementById("xpertapply-assistant-overlay-v1")).toBeTruthy();
+    expect(document.getElementById("jobpilot-assisted-apply")).toBeNull();
     widget.destroy();
   });
 });

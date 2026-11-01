@@ -17,7 +17,11 @@ function installFakeChrome(existingStore?: Record<string, unknown>, queryTabs: c
   const store = existingStore ?? {};
   const messageListeners: Listener[] = [];
   const installedListeners: Array<() => void> = [];
-  const sentToTabs: { tabId: number; message: unknown }[] = [];
+  const sentToTabs: {
+    tabId: number;
+    message: unknown;
+    options?: { frameId?: number; documentId?: string };
+  }[] = [];
   const tabsCreated: Array<{ id: number; url: string }> = [];
   const executedScripts: Array<{ tabId: number }> = [];
   let nextTabId = 1000;
@@ -47,16 +51,43 @@ function installFakeChrome(existingStore?: Record<string, unknown>, queryTabs: c
         tabsCreated.push({ id, url: opts.url });
         return { id };
       }),
-      get: vi.fn(async () => { throw new Error("no such tab"); }),
+      get: vi.fn(async (): Promise<chrome.tabs.Tab> => { throw new Error("no such tab"); }),
       update: vi.fn(async () => ({})),
       query: vi.fn(async (queryInfo: { url?: string }) => {
         if (!queryInfo?.url) return [];
         const prefix = queryInfo.url.replace(/\*$/, "");
         return queryTabs.filter((t) => (t.url ?? "").startsWith(prefix));
       }),
-      sendMessage: vi.fn((tabId: number, message: unknown, cb?: (r: unknown) => void) => {
-        sentToTabs.push({ tabId, message });
-        cb?.(undefined);
+      sendMessage: vi.fn((
+        tabId: number,
+        message: unknown,
+        optionsOrCallback?: { frameId?: number; documentId?: string } | ((r: unknown) => void),
+        callback?: (r: unknown) => void
+      ) => {
+        sentToTabs.push({
+          tabId,
+          message,
+          options: typeof optionsOrCallback === "object" ? optionsOrCallback : undefined
+        });
+        const cb = typeof optionsOrCallback === "function" ? optionsOrCallback : callback;
+        cb?.((message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
+          ? {
+              ok: true,
+              evidence: true,
+              fieldCount: 4,
+              probe: {
+                isTopFrame: typeof optionsOrCallback === "object"
+                  ? (optionsOrCallback.frameId ?? 0) === 0
+                  : true,
+                sanitizedUrl: (globalThis as typeof globalThis & { __testMessageSenderUrl?: string })
+                  .__testMessageSenderUrl ?? "https://careers.mongodb.com/jobs/123/apply",
+                rootConfident: true,
+                applicationLabelsFound: (globalThis as typeof globalThis & { __testProbeLabels?: string[] })
+                  .__testProbeLabels ?? ["first_name", "last_name", "email", "resume"],
+                bestScore: 12
+              }
+            }
+          : undefined);
       })
     },
     windows: { update: vi.fn(async () => ({})) },
@@ -102,10 +133,24 @@ function installFakeFetch() {
 }
 
 function dispatch(listeners: Listener[], raw: unknown, sender: unknown): Promise<unknown> {
+  const supplied = sender as {
+    tab?: { id?: number };
+    frameId?: number;
+    documentId?: string;
+    url?: string;
+  };
+  const chromeSender = supplied.documentId
+    ? supplied
+    : {
+        ...supplied,
+        documentId: `document-${supplied.tab?.id ?? "unknown"}-${supplied.frameId ?? -1}`
+      };
+  (globalThis as typeof globalThis & { __testMessageSenderUrl?: string }).__testMessageSenderUrl =
+    chromeSender.url;
   return new Promise((resolve) => {
     let responded = false;
     for (const fn of listeners) {
-      const keepAlive = fn(raw, sender, (resp) => {
+      const keepAlive = fn(raw, chromeSender, (resp) => {
         if (!responded) { responded = true; resolve(resp); }
       });
       if (!keepAlive && !responded) {
@@ -148,7 +193,7 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
 
   it("matches a custom employer domain that has an active handoff and returns the session", async () => {
     installFakeFetch();
-    const { fakeChrome, messageListeners } = installFakeChrome();
+    const { fakeChrome, messageListeners, sentToTabs } = installFakeChrome();
     const state = await import("../state");
     await state.putActive(seedHandoff());
     await import("../background");
@@ -162,12 +207,20 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     expect(resp.matched).toBe(true);
     expect(resp.ok).toBe(true);
     expect(resp.session?.company).toBe("MongoDB");
+    expect(sentToTabs.filter(({ message }) =>
+      (message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
+    )).toHaveLength(1);
     void fakeChrome;
   });
 
-  it("stays dormant (matched:false, HANDOFF_NOT_FOUND) on an unrelated https page with no handoff at all", async () => {
+  // XA-CORE1: a page with no website launch is no longer a dead end. After the user's own site
+  // grant it is judged on its own (a counts-and-labels probe that never leaves the browser); a real
+  // application form then resolves as an independent draft for the signed-in account. These tests
+  // run with no extension sign-in, so the answer is "connect" — and, crucially, never a binding
+  // to someone else's launch, a session, or a package.
+  it("never binds an unrelated page with no handoff, and asks the signed-out user to connect", async () => {
     installFakeFetch();
-    const { messageListeners } = installFakeChrome();
+    const { messageListeners, sentToTabs } = installFakeChrome();
     await import("../background");
 
     const resp = (await dispatch(
@@ -177,11 +230,70 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     )) as { ok: boolean; matched: boolean; error?: string; session?: unknown };
 
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
     expect(resp.session).toBeUndefined();
+    expect(sentToTabs.filter(({ message }) =>
+      (message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
+    ).length).toBeLessThanOrEqual(1);
   });
 
-  it("stays dormant on an https page whose URL does not match the active handoff", async () => {
+  // A page that is NOT an application never gets a draft. It is also never claimed by a stale
+  // website launch it does not belong to: it is reported as "not an application (yet)", which the
+  // content script answers by watching the page, boundedly, for a form that renders later.
+  describe("a page that is not an application is neither drafted nor claimed by a stale launch", () => {
+    const newsletterOnly = ["email"];
+    beforeEach(() => { (globalThis as { __testProbeLabels?: string[] }).__testProbeLabels = newsletterOnly; });
+    afterEach(() => { delete (globalThis as { __testProbeLabels?: string[] }).__testProbeLabels; });
+
+    it("no handoff: not an application", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      await import("../background");
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://www.google.com/", title: "g", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 2, url: "https://www.google.com/" }, frameId: 0, url: "https://www.google.com/" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+
+    it("a live handoff for another page is not applied to it", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await state.putActive(seedHandoff());
+      await import("../background");
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://evil.example.com/phish", title: "n", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 3, url: "https://evil.example.com/phish" }, frameId: 0, url: "https://evil.example.com/phish" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+
+    it("a page inside the live launch's own workflow still gets the reconnect answer", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await state.putActive(seedHandoff());
+      await import("../background");
+      // Same employer as the launch (careers.mongodb.com), a different path: the employer's own login/hop page.
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://careers.mongodb.com/login", title: "l", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 4, url: "https://careers.mongodb.com/login" }, frameId: 0, url: "https://careers.mongodb.com/login" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "HANDOFF_URL_MISMATCH" });
+    });
+
+    it("an expired handoff is not applied to it either", async () => {
+      installFakeFetch();
+      const { messageListeners } = installFakeChrome();
+      const state = await import("../state");
+      await import("../background");
+      await state.putActive(seedHandoff({ expiresAt: Date.now() - 1000 }));
+      const resp = (await dispatch(messageListeners,
+        { type: "JOBPILOT_CONTENT_READY", url: "https://careers.mongodb.com/jobs/123/apply", title: "a", protocolVersion: 3, isTopFrame: true, topUrl: null, detectedAts: null },
+        { tab: { id: 2, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" })) as { matched: boolean; error?: string };
+      expect(resp).toMatchObject({ matched: false, error: "DIRECT_NOT_ELIGIBLE" });
+    });
+  });
+
+  it("does not claim an unrelated page for the active handoff", async () => {
     installFakeFetch();
     const { messageListeners } = installFakeChrome();
     const state = await import("../state");
@@ -195,7 +307,121 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
     )) as { ok: boolean; matched: boolean; error?: string };
 
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_URL_MISMATCH");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
+  });
+
+  it("does not probe when the exact sender-origin grant has been revoked", async () => {
+    installFakeFetch();
+    const { fakeChrome, messageListeners, sentToTabs } = installFakeChrome();
+    fakeChrome.permissions.contains.mockResolvedValue(false);
+    const state = await import("../state");
+    await state.putActive(seedHandoff());
+    await import("../background");
+
+    const resp = (await dispatch(
+      messageListeners,
+      { type: "JOBPILOT_CONTENT_READY" },
+      { tab: { id: 31, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
+    )) as { matched: boolean; error?: string };
+
+    expect(resp).toMatchObject({ matched: false, error: "HOST_PERMISSION_MISSING" });
+    expect(sentToTabs.some(({ message }) =>
+      (message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
+    )).toBe(false);
+  });
+
+  it("discards a probe result when authority generation changes in flight", async () => {
+    installFakeFetch();
+    const { fakeChrome, messageListeners } = installFakeChrome();
+    const state = await import("../state");
+    await state.putActive(seedHandoff());
+    let releaseProbe: ((response: unknown) => void) | null = null;
+    (fakeChrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockImplementation((...args: unknown[]) => {
+      const message = args[1] as { type?: string };
+      const callback = args.find((arg) => typeof arg === "function") as ((response: unknown) => void) | undefined;
+      if (message.type === "JOBPILOT_PROBE_FRAME_APPLICATION") releaseProbe = callback ?? null;
+      else callback?.(undefined);
+    });
+    const background = await import("../background");
+
+    const responsePromise = dispatch(
+      messageListeners,
+      { type: "JOBPILOT_CONTENT_READY" },
+      { tab: { id: 32, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
+    ) as Promise<{ matched: boolean; error?: string }>;
+    await vi.waitFor(() => expect(releaseProbe).not.toBeNull());
+    state.advanceAuthorityGeneration();
+    state.endSessionAuthority(55);
+    const respond = releaseProbe as unknown as (response: unknown) => void;
+    respond({
+      ok: true,
+      evidence: true,
+      fieldCount: 3,
+      probe: {
+        isTopFrame: true,
+        sanitizedUrl: (globalThis as typeof globalThis & { __testMessageSenderUrl?: string })
+          .__testMessageSenderUrl ?? "https://careers.mongodb.com/jobs/123/apply",
+        rootConfident: true,
+        applicationLabelsFound: ["first_name", "email"],
+        bestScore: 20
+      }
+    });
+
+    await expect(responsePromise).resolves.toMatchObject({ matched: false, error: "STALE_AUTHORITY" });
+    expect(background.frameRegistrySnapshot(32)).toEqual([]);
+  });
+
+  it("does not transfer READY authorization to a replacement document reusing the frame id", async () => {
+    installFakeFetch();
+    const { fakeChrome, messageListeners, sentToTabs } = installFakeChrome();
+    const state = await import("../state");
+    await state.putActive(seedHandoff());
+    const background = await import("../background");
+
+    let releasePermission: ((granted: boolean) => void) | null = null;
+    let currentDocumentId = "document-a";
+    let replacementDocumentProbeCount = 0;
+    fakeChrome.permissions.contains.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+      releasePermission = resolve;
+    }));
+    (fakeChrome.tabs.sendMessage as ReturnType<typeof vi.fn>).mockImplementation((...args: unknown[]) => {
+      const message = args[1] as { type?: string };
+      const options = args[2] as { frameId?: number; documentId?: string };
+      const callback = args.find((arg) => typeof arg === "function") as ((response: unknown) => void) | undefined;
+      sentToTabs.push({ tabId: Number(args[0]), message, options });
+      if (message.type !== "JOBPILOT_PROBE_FRAME_APPLICATION") return callback?.(undefined);
+      if (options.documentId === currentDocumentId) {
+        if (currentDocumentId === "document-b") replacementDocumentProbeCount += 1;
+        return callback?.({ ok: true });
+      }
+      fakeChrome.runtime.lastError = { message: "No document with the given ID" };
+      callback?.(undefined);
+      fakeChrome.runtime.lastError = undefined;
+    });
+
+    const responsePromise = dispatch(
+      messageListeners,
+      { type: "JOBPILOT_CONTENT_READY" },
+      {
+        tab: { id: 33, url: "https://careers.mongodb.com/jobs/123/apply" },
+        frameId: 0,
+        documentId: "document-a",
+        url: "https://careers.mongodb.com/jobs/123/apply"
+      }
+    ) as Promise<{ matched: boolean; error?: string }>;
+    await vi.waitFor(() => expect(releasePermission).not.toBeNull());
+
+    // Navigation keeps tab/frame 33:0 but replaces immutable document A with B.
+    currentDocumentId = "document-b";
+    const allow = releasePermission as unknown as (granted: boolean) => void;
+    allow(true);
+
+    await expect(responsePromise).resolves.toMatchObject({ matched: true, error: "NO_MATCHING_FRAME" });
+    expect(sentToTabs.find(({ message }) =>
+      (message as { type?: string }).type === "JOBPILOT_PROBE_FRAME_APPLICATION"
+    )?.options).toEqual({ frameId: 0, documentId: "document-a" });
+    expect(replacementDocumentProbeCount).toBe(0);
+    expect(background.frameRegistrySnapshot(33)).toEqual([]);
   });
 
   it("trusts a nested iframe once the tab is bound, even though the iframe's own URL looks unrelated (embedded ATS widget)", async () => {
@@ -287,10 +513,84 @@ describe("content-script gating (arbitrary employer domains, e.g. MongoDB Career
       { tab: { id: 11, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     );
 
-    // setPanelBehavior is only ever wired to onInstalled (never invoked by our
-    // fake onInstalled listener), and nothing else in the handoff path calls
-    // chrome.sidePanel — the side panel is a purely optional viewer.
-    expect(fakeChrome.sidePanel.setPanelBehavior).not.toHaveBeenCalled();
+    // Worker startup disables historical action-click ownership once; the
+    // handoff itself never opens or otherwise operates the Side Panel.
+    expect(fakeChrome.sidePanel.setPanelBehavior).toHaveBeenCalledTimes(1);
+    expect(fakeChrome.sidePanel.setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: false });
+  });
+});
+
+describe("Stage 3C-4 workflow generation isolation", () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("3 · a new request for the same application gets a new tab and a fresh view", async () => {
+    installFakeFetch();
+    const runtime = installFakeChrome();
+    runtime.fakeChrome.tabs.get.mockResolvedValue({ id: 81, windowId: 1 } as chrome.tabs.Tab);
+    const state = await import("../state");
+    const old = seedHandoff({ requestId: "old-run", targetTabId: 81 });
+    await state.putPending(81, old);
+    await state.putView(81, {
+      ...state.initialView(81, old, "MongoDB", "Engineer"),
+      state: "completed", fieldsDiscovered: 9, filled: 6, resumeStatus: "uploaded"
+    });
+    await import("../background");
+
+    const response = await dispatch(runtime.messageListeners, {
+      type: "JOBPILOT_LAUNCH_REQUEST",
+      payload: {
+        requestId: "new-run", launchToken: "new-token", sessionId: 55, jobId: 1,
+        officialUrl: old.officialUrl, atsType: null
+      }
+    }, { tab: { id: 1, windowId: 1 }, origin: "http://localhost:3000" }) as { tabId: number };
+
+    expect(response.tabId).toBe(1000);
+    expect(runtime.tabsCreated).toHaveLength(1);
+    expect(await state.getView(1000)).toMatchObject({
+      requestId: "new-run", state: "waiting_for_tab", fieldsDiscovered: 0,
+      filled: 0, resumeStatus: "pending", failureCode: null
+    });
+  });
+
+  it("9 · an old tab update cannot replace the active new workflow generation", async () => {
+    installFakeChrome();
+    const state = await import("../state");
+    const old = seedHandoff({ requestId: "old-run", targetTabId: 81, createdAt: 1 });
+    const current = seedHandoff({ requestId: "new-run", targetTabId: 82, createdAt: 2 });
+    await state.putPending(81, old);
+    await state.putActive(current);
+    await state.updatePending(81, { state: "completed", status: "ready" });
+
+    expect(await state.getActive()).toMatchObject({ requestId: "new-run", targetTabId: 82 });
+    expect(await state.getPending(81)).toMatchObject({ requestId: "old-run", state: "completed" });
+  });
+
+  it("runtime view/tab state is absent after a browser-session storage reset", async () => {
+    const localStore: Record<string, unknown> = {
+      pendingLaunches: { "81": seedHandoff({ requestId: "old-run", targetTabId: 81 }) },
+      viewStates: { "81": { state: "completed", fieldsDiscovered: 9, filled: 6 } },
+      activeAssistedApplyHandoffV1: seedHandoff({ requestId: "old-run", targetTabId: 81 })
+    };
+    const sessionStore: Record<string, unknown> = {};
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      storage: {
+        local: {
+          get: async (key: string) => ({ [key]: localStore[key] }),
+          set: async (value: Record<string, unknown>) => Object.assign(localStore, value),
+          remove: async (key: string) => { delete localStore[key]; }
+        },
+        session: {
+          get: async (key: string) => ({ [key]: sessionStore[key] }),
+          set: async (value: Record<string, unknown>) => Object.assign(sessionStore, value),
+          remove: async (key: string) => { delete sessionStore[key]; }
+        }
+      }
+    };
+    const state = await import("../state");
+    expect(await state.getPending(81)).toBeNull();
+    expect(await state.getView(81)).toBeNull();
+    expect(await state.getActive()).toBeNull();
   });
 });
 
@@ -352,7 +652,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 1, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("returns HANDOFF_EXPIRED (not HANDOFF_NOT_FOUND) when the active handoff's TTL has passed", async () => {
@@ -371,7 +671,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 2, url: "https://careers.mongodb.com/jobs/123/apply" }, frameId: 0, url: "https://careers.mongodb.com/jobs/123/apply" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_EXPIRED");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   // Regression for the exact reported bug: a PREVIOUS Temporal (Ashby)
@@ -393,7 +693,7 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 3, url: "https://jobs.ashbyhq.com/acme-corp/9f81c3e2" }, frameId: 0, url: "https://jobs.ashbyhq.com/acme-corp/9f81c3e2" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_URL_MISMATCH");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("classifies a 401 session-package failure as SESSION_UNAUTHORIZED, not a generic failure", async () => {
@@ -446,13 +746,13 @@ describe("handshake + stale-handoff regressions", () => {
       { tab: { id: 6, url: "https://careers.mongodb.com/jobs/1" }, frameId: 0, url: "https://careers.mongodb.com/jobs/1" }
     )) as { matched: boolean; error?: string };
     expect(resp.matched).toBe(false);
-    expect(resp.error).toBe("HANDOFF_NOT_FOUND");
+    expect(resp.error).toBe("DIRECT_SIGNED_OUT");
   });
 
   it("on install/update, re-injects the bridge into already-open XpertApply tabs but never an ATS/employer tab", async () => {
     installFakeFetch();
     const openTabs = [
-      { id: 501, url: "https://app.jobpilot.ai/jobs" } as chrome.tabs.Tab,
+      { id: 501, url: "https://www.xpertapply.com/jobs" } as chrome.tabs.Tab,
       { id: 502, url: "https://careers.mongodb.com/jobs/123/apply" } as chrome.tabs.Tab
     ];
     const { installedListeners, executedScripts } = installFakeChrome(undefined, openTabs);
@@ -471,7 +771,7 @@ describe("handshake + stale-handoff regressions", () => {
   it("revives an already-open XpertApply tab when the extension runtime resets even without onInstalled", async () => {
     installFakeFetch();
     const openTabs = [
-      { id: 601, url: "http://localhost:3000/jobs" } as chrome.tabs.Tab
+      { id: 601, url: "https://xpertapply.com/jobs" } as chrome.tabs.Tab
     ];
     const { executedScripts } = installFakeChrome(undefined, openTabs);
 

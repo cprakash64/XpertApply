@@ -8,6 +8,7 @@
  */
 
 import { normalizeForMatch } from "../aliases";
+import { MAX_DROPDOWN_OPTIONS } from "../controlBudget";
 import {
   deepClosest,
   deepContains,
@@ -281,9 +282,10 @@ function hasOptions(menu: HTMLElement): boolean {
  * which matched nothing, so a menu full of live suggestions read as empty.
  */
 function optionElements(menu: HTMLElement): HTMLElement[] {
-  const declared = deepQueryAll<HTMLElement>(menu, OPTION_SELECTOR);
+  // Bounded before any per-option work; see MAX_DROPDOWN_OPTIONS.
+  const declared = deepQueryAll<HTMLElement>(menu, OPTION_SELECTOR).slice(0, MAX_DROPDOWN_OPTIONS);
   if (declared.length > 0) return declared;
-  return Array.from(menu.children).filter((child): child is HTMLElement => {
+  return Array.from(menu.children).slice(0, MAX_DROPDOWN_OPTIONS).filter((child): child is HTMLElement => {
     if (!(child instanceof HTMLElement)) return false;
     // Skip the menu's own chrome: separators, group labels with no text, and
     // "can't find yours?" escape hatches that are actions, not values.

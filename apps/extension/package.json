@@ -1,14 +1,18 @@
 {
   "name": "@xpertapply/extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "XpertApply assisted auto-apply Chrome extension (MV3). User-controlled copilot — never submits.",
   "scripts": {
-    "build": "node build.mjs",
+    "build": "node build.mjs --profile production",
+    "build:staging": "node build.mjs --profile staging",
+    "build:dev": "node build.mjs --profile development",
+    "build:e2e": "node e2e/build-granted.mjs",
     "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run build && npm run build:e2e && npm test",
     "test": "vitest run",
-    "package": "node build.mjs && cd dist && zip -qr ../xpertapply-extension.zip . -x '*.map' && echo 'Packaged apps/extension/xpertapply-extension.zip'",
+    "package": "node package.mjs",
     "test:e2e": "playwright test",
     "test:all": "vitest run && npm run test:e2e",
     "smoke:dropdowns": "node e2e/build-harness.mjs && node e2e/smoke.mjs"

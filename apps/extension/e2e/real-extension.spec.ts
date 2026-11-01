@@ -20,7 +20,17 @@ import fs from "node:fs";
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIST = path.resolve(here, "..", "dist");
+/**
+ * The extension build these specs load.
+ *
+ * Stage 3C removed install-time authority over employer/application sites, so a
+ * loopback fixture origin is no longer granted at install. These specs exercise
+ * what the extension does ONCE a user has granted the origin, so they run
+ * against a build with the fixture origins pre-granted — the same state Chrome
+ * is in after the grant. `npm run test:e2e` builds it; the shipped `dist/` is
+ * what the Stage 3C site-access spec asserts against.
+ */
+const DIST = process.env.XA_E2E_DIST ?? path.resolve(here, "..", "dist");
 const FIXTURE = fs.readFileSync(path.join(here, "fixtures", "listing-tiktok.html"), "utf8");
 const UNTRUSTED = fs.readFileSync(path.join(here, "fixtures", "listing-untrusted.html"), "utf8");
 
@@ -29,6 +39,18 @@ type Fixtures = { context: BrowserContext; worker: Worker; origin: string };
 const test = base.extend<Fixtures>({
   origin: async ({}, use) => {
     const server: Server = createServer((request, response) => {
+      if (request.method === "POST" && request.url?.startsWith("/careers/applications/submit")) {
+        response.writeHead(303, { Location: "/application-submitted?submitted=true" });
+        response.end();
+        return;
+      }
+      if (request.url?.startsWith("/application-submitted")) {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><title>Application received</title>
+          <main><h1>Your application has been submitted.</h1>
+          <p>Confirmation number: XA-E2E-55</p></main>`);
+        return;
+      }
       if (request.url?.startsWith("/job")) {
         response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         response.end(FIXTURE);
@@ -139,7 +161,7 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
       protocolVersion: 3,
       atsType: null
     };
-    await chrome.storage.local.set({ activeAssistedApplyHandoffV1: launch });
+    await (chrome.storage.session ?? chrome.storage.local).set({ activeAssistedApplyHandoffV1: launch });
   }, applicationUrl);
 
   const page = await context.newPage();
@@ -153,7 +175,10 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
     if (text.includes("[XpertApply]")) states.push(text.slice(0, 160));
   });
 
-  await page.goto(applicationUrl);
+  // The behavior under test can perform a same-document transition before the
+  // original document reaches `load`. Waiting for commit proves navigation
+  // began without racing the extension-driven transition itself.
+  await page.goto(applicationUrl, { waitUntil: "commit" });
 
   // No user interaction of any kind happens after this point.
   await page.waitForSelector("#application-form", { timeout: 20_000 });
@@ -180,6 +205,29 @@ test("the shipped content script clicks 'Apply to this job' with no user action"
   expect(result.clicks).not.toContain("cookie-accept");
   expect(result.clicks.filter((entry) => entry === "primary-apply")).toHaveLength(1);
 
+  // XA-08 regression: runtime workflow state may survive MV3 worker
+  // suspension, but bearer credentials and job history must never be durable.
+  // Inspect the real storage areas used by the shipped service worker after a
+  // completed autofill run, not a state-module mock.
+  const storage = await worker.evaluate(async () => ({
+    local: await chrome.storage.local.get(null),
+    session: await chrome.storage.session.get(null)
+  }));
+  const durableText = JSON.stringify(storage.local);
+  expect(Object.keys(storage.local)).not.toEqual(expect.arrayContaining([
+    "activeAssistedApplyHandoffV1",
+    "pendingLaunches",
+    "viewStates",
+    "sessionPackages"
+  ]));
+  expect(durableText).not.toMatch(/launchToken|handoffToken|sessionToken/i);
+  expect(Object.keys(storage.session)).toEqual(expect.arrayContaining([
+    "activeAssistedApplyHandoffV1",
+    "pendingLaunches",
+    "viewStates",
+    "sessionPackages"
+  ]));
+
   await page.close();
 });
 
@@ -191,7 +239,7 @@ test("the shipped extension never activates the final Submit control", async ({
   const applicationUrl = `${origin}/job`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-app-2", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-request-2",
@@ -204,7 +252,7 @@ test("the shipped extension never activates the final Submit control", async ({
 
   const page = await context.newPage();
 
-  await page.goto(applicationUrl);
+  await page.goto(applicationUrl, { waitUntil: "commit" });
   await page.waitForSelector("#application-form", { timeout: 20_000 });
   // Give any mutation-driven follow-up a chance to misbehave.
   await page.waitForTimeout(2500);
@@ -215,6 +263,76 @@ test("the shipped extension never activates the final Submit control", async ({
   expect(clicks.some((entry) => entry.toLowerCase().includes("submit"))).toBe(false);
   // The form is still there and unsubmitted.
   expect(await page.locator("#final-submit").count()).toBe(1);
+
+  await page.close();
+});
+
+test("a user-submitted application reaching strong confirmation evidence is reported once", async ({
+  context,
+  worker,
+  origin
+}) => {
+  const applicationUrl = `${origin}/job`;
+  await worker.evaluate(async (url) => {
+    const now = Date.now();
+    await (chrome.storage.session ?? chrome.storage.local).set({
+      activeAssistedApplyHandoffV1: {
+        version: 1, applicationId: "e2e-confirmation", jobId: "4242", applicationUrl: url,
+        status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-confirmation",
+        sessionId: 55, launchToken: "e2e-launch", officialUrl: url,
+        expectedOrigin: new URL(url).origin, createdAt: now, expiresAt: now + 900_000,
+        state: "waiting_for_content_script", protocolVersion: 3, atsType: null
+      }
+    });
+  }, applicationUrl);
+
+  const confirmations: { body: Record<string, unknown>; authorization: string | undefined }[] = [];
+  // Registered after the fixture's broad session route so Playwright gives
+  // this exact endpoint precedence and the service worker receives a real
+  // session-scoped token.
+  await context.route("**/application-sessions/token", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ session_token: "e2e-session-token" })
+  }));
+  await context.route("**/application-sessions/55/submission-confirmed", async (route) => {
+    confirmations.push({
+      body: route.request().postDataJSON() as Record<string, unknown>,
+      authorization: route.request().headers().authorization
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, application: {}, created: true, already_applied: false, job_id: 4242 })
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(applicationUrl, { waitUntil: "commit" });
+  await page.waitForSelector("#application-form", { timeout: 20_000 });
+  await page.locator("#first_name").fill("Test");
+  await page.locator("#last_name").fill("Candidate");
+  await page.locator("#email").fill("candidate@example.test");
+
+  // Playwright's pointer action is the user's final-submit gesture. The
+  // extension observes the result and must never activate this control itself.
+  await page.locator("#final-submit").click();
+  await page.waitForURL(/application-submitted/);
+  await expect.poll(() => confirmations.length, { timeout: 10_000 }).toBe(1);
+
+  expect(confirmations[0]).toEqual({
+    authorization: "Bearer e2e-session-token",
+    body: {
+      evidence_type: "success_page",
+      submission_timestamp: expect.any(String),
+      submission_reference: "XA-E2E-55",
+      ats: null,
+      confirmation_source: "extension_confirmed"
+    }
+  });
+  expect(Object.keys(confirmations[0].body)).not.toEqual(expect.arrayContaining(["job_id", "user_id", "status"]));
+  await page.waitForTimeout(750);
+  expect(confirmations).toHaveLength(1);
 
   await page.close();
 });
@@ -232,7 +350,7 @@ test("URL-first: the shipped extension navigates via the service worker, without
   const listingUrl = `${origin}/listing?cta=anchor`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-url-first", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-url-first",
@@ -273,7 +391,7 @@ test("URL-first: target=_blank opens a new tab that is bound to the same session
   const listingUrl = `${origin}/listing?cta=anchor-blank`;
   await worker.evaluate(async (url) => {
     const now = Date.now();
-    await chrome.storage.local.set({
+    await (chrome.storage.session ?? chrome.storage.local).set({
       activeAssistedApplyHandoffV1: {
         version: 1, applicationId: "e2e-newtab", jobId: "4242", applicationUrl: url,
         status: "prepared", handoffToken: "e2e-handoff", requestId: "e2e-newtab",
@@ -298,7 +416,7 @@ test("URL-first: target=_blank opens a new tab that is bound to the same session
 
   // The service worker bound the NEW tab to the existing launch.
   const bound = await worker.evaluate(async () => {
-    const store = await chrome.storage.local.get("pendingLaunches");
+    const store = await (chrome.storage.session ?? chrome.storage.local).get("pendingLaunches");
     const map = (store.pendingLaunches ?? {}) as Record<string, { sessionId: number }>;
     return Object.values(map).map((launch) => launch.sessionId);
   });

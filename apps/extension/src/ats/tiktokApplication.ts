@@ -8,6 +8,7 @@ import {
   type TransactionFailure,
   type TransactionResult
 } from "../content/dropdownTransaction";
+import { highlight } from "../fields/fill";
 
 export type TikTokLegalKind = "authorization" | "sponsorship_now_or_future";
 
@@ -395,7 +396,7 @@ function candidateTriggers(container: HTMLElement, question: HTMLElement): HTMLE
   const nodes = Array.from(container.querySelectorAll<HTMLElement>(TRIGGER_SELECTOR));
   if (container.matches(TRIGGER_SELECTOR)) nodes.unshift(container);
   return Array.from(new Set(nodes)).filter((element) => {
-    if (!rendered(element) || element.closest("#jobpilot-assisted-apply")) return false;
+    if (!rendered(element) || element.closest("#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1")) return false;
     if (element instanceof HTMLButtonElement && element.type === "submit") return false;
     if (isTikTokLegalQuestionText(element.innerText || element.textContent || "") && element !== question) return false;
     return true;
@@ -719,8 +720,7 @@ export async function actuateTikTokLegalField(
   }
   if (assisted) {
     initial.trigger.scrollIntoView({ block: "center", behavior: "auto" });
-    initial.trigger.style.outline = "3px solid #5b5ce2";
-    initial.trigger.style.outlineOffset = "3px";
+    highlight(initial.trigger, "review");
     initial.trigger.focus();
     // Close anything the OTHER legal question left open first. The two TikTok
     // dropdowns portal into the same place, so a menu still mounted from the
@@ -735,7 +735,14 @@ export async function actuateTikTokLegalField(
   return selectApprovedOption(initial.field, approvedDisplay, {
     canonicalKey: initial.canonicalKey,
     typedAnswer
-  }, { reacquire, callerOpened: assisted });
+  }, {
+    reacquire,
+    callerOpened: assisted,
+    // The assisted action IS the user asking for this answer to be put in the
+    // control, so replacing what is there is what they requested. An automatic
+    // run never sets this.
+    allowOverwrite: assisted
+  });
 }
 
 export const TikTokApplicationAdapter = {

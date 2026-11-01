@@ -52,6 +52,7 @@ export type ReadinessStage =
 export type ReadinessFailureCode =
   | "APPLICATION_ROOT_NOT_FOUND"
   | "APPLICATION_FRAME_UNAVAILABLE"
+  | "APPLICATION_FORM_TOO_LARGE"
   | "FIELD_DISCOVERY_RETURNED_ZERO"
   | "APPLICATION_DISCOVERY_TIMEOUT";
 
@@ -133,7 +134,7 @@ export interface ReadinessOptions {
 }
 
 /** XpertApply's own UI is never evidence of an employer application. */
-const WIDGET_ROOT = "#jobpilot-assisted-apply";
+const WIDGET_ROOT = "#jobpilot-assisted-apply,#xpertapply-assistant-overlay-v1";
 
 const APPLICANT_CONTROL_SELECTOR =
   'input:not([type=hidden]):not([type=submit]):not([type=button]),textarea,select,[contenteditable=true],[role=combobox],[role=listbox]';
@@ -463,6 +464,10 @@ export function awaitApplicationReadiness(options: ReadinessOptions = {}): Promi
       }
 
       const root = resolveApplicationForm(doc);
+      if (root.reason === "APPLICATION_FORM_TOO_LARGE") {
+        finish(false, "APPLICATION_FORM_TOO_LARGE", root);
+        return;
+      }
       const fingerprint = rootFingerprint(doc, root);
       if (lastFingerprint !== null && lastFingerprint !== fingerprint) {
         // The application root was replaced during hydration (a React remount,

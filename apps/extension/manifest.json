@@ -2,48 +2,69 @@
   "manifest_version": 3,
   "name": "XpertApply — Assisted Apply",
   "short_name": "XpertApply",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-powered job application autofill and career copilot by XpertApply. You always review and submit every application yourself.",
-  "permissions": ["sidePanel", "storage", "scripting", "tabs"],
-  "optional_permissions": ["webNavigation"],
-  "host_permissions": [
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+  "icons": {
+    "16": "icons/xpertapply-16.png",
+    "32": "icons/xpertapply-32.png",
+    "48": "icons/xpertapply-48.png",
+    "128": "icons/xpertapply-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "identity",
+    "sidePanel",
+    "storage",
+    "scripting",
+    "tabs"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open XpertApply Assisted Apply" },
+  "host_permissions": [
+    "https://api.xpertapply.com/*",
+    "https://xpertapply.com/*",
+    "https://www.xpertapply.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://xpertapply.com/*",
+      "https://www.xpertapply.com/*"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open XpertApply Assisted Apply"
+  },
   "content_scripts": [
     {
       "matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
         "https://xpertapply.com/*",
-        "https://www.xpertapply.com/*",
-        "https://app.jobpilot.ai/*",
-        "https://ezjobfind.com/*",
-        "https://www.ezjobfind.com/*"
+        "https://www.xpertapply.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
-    },
+    }
+  ],
+  "web_accessible_resources": [
     {
-      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-      "exclude_matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
-        "https://xpertapply.com/*",
-        "https://www.xpertapply.com/*",
-        "https://app.jobpilot.ai/*",
-        "https://ezjobfind.com/*",
-        "https://www.ezjobfind.com/*"
+      "resources": [
+        "fieldentry.html",
+        "fieldentry.js"
       ],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true,
-      "match_origin_as_fallback": true
+      "matches": [
+        "https://*/*"
+      ],
+      "use_dynamic_url": true
     }
   ]
 }

@@ -70,7 +70,7 @@ describe("Affirm (new Greenhouse job-boards) form", () => {
     const outcome = await fillField(country, "United States");
     // No <option role> rendered within the bounded wait → do not fake success.
     expect(outcome.status).toBe("review_required");
-    expect(country.element?.getAttribute("data-jobpilot-status")).toBe("review");
+    expect(Array.from(country.element?.attributes ?? []).filter((attribute) => attribute.name.startsWith("data-jobpilot-"))).toEqual([]);
   });
 
   it("selects a real combobox option and VERIFIES the component committed it", async () => {

@@ -2,26 +2,34 @@
  * Form-filling engine. Deterministic DOM interaction with native setters so
  * React/Vue-controlled inputs register the change. Never overwrites a non-empty
  * value the user typed (unless forced), records what XpertApply filled so it can
- * be cleared, and applies subtle, fully-removable status highlighting.
+ * be cleared in extension-private memory, and applies subtle, fully-removable
+ * status highlighting.
  */
 
 import type { DiscoveredField, FillOutcome } from "../types";
 import { fillDropdown, selectAdapter } from "./dropdown";
 import type { AnswerSource } from "./dropdown/types";
+import { deepQueryAll } from "../dom/deepDom";
+import { checkboxGroupMembers, checkboxOptionLabel } from "./discovery";
+import { presentFieldStatus, removeFieldStatus } from "./statusPresentation";
 
 export type FillStatus = "verified" | "generated" | "review" | "invalid" | "neutral";
 
-const FILLED_ATTR = "data-jobpilot-filled";
-const ORIGINAL_ATTR = "data-jobpilot-original";
-const STATUS_ATTR = "data-jobpilot-status";
+interface DropdownOriginal {
+  field: DiscoveredField;
+  selected: string[];
+}
 
-const OUTLINE: Record<FillStatus, string> = {
-  verified: "2px solid #2f8f5b", // green — verified user data
-  generated: "2px solid #2f6f9f", // blue — generated/suggested
-  review: "2px solid #e0a72f", // yellow — review required
-  invalid: "2px solid #c85a3e", // red — missing/invalid
-  neutral: ""
-};
+interface PrivateFillState {
+  filled: boolean;
+  status: FillStatus;
+}
+
+/** Document-session only. Weak keys do not retain detached employer controls. */
+const dropdownOriginals = new WeakMap<HTMLElement, DropdownOriginal>();
+const originalValues = new WeakMap<HTMLElement, string>();
+const fillStates = new WeakMap<HTMLElement, PrivateFillState>();
+const repeaterElements = new WeakSet<HTMLElement>();
 
 export interface FillOptions {
   force?: boolean; // overwrite an existing non-empty user value
@@ -56,6 +64,16 @@ function isComboboxLike(el: HTMLElement): boolean {
   return false;
 }
 
+/**
+ * Whether this document may still write to the employer form. The worker withdraws it (sign-out, revocation) with
+ * SESSION_DETACH and a new authorized session restores it; while withdrawn every write is refused, including one that was
+ * already queued behind an await when the credential disappeared.
+ */
+let writeAuthorityWithdrawn = false;
+export function withdrawFillAuthority(): void { writeAuthorityWithdrawn = true; }
+export function restoreFillAuthority(): void { writeAuthorityWithdrawn = false; }
+export function fillAuthorityActive(): boolean { return !writeAuthorityWithdrawn; }
+
 /** Fill one field with a value. Returns the outcome for the audit trail.
  * Async: custom/JS-controlled dropdowns (comboboxes, React Select, etc.) may
  * render their options asynchronously, so filling one control involves a
@@ -64,6 +82,7 @@ function isComboboxLike(el: HTMLElement): boolean {
  * from two different open dropdowns can never be confused with each other. */
 export async function fillField(field: DiscoveredField, value: string | string[], options: FillOptions = {}): Promise<FillOutcome> {
   const el = field.element;
+  if (writeAuthorityWithdrawn) return { uid: field.uid, status: "skipped", reason: "authorization withdrawn" };
   if (!el) {
     return { uid: field.uid, status: "error", reason: "no element" };
   }
@@ -83,8 +102,12 @@ export async function fillField(field: DiscoveredField, value: string | string[]
       case "listbox":
       case "radio":
         return await fillViaDropdown(field, toValues(value), options);
-      case "checkbox":
-        return fillCheckbox(field, el as HTMLInputElement, single, options);
+      case "checkbox": {
+        const group = checkboxGroupMembers(el);
+        return group
+          ? fillCheckboxGroup(field, group, toValues(value))
+          : fillCheckbox(field, el as HTMLInputElement, single, options);
+      }
       default:
         return { uid: field.uid, status: "skipped", reason: "unsupported control" };
     }
@@ -113,6 +136,12 @@ async function fillViaDropdown(field: DiscoveredField, values: string[], options
     return { uid: field.uid, status: "skipped", reason: "user value present" };
   }
 
+  // Capture before interaction. Keep the FIRST snapshot across forced/repeated
+  // fills so Clear always returns to the user's state, not an intermediate
+  // XpertApply selection.
+  const original = dropdownOriginals.get(el) ?? { field, selected: [...existing] };
+  if (!dropdownOriginals.has(el)) dropdownOriginals.set(el, original);
+  captureOriginalIfPossible(el);
   const result = await fillDropdown(field, {
     values,
     searchValue: options.dropdownSearchValue,
@@ -128,12 +157,11 @@ async function fillViaDropdown(field: DiscoveredField, values: string[], options
     selected: result.selected
   };
   if (result.ok) {
-    captureOriginalIfPossible(el);
-    mark(el, options.status ?? "verified");
+    markFilled(el, options.status ?? "verified");
     return { uid: field.uid, status: "filled", dropdown: detail };
   }
   // A failed dropdown is ALWAYS surfaced — highlighted red when required.
-  mark(el, field.required ? "invalid" : "review");
+  markFilled(el, field.required ? "invalid" : "review");
   return { uid: field.uid, status: "review_required", reason: result.reason, dropdown: detail };
 }
 
@@ -144,10 +172,10 @@ function captureOriginalIfPossible(el: HTMLElement): void {
 
 function fillContentEditable(field: DiscoveredField, el: HTMLElement, value: string, options: FillOptions): FillOutcome {
   if ((el.textContent || "").trim() && !options.force && !isJobPilotFilled(el)) return { uid: field.uid, status: "skipped", reason: "user value present" };
-  el.setAttribute(ORIGINAL_ATTR, el.textContent || "");
+  captureOriginalValue(el, el.textContent || "");
   el.textContent = value;
   dispatch(el, ["input", "change", "blur"]);
-  mark(el, options.status ?? "verified");
+  markFilled(el, options.status ?? "verified");
   return (el.textContent || "").trim() === value.trim() ? { uid: field.uid, status: "filled" } : { uid: field.uid, status: "error", reason: "value did not stick" };
 }
 
@@ -164,21 +192,48 @@ async function fillTextLike(field: DiscoveredField, el: HTMLInputElement, value:
   captureOriginal(el);
   setNativeValue(el, value);
   dispatch(el, ["input", "change", "blur"]);
-  mark(el, options.status ?? "verified");
+  markFilled(el, options.status ?? "verified");
   if (el.validationMessage) {
-    mark(el, "invalid");
+    markFilled(el, "invalid");
     return { uid: field.uid, status: "review_required", reason: el.validationMessage };
   }
   // The site may have rewritten (or rejected) the value on blur.
   if (options.verify && !options.verify(el.value ?? "")) {
-    mark(el, field.required ? "invalid" : "review");
+    markFilled(el, field.required ? "invalid" : "review");
     return { uid: field.uid, status: "review_required", reason: "value did not survive site formatting" };
   }
   if (el.getAttribute("aria-invalid") === "true") {
-    mark(el, "invalid");
+    markFilled(el, "invalid");
     return { uid: field.uid, status: "review_required", reason: "site marked the field invalid" };
   }
   return { uid: field.uid, status: "filled" };
+}
+
+/**
+ * Tick the options of a checkbox SET by their label. Every wanted value must match an option
+ * exactly (ignoring case and spacing); otherwise nothing is ticked and the question goes to
+ * review, because ticking "the nearest" box answers a question the user did not answer. An
+ * option the user already ticked is never unticked.
+ */
+function fillCheckboxGroup(field: DiscoveredField, members: HTMLInputElement[], wanted: string[]): FillOutcome {
+  const norm = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
+  const byLabel = new Map(members.map((member) => [norm(checkboxOptionLabel(member)), member]));
+  const targets = wanted.map((value) => byLabel.get(norm(value)));
+  if (wanted.length === 0 || targets.some((member) => !member)) {
+    return { uid: field.uid, status: "review_required", reason: "no matching option" };
+  }
+  for (const member of targets as HTMLInputElement[]) {
+    captureOriginal(member);
+    if (!member.checked) {
+      member.click();
+      dispatch(member, ["input", "change"]);
+    }
+    markFilled(member, "verified");
+  }
+  const verified = (targets as HTMLInputElement[]).every((member) => member.checked);
+  return verified
+    ? { uid: field.uid, status: "filled" }
+    : { uid: field.uid, status: "error", reason: "option did not stay selected" };
 }
 
 function fillCheckbox(field: DiscoveredField, el: HTMLInputElement, value: string, _options: FillOptions): FillOutcome {
@@ -188,20 +243,45 @@ function fillCheckbox(field: DiscoveredField, el: HTMLInputElement, value: strin
     el.click(); // native toggle to the desired state (avoids double-toggling)
     dispatch(el, ["input", "change"]);
   }
-  mark(el, "verified");
+  markFilled(el, "verified");
   return { uid: field.uid, status: "filled" };
 }
 
 // --------------------------------------------------------------------------- //
 // Clearing + highlighting (fully reversible; never permanently alters the page)
 // --------------------------------------------------------------------------- //
-export function clearJobPilotFields(root: ParentNode = document): number {
-  const filled = Array.from(root.querySelectorAll<HTMLElement>(`[${FILLED_ATTR}]`));
+export interface ClearResult {
+  cleared: number;
+  failed: number;
+}
+
+export async function clearJobPilotFields(root: ParentNode = document): Promise<ClearResult> {
+  const candidates = deepQueryAll<HTMLElement>(root, "*");
+  if (root instanceof HTMLElement) candidates.unshift(root);
+  const filled = candidates.filter((element) => isJobPilotFilled(element));
+  let cleared = 0;
+  let failed = 0;
   for (const el of filled) {
-    const original = el.getAttribute(ORIGINAL_ATTR) ?? "";
+    const dropdownOriginal = dropdownOriginals.get(el);
+    if (dropdownOriginal) {
+      const adapter = selectAdapter(dropdownOriginal.field);
+      const restored = Boolean(
+        adapter?.restoreSelection
+        && await adapter.restoreSelection(dropdownOriginal.field, dropdownOriginal.selected).catch(() => false)
+      );
+      if (!restored) {
+        failed += 1;
+        continue;
+      }
+      dropdownOriginals.delete(el);
+    }
+    const original = originalValues.get(el) ?? "";
     const tag = el.tagName.toLowerCase();
     const input = el as HTMLInputElement;
-    if (input.type === "checkbox" || input.type === "radio") {
+    if (dropdownOriginal) {
+      // The adapter already restored and dispatched the framework-visible
+      // events. Never overwrite that verified state through a second path.
+    } else if (input.type === "checkbox" || input.type === "radio") {
       input.checked = original === "checked";
     } else if (el.getAttribute("contenteditable") === "true") {
       el.textContent = original;
@@ -210,50 +290,64 @@ export function clearJobPilotFields(root: ParentNode = document): number {
     } else {
       setNativeValue(el as HTMLInputElement | HTMLTextAreaElement, original);
     }
-    dispatch(el, ["input", "change"]);
-    el.removeAttribute(FILLED_ATTR);
-    el.removeAttribute(ORIGINAL_ATTR);
-    el.removeAttribute("data-jobpilot-repeater");
+    if (!dropdownOriginal) dispatch(el, ["input", "change"]);
     removeHighlight(el);
+    fillStates.delete(el);
+    originalValues.delete(el);
+    repeaterElements.delete(el);
+    cleared += 1;
   }
-  return filled.length;
+  return { cleared, failed };
 }
 
 export function highlight(el: HTMLElement, status: FillStatus): void {
-  mark(el, status);
+  const current = fillStates.get(el);
+  fillStates.set(el, { filled: current?.filled ?? false, status });
+  paint(el, status);
 }
 
 export function removeHighlight(el: HTMLElement): void {
-  el.style.outline = "";
-  el.style.removeProperty("outline-offset");
-  el.removeAttribute(STATUS_ATTR);
+  removeFieldStatus(el);
+  const current = fillStates.get(el);
+  if (current) fillStates.set(el, { ...current, status: "neutral" });
 }
 
 export function isJobPilotFilled(el: HTMLElement): boolean {
-  return el.hasAttribute(FILLED_ATTR);
+  return fillStates.get(el)?.filled === true;
+}
+
+export function markJobPilotRepeater(el: HTMLElement): void {
+  repeaterElements.add(el);
+}
+
+export function isJobPilotRepeater(el: HTMLElement): boolean {
+  return repeaterElements.has(el);
 }
 
 // --------------------------------------------------------------------------- //
 // Low-level helpers
 // --------------------------------------------------------------------------- //
-function mark(el: HTMLElement, status: FillStatus): void {
-  el.setAttribute(FILLED_ATTR, "1");
-  el.setAttribute(STATUS_ATTR, status);
-  if (OUTLINE[status]) {
-    el.style.outline = OUTLINE[status];
-    el.style.outlineOffset = "1px";
-  }
+function markFilled(el: HTMLElement, status: FillStatus): void {
+  fillStates.set(el, { filled: true, status });
+  paint(el, status);
+}
+
+function paint(el: HTMLElement, status: FillStatus): void {
+  if (status === "neutral") removeFieldStatus(el);
+  else presentFieldStatus(el, status);
 }
 
 function captureOriginal(el: HTMLInputElement | HTMLSelectElement): void {
-  if (el.hasAttribute(ORIGINAL_ATTR)) {
-    return;
-  }
+  if (originalValues.has(el)) return;
   const input = el as HTMLInputElement;
   const original = input.type === "checkbox" || input.type === "radio"
     ? (input.checked ? "checked" : "")
     : el.value;
-  el.setAttribute(ORIGINAL_ATTR, original ?? "");
+  originalValues.set(el, original ?? "");
+}
+
+function captureOriginalValue(el: HTMLElement, value: string): void {
+  if (!originalValues.has(el)) originalValues.set(el, value);
 }
 
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {

@@ -7,11 +7,13 @@
  * summary. It never clicks Submit.
  */
 
+import { answerMapFor } from "../fields/answerMap";
 import type { DetectionOutcome } from "../ats/registry";
 import { pickApplicationForm } from "../ats/base";
 import { discoverUploadInputs } from "../ats/base";
 import { deepClosest, deepTextContent } from "../dom/deepDom";
 import { applyFill, scan, type FillSummary } from "../fields/runner";
+import { fillField, highlight, isJobPilotFilled } from "../fields/fill";
 import { uploadFileToInput } from "../fields/upload";
 import { buildLedger, computeCounts, type LedgerCounts, type LedgerEntry } from "../fields/ledger";
 import { COMPANY_SCOPED_FIELDS, CUSTOM_RESPONSE_FIELDS, UPLOAD_FIELDS, type CanonicalField } from "../fields/taxonomy";
@@ -35,6 +37,22 @@ export interface AutofillDeps {
   /** Documents prepared before ATS parsing. Supplying this prevents a second
    * upload during the authoritative post-parse fill. */
   preparedDocuments?: PreparedDocumentUploads;
+  /** Ask the backend for grounded, editable drafts of open-ended questions. Absent or failing: those fields stay with the applicant. */
+  draftAnswers?: (questions: DraftQuestionPayload[]) => Promise<DraftedAnswer[] | null>;
+}
+
+export interface DraftQuestionPayload {
+  field_identifier: string;
+  question: string;
+  control_type: "textarea" | "text";
+  max_length: number | null;
+  required: boolean;
+}
+export interface DraftedAnswer {
+  field_identifier: string;
+  proposed_answer: string;
+  generation_status: string;
+  missing_information: string[];
 }
 
 export interface PreparedDocumentUploads {
@@ -79,6 +97,7 @@ export async function runAutofill(
   });
   const summary = await applyFill(scanned.fields, takeoverMappings, session);
   const fieldResults = buildFieldResults(scanned.fields, scanned.mappings, session, summary);
+  await draftOpenEndedAnswers(scanned.fields, scanned.mappings, fieldResults, deps);
   fieldResults.push(...documents.fieldResults);
   const { uploaded, reviewDocs } = documents;
 
@@ -91,6 +110,7 @@ export async function runAutofill(
     fieldResults,
     uploadLedgerStates(uploaded, reviewDocs)
   );
+  applyLedgerHighlights(scanned.fields, ledger);
   const counts = computeCounts(ledger);
   const reviewItems = counts.pending;
   const filled = counts.filled;
@@ -120,6 +140,80 @@ export async function runAutofill(
       .map((item) => ({ field_key: item.fieldKey, reason_code: item.reasonCode as string }))
   };
   return { progress, result, fieldResults, fields: scanned.fields, ledger, counts };
+}
+
+/** The longest question label worth sending; the backend bounds it again. */
+const MAX_DRAFT_QUESTION = 600;
+const MIN_DRAFT_QUESTION = 25;
+/** Questions only the applicant may answer. The backend refuses them too; they are not even sent. */
+const APPLICANT_ONLY_QUESTION = /sponsor|visa|authori[sz]|salary|compensation|relocat|notice period|start date|availab|gender|race|ethnic|veteran|disabilit|pronoun|criminal|convict|background check|consent|\bagree|acknowledg|certify|attest|declar|citizen|date of birth/i;
+
+/**
+ * Open-ended employer questions (textareas with a real question as their label) that nothing else answered.
+ *
+ * Never a field that already holds a value (the employer's, the browser's or the applicant's), a hidden or disabled control, a sensitive
+ * or upload field, or anything the deterministic mapping owns. Whether a question is one the model may touch at all is decided again
+ * by the backend; this only decides what is worth asking.
+ */
+export function openEndedCandidates(fields: DiscoveredField[], mappings: FieldMapping[]): DiscoveredField[] {
+  const mapByUid = new Map(mappings.map((m) => [m.uid, m]));
+  const out: DiscoveredField[] = [];
+  for (const field of fields) {
+    const el = field.element as HTMLTextAreaElement | undefined;
+    if (!el || field.control !== "textarea" || !field.visible || field.disabled || field.custom) continue;
+    if (field.existingValue.trim() || (el.value ?? "").trim()) continue;
+    const mapping = mapByUid.get(field.uid);
+    if (mapping && (mapping.sensitive || UPLOAD_FIELDS.has(mapping.canonicalKey) || (mapping.canonicalKey !== "unknown" && mapping.safeToAutoFill))) continue;
+    const question = (field.label || field.ariaLabel || "").replace(/\s+/g, " ").trim();
+    if (question.length < MIN_DRAFT_QUESTION || APPLICANT_ONLY_QUESTION.test(question)) continue;
+    out.push(field);
+  }
+  return out.slice(0, 8);
+}
+
+async function draftOpenEndedAnswers(
+  fields: DiscoveredField[],
+  mappings: FieldMapping[],
+  results: FieldFillResult[],
+  deps: Pick<AutofillDeps, "draftAnswers">
+): Promise<void> {
+  if (!deps.draftAnswers) return;
+  const candidates = openEndedCandidates(fields, mappings);
+  if (candidates.length === 0) return;
+  const byIdentifier = new Map(candidates.map((field) => [field.uid, field]));
+  let drafts: DraftedAnswer[] | null = null;
+  try {
+    drafts = await deps.draftAnswers(candidates.map((field) => {
+      const max = Number((field.element as HTMLTextAreaElement).maxLength);
+      return {
+        field_identifier: field.uid,
+        question: (field.label || field.ariaLabel).replace(/\s+/g, " ").trim().slice(0, MAX_DRAFT_QUESTION),
+        control_type: "textarea" as const,
+        max_length: Number.isFinite(max) && max > 0 ? max : null,
+        required: field.required
+      };
+    }));
+  } catch {
+    drafts = null;
+  }
+  if (!drafts) return;
+  for (const draft of drafts) {
+    const field = byIdentifier.get(draft.field_identifier);
+    const el = field?.element as HTMLTextAreaElement | undefined;
+    if (!field || !el || !draft.proposed_answer) continue;
+    if (draft.generation_status !== "drafted" && draft.generation_status !== "partial") continue;
+    // The applicant may have started typing while the draft was being written: their text always wins.
+    if ((el.value ?? "").trim()) continue;
+    const outcome = await fillField(field, draft.proposed_answer, { status: "generated" });
+    if (outcome.status !== "filled") continue;
+    const index = results.findIndex((item) => item.uid === field.uid);
+    const next: FieldFillResult = {
+      uid: field.uid, fieldKey: index >= 0 ? results[index].fieldKey : "unknown",
+      question: field.label || field.ariaLabel, status: "filled", reasonCode: "AI_DRAFT_REVIEW",
+      confidence: 0.5, required: field.required, control: field.control
+    };
+    if (index >= 0) results[index] = { ...results[index], ...next }; else results.push(next);
+  }
 }
 
 /** Upload documents as a separate lifecycle phase before any authoritative DOM
@@ -210,7 +304,20 @@ function buildScanLedger(
   for (const [kind, state] of uploadStates) {
     const canonicalKey = `${kind}_upload`;
     const uid = `upload:${kind}`;
-    if (entries.some((e) => e.uid === uid || e.canonicalKey === canonicalKey)) continue;
+    const existing = entries.find((e) => e.uid === uid || e.canonicalKey === canonicalKey);
+    if (existing) {
+      // A visible file input is already an entry, derived from the DOM before the upload. If the
+      // upload was then rejected or the framework replaced the input, the employer's control holds
+      // nothing, so the entry must not stay "filled".
+      if (state !== "uploaded") {
+        existing.status = "technical_failure";
+        existing.reasonCode = "DOCUMENT_UPLOAD_REJECTED";
+        existing.verified = false;
+        existing.currentValuePresent = false;
+        existing.fillSource = null;
+      }
+      continue;
+    }
     entries.push(documentEntry(kind, state));
   }
   return entries;
@@ -250,7 +357,7 @@ function buildFieldResults(
   session: ApplicationSessionData,
   summary: FillSummary
 ): FieldFillResult[] {
-  const answers = new Map(session.answers.map((a) => [a.canonical_key, a]));
+  const answers = answerMapFor(session);
   const byUid = new Map(fields.map((f) => [f.uid, f]));
   const results: FieldFillResult[] = [];
 
@@ -307,7 +414,13 @@ function buildFieldResults(
       const withOptions = outcome.dropdown?.options?.length
         ? { ...base, options: outcome.dropdown.options }
         : base;
-      if (outcome.status === "filled") results.push({ ...withOptions, status: "filled" });
+      if (outcome.status === "filled") {
+        results.push({
+          ...withOptions,
+          status: "filled",
+          reasonCode: mapping.requiresReview ? "LOW_CONFIDENCE" : undefined
+        });
+      }
       else if (outcome.status === "skipped") results.push({ ...withOptions, status: "skipped", reasonCode: "USER_VALUE_PRESENT" });
       else if (outcome.status === "review_required") {
         // Carry the exact dropdown failure code (DROPDOWN_OPEN_FAILED,
@@ -323,7 +436,11 @@ function buildFieldResults(
     }
     const had = el ? valueStuck(el, answer.value) : false;
     if (had) {
-      results.push({ ...base, status: "filled" });
+      results.push({
+        ...base,
+        status: "filled",
+        reasonCode: mapping.requiresReview ? "LOW_CONFIDENCE" : undefined
+      });
     } else if (el && hadUserValue(field)) {
       results.push({ ...base, status: "skipped", reasonCode: "USER_VALUE_PRESENT" });
     } else {
@@ -331,6 +448,17 @@ function buildFieldResults(
     }
   }
   return results;
+}
+
+/** Paint successful controls from the ledger's single terminal status. */
+function applyLedgerHighlights(fields: DiscoveredField[], entries: LedgerEntry[]): void {
+  const byUid = new Map(entries.map((entry) => [entry.uid, entry]));
+  for (const field of fields) {
+    if (!field.element) continue;
+    const status = byUid.get(field.uid)?.status;
+    if (status === "filled_verified") highlight(field.element, "verified");
+    else if (status === "filled_needs_review") highlight(field.element, byUid.get(field.uid)?.reasonCode === "AI_DRAFT_REVIEW" ? "generated" : "review");
+  }
 }
 
 /** Dropdown failure codes are first-class reason codes; anything else falls back
@@ -376,7 +504,7 @@ function valueStuck(el: HTMLInputElement | HTMLSelectElement, expected: string):
   const current = (el.value || "").trim().toLowerCase();
   const want = expected.trim().toLowerCase();
   if (!current) return false;
-  return current === want || current.includes(want) || want.includes(current) || el.hasAttribute("data-jobpilot-filled");
+  return current === want || current.includes(want) || want.includes(current) || isJobPilotFilled(el);
 }
 
 function hadUserValue(field: DiscoveredField): boolean {
@@ -460,7 +588,16 @@ async function verifyUpload(input: HTMLInputElement, filename: string): Promise<
     await delay(150);
   }
   // Last resort: the file is set on the input even if the UI text is not found.
-  return Boolean(input.files && input.files.length === 1 && input.files[0].name === filename);
+  //
+  // Only on an input that is STILL IN THE DOCUMENT. A framework that replaces
+  // the file input after an upload leaves the old node detached with its
+  // `files` list intact, so reading it back proves nothing about what the
+  // employer's form now holds — and reporting that as upload_verified is a
+  // false success on the one field the user cannot check from the ledger.
+  // A replaced input with no visible filename is honestly unverifiable.
+  return Boolean(
+    input.isConnected && input.files && input.files.length === 1 && input.files[0].name === filename
+  );
 }
 
 function delay(ms: number): Promise<void> {

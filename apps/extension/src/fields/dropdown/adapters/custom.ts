@@ -165,6 +165,32 @@ export function createCustomAdapter(config: CustomAdapterConfig): DropdownAdapte
 
     readSelection(field): string[] {
       return readCustomSelection(field);
+    },
+
+    async restoreSelection(field, selected): Promise<boolean> {
+      if (sameSelections(adapter.readSelection(field), selected)) return true;
+
+      // Multi-select restoration must first remove selections introduced by
+      // XpertApply. Single-select controls replace the current choice when the
+      // original option is selected, so they need no preliminary clear.
+      if ((field.multiple || selected.length === 0) && !(await clearCustomSelection(field, adapter))) {
+        return false;
+      }
+      for (const wanted of selected) {
+        const opened = await adapter.open(field);
+        if (!opened.ok) return false;
+        const options = await adapter.getOptions(field, opened.listbox);
+        const option = options.find((candidate) =>
+          aliasMatches(candidate.label, wanted)
+          || normalizeForMatch(candidate.label) === normalizeForMatch(wanted)
+        );
+        if (!option || !(await adapter.select(field, option)).ok) return false;
+        await adapter.close(field);
+      }
+      return Boolean(await waitFor(
+        () => sameSelections(adapter.readSelection(field), selected) ? true : null,
+        TIMING.verifyMs
+      ));
     }
   };
 
@@ -179,6 +205,35 @@ export function createCustomAdapter(config: CustomAdapterConfig): DropdownAdapte
     };
   }
   return adapter;
+}
+
+async function clearCustomSelection(field: DiscoveredField, adapter: DropdownAdapter): Promise<boolean> {
+  const el = field.element as HTMLElement | undefined;
+  if (!el) return false;
+  const clearControl = deepQuery<HTMLElement>(el, [
+    '[aria-label*="clear" i]',
+    '[title*="clear" i]',
+    '[class*="clearIndicator"]',
+    '[class*="clear-indicator"]'
+  ].join(","));
+  if (clearControl && isElementVisible(clearControl)) pressSequence(clearControl);
+
+  if (adapter.readSelection(field).length > 0) {
+    const target = focusTarget(field);
+    focus(target);
+    if (target instanceof HTMLInputElement) setNativeValue(target, "");
+    key(target, "Backspace");
+    key(target, "Delete");
+  }
+  return Boolean(await waitFor(
+    () => adapter.readSelection(field).length === 0 ? true : null,
+    TIMING.verifyMs
+  ));
+}
+
+function sameSelections(actual: string[], expected: string[]): boolean {
+  const normalized = (values: string[]) => values.map(normalizeForMatch).sort();
+  return JSON.stringify(normalized(actual)) === JSON.stringify(normalized(expected));
 }
 
 /**

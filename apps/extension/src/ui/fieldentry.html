@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>XpertApply private entry</title>
+    <style>
+      :root { color-scheme: light; --accent: #1b704a; --ink: #1a2b21; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: transparent; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); overflow: hidden; }
+      input[type=text] { width: 100%; min-height: 42px; margin-top: 11px; padding: 8px 10px; border: 1px solid rgba(57,93,70,.24); border-radius: 11px; background: rgba(255,255,255,.9); color: var(--ink); font: inherit; }
+      input::placeholder { color: #8a938d; }
+      label.toggle { display: flex; gap: 7px; align-items: flex-start; margin-top: 10px; }
+      label.toggle input { accent-color: var(--accent); margin-top: 2px; }
+      button { min-height: 36px; margin-top: 10px; padding: 0 16px; border: 1px solid var(--accent); border-radius: 9px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: default; }
+      :focus-visible { outline: 3px solid rgba(30,116,76,.35); outline-offset: 2px; }
+      #msg { margin-top: 6px; color: #8a3a24; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <form id="f" autocomplete="off"></form>
+    <script src="fieldentry.js"></script>
+  </body>
+</html>

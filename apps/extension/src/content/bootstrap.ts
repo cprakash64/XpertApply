@@ -1,3 +1,5 @@
+import { questionLedger } from "./workflowLedger";
+import { toolbarDisclosureAccepted } from "../toolbarDisclosure";
 /**
  * Content script with two roles depending on where it runs:
  *
@@ -15,6 +17,7 @@
  *    to warn; it never clicks it.
  */
 
+import { projectWorkflowProgress } from "./workflowProgress";
 import { detectAdapter, type DetectionOutcome } from "../ats/registry";
 import {
   actuateTikTokLegalField,
@@ -24,7 +27,8 @@ import {
   tikTokFailureCode,
   type TikTokAdapterTrace
 } from "../ats/tiktokApplication";
-import { clearJobPilotFields, fillField } from "../fields/fill";
+import { clearJobPilotFields, fillField, restoreFillAuthority, withdrawFillAuthority } from "../fields/fill";
+import { resetFieldStatusPresentation } from "../fields/statusPresentation";
 import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin } from "../config";
 import { log } from "../logger";
 import {
@@ -32,9 +36,10 @@ import {
   PAGE_SOURCE_EXT,
   PROTOCOL_VERSION,
   parsePageMessage,
+  LEGACY_PRESENCE_PING,
+  LEGACY_PRESENCE_PONG,
   parseRuntimeMessage,
   type AutofillReason,
-  type ExtensionInfo,
   type LaunchPayload,
   type PageMessage,
   type ProgressPayload
@@ -46,7 +51,7 @@ import {
   type LedgerCounts,
   type LedgerEntry
 } from "../fields/ledger";
-import { prepareDocumentUploads, runAutofill, type PreparedDocumentUploads } from "./autofill";
+import { prepareDocumentUploads, runAutofill, type DraftedAnswer, type PreparedDocumentUploads } from "./autofill";
 import { buildDiagnostics, type QuestionExecutionTrace } from "./diagnostics";
 import { buildReviewModel } from "./review";
 import {
@@ -58,6 +63,7 @@ import {
 import { createApplicationAnswerHandlers } from "./applicationAnswer";
 import { startTeachMode, type LearnScope, type LearnedAnswer } from "./teach";
 import { resolveApplicationForm } from "../ats/base";
+import { evaluateSubmissionEvidence, isLikelyFinalSubmitLabel, matchesSuccessMessage, matchesSuccessUrl } from "../ats/submissionEvidence";
 import type { FormRootResult } from "../ats/formRoot";
 import { probeFrame } from "../frames/probe";
 import { deepQueryAll, scopedElementById } from "../dom/deepDom";
@@ -90,10 +96,13 @@ import {
   type TransactionPanelItem,
   type WidgetStage
 } from "./widget";
-import { claimContentInstance, makeContentInstanceId } from "./instance";
+import { claimWorkflowContentInstance, makeContentInstanceId } from "./instance";
 import { ResolutionRunCoordinator, type EligibilityRun } from "./resolutionRun";
 import { fillStructuredRepeaters } from "../fields/repeaters";
 import { discoverFields } from "../fields/discovery";
+import { checkSemanticCompatibility, isConsequentialKey } from "../fields/answerSemantics";
+import { checkConsequentialOption } from "../fields/consequentialAnswer";
+import type { CanonicalField } from "../fields/taxonomy";
 import { scan } from "../fields/runner";
 import { AtsLifecycleRun, domMetrics, waitForAtsParse } from "./atsLifecycle";
 import {
@@ -105,8 +114,7 @@ import {
 import {
   frameVerdict,
   observeFrames,
-  reopenableFrameUrl,
-  selectApplicationFrame
+  reopenableFrameUrl
 } from "../frames/frameInventory";
 import { reconcileAtsValues, type ReconciledField } from "./reconciliation";
 import {
@@ -130,7 +138,6 @@ import {
 } from "./questionBatch";
 import { enumerateOptions, selectApprovedOption, type TransactionResult } from "./dropdownTransaction";
 import {
-  QuestionLedger,
   STAGE_LABEL,
   absorbScalarLedger,
   type QuestionState,
@@ -138,15 +145,39 @@ import {
 } from "./questionLedger";
 
 // Declarative injection and the background's readiness fallback can both run.
-// The newest instance owns the frame; older current-build instances check this
-// predicate and become inert. Crucially, we DO NOT skip when an old boolean
-// guard is present: that is the frozen state left by an extension reload.
-const isCurrentInstance = claimContentInstance(
-  window as unknown as Record<string, unknown>,
-  makeContentInstanceId(BUILD_INFO.buildId)
+// A live same-build owner survives same-document toolbar reinjection. A new
+// build or orphaned runtime supersedes it; old instances then become inert.
+// A stale boolean alone never prevents recovery after an extension reload.
+/** Required extension operations remain unavailable in ordinary pages. Chrome
+ * supplies this capability in the manifest's isolated content-script world;
+ * the pure injectable harness never imports or starts this entrypoint. */
+export function requireWorkflowRuntime(): typeof chrome.runtime {
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.id || typeof runtime.getManifest !== "function" || typeof runtime.sendMessage !== "function") {
+    throw new Error("EXTENSION_RUNTIME_UNAVAILABLE");
+  }
+  return runtime;
+}
+let isCurrentInstance: () => boolean = () => false;
+if (globalThis.chrome?.runtime?.id) {
+  const workflowRuntime = requireWorkflowRuntime();
+  isCurrentInstance = claimWorkflowContentInstance(
+    window as unknown as Record<string, unknown>,
+    makeContentInstanceId(BUILD_INFO.buildId),
+    BUILD_INFO.buildId,
+    () => Boolean(workflowRuntime.id && workflowRuntime.getManifest())
+  );
+}
+const toolbarInitiated = Boolean(
+  (globalThis as typeof globalThis & { __xpertapplyOverlayBootstrapV1__?: true })
+    .__xpertapplyOverlayBootstrapV1__
 );
+let toolbarFillAuthorized = !toolbarInitiated;
 
-if (isApprovedJobPilotOrigin(location.origin)) {
+if (!isCurrentInstance()) {
+  // A live same-build workflow already owns this document. Toolbar SHOW will
+  // mount a fresh presentation controller and fetch its authoritative view.
+} else if (isApprovedJobPilotOrigin(location.origin)) {
   // Never let ATS-only code (DOM scanning, adapters) reach the web-origin role
   // even indirectly.
   try {
@@ -163,12 +194,6 @@ if (isApprovedJobPilotOrigin(location.origin)) {
 // 1. XpertApply web origin: validated, acknowledged bridge
 // --------------------------------------------------------------------------- //
 function initWebOrigin(): void {
-  const info: ExtensionInfo = {
-    installed: true,
-    version: chrome.runtime.getManifest?.().version ?? "0.0.0",
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: EXTENSION_CAPABILITIES
-  };
   // Register the listener FIRST, synchronously, before anything async — the
   // web page may send WEB_PING immediately after its own readiness listener
   // goes up, and there must be no window where a ping could arrive unheard.
@@ -178,36 +203,29 @@ function initWebOrigin(): void {
     if (!isApprovedJobPilotOrigin(event.origin)) return;
     const data = parsePageMessage(event.data);
     if (!data) return;
-    if (data.type === MSG.PING) {
-      log.debug("web ping received");
-      const ack = (await sendRuntime({
-        type: MSG.HANDSHAKE,
-        origin: event.origin,
-        apiBase: data.apiBase,
-        protocolVersion: PROTOCOL_VERSION
-      })) as
-        | { ok?: boolean; protocolVersion?: number }
-        | undefined;
-      // PONG whenever the background is actually reachable — regardless of
-      // whether ITS protocol version matches this (possibly stale, if the
-      // extension was reloaded while this tab stayed open) content script's
-      // compiled-in PROTOCOL_VERSION. The web app already compares
-      // info.protocolVersion itself to decide "outdated" vs. current; what
-      // must never happen is silently dropping the reply and collapsing
-      // "installed but outdated/stale" into "not installed at all".
-      // `ack === undefined` means chrome.runtime.sendMessage itself failed
-      // (extension context invalidated — content script truly orphaned by a
-      // reload) and there is genuinely no bridge to report; stay silent so
-      // the web app's timeout-driven "reload the page" messaging is accurate.
-      if (ack !== undefined) {
-        window.postMessage({ source: PAGE_SOURCE_EXT, type: MSG.PONG, info } satisfies PageMessage, location.origin);
-        log.debug("extension ready sent");
-      } else {
-        // Expected briefly during an unpacked-extension reload. The background
-        // now revives this page automatically; logging at warn made Chrome list
-        // a normal lifecycle transition as an extension error.
-        log.debug("background temporarily unavailable; waiting for bridge revival");
-      }
+    if (data.type === LEGACY_PRESENCE_PING) {
+      window.postMessage({
+        source: PAGE_SOURCE_EXT,
+        type: LEGACY_PRESENCE_PONG,
+        info: {
+          installed: true,
+          version: BUILD_INFO.version,
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: EXTENSION_CAPABILITIES
+        }
+      } satisfies PageMessage, location.origin);
+    } else if (data.type === MSG.EXTENSION_PRESENCE_PING) {
+      window.postMessage({
+        source: PAGE_SOURCE_EXT,
+        type: MSG.EXTENSION_PRESENCE_READY,
+        requestId: data.requestId,
+        info: {
+          installed: true,
+          version: BUILD_INFO.version,
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: EXTENSION_CAPABILITIES
+        }
+      } satisfies PageMessage, location.origin);
     } else if (data.type === MSG.STAGE_LAUNCH) {
       if (validLaunch(data.payload)) void sendRuntime({ type: MSG.STAGE_LAUNCH, payload: data.payload });
     } else if (data.type === MSG.START_ASSISTED_APPLY) {
@@ -230,19 +248,17 @@ function validLaunch(payload: LaunchPayload): boolean {
 // --------------------------------------------------------------------------- //
 // 2. Employer/ATS page: readiness pull + canonical autofill
 //
-// host_permissions now cover every https(s) origin (employer/ATS forms live on
-// domains we cannot enumerate up front), so this script is declaratively
-// injected into every page. What keeps it dormant everywhere except a
-// user-initiated XpertApply handoff is this gate: it NEVER scans the DOM,
-// inserts the widget, or observes mutations until the background confirms
-// this exact tab/frame matches an active, unexpired handoff. An unmatched
-// frame registers only the (inert) message listener and exits immediately.
+// Employer/ATS code is dynamically injected only after an exact-origin grant.
+// Injection is still not workflow authority: the readiness message below is
+// inert, and this frame does not scan the DOM until the worker has matched its
+// Chrome-supplied tab/frame identity to an active, unexpired handoff and sends
+// an explicit PROBE_FRAME_APPLICATION request.
 // --------------------------------------------------------------------------- //
 const isTopFrame = window.top === window;
 
-/** Sanitized evidence about THIS frame, sent with CONTENT_READY so the
- * background can rank frames. Best-effort: a probe failure must never block the
- * readiness handshake. */
+/** Sanitized evidence about THIS frame, returned only when the worker asks for
+ * it after authorizing the Chrome-supplied sender. A probe failure is
+ * recoverable, but deliberately blocks package access and autofill. */
 function buildFrameProbe() {
   try {
     const p = probeFrame(document);
@@ -260,8 +276,13 @@ function buildFrameProbe() {
 let session: ApplicationSessionData | null = null;
 let outcome: DetectionOutcome | null = null;
 let running = false;
+let completedWorkflowProgress: ProgressPayload | null = null;
+let completedWorkflowSessionId: number | null = null;
 let started = false;
 let matched = false;
+/** True only once this instance FINISHED its handshake, found no workflow for the page, and went quiet.
+ * A ping during the handshake reports false, so the worker never starts a second concurrent run. */
+let dormant = false;
 // Once a launch reaches a terminal ready/review/failure state, DOM changes
 // (including the user's own answers) must not silently start autofill again.
 // Only the explicit Retry action clears this latch.
@@ -283,6 +304,13 @@ const HANDOFF_IMPL_VERSION = "session-scoped-package-v1";
  * rest, so a failing workflow can never become a request loop. */
 let reconnectAttempted = false;
 let reconnectInFlight = false;
+let submissionObservationStarted = false;
+let submitGestureObserved = false;
+let submissionOutcomeReported = false;
+let manualConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+let successSignalPresentBeforeSubmit = false;
+let submissionGestureAt: number | null = null;
+const SUBMISSION_OBSERVATION_MS = 15_000;
 
 /**
  * Ask the background to re-establish this tab's workflow binding.
@@ -307,6 +335,7 @@ async function requestReconnect(): Promise<boolean> {
     if (result?.ok && result.session) {
       if (session?.sessionId !== result.session.sessionId) preparedDocuments = null;
       session = result.session;
+      restoreFillAuthority();
       matched = true;
       automaticRunSettled = false;
       rootRecoveryAttempted = false;
@@ -316,7 +345,9 @@ async function requestReconnect(): Promise<boolean> {
       }
       outcome = detectAdapter({ url: location.href, document });
       started = true;
-      void discoverAndFill("continue_after_navigation");
+      if (await startSubmissionObservation()) return true;
+      if (toolbarInitiated) void discoverForToolbar();
+      else void discoverAndFill("continue_after_navigation");
       observeMutations();
       return true;
     }
@@ -340,6 +371,25 @@ async function requestReconnect(): Promise<boolean> {
   } finally {
     reconnectInFlight = false;
   }
+}
+
+/**
+ * Ask the worker whether THIS frame is the one that fills this tab.
+ *
+ * Sends only its own root verdict; the worker takes the tab and the frame from
+ * `sender`, so a frame cannot claim to be another one. A worker that cannot
+ * answer (older build, transient failure) is treated as a grant: this arbitrates
+ * between frames, and must never be the reason a legitimate single-frame
+ * application stops working.
+ */
+async function requestFillLease(rootConfident: boolean): Promise<{ granted: boolean; reason: string }> {
+  const response = (await sendRuntime({ type: MSG.REQUEST_FILL_LEASE, rootConfident })) as
+    | { granted?: boolean; reason?: string }
+    | undefined;
+  if (!response || typeof response.granted !== "boolean") {
+    return { granted: true, reason: "LEASE_UNAVAILABLE" };
+  }
+  return { granted: response.granted, reason: response.reason ?? "unknown" };
 }
 
 /** Last reconnect outcome, for sanitized diagnostics only. */
@@ -379,10 +429,13 @@ const TERMINAL_FAILURE_CODES = new Set([
 ]);
 
 async function initAtsPage(): Promise<void> {
+  installSubmissionGestureObserver();
+  installApplyClickObserver();
   // Cheap and always safe to register: answers liveness pings and gives an
   // unmatched frame a second chance if the tab becomes bound to a handoff
   // shortly after this frame's own (negative) initial check — e.g. an
   // employer-embedded iframe whose content script races the top frame's.
+  let registrationRecovery: Promise<void> | null = null;
   chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     if (!isCurrentInstance()) return false;
     const message = parseRuntimeMessage(raw);
@@ -391,24 +444,48 @@ async function initAtsPage(): Promise<void> {
       return false;
     }
     if (message.type === MSG.PING_CONTENT) {
-      sendResponse({ ok: true, url: location.href });
+      // `started` lets the worker tell a live workflow from a registered instance that found no
+      // handoff when its page loaded and has been dormant since.
+      sendResponse({ ok: true, url: location.href, started, dormant });
       return false;
     }
+    if (message.type === MSG.CONTENT_RECONNECT) {
+      if (_sender.id !== chrome.runtime.id) return false;
+      // Every surviving frame independently uses the normal sender-qualified
+      // handshake. Recovery never discovers/fills or opens UI locally.
+      registrationRecovery ??= sendRuntime({ type: MSG.CONTENT_READY }).then((response) => {
+        if (!isCurrentInstance()) return;
+        const ready = response as { matched?: boolean; session?: ApplicationSessionData | null } | undefined;
+        matched = Boolean(ready?.matched);
+        session = ready?.session ?? null;
+        if (session) restoreFillAuthority();
+      }).finally(() => { registrationRecovery = null; });
+      void registrationRecovery.then(() => sendResponse({ ok: true }));
+      return true;
+    }
     if (message.type === MSG.PROBE_FRAME_APPLICATION) {
-      // Answered by EVERY frame, matched or not: this is the diagnostic that
-      // tells the top frame whether a nested application frame is reachable at
-      // all. Counts and one boolean — never a label, never a value.
+      // Only the worker sends this frame-targeted request, after it has matched
+      // the browser-supplied sender to a live handoff. Counts, scores and one
+      // boolean only — never a field value or surrounding page text.
+      const probe = buildFrameProbe();
       const evidence = collectApplicationEvidence(document);
       sendResponse({
         ok: true,
+        probe,
         evidence: hasApplicationEvidence(evidence),
         fieldCount: evidence.applicantControlCount
       });
       return false;
     }
     if (message.type === MSG.AUTOFILL_START) {
+      toolbarFillAuthorized = true;
       if (message.reason === "manual_retry") { automaticRunSettled = false; rootRecoveryAttempted = false; }
-      void (matched ? fill(message.reason) : checkHandoffAndStart(message.reason)).then(() => sendResponse({ ok: true }));
+      // Retry is a new discovery attempt, not another adapter call against the
+      // frame that happened to answer first (normally the employer top frame).
+      // The top frame can therefore rediscover and activate a permitted ATS;
+      // an already-active ATS reaches fill immediately from the same function.
+      void (matched ? discoverAndFill(message.reason) : checkHandoffAndStart(message.reason))
+        .then(() => sendResponse({ ok: true }));
       return true;
     }
     if (message.type === MSG.AUTOFILL_PROGRESS) {
@@ -420,15 +497,104 @@ async function initAtsPage(): Promise<void> {
       sendResponse({ ok: true });
       return false;
     }
-    if (message.type === MSG.CLEAR_SESSION) {
-      if (matched) clearJobPilotFields(document);
+    if (message.type === MSG.SESSION_DETACH) {
+      // Only the worker sends this, when the authorization behind this page's session is gone. Stop writing, forget the
+      // in-memory package and drop XpertApply's annotations. Nothing on the employer form is changed or cleared.
+      if (_sender.id !== chrome.runtime.id) return false;
+      withdrawFillAuthority();
+      session = null;
+      matched = false;
+      preparedDocuments = null;
+      running = false;
+      resetFieldStatusPresentation();
       sendResponse({ ok: true });
       return false;
+    }
+    if (message.type === MSG.CLEAR_SESSION) {
+      if (!matched) {
+        sendResponse({ ok: true, cleared: 0, failed: 0 });
+        return false;
+      }
+      void clearJobPilotFields(document).then((result) => sendResponse({ ok: result.failed === 0, ...result }));
+      return true;
     }
     return false;
   });
 
   await checkHandoffAndStart("automatic_launch");
+}
+
+
+/**
+ * The user clicks the employer's own Apply control themselves.
+ *
+ * XpertApply follows the navigation that click causes only if the worker knows the click happened, because a live Apply activation
+ * is the evidence that lets the launch's tab move to the next page (a shared employer domain is never enough). The automatic path
+ * records that activation before it clicks; a user's own click, which is the only path when the page offers several candidate Apply
+ * controls, had no such record, so the next page was refused as "not the prepared application". This records it, from a TRUSTED
+ * click on a control that already passed the candidate rules (so never a Submit, a consent control, or XpertApply's own UI). The
+ * click itself is untouched: nothing is prevented, repeated or synthesised.
+ */
+function installApplyClickObserver(): void {
+  // Called from initAtsPage() while the module is still evaluating, before the `isTopFrame` initialiser below have run,
+  // so this must not read module-level state declared later in the file. initAtsPage runs once per claimed instance.
+  if (window !== window.top) return;
+  document.addEventListener("click", (event) => {
+    if (!event.isTrusted || !isCurrentInstance() || !session || !(event.target instanceof Element)) return;
+    const hit = findActivationCandidates(document).find((candidate) => candidate.element.contains(event.target as Node));
+    if (!hit) return;
+    const anchor = hit.element.closest("a[href]");
+    const destination = resolveApplyDestination(hit.element, location.href);
+    void sendRuntime({
+      type: MSG.PREPARE_APPLICATION_LAUNCH,
+      sessionId: session.sessionId,
+      sourceUrl: location.href,
+      normalizedCtaText: accessibleName(hit.element).toLowerCase().replace(/\s+/g, " ").trim(),
+      confidence: hit.score,
+      href: destination.ok ? destination.destination.url : null,
+      target: anchor?.getAttribute("target") ?? hit.element.getAttribute("target"),
+      expectedDestinationOrigin: destination.ok ? new URL(destination.destination.url).origin : null,
+      jobFingerprint: shortHash(`${session.company ?? ""}|${session.jobTitle ?? ""}|${session.officialUrl ?? location.href}`)
+    });
+  }, true);
+}
+
+function installSubmissionGestureObserver(): void {
+  if (submissionObservationStarted) return;
+  submissionObservationStarted = true;
+  document.addEventListener("submit", (event) => {
+    if (!isCurrentInstance() || submissionOutcomeReported) return;
+    const submitter = typeof SubmitEvent !== "undefined" && event instanceof SubmitEvent && event.submitter instanceof HTMLElement
+      ? event.submitter
+      : outcome?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+    const label = submitter
+      ? `${accessibleName(submitter)} ${(submitter as HTMLInputElement).value ?? ""}`.trim()
+      : "";
+    if (!isLikelyFinalSubmitLabel(label)) return;
+    submitGestureObserved = true;
+    submissionGestureAt = Date.now();
+    void sendRuntime({ type: MSG.SUBMISSION_GESTURE_CANDIDATE });
+    queueMicrotask(() => {
+      if (event.defaultPrevented) {
+        submitGestureObserved = false;
+        submissionGestureAt = null;
+        void sendRuntime({ type: MSG.SUBMISSION_GESTURE_CANDIDATE_CANCELLED });
+        return;
+      }
+      if (session) {
+        clearSubmissionTimer();
+        manualConfirmationTimer = setTimeout(() => {
+          manualConfirmationTimer = null;
+          void evaluateCurrentSubmission(true);
+        }, 2_000);
+      }
+    });
+  }, true);
+}
+
+function clearSubmissionTimer(): void {
+  if (manualConfirmationTimer) clearTimeout(manualConfirmationTimer);
+  manualConfirmationTimer = null;
 }
 
 function mirrorFrameProgress(progress: ProgressPayload): void {
@@ -466,31 +632,50 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
   });
 }
 
-/** Best-effort top-level URL; throws for a cross-origin iframe (expected —
- * the background already knows the top URL via chrome.tabs, it doesn't need
- * this frame to report it). */
-function topFrameUrl(): string | null {
-  if (isTopFrame) return location.href;
-  try {
-    return window.top?.location.href ?? null;
-  } catch {
-    return null;
-  }
+// A form that renders late (Apply Now, a React route, a delayed widget) is recognised by
+// looking again when the document changes. Bounded on every axis: one observer, one pending
+// timer, a minimum gap between looks, a cap on looks and on total time, reset only by a real
+// URL change. It stops the moment the page binds or the budget is spent.
+const DIRECT_RECHECK_GAP_MS = 2_500;
+const DIRECT_RECHECK_MAX = 12;
+const DIRECT_RECHECK_WINDOW_MS = 3 * 60_000;
+let directWatchActive = false;
+
+function watchForDirectApplication(): void {
+  if (!isTopFrame || directWatchActive || started || !document.documentElement) return;
+  directWatchActive = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let checks = 0;
+  let windowStart = Date.now();
+  let href = location.href;
+  const stop = () => {
+    directWatchActive = false;
+    observer.disconnect();
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  const look = () => {
+    timer = null;
+    if (started || matched || !isCurrentInstance()) return stop();
+    if (location.href !== href) { href = location.href; checks = 0; windowStart = Date.now(); }
+    if (checks >= DIRECT_RECHECK_MAX || Date.now() - windowStart > DIRECT_RECHECK_WINDOW_MS) return stop();
+    checks += 1;
+    void checkHandoffAndStart("automatic_launch").finally(() => { if (started || matched) stop(); });
+  };
+  const observer = new MutationObserver(() => {
+    if (timer === null) timer = setTimeout(look, DIRECT_RECHECK_GAP_MS);
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
+  dormant = false;
   if (!isCurrentInstance()) return;
-  const resp = (await sendRuntime({
-    type: MSG.CONTENT_READY,
-    probe: buildFrameProbe(),
-    url: location.href,
-    title: document.title,
-    protocolVersion: PROTOCOL_VERSION,
-    isTopFrame,
-    topUrl: topFrameUrl(),
-    detectedAts: null
-  })) as
-    | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null }
+  // The toolbar path reads the page only after a recorded first-use acceptance,
+  // even if something other than the worker's ordered injection loaded this script.
+  if (toolbarInitiated && !(await toolbarDisclosureAccepted())) return;
+  const resp = (await sendRuntime({ type: MSG.CONTENT_READY })) as
+    | { ok: boolean; matched?: boolean; error?: string; recoverable?: boolean; session?: ApplicationSessionData | null; submissionGestureAt?: number | null }
     | undefined;
 
   if (!resp?.matched) {
@@ -501,11 +686,17 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
     // matching requires an exact hostname, so it cannot approve that on its
     // own. Ask the worker instead, which applies the explicit workflow origin
     // graph (same registrable domain, or an allow-listed ATS host).
-    if (isTopFrame && resp?.error === "HANDOFF_URL_MISMATCH" && !reconnectAttempted) {
+    if (isTopFrame && (resp?.error === "HANDOFF_URL_MISMATCH"
+      || (toolbarInitiated && resp?.error === "HANDOFF_NOT_FOUND")) && !reconnectAttempted) {
       reconnectAttempted = true;
       log.info("destination session resolution", { stage: "workflow_lookup", reason: "handoff_url_mismatch_retry" });
-      await requestReconnect();
+      if (!(await requestReconnect())) watchForDirectApplication();
     }
+    // Independent application on a permitted site: no website launch is involved, so the worker
+    // answers with where direct resolution stopped. A page that is not (yet) an application is
+    // watched, boundedly. (Signed-out / unavailable are shown by the worker's own assistant view.)
+    if (isTopFrame && (resp?.error === "DIRECT_NOT_ELIGIBLE" || resp?.error === "HANDOFF_URL_MISMATCH")) watchForDirectApplication();
+    dormant = !started && !matched;
     return;
   }
   matched = true;
@@ -555,14 +746,150 @@ async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {
   });
   if (session?.sessionId !== resp.session.sessionId) preparedDocuments = null;
   session = resp.session;
-  outcome = detectAdapter({ url: location.href, document });
+  restoreFillAuthority();
+  if (resp.submissionGestureAt && Date.now() - resp.submissionGestureAt <= SUBMISSION_OBSERVATION_MS) {
+    submitGestureObserved = true;
+    submissionGestureAt = resp.submissionGestureAt;
+    successSignalPresentBeforeSubmit = false;
+  }
+  const detected = detectAdapter({ url: location.href, document });
+  outcome = detected;
   if (isTopFrame) {
     widget = ensureWidget();
     widget.update({ stage: "detecting", message: "Waiting for the application form…" });
+    if (session.confirmationRequiredAt && !session.confirmationPromptDismissedAt) {
+      widget.showSubmissionConfirmation();
+    }
   }
   started = true;
-  void discoverAndFill(reason);
+  if (await startSubmissionObservation()) return;
+  if (toolbarInitiated && reason === "automatic_launch") {
+    await discoverForToolbar();
+  } else {
+    void discoverAndFill(reason);
+  }
   observeMutations();
+}
+
+/** Read-only application recognition for an explicit toolbar open. This uses
+ * the canonical adapter/root/field discovery stack, but deliberately never
+ * calls fillField, uploads a file, changes a control, or advances the form. */
+async function discoverForToolbar(): Promise<void> {
+  if (!session || !isCurrentInstance()) return;
+  const detected = detectAdapter({ url: location.href, document });
+  outcome = detected;
+  const resolved = resolveApplicationForm(document);
+  const root = resolved.root ?? document;
+  const fields = discoverQuestionFields(root);
+  const submit = detected?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+  const progress: ProgressPayload = {
+    state: fields.length > 0 ? "discovering_fields" : "failed",
+    atsId: detected?.result.atsId ?? "generic",
+    atsDisplayName: detected?.adapter.displayName ?? "Generic application",
+    limited: detected?.limited ?? true,
+    fieldsDiscovered: fields.length,
+    filled: 0,
+    skipped: 0,
+    reviewRequired: fields.length,
+    reachedFinalStep: submit !== null,
+    documentsUploaded: [],
+    reviewDocuments: []
+  };
+  await sendRuntime({ type: MSG.AUTOFILL_PROGRESS, payload: progress });
+  // Failed progress alone has no refusal code for the canonical renderer.
+  // Preserve the existing discovery decision through the trusted failure path,
+  // even when toolbar reinjection superseded an earlier content instance.
+  if (resolved.reason === "APPLICATION_FORM_TOO_LARGE") {
+    await sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: resolved.reason });
+  }
+  widget = ensureWidget();
+  widget.update({
+    stage: fields.length > 0 ? "review" : "failed",
+    total: fields.length,
+    filled: 0,
+    message: fields.length > 0
+      ? `${fields.length} field${fields.length === 1 ? "" : "s"} found. Choose Fill application when you're ready.`
+      : "We couldn't recognize fillable fields on this application. Refresh the page and try again."
+  });
+}
+
+/**
+ * Observe only the result of the user's submission. This listener never calls
+ * click(), requestSubmit(), submit(), or dispatches an input/pointer event.
+ */
+async function startSubmissionObservation(): Promise<boolean> {
+  if (!session || submissionOutcomeReported) return submissionOutcomeReported;
+  if (!successSignalPresentBeforeSubmit && !submitGestureObserved) {
+    const initialText = (document.body?.innerText || document.body?.textContent || "").slice(0, 20_000);
+    successSignalPresentBeforeSubmit = matchesSuccessUrl(location.href) || matchesSuccessMessage(initialText);
+  }
+  return evaluateCurrentSubmission(false);
+}
+
+async function evaluateCurrentSubmission(reportWeakEvidence: boolean): Promise<boolean> {
+  if (!session || submissionOutcomeReported || !isCurrentInstance()) return submissionOutcomeReported;
+  if (submitGestureObserved && submissionGestureAt && Date.now() - submissionGestureAt > SUBMISSION_OBSERVATION_MS) {
+    submitGestureObserved = false;
+    submissionGestureAt = null;
+  }
+  const resolved = resolveApplicationForm(document);
+  const adapterSubmit = outcome?.adapter.findSubmitControl({ url: location.href, document }) ?? null;
+  const evidence = evaluateSubmissionEvidence({
+    url: location.href,
+    visibleText: (document.body?.innerText || document.body?.textContent || "").slice(0, 20_000),
+    formStillPresent: Boolean(resolved.root || adapterSubmit),
+    submitClicked: submitGestureObserved,
+    successSignalWasPresentBeforeSubmit: successSignalPresentBeforeSubmit,
+    submissionResponse: null
+  });
+
+  if (evidence.confirmed) {
+    submissionOutcomeReported = true;
+    clearSubmissionTimer();
+    automaticRunSettled = true;
+    const response = await sendRuntime({
+      type: MSG.SUBMISSION_CONFIRMED,
+      sessionId: session.sessionId,
+      evidenceType: evidence.evidenceType,
+      submissionTimestamp: new Date().toISOString(),
+      submissionReference: evidence.reference,
+      ats: outcome?.result.atsId ?? session.atsType ?? null
+    }) as { ok?: boolean } | undefined;
+    if (!response?.ok) {
+      // The server is authoritative. A refused/failed request stays retryable
+      // through the user's explicit Mark as applied path and is never painted
+      // as a successful automatic confirmation.
+      widget?.update({
+        stage: "review",
+        message: "Submission detected, but XpertApply could not record it. Confirm it in XpertApply."
+      });
+      await sendRuntime({
+        type: MSG.MANUAL_CONFIRMATION_REQUIRED,
+        sessionId: session.sessionId,
+        reason: "AMBIGUOUS_CONFIRMATION"
+      });
+      widget?.showSubmissionConfirmation();
+      return true;
+    }
+    widget?.update({ stage: "ready", message: "Application submitted and recorded in your Tracker." });
+    return true;
+  }
+
+  if (reportWeakEvidence && submitGestureObserved) {
+    if (evidence.reason === "VALIDATION_FAILED") {
+      submitGestureObserved = false;
+      widget?.update({ stage: "review", message: "The employer form needs changes before it can be submitted." });
+      return false;
+    }
+    submissionOutcomeReported = true;
+    const response = await sendRuntime({
+      type: MSG.MANUAL_CONFIRMATION_REQUIRED,
+      sessionId: session.sessionId,
+      reason: evidence.reason
+    }) as { ok?: boolean } | undefined;
+    if (response?.ok) widget?.showSubmissionConfirmation();
+  }
+  return false;
 }
 
 function ensureWidget(): ReturnType<typeof createWidget> {
@@ -578,20 +905,62 @@ function ensureWidget(): ReturnType<typeof createWidget> {
           void requestReconnect();
           return;
         }
-        void (matched && session ? fill("manual_retry") : checkHandoffAndStart("manual_retry"));
+        void (matched && session ? discoverAndFill("manual_retry") : checkHandoffAndStart("manual_retry"));
       },
       rescan: () => {
         automaticRunSettled = false;
         rootRecoveryAttempted = false;
-        void (matched && session ? fill("manual_retry") : checkHandoffAndStart("manual_retry"));
+        void (matched && session ? discoverAndFill("manual_retry") : checkHandoffAndStart("manual_retry"));
       },
-      clear: () => { if (matched) clearJobPilotFields(document); },
+      clear: () => {
+        if (!matched) return;
+        void clearJobPilotFields(document).then(({ cleared, failed }) => {
+          widget?.update({
+            stage: "review",
+            message: failed > 0
+              ? `Cleared ${cleared} field${cleared === 1 ? "" : "s"}, but ${failed} choice control${failed === 1 ? "" : "s"} could not be safely restored. Review the marked field${failed === 1 ? "" : "s"} manually.`
+              : `Cleared ${cleared} XpertApply-filled field${cleared === 1 ? "" : "s"}.`
+          });
+        });
+      },
       openApplication: () => { void manuallyOpenApplication(); },
       reconnect: () => {
         widget?.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true, offerReconnect: true });
         void requestReconnect();
       },
-      complete: () => { if (session) void sendRuntime({ type: MSG.COMPLETE_SESSION, sessionId: session.sessionId }); },
+      complete: () => {
+        const completingSession = session;
+        const completingWidget = widget;
+        if (!completingSession || !completingWidget) return;
+        void sendRuntime({ type: MSG.COMPLETE_SESSION, sessionId: completingSession.sessionId }).then((response) => {
+          // A late response must not update a replacement workflow/widget.
+          if (session !== completingSession || widget !== completingWidget) return;
+          if (!response || typeof response !== "object" || !("ok" in response) || response.ok !== true) {
+            completingWidget.update({ stage: "failed", message: "Application completion could not be saved. Please try again." });
+          }
+        });
+      },
+      confirmSubmitted: async () => {
+        if (!session) return { ok: false, error: "This application session is no longer available." };
+        const response = await sendRuntime({ type: MSG.USER_CONFIRMED_SUBMITTED, sessionId: session.sessionId }) as { ok?: boolean; error?: string } | undefined;
+        if (!response?.ok) return { ok: false, error: response?.error ?? "XpertApply couldn't record this application." };
+        submissionOutcomeReported = true;
+        clearSubmissionTimer();
+        widget?.update({ stage: "ready", message: "Application marked as applied and added to Tracker." });
+        return { ok: true };
+      },
+      confirmNotSubmitted: async () => {
+        if (!session) return { ok: false, error: "This application session is no longer available." };
+        const response = await sendRuntime({ type: MSG.USER_CONFIRMED_NOT_SUBMITTED, sessionId: session.sessionId }) as { ok?: boolean; error?: string } | undefined;
+        if (!response?.ok) return { ok: false, error: response?.error ?? "XpertApply couldn't save that choice." };
+        submissionOutcomeReported = false;
+        clearSubmissionTimer();
+        submitGestureObserved = false;
+        submissionGestureAt = null;
+        successSignalPresentBeforeSubmit = matchesSuccessUrl(location.href) || matchesSuccessMessage((document.body?.innerText || document.body?.textContent || "").slice(0, 20_000));
+        widget?.update({ stage: "review", message: "Not marked as applied. Continue when you're ready." });
+        return { ok: true };
+      },
       diagnostics: copyDiagnostics,
       captureControl: captureCurrentEligibilityControls,
       teach: (enabled) => { if (enabled) beginTeaching(); else { stopTeaching?.(); stopTeaching = null; } }
@@ -739,12 +1108,14 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
 
   const message = obstructed
     ? "A cookie or consent banner is covering this page. Dismiss it, then choose Retry."
-    : code === "FIELD_DISCOVERY_RETURNED_ZERO"
-      ? "The application form loaded but XpertApply found no fields it can fill. Choose Rescan application."
+    : code === "APPLICATION_FORM_TOO_LARGE"
+      ? `This page has ${readiness.root?.controlCount ?? "too many"} controls, above XpertApply's safe limit of ${readiness.root?.controlBudget ?? 1_000}. XpertApply won't partially fill it; review the form manually.`
+      : code === "FIELD_DISCOVERY_RETURNED_ZERO"
+        ? "The application form loaded but XpertApply found no fields it can fill. Choose Rescan application."
       : canOpen
         ? "Click once to open the application form. XpertApply will continue automatically."
         : stillOnEntryUrl
-          ? "This looks like a job listing rather than an application form. Open the employer's apply link, then choose Retry."
+          ? "Click Apply now to continue. XpertApply will follow you to the application form."
           : "The application page opened, but its form did not finish loading in time. Choose Retry.";
 
   log.info("destination discovery terminal", {
@@ -766,7 +1137,10 @@ function reportDestinationFailure(readiness: ReadinessResult, obstructed: boolea
       ? "CONSENT_OVERLAY_BLOCKING"
       : canOpen
         ? "NAVIGATION_NEEDS_USER_GESTURE"
-        : code
+        // Still on the job-details page and no single Apply control could be chosen safely: say so, instead of a form timeout.
+        : stillOnEntryUrl && code !== "APPLICATION_FORM_TOO_LARGE" && code !== "FIELD_DISCOVERY_RETURNED_ZERO"
+          ? (findActivationCandidates(document).length > 0 ? "APPLICATION_CTA_AMBIGUOUS" : "APPLICATION_CTA_NOT_FOUND")
+          : code
   });
 }
 
@@ -812,14 +1186,34 @@ async function reportFrameRemedy(): Promise<void> {
       readableFieldCount: frame.readableFieldCount
     }))
   })) as
-    | { ok?: boolean; outcome?: string; reopenOrigin?: string | null; frames?: unknown[]; enumerationSource?: string; enumerationComplete?: boolean }
+    | {
+        ok?: boolean;
+        outcome?: string;
+        /** The ONE origin the worker has established belongs to this workflow. */
+        candidateOrigin?: string | null;
+        candidateSource?: string | null;
+        frames?: unknown[];
+        enumerationSource?: string;
+        enumerationComplete?: boolean;
+      }
     | undefined;
 
-  const candidate = selectApplicationFrame(observed);
+  // The WORKER decides which origin may be acted on; this side only supplies
+  // observation and, once told, the URL to open. Ranking locally would put that
+  // choice back within reach of the page: an ad or consent iframe can be made
+  // as application-shaped as the real ATS frame, and DOM order is page-
+  // controlled. `candidateOrigin` has already passed originJoinsWorkflow.
+  const trustedOrigin = inspection?.candidateOrigin ?? null;
+  const candidate = trustedOrigin
+    ? observed.find((frame) => frame.origin === trustedOrigin) ?? null
+    : null;
   const reopenUrl = reopenableFrameUrl(candidate, document);
   const outcome = inspection?.outcome
+    // No answer from the worker means no trust decision was made, so there is
+    // no candidate to name. Fail closed rather than falling back to a local
+    // verdict about a frame nobody has vouched for.
     ?? frameVerdict({
-      frame: candidate,
+      frame: null,
       contentScriptResponds: false,
       hostPermissionGranted: false,
       reportedFieldCount: null
@@ -839,10 +1233,30 @@ async function reportFrameRemedy(): Promise<void> {
     reopenAvailable: String(Boolean(reopenUrl))
   });
 
+  // Inspection may itself have activated a fresh Chrome-confirmed frame from
+  // persisted exact authority. That child now owns discovery/fill; do not
+  // overwrite the healthy transition with the old unreachable fallback.
+  if ([
+    "APPLICATION_FRAME_FOUND",
+    "APPLICATION_FRAME_DISCOVERY_COMPLETED",
+    "APPLICATION_FRAME_DISCOVERY_ZERO_FIELDS"
+  ].includes(outcome)) {
+    pendingFrameRemedy = null;
+    widget = ensureWidget();
+    widget.update({
+      stage: "detecting",
+      stageLabel: "Application in embedded form",
+      message: "The application is inside an embedded form. XpertApply is filling it there…"
+    });
+    return;
+  }
+
   // Prefer asking for the exact origin: it keeps the user in one tab and one
   // session. Reopening is the fallback that works even when no grant can help.
+  // Both remedies target `trustedOrigin` and nothing else — an untrusted frame
+  // was removed upstream, so neither path can name it to the user.
   const permissionOrigin = outcome === "APPLICATION_FRAME_PERMISSION_MISSING"
-    ? inspection?.reopenOrigin ?? candidate?.origin ?? null
+    ? trustedOrigin
     : null;
 
   pendingFrameRemedy = permissionOrigin
@@ -896,8 +1310,13 @@ async function applyFrameRemedy(): Promise<boolean> {
       await discoverAndFill("manual_retry");
       return true;
     }
-    // Denied, or the origin is not part of this workflow. Reopening still works.
-    const fallback = reopenableFrameUrl(selectApplicationFrame(observeFrames(document)), document);
+    // Denied, or the origin is not part of this workflow. Reopening still works
+    // — but only for the origin the worker vouched for, never for whatever
+    // frame happens to rank highest in this document.
+    const fallback = reopenableFrameUrl(
+      observeFrames(document).find((frame) => frame.origin === remedy.origin) ?? null,
+      document
+    );
     if (!fallback) {
       widget?.update({
         stage: "failed",
@@ -1124,7 +1543,9 @@ async function activateApplicationSurfaceOnce(): Promise<SurfaceActivation> {
       failureCode: candidates.length ? "APPLICATION_CTA_AMBIGUOUS" : "APPLICATION_CTA_NOT_FOUND"
     };
     log.debug("no safe application-surface control on this page");
-    void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: "FORM_NOT_RENDERED" });
+    // Several plausible Apply controls and no way to tell which is this job's is a different state from "no form yet": the user is
+    // asked to choose, and the launch follows whichever they click (see installApplyClickObserver).
+    void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: candidates.length ? "APPLICATION_CTA_AMBIGUOUS" : "FORM_NOT_RENDERED" });
     return "no_candidate";
   }
 
@@ -1447,6 +1868,7 @@ async function fill(reason: AutofillReason): Promise<void> {
   if (!formRoot.confident) {
     running = false;
     const ambiguous = formRoot.reason === "APPLICATION_FORM_AMBIGUOUS";
+    const tooLarge = formRoot.reason === "APPLICATION_FORM_TOO_LARGE";
 
     // An unresolved root is EXPECTED state while the application has not been
     // revealed yet (the live Airbnb page ships "Role overview" selected and no
@@ -1456,13 +1878,15 @@ async function fill(reason: AutofillReason): Promise<void> {
     log.debug(`application root unresolved (${formRoot.reason ?? "unknown"}), ${formRoot.candidates.length} candidate(s)`);
 
     // Ambiguity is a real dead end — two different forms, nothing safe to pick.
-    if (ambiguous) {
+    if (ambiguous || tooLarge) {
       widget?.update({
         stage: "failed",
-        message:
-          "XpertApply found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it."
+        message: tooLarge
+          ? `This page has ${formRoot.controlCount ?? "too many"} controls, above XpertApply's safe limit of ${formRoot.controlBudget ?? 1_000}. XpertApply won't partially fill it; review the form manually.`
+          : "XpertApply found more than one possible application form on this page and won't guess. Use Copy diagnostics to report it.",
+        recoverable: true
       });
-      void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: "APPLICATION_FORM_AMBIGUOUS" });
+      void sendRuntime({ type: MSG.AUTOFILL_FAILED, reasonCode: formRoot.reason });
       return;
     }
 
@@ -1477,6 +1901,33 @@ async function fill(reason: AutofillReason): Promise<void> {
     if ((activation === "no_candidate" || activation === "already_activated") && !rootRecoveryAttempted) {
       rootRecoveryAttempted = true;
       await discoverAndFill(reason);
+    }
+    return;
+  }
+
+  // This frame believes it holds the application. So might a sibling: a tab can
+  // contain the real application AND a vendor widget that asks for a name, an
+  // e-mail and a résumé. Exactly one frame per tab may fill, and the worker —
+  // the only party with a tab-wide view — decides which. Asked BEFORE the
+  // document upload and before any value is written.
+  const lease = await requestFillLease(formRoot.confident);
+  if (!lease.granted) {
+    running = false;
+    // A refusal because the worker could not yet establish which frame holds
+    // the application is not terminal — a probe arriving later can settle it,
+    // and latching here would strand a slow-loading embedded application. A
+    // refusal because another frame IS the application is final.
+    const retryable = lease.reason === "FRAME_SELECTION_UNRESOLVED";
+    automaticRunSettled = !retryable;
+    log.info("standing down; this frame is not the application", { reason: lease.reason });
+    // Not a failure: the application is being filled somewhere else in this
+    // tab. Saying so in the widget would put an error on a healthy run.
+    if (isTopFrame) {
+      widget?.update({
+        stage: "detecting",
+        stageLabel: "Application in embedded form",
+        message: "The application is inside an embedded form. XpertApply is filling it there…"
+      });
     }
     return;
   }
@@ -1627,6 +2078,15 @@ async function fill(reason: AutofillReason): Promise<void> {
   try {
     const res = await runAutofill(session, outcome, {
       fetchDocument,
+      draftAnswers: async (questions) => {
+        const draftSessionId = session?.sessionId;
+        if (draftSessionId == null) return null;
+        const response = (await sendRuntime({ type: MSG.DRAFT_ANSWERS, sessionId: draftSessionId, questions })) as
+          { ok?: boolean; drafts?: DraftedAnswer[] } | undefined;
+        // A late reply for an application this document no longer belongs to is dropped, never applied.
+        if (!isCurrentInstance() || session?.sessionId !== draftSessionId || !response?.ok || !Array.isArray(response.drafts)) return null;
+        return response.drafts;
+      },
       preparedDocuments: documentsForRun,
       onUploadStart: (kind) => widget?.update({
         stage: "uploading",
@@ -1712,23 +2172,22 @@ async function fill(reason: AutofillReason): Promise<void> {
     });
     publishTransactionPanel();
 
+    completedWorkflowSessionId = session.sessionId;
+    completedWorkflowProgress = projectWorkflowProgress({
+      ...res.progress,
+      state: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review"
+    }, questionLedger.counts(), questionLedger.all());
     void sendRuntime({
       type: MSG.AUTOFILL_RESULT,
       sessionId: session.sessionId,
       result: {
         ...res.result,
-        status: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review",
-        fields_discovered: ledgerCounts.discovered,
-        fields_filled: ledgerCounts.filled,
-        review_items: ledgerCounts.pending + lastFinalVerification.technicalIssues
+        status: completedWorkflowProgress.state === "completed" ? "completed" : "completed_with_review",
+        fields_discovered: completedWorkflowProgress.fieldsDiscovered,
+        fields_filled: completedWorkflowProgress.filled,
+        review_items: completedWorkflowProgress.reviewRequired
       },
-      progress: {
-        ...res.progress,
-        state: lastFinalVerification.canEnterReviewReady ? "completed" : "completed_with_review",
-        fieldsDiscovered: ledgerCounts.discovered,
-        filled: ledgerCounts.filled,
-        reviewRequired: ledgerCounts.pending + lastFinalVerification.technicalIssues
-      }
+      progress: completedWorkflowProgress
     });
     if (
       lastFinalVerification.canEnterReviewReady
@@ -1762,6 +2221,8 @@ async function fill(reason: AutofillReason): Promise<void> {
             : atReview
               ? "Live verification passed. Review the application before submitting."
               : "All required live controls are verified. Review everything before submitting."
+          : ledgerCounts.needsConfirmation > 0
+            ? `${ledgerCounts.needsConfirmation} filled field${ledgerCounts.needsConfirmation === 1 ? "" : "s"} need${ledgerCounts.needsConfirmation === 1 ? "s" : ""} your confirmation before final review.`
           : tiktokActive
             ? `${lastFinalVerification.requiredRemaining} required eligibility field${lastFinalVerification.requiredRemaining === 1 ? "" : "s"} remain. ${lastFinalVerification.technicalIssues} technical issue${lastFinalVerification.technicalIssues === 1 ? "" : "s"}. ${consentMessage}`.trim()
             : `Autofill is incomplete. ${lastFinalVerification.requiredRemaining} required field${lastFinalVerification.requiredRemaining === 1 ? "" : "s"} remain; ${lastFinalVerification.technicalIssues} technical issue${lastFinalVerification.technicalIssues === 1 ? "" : "s"}. ${consentMessage}`.trim(),
@@ -1832,7 +2293,7 @@ async function fill(reason: AutofillReason): Promise<void> {
  */
 /** The one authoritative record of what happened to each question. Every
  * widget count is derived from it, so no two summaries can disagree. */
-export const questionLedger = new QuestionLedger();
+export { questionLedger } from "./workflowLedger";
 const questionExecutionTraces = new Map<string, QuestionExecutionTrace>();
 const resolutionRuns = new ResolutionRunCoordinator();
 let activeResolutionRun: EligibilityRun | null = null;
@@ -1858,6 +2319,8 @@ function beginResolutionRun(): { id: string; createdAt: string } {
   // Retry is a new observation of the page. Old unresolved items and option
   // probes must not survive and overwrite the new resolver result.
   questionLedger.clear();
+  completedWorkflowProgress = null;
+  completedWorkflowSessionId = null;
   questionExecutionTraces.clear();
   lastFinalVerification = null;
   lastTikTokAdapterTrace = null;
@@ -1885,7 +2348,16 @@ function stableTransactionFailure(reason: string): string | null {
     backing_value_mismatch: "CONTROL_VALUE_VERIFICATION_FAILED",
     validation_failed: "CONTROL_VALUE_VERIFICATION_FAILED",
     stale_resolution: "CANONICAL_RESOLUTION_CONFLICT",
-    timeout: "CONTROL_VALUE_VERIFICATION_FAILED"
+    timeout: "CONTROL_VALUE_VERIFICATION_FAILED",
+    // Deliberate safety refusals, not verification failures. Falling through to
+    // CONTROL_VALUE_VERIFICATION_FAILED would report a gate that worked as a
+    // control that misbehaved, and would send a diagnostics reader looking for
+    // a DOM problem that does not exist.
+    semantics_incompatible: "ANSWER_SEMANTICS_INCOMPATIBLE",
+    consequential_answer_refused: "CONSEQUENTIAL_ANSWER_REFUSED",
+    option_contradicts_answer: "OPTION_CONTRADICTS_ANSWER",
+    // Not a failure at all: the user answered this one themselves.
+    user_value_present: "USER_VALUE_PRESENT"
   };
   return reason === "verified" ? null : codes[reason] ?? "CONTROL_VALUE_VERIFICATION_FAILED";
 }
@@ -1966,10 +2438,10 @@ function recordFinalControl(control: FinalControlVerification): void {
     && (prior?.state === "answer_missing" || prior?.state === "requires_confirmation");
   const state = control.consent
     ? "sensitive_manual"
+    : preserveMissingAnswer
+      ? null
     : control.verified
       ? "filled_verified"
-      : preserveMissingAnswer
-        ? null
       : control.required
         ? "interaction_failed"
         : null;
@@ -2365,7 +2837,8 @@ async function resolveAndApply(
 
     const outcome = await applyResolvedAnswer(root, entry, labelToApply, {
       canonicalKey: result.canonical_key,
-      typedAnswer: typeof result.typed_answer === "boolean" ? result.typed_answer : null
+      typedAnswer: typeof result.typed_answer === "boolean" ? result.typed_answer : null,
+      safeSource: result.safe_source
     });
     if (!isActiveResolutionRun(runId)) continue;
     emitStage(
@@ -2611,6 +3084,7 @@ function uidOfFieldKey(fieldKey: string): string {
 /** Push the authoritative list and its counts into the widget. Called after
  * every action so what the user sees is never one step behind the ledger. */
 function refreshAuthoritativeReview(): void {
+  emitProgressOnly();
   if (!isTopFrame) return;
   const partition = partitionReview(session ? buildReviewItems(ledger, session) : []);
   widget?.showActions(
@@ -2928,12 +3402,63 @@ async function enumerateClosedControls(
   return enumeratedOptions;
 }
 
+/**
+ * May the backend resolver's answer for this control be written?
+ *
+ * Applies the SAME semantic compatibility rules the local fill path uses, to
+ * the SAME rendered question text. A consequential key whose jurisdiction or
+ * polarity cannot be positively established is refused here exactly as it would
+ * be in `decideFill` — so there is one answer to "may this be stated on the
+ * user's behalf", not one per code path.
+ */
+function resolvedAnswerAllowed(
+  entry: PreparedQuestion,
+  canonicalKey: string | null
+): { ok: true } | { ok: false; reason: string } {
+  if (!canonicalKey) return { ok: true };
+  const key = canonicalKey as CanonicalField;
+  if (!isConsequentialKey(key)) return { ok: true };
+  const rendered = [
+    entry.field.label,
+    entry.field.ariaLabel,
+    entry.field.placeholder,
+    entry.field.nearbyText,
+    entry.field.sectionHeading
+  ].filter(Boolean).join(" ");
+  const compatible = checkSemanticCompatibility(key, rendered, { jobLocation: session?.jobLocation });
+  return compatible.ok ? { ok: true } : { ok: false, reason: compatible.reason };
+}
+
 async function applyResolvedAnswer(
   root: ParentNode,
   entry: PreparedQuestion,
   approvedLabel: string,
-  answer: { canonicalKey: string | null; typedAnswer: boolean | null }
+  answer: { canonicalKey: string | null; typedAnswer: boolean | null; safeSource: string }
 ): Promise<{ status: QuestionState; reason: string; displayed?: string; backing?: string; transaction?: TransactionResult }> {
+  // THE CLIENT GATE IS FINAL, INCLUDING FOR THE SERVER'S OWN ANSWER.
+  //
+  // The resolver runs on the backend and answers with an option reference this
+  // page reported seeing, which is what keeps a model from inventing a value.
+  // It does not make the answer semantically appropriate: the backend does not
+  // re-read the rendered wording for jurisdiction or polarity, so a resolved
+  // sponsorship answer could still land on a question asking the opposite, or
+  // on one asking about another country. This path used to write straight to
+  // the DOM, which made it a way around the gate every other fill passes.
+  const gate = resolvedAnswerAllowed(entry, answer.canonicalKey);
+  if (!gate.ok) {
+    log.info("resolver answer refused by the client gate", { reason: gate.reason });
+    return {
+      status: "requires_confirmation" as const,
+      reason: gate.reason,
+      transaction: {
+        ok: false,
+        reason: "semantics_incompatible",
+        states: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED"],
+        adapter: "custom_choice"
+      }
+    };
+  }
+
   // Re-discover: the page may have re-rendered between asking and acting, and
   // an answer computed against a different option set must not be applied.
   const live = discoverQuestionFields(root).find(
@@ -2956,6 +3481,40 @@ async function applyResolvedAnswer(
       transaction: {
         ok: false,
         reason: "stale_resolution",
+        states: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED", "QUEUED_FOR_ACTUATION", "CONTROL_LOCATED"],
+        adapter: live.element instanceof HTMLSelectElement ? "native_select" : "custom_choice"
+      }
+    };
+  }
+
+  // B-03. The resolver's recommendation is ADVISORY for a consequential key.
+  //
+  // Everything above established that the QUESTION is one this answer may speak
+  // to — same jurisdiction, same polarity — and that the option set has not
+  // changed underneath us. None of it established that the option the resolver
+  // pointed at MEANS what the canonical answer says, and a provider returning
+  // the exactly-offered wrong option with confidence 1.0 passed every one of
+  // them. The deterministic gate runs here, against the option set as it stands
+  // right now, and BEFORE anything is opened or clicked: a refusal leaves the
+  // employer's control untouched.
+  const consequential = checkConsequentialOption({
+    canonicalKey: answer.canonicalKey,
+    typedAnswer: answer.typedAnswer,
+    approvedLabel,
+    offeredLabels: (live.options ?? []).filter((label) => label.trim().length > 0),
+    safeSource: answer.safeSource,
+    storedAnswer: answer.canonicalKey
+      ? session?.answers.find((stored) => stored.canonical_key === answer.canonicalKey)
+      : undefined
+  });
+  if (!consequential.ok) {
+    log.info("consequential answer refused by the client gate", { reason: consequential.reason });
+    return {
+      status: "requires_confirmation" as const,
+      reason: consequential.reason,
+      transaction: {
+        ok: false,
+        reason: "consequential_answer_refused",
         states: ["DISCOVERED", "RESOLVER_REQUESTED", "SEMANTICALLY_RESOLVED", "QUEUED_FOR_ACTUATION", "CONTROL_LOCATED"],
         adapter: live.element instanceof HTMLSelectElement ? "native_select" : "custom_choice"
       }
@@ -2987,9 +3546,17 @@ async function applyResolvedAnswer(
         root
       )
     : await selectApprovedOption(live, approvedLabel, answer, { reacquire });
-  return result.ok
-    ? { status: "filled_verified" as const, reason: "verified", displayed: result.displayed, backing: result.backing, transaction: result }
-    : { status: "interaction_failed" as const, reason: result.reason, displayed: result.displayed, backing: result.backing, transaction: result };
+  if (result.ok) {
+    return { status: "filled_verified" as const, reason: "verified", displayed: result.displayed, backing: result.backing, transaction: result };
+  }
+  // The user answered this one themselves while the request was in flight. That
+  // is not a technical failure and there is nothing to retry — their answer
+  // stands, and it is surfaced for them to confirm rather than reported as
+  // something XpertApply filled.
+  const status = result.reason === "user_value_present"
+    ? ("requires_confirmation" as const)
+    : ("interaction_failed" as const);
+  return { status, reason: result.reason, displayed: result.displayed, backing: result.backing, transaction: result };
 }
 
 // A repeated DOM mutation must never click the same navigation control twice.
@@ -3063,19 +3630,18 @@ const reviewHandlers: ReviewHandlers = {
       // Apply immediately to whichever discovered fields the field mapper already
       // classified — the same classification used for automatic fill, no separate
       // DOM-guessing heuristic here.
-      const nameFills: Promise<unknown>[] = [];
-      const resolved = new Set<string>();
+      const nameFills: Promise<{ uid: string; verified: boolean }>[] = [];
       for (const [uid, canonicalKey] of lastCanonicalKeyByUid) {
         const field = lastFields.get(uid);
         const v = valueForKey[canonicalKey];
         if (!field || v === undefined) continue;
-        nameFills.push(fillField(field, v, { status: "verified", force: true }));
-        resolved.add(uid);
+        nameFills.push(fillField(field, v, { status: "verified", force: true })
+          .then(outcome => ({ uid, verified: outcome.status === "filled" })));
       }
-      await Promise.all(nameFills);
-      for (const uid of resolved) markLedgerResolved(uid, "user");
+      const results = await Promise.all(nameFills);
+      for (const result of results) if (result.verified) markLedgerResolved(result.uid, "user");
       refreshLedgerCounts();
-      return true;
+      return results.length > 0 && results.every(result => result.verified);
     }
     const field = lastFields.get(id);
     if (!field) return false;
@@ -3169,11 +3735,17 @@ function markLedgerResolved(uid: string, fillSource: string): void {
   entry.verified = true;
   entry.currentValuePresent = true;
   entry.fillSource = fillSource;
+  // Only the explicit review handler reaches here after its verified fill.
+  // Scalar scan absorption intentionally cannot resolve terminal questions.
+  const question = questionLedger.get(`f_${entry.frameId}_${uid}`);
+  if (question && question.sensitivity !== "consent") {
+    questionLedger.recordFinalVerification({ fieldKey: question.fieldKey, state: "filled_verified", reasonCode: "USER_CONFIRMED_REVIEW_FILL", required: question.required, canonicalCategory: question.canonicalCategory });
+  }
 }
 
 function refreshLedgerCounts(): void {
   ledgerCounts = computeCounts(ledger);
-  widget?.refreshCounts(ledgerCounts);
+  refreshAuthoritativeReview();
 }
 
 /**
@@ -3570,12 +4142,15 @@ function observeMutations(): void {
     if (Date.now() > stopAt) { observer.disconnect(); return; }
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
-      // Continue filling any newly rendered fields. The fill engine skips fields
-      // already filled or edited by the user, so this never duplicates values.
-      if (session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
-        void discoverAndFill("continue_after_navigation");
-      }
-      else emitProgressOnly();
+      void evaluateCurrentSubmission(false).then((confirmed) => {
+        if (confirmed) return;
+        // Continue filling any newly rendered fields. The fill engine skips
+        // fields already filled or edited by the user.
+        if (toolbarFillAuthorized && session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
+          void discoverAndFill("continue_after_navigation");
+        }
+        else emitProgressOnly();
+      });
     }, 500);
   });
   observer.observe(document.body, { childList: true, subtree: true });
@@ -3584,20 +4159,11 @@ function observeMutations(): void {
 
 function emitProgressOnly(): void {
   if (!isCurrentInstance() || !outcome) return;
-  const submit = outcome.adapter.findSubmitControl({ url: location.href, document });
-  const progress: ProgressPayload = {
-    state: session ? "detecting_ats" : "waiting_for_content_script",
-    atsId: outcome.result.atsId,
-    atsDisplayName: outcome.adapter.displayName,
-    limited: outcome.limited,
-    fieldsDiscovered: 0,
-    filled: 0,
-    skipped: 0,
-    reviewRequired: 0,
-    reachedFinalStep: submit !== null,
-    documentsUploaded: [],
-    reviewDocuments: []
-  };
+  // Initial discovery already publishes its own state. A DOM mutation is not
+  // a new workflow: it must never reset an active or completed Fill to zero.
+  if (running || !completedWorkflowProgress || !session || session.sessionId !== completedWorkflowSessionId) return;
+  completedWorkflowProgress = projectWorkflowProgress(completedWorkflowProgress, questionLedger.counts(), questionLedger.all());
+  const progress = completedWorkflowProgress;
   void sendRuntime({ type: MSG.AUTOFILL_PROGRESS, payload: progress });
 }
 

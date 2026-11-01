@@ -92,7 +92,7 @@ describe("Temporal (Ashby) application page", () => {
   it("leaves the page pristine after clearing", async () => {
     mountFixture(TEMPORAL_ASHBY_FIXTURE);
     await runFill(document.querySelector("form")!, temporalSession());
-    clearJobPilotFields(document);
+    await clearJobPilotFields(document);
     expect((document.getElementById("_systemfield_name") as HTMLInputElement).value).toBe("");
     expect(document.querySelectorAll("[data-jobpilot-filled]").length).toBe(0);
   });

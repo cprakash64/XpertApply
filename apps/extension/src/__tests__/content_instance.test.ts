@@ -19,3 +19,36 @@ describe("content-script reload ownership", () => {
     expect(makeContentInstanceId("build-a")).not.toBe(makeContentInstanceId("build-a"));
   });
 });
+
+describe("same-document workflow reinjection", () => {
+  it("retains the live ledger owner instead of publishing fresh discovery", async () => {
+    const { claimWorkflowContentInstance } = await import("../content/instance");
+    const world: Record<string, unknown> = {};
+    const live = claimWorkflowContentInstance(world, "first", "build-a", () => true);
+    const reinjected = claimWorkflowContentInstance(world, "second", "build-a", () => true);
+    expect(live()).toBe(true);
+    expect(reinjected()).toBe(false);
+    expect(world.__jobpilotContentInstance).toBe("first");
+  });
+
+  it.each([false, "throws"])("replaces an orphaned runtime (%s), including the same build", async invalid => {
+    const { claimWorkflowContentInstance } = await import("../content/instance");
+    const world: Record<string, unknown> = {};
+    const old = claimWorkflowContentInstance(world, "old", "build-a", () => {
+      if (invalid === "throws") throw new Error("Extension context invalidated");
+      return false;
+    });
+    const current = claimWorkflowContentInstance(world, "new", "build-a", () => true);
+    expect(old()).toBe(false);
+    expect(current()).toBe(true);
+  });
+
+  it("permits a changed build to supersede the previous owner", async () => {
+    const { claimWorkflowContentInstance } = await import("../content/instance");
+    const world: Record<string, unknown> = {};
+    const old = claimWorkflowContentInstance(world, "old", "build-a", () => true);
+    const current = claimWorkflowContentInstance(world, "new", "build-b", () => true);
+    expect(old()).toBe(false);
+    expect(current()).toBe(true);
+  });
+});

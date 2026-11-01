@@ -1,5 +1,5 @@
 // Bundles the MV3 extension into dist/ with esbuild, then copies static assets.
-// Content script + sidepanel are IIFE (self-contained); background is ESM
+// Content script + extension pages are IIFE (self-contained); background is ESM
 // (MV3 service workers support type: module).
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, rmSync } from "node:fs";
@@ -7,8 +7,22 @@ import { execSync } from "node:child_process";
 import { readFileSync as readSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import {
+  bridgeOriginsForProfile,
+  bridgeMatchPatternsForProfile
+} from "./src/bridge-origin-profiles.mjs";
+import { DEVELOPMENT_BRIDGE_ORIGINS } from "./src/development-bridge-origins.mjs";
+import { resolveExtensionBuild } from "./src/build-profile.mjs";
+import { manifestForProfile } from "./src/staging-manifest.mjs";
+import { STAGING_API_ORIGIN } from "./src/staging-origins.mjs";
 
-const outdir = "dist";
+const { profile: BUILD_PROFILE, outdir } = resolveExtensionBuild({
+  argv: process.argv.slice(2),
+  env: process.env
+});
+// Loopback is a development/e2e convenience only. Production and staging never trust or register it.
+const allowLoopbackBridge = BUILD_PROFILE === "development" || BUILD_PROFILE === "e2e";
+const STAGING = BUILD_PROFILE === "staging";
 
 // --------------------------------------------------------------------------- //
 // Build identity
@@ -45,6 +59,7 @@ function sourceFingerprint() {
     }
   };
   walk("src");
+  walk("icons");
   files.push("manifest.json", "build.mjs");
 
   const hash = createHash("sha256");
@@ -77,7 +92,13 @@ try {
 const buildDefine = {
   __JOBPILOT_BUILD_VERSION__: JSON.stringify(BUILD_VERSION),
   __JOBPILOT_BUILT_AT__: JSON.stringify(BUILT_AT),
-  __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID)
+  __JOBPILOT_BUILD_ID__: JSON.stringify(BUILD_ID),
+  __XPERTAPPLY_ALLOW_LOOPBACK__: JSON.stringify(allowLoopbackBridge),
+  __XPERTAPPLY_BRIDGE_ORIGINS__: JSON.stringify(bridgeOriginsForProfile(BUILD_PROFILE)),
+  __XPERTAPPLY_PROFILE__: JSON.stringify(BUILD_PROFILE),
+  // Staging pins its API and refuses any stored override outside this list; other profiles keep their existing behaviour.
+  __XPERTAPPLY_DEFAULT_API_BASE__: JSON.stringify(STAGING ? STAGING_API_ORIGIN : "https://api.xpertapply.com"),
+  __XPERTAPPLY_STRICT_API_ORIGINS__: JSON.stringify(STAGING ? [STAGING_API_ORIGIN] : null)
 };
 rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
@@ -88,6 +109,8 @@ await build({
   ...common,
   format: "esm",
   entryPoints: { background: "src/background.ts" },
+  // The e2e-only toolbar hook is injected for --profile e2e and never otherwise.
+  ...(BUILD_PROFILE === "e2e" ? { inject: ["src/e2eToolbarHook.ts"] } : {}),
   outdir
 });
 
@@ -96,7 +119,10 @@ await build({
   format: "iife",
   entryPoints: {
     content: "src/content/bootstrap.ts",
-    sidepanel: "src/ui/sidepanel.ts"
+    overlayBootstrap: "src/content/overlayBootstrap.ts",
+    sidepanel: "src/ui/sidepanel.ts",
+    assistant: "src/ui/assistant.ts",
+    fieldentry: "src/ui/fieldentry.ts"
   },
   outdir
 });
@@ -104,10 +130,17 @@ await build({
 // Write the manifest with the same identity compiled into the bundle, so the
 // two can never disagree about which build is loaded.
 {
-  const generated = { ...sourceManifest, version_name: `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT})` };
+  const generated = manifestForProfile(
+    sourceManifest,
+    BUILD_PROFILE,
+    `${BUILD_VERSION} (${BUILD_ID} ${BUILT_AT}; ${BUILD_PROFILE})`
+  );
   writeFileSync(`${outdir}/manifest.json`, JSON.stringify(generated, null, 2));
 }
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
+cpSync("src/ui/assistant.html", `${outdir}/assistant.html`);
+cpSync("src/ui/fieldentry.html", `${outdir}/fieldentry.html`);
+cpSync("icons", `${outdir}/icons`, { recursive: true });
 
 // Fail the build if the manifest references a file that does not exist in dist/
 // (a renamed entry point or a typo would otherwise ship a broken extension).
@@ -121,6 +154,6 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log(`Extension built to dist/ — v${BUILD_VERSION} build ${BUILD_ID} at ${BUILT_AT}`);
-console.log("Load unpacked from apps/extension/dist. After rebuilding: chrome://extensions -> Reload,");
+console.log(`Extension built to ${outdir}/ — profile ${BUILD_PROFILE}, v${BUILD_VERSION} build ${BUILD_ID} at ${BUILT_AT}`);
+console.log(`Load unpacked from apps/extension/${outdir}. After rebuilding: chrome://extensions -> Reload,`);
 console.log("then close and reopen the application tab so the new content script is injected.");

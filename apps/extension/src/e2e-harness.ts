@@ -8,14 +8,14 @@
  */
 
 import { discoverAll } from "./fields/discovery";
-import { fillField } from "./fields/fill";
+import { clearJobPilotFields, fillField } from "./fields/fill";
 import { configureDropdownTiming, isBlankValue } from "./fields/dropdown/dom";
 import { probeFrame, selectApplicationFrame } from "./frames/probe";
 import { dropdownEventLog, fillDropdown, selectAdapter } from "./fields/dropdown";
 import { buildLedger, valuePresent } from "./fields/ledger";
 import { scan } from "./fields/runner";
 import { createWidget } from "./content/widget";
-import { questionLedger } from "./content/bootstrap";
+import { questionLedger } from "./content/workflowLedger";
 import { findActivationCandidates, selectActivationControl } from "./ats/applicationSurface";
 import { resolveApplyDestination, validateDestination } from "./ats/applyDestination";
 import {
@@ -86,6 +86,9 @@ const harness = {
     const outcome = await fillField(field, value, { status: "verified", force: true });
     return { status: outcome.status, reason: outcome.reason, dropdown: outcome.dropdown };
   },
+
+  /** Invoke the same reversible-clear function wired to the production widget. */
+  clear: () => clearJobPilotFields(document),
 
   /** Open a dropdown only to read its real options (no answer supplied).
    * This is the ONE legitimate opt-in for allowProbe: an explicit request to

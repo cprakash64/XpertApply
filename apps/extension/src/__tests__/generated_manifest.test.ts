@@ -7,11 +7,15 @@
  * runs inside iframe#grnhse_iframe, and no amount of coordinator logic could
  * help.
  *
- * Skips (rather than fails) when dist/ has not been built, so `npm test` on a
- * clean checkout is not blocked; CI runs `npm run build` first.
+ * FAILS (never skips) when dist/ has not been built. These assertions are the
+ * executable proof of the host-permission model — nothing is scripted or
+ * reachable on an employer site until the user grants it — so a run that
+ * silently omitted them could report success without checking that model at
+ * all. Build first: `npm run verify` runs typecheck, build and test in the one
+ * order that works, and is what CI and `make test-extension` both call.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -51,10 +55,17 @@ function matchPatternMatches(pattern: string, url: string): boolean {
   return pathRe.test(target.pathname + target.search);
 }
 
-const distExists = existsSync(DIST_MANIFEST);
-const manifest = distExists ? JSON.parse(readFileSync(DIST_MANIFEST, "utf-8")) : null;
+// Thrown at load, not conditionally skipped: a missing build must turn the run
+// red with an instruction, not green with fewer tests.
+if (!existsSync(DIST_MANIFEST)) {
+  throw new Error(
+    "dist/manifest.json is missing, so the generated production manifest cannot be verified. " +
+      "Run `npm run verify` (typecheck, build, test), or `npm run build` before `npm test`."
+  );
+}
+const manifest = JSON.parse(readFileSync(DIST_MANIFEST, "utf-8"));
 
-describe.skipIf(!distExists)("generated dist/manifest.json", () => {
+describe("generated dist/manifest.json", () => {
   it("is Manifest V3", () => {
     expect(manifest.manifest_version).toBe(3);
   });
@@ -64,45 +75,68 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
     expect(manifest.version_name, "build.mjs must stamp version_name").toMatch(/\(.+\)/);
   });
 
-  it("injects a content script into the live Greenhouse application frame", () => {
+  it("packages the exact E4O-C permissions and on-demand overlay bootstrap", () => {
+    expect(manifest.version).toBe("0.3.0");
+    expect(manifest.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
+    expect(manifest.host_permissions).toEqual([
+      "https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"
+    ]);
+    expect(manifest.optional_host_permissions).toEqual(["https://*/*"]);
+    expect(existsSync(path.join(here, "..", "..", "dist", "overlayBootstrap.js"))).toBe(true);
+  });
+
+  // XA-06 (Stage 3C). These four assertions used to require that the SHIPPED
+  // manifest already reached the live Greenhouse frame — a static content
+  // script matching every https page in every frame, plus a wildcard host
+  // permission. That is the finding, not the feature: it gave XpertApply
+  // authority over every site the user visits from the moment of install.
+  //
+  // The product requirement behind them is unchanged and still asserted: the
+  // live Greenhouse application frame, and the carrier page that embeds it,
+  // must remain reachable. They are now reachable by ASKING — an optional host
+  // pattern the user can grant for that one origin, and programmatic injection
+  // once they have.
+
+  it("does not reach the live Greenhouse frame until the user grants it", () => {
     const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[] }) => {
       const included = cs.matches.some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
       const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
       return included && !excluded;
     });
-    expect(matching.length, "no content script matches the Greenhouse iframe URL").toBeGreaterThan(0);
+    expect(matching.length, "no employer frame may be scripted at install time").toBe(0);
+    expect(
+      (manifest.host_permissions ?? []).some((p: string) => matchPatternMatches(p, GREENHOUSE_IFRAME_URL)),
+      "no install-time host authority over an employer/ATS origin"
+    ).toBe(false);
   });
 
-  it("runs that content script in ALL frames, so the iframe is covered", () => {
-    const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[]; all_frames?: boolean }) => {
-      const included = cs.matches.some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
-      const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, GREENHOUSE_IFRAME_URL));
-      return included && !excluded;
-    });
-    // An iframe is not the top frame; without all_frames the application frame
-    // never gets the script no matter how the patterns are written.
-    expect(matching.some((cs: { all_frames?: boolean }) => cs.all_frames === true)).toBe(true);
+  it("can still be granted the live Greenhouse frame, and inject into it", () => {
+    // The capability is retained: the origin is coverable by an optional
+    // pattern the side panel can request…
+    expect(
+      (manifest.optional_host_permissions ?? []).some((p: string) => matchPatternMatches(p, GREENHOUSE_IFRAME_URL)),
+      "the Greenhouse frame origin must be grantable"
+    ).toBe(true);
+    // …and `scripting` is what turns that grant into a content script in the
+    // frame, so it is load-bearing rather than vestigial.
+    expect(manifest.permissions ?? []).toContain("scripting");
   });
 
-  it("also injects into the Airbnb carrier page (for surface activation)", () => {
-    const matching = (manifest.content_scripts ?? []).filter((cs: { matches: string[]; exclude_matches?: string[] }) => {
-      const included = cs.matches.some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL));
-      const excluded = (cs.exclude_matches ?? []).some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL));
-      return included && !excluded;
-    });
-    expect(matching.length).toBeGreaterThan(0);
-  });
-
-  it("holds host permission for the Greenhouse origin", () => {
-    const permitted = (manifest.host_permissions ?? []).some((p: string) =>
-      matchPatternMatches(p, GREENHOUSE_IFRAME_URL)
+  it("treats the Airbnb carrier page the same way", () => {
+    const staticMatch = (manifest.content_scripts ?? []).some((cs: { matches: string[] }) =>
+      cs.matches.some((m) => matchPatternMatches(m, AIRBNB_CAREERS_URL))
     );
-    expect(permitted).toBe(true);
+    expect(staticMatch, "the carrier page is not scripted at install time").toBe(false);
+    expect(
+      (manifest.optional_host_permissions ?? []).some((p: string) => matchPatternMatches(p, AIRBNB_CAREERS_URL)),
+      "the carrier page must be grantable"
+    ).toBe(true);
   });
 
   it("does not request browsing-history permissions", () => {
     const permissions: string[] = manifest.permissions ?? [];
     expect(permissions).not.toContain("webNavigation");
+    expect(manifest.optional_permissions ?? []).not.toContain("webNavigation");
     expect(permissions).not.toContain("history");
   });
 
@@ -115,10 +149,8 @@ describe.skipIf(!distExists)("generated dist/manifest.json", () => {
   });
 });
 
-describe.skipIf(!distExists)("built content bundle", () => {
-  const bundle = distExists
-    ? readFileSync(path.join(here, "..", "..", "dist", "content.js"), "utf-8")
-    : "";
+describe("built content bundle", () => {
+  const bundle = readFileSync(path.join(here, "..", "..", "dist", "content.js"), "utf-8");
 
   it("contains the activation coordinator, not just the source tree", () => {
     // Proves the shipped artifact — not merely the repo — carries the fix.
@@ -128,5 +160,49 @@ describe.skipIf(!distExists)("built content bundle", () => {
 
   it("contains the document-level root fallback", () => {
     expect(bundle).toContain("document_fallback");
+  });
+});
+
+describe("built toolbar overlay bootstrap", () => {
+  const bundlePath = path.join(here, "..", "..", "dist", "overlayBootstrap.js");
+  const bundle = readFileSync(bundlePath, "utf-8");
+
+  it("is packaged on demand without remote-code primitives or workflow bootstrap", () => {
+    expect(bundle).toContain("XPERTAPPLY_SHOW_APPLICATION_OVERLAY");
+    expect(bundle).not.toContain("eval(");
+    expect(bundle).not.toContain("new Function");
+    expect(bundle).not.toContain("discoverAndFill");
+  });
+});
+
+// R3 recovery must use existing tabs messaging, never permission expansion.
+it("keeps recovery independent of the webNavigation permission", () => {
+  const production = JSON.parse(readFileSync(DIST_MANIFEST, "utf8"));
+  expect(production.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
+  expect(production.optional_permissions ?? []).not.toContain("webNavigation");
+});
+
+// The shipped bytes, not just the source: a page script must never be able to read
+// or operate the overlay, which requires every shadow root the extension attaches
+// to be closed. (0.3.0 shipped two open roots and nothing failed.)
+describe("built bundles", () => {
+  const distDir = path.join(here, "..", "..", "dist");
+  const bundles = readdirSync(distDir).filter((file) => file.endsWith(".js"));
+
+  it("includes the bundles that can attach a shadow root", () => {
+    expect(bundles).toEqual(expect.arrayContaining(["content.js", "overlayBootstrap.js"]));
+  });
+
+  it("opens no shadow root in any shipped bundle", () => {
+    const offenders = bundles.filter((file) => {
+      const text = readFileSync(path.join(distDir, file), "utf-8");
+      return /attachShadow\(\s*\{[^)]*mode\s*:\s*["'`]open["'`]/s.test(text);
+    });
+    expect(offenders, "every attachShadow in a shipped bundle must be { mode: \"closed\" }").toEqual([]);
+  });
+
+  it("does attach closed roots, so the assertion above is not vacuous", () => {
+    const content = readFileSync(path.join(distDir, "content.js"), "utf-8");
+    expect(content).toMatch(/attachShadow\(\s*\{\s*mode\s*:\s*["']closed["']/);
   });
 });

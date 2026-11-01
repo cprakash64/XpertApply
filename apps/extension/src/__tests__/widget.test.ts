@@ -6,15 +6,50 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWidget, type ReviewHandlers, type ReviewItem } from "../content/widget";
+import { APPLICATION_OVERLAY_HOST_ID, getOverlayState } from "../content/applicationOverlay";
+import { reopenApplicationAssistantOverlay } from "../content/applicationOverlayAssistant";
 
-// The widget uses attachShadow({ mode: "closed" }) so ATS page scripts can't
-// reach into it — which also hides it from Element.shadowRoot in a real
-// browser (and in jsdom). Capture the root via the attachShadow call itself,
-// exactly as the browser's own devtools/testing hooks would.
+// The compatibility surface remains isolated in a nested ShadowRoot. Capture
+// that root while the canonical outer assistant stays openly inspectable.
 let capturedRoot: ShadowRoot | null = null;
 let originalAttachShadow: typeof Element.prototype.attachShadow;
 
+// Free-text entry lives in an extension-origin iframe (see privateEntry.ts), so
+// the widget registers an entry with the worker instead of rendering an <input>.
+// This stub is the worker side: it records registrations and lets a test deliver
+// the values the iframe would submit.
+type Registration = { type: string; entryId: string; fields: { placeholder: string; value: string }[]; submitLabel: string; toggle?: { label: string; checked: boolean } };
+let registrations: Registration[] = [];
+type RuntimeListener = (raw: unknown, sender: unknown, respond: (r: unknown) => void) => boolean | void;
+const runtimeListeners = new Set<RuntimeListener>();
+function useRuntimeStub(): void {
+  vi.stubGlobal("chrome", {
+    runtime: {
+      id: "test-extension",
+      lastError: undefined,
+      getURL: (path: string) => `chrome-extension://test-extension/${path}`,
+      sendMessage: (message: Registration, callback?: (response: unknown) => void) => { if (message?.type === "XPERTAPPLY_FIELD_ENTRY_REGISTER") registrations.push(message); callback?.({ ok: true }); },
+      onMessage: {
+        addListener: (listener: RuntimeListener) => { runtimeListeners.add(listener); },
+        removeListener: () => undefined,
+        hasListener: () => false
+      }
+    }
+  });
+}
+function deliver(entryId: string, values: string[], toggled?: boolean): Promise<unknown> {
+  return new Promise((resolve) => {
+    const message = { type: "XPERTAPPLY_FIELD_ENTRY_DELIVER", entryId, values, ...(toggled === undefined ? {} : { toggled }) };
+    // Every content-side listener sees the message, as Chrome would deliver it; the private-entry one answers.
+    for (const listener of runtimeListeners) listener(message, { id: "test-extension" }, resolve);
+  });
+}
+function entryIdIn(root: ParentNode, itemId: string): string {
+  return root.querySelector(`[data-item="${itemId}"] [data-private-entry]`)!.getAttribute("data-private-entry")!;
+}
+
 beforeEach(() => {
+  registrations = [];
   originalAttachShadow = Element.prototype.attachShadow;
   Element.prototype.attachShadow = function (init: ShadowRootInit) {
     const root = originalAttachShadow.call(this, { ...init, mode: "open" });
@@ -24,12 +59,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   Element.prototype.attachShadow = originalAttachShadow;
   capturedRoot = null;
   document.body.innerHTML = "";
 });
 
 function mountWidget() {
+  // These tests exercise visible UI after an explicit user open.
+  reopenApplicationAssistantOverlay(document);
   return createWidget({ retry: () => {}, clear: () => {}, complete: () => {} });
 }
 
@@ -45,9 +83,34 @@ describe("review widget", () => {
     document.documentElement.appendChild(old);
 
     const widget = mountWidget();
-    const current = document.querySelectorAll("#jobpilot-assisted-apply");
+    expect(document.querySelectorAll("#jobpilot-assisted-apply")).toHaveLength(0);
+    const current = document.querySelectorAll("#xpertapply-assistant-overlay-v1");
     expect(current).toHaveLength(1);
     expect((current[0] as HTMLElement).dataset.instance).not.toBe("stale");
+    widget.destroy();
+  });
+
+  it("keeps one canonical outer panel and passive updates do not undo close", () => {
+    const widget = mountWidget();
+    const host = document.getElementById(APPLICATION_OVERLAY_HOST_ID)!;
+    expect(document.querySelectorAll(`#${APPLICATION_OVERLAY_HOST_ID}`)).toHaveLength(1);
+    expect(document.getElementById("jobpilot-assisted-apply")).toBeNull();
+    host.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-close]")?.click();
+    expect(getOverlayState(document)).toBe("ABSENT");
+    widget.update({ stage: "filling", message: "Passive progress" });
+    expect(document.getElementById(APPLICATION_OVERLAY_HOST_ID)).toBeNull();
+    const reopened = reopenApplicationAssistantOverlay(document);
+    expect(getOverlayState(document)).toBe("OPEN");
+    reopened.overlay.destroy();
+  });
+
+  it("keeps the canonical assistant minimized across passive workflow updates", () => {
+    const widget = mountWidget();
+    const host = document.getElementById(APPLICATION_OVERLAY_HOST_ID)!;
+    host.shadowRoot?.querySelector<HTMLButtonElement>("[data-overlay-minimize]")?.click();
+    expect(getOverlayState(document)).toBe("MINIMIZED");
+    widget.update({ stage: "review", message: "Review changed" });
+    expect(getOverlayState(document)).toBe("MINIMIZED");
     widget.destroy();
   });
 
@@ -98,6 +161,7 @@ describe("review widget", () => {
   });
 
   it("does not offer a save checkbox for a non-reusable (custom/application-specific) question", () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -108,10 +172,13 @@ describe("review widget", () => {
     widget.showReview(items, { onFill: vi.fn(async () => true), onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
     const root = shadowRoot();
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0].toggle).toBeUndefined();
     widget.destroy();
   });
 
   it("uses a specific placeholder instead of a generic answer prompt", () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -122,12 +189,16 @@ describe("review widget", () => {
       }
     ];
     widget.showReview(items, { onFill: vi.fn(async () => true), onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
-    expect((shadowRoot().querySelector('input[type="text"]') as HTMLInputElement).placeholder).toBe("e.g. Master's Degree");
+    // No text input exists in the employer document; the placeholder is configured in the private entry.
+    expect(shadowRoot().querySelector('input[type="text"]')).toBeNull();
+    expect(registrations[0].fields[0].placeholder).toBe("e.g. Master's Degree");
+    expect(registrations[0].toggle?.label).toContain("Save for future applications");
     expect(shadowRoot().textContent).not.toContain("Fill this application");
     widget.destroy();
   });
 
   it("a name-confirmation item shows first/middle/last separately and never offers a save checkbox", async () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       {
@@ -141,20 +212,23 @@ describe("review widget", () => {
     widget.showReview(items, { onFill, onSave: vi.fn(async () => true), onJumpToField: vi.fn() });
 
     const root = shadowRoot();
-    const inputs = root.querySelectorAll('input[type="text"]');
+    // No text input in the employer document; five fields in the private entry.
+    expect(root.querySelectorAll('input[type="text"]').length).toBe(0);
+    expect(registrations).toHaveLength(1);
     // The middle name is its own field — this is what stops "Prakash Pandey"
     // from being offered as the last name.
-    expect((inputs[0] as HTMLInputElement).value).toBe("Chandra");
-    expect((inputs[1] as HTMLInputElement).value).toBe("Prakash");
-    expect((inputs[2] as HTMLInputElement).value).toBe("Pandey");
-    // Five inputs: first, middle, last, preferred first, preferred last (A/D).
-    expect(inputs.length).toBe(5);
+    expect(registrations[0].fields.map((f) => f.value)).toEqual(["Chandra", "Prakash", "Pandey", "", ""]);
+    // Five fields: first, middle, last, preferred first, preferred last (A/D).
+    expect(registrations[0].submitLabel).toBe("Confirm and fill");
+    expect(registrations[0].toggle).toBeUndefined();
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
 
-    const confirmBtn = Array.from(root.querySelectorAll("button")).find((b) => b.textContent?.includes("Confirm and fill"))!;
-    confirmBtn.click();
-    await Promise.resolve();
-    await Promise.resolve();
+    // A first or last name left blank is refused before anything is filled.
+    expect(await deliver(entryIdIn(root, "name_confirm"), ["", "", "Pandey", "", ""])).toEqual({ ok: false });
+    expect(onFill).not.toHaveBeenCalled();
+
+    const response = await deliver(entryIdIn(root, "name_confirm"), ["Chandra", "Prakash", "Pandey", "", ""]);
+    expect(response).toEqual({ ok: true });
     // Blank preferred fields are carried as empty segments (filled from the legal
     // name downstream). first|middle|last|preferredFirst|preferredLast.
     expect(onFill).toHaveBeenCalledWith("name_confirm", "Chandra|Prakash|Pandey||");
@@ -162,6 +236,7 @@ describe("review widget", () => {
   });
 
   it("resolving an item updates the pending count without any page reload", async () => {
+    useRuntimeStub();
     const widget = mountWidget();
     const items: ReviewItem[] = [
       { id: "uid-4", kind: "field", category: "optional", question: "Q1", required: false, reasonText: "x", control: "text", reusable: false },
@@ -173,16 +248,10 @@ describe("review widget", () => {
 
     // Resolve uid-5 via Skip first (it's optional) — this re-renders the
     // whole panel, so uid-4's controls are queried fresh afterward.
-    const skipBtn = root.querySelector('[data-item="uid-5"] button:not(:first-of-type)') as HTMLButtonElement;
+    const skipBtn = root.querySelector('[data-item="uid-5"] .row button') as HTMLButtonElement;
     skipBtn?.click();
 
-    const freshInput = root.querySelector('[data-item="uid-4"] input') as HTMLInputElement;
-    freshInput.value = "answer";
-    freshInput.dispatchEvent(new Event("change", { bubbles: true }));
-    const fillBtn = root.querySelector('[data-item="uid-4"] button') as HTMLButtonElement;
-    fillBtn.click();
-    await Promise.resolve();
-    await Promise.resolve();
+    await deliver(entryIdIn(root, "uid-4"), ["answer"]);
 
     expect(root.querySelector(".review-toggle")?.textContent).toContain("All caught up");
     widget.destroy();
@@ -247,6 +316,123 @@ describe("Teach XpertApply — consent before anything is remembered", () => {
     const root = shadowRoot();
     (Array.from(root.querySelectorAll(".teach-item button")).find((b) => b.textContent === "Not now") as HTMLButtonElement).click();
     expect(onDecision).toHaveBeenCalledWith("none");
+    widget.destroy();
+  });
+});
+
+
+describe("XA-16 named widget and scoped announcements", () => {
+  it("has one visible heading, one named nonmodal panel, and only a message live region", () => {
+    const widget = mountWidget();
+    const root = shadowRoot();
+    const panel = root.querySelector("section")!;
+    expect(panel.getAttribute("aria-labelledby")).toBe("xpertapply-heading");
+    expect(root.getElementById("xpertapply-heading")?.textContent).toBe("XpertApply assisted application");
+    expect(root.querySelectorAll("h2")).toHaveLength(1);
+    expect(panel.hasAttribute("aria-live")).toBe(false);
+    expect(panel.hasAttribute("aria-label")).toBe(false);
+    expect(panel.hasAttribute("aria-modal")).toBe(false);
+    expect(root.querySelectorAll('[aria-live],[role="status"],[role="alert"]')).toHaveLength(1);
+    expect(root.querySelector('[role="status"]')).toBe(root.querySelector(".message"));
+    expect(root.querySelector(".message")?.getAttribute("aria-atomic")).toBe("true");
+    for (const selector of [".counts-row", ".review-panel", ".action-panel", ".actions", ".footer"]) {
+      expect(root.querySelector(selector)?.closest('[aria-live],[role="status"]')).toBeNull();
+    }
+    widget.destroy();
+  });
+
+  it.each([
+    ["preparing", "Preparing your application…"],
+    ["filling", "Starting autofill"],
+    ["ready", "3 fields filled"],
+    ["review", "2 fields need your confirmation"],
+    ["failed", "Unable to save completion. Try again."],
+    ["ready", "Ready for manual completion"]
+  ] as const)("announces only the intended message in %s", async (stage, message) => {
+    const widget = mountWidget();
+    const root = shadowRoot();
+    const status = root.querySelector(".message")!;
+    widget.update({stage, message, filled: 2, total: 3});
+    expect(status.textContent).toBe(message);
+    expect(root.querySelectorAll('[role="status"],[aria-live]')).toHaveLength(1);
+    expect(root.getElementById("xpertapply-heading")?.textContent).toBe("XpertApply assisted application");
+    const observer = new MutationObserver(() => {});
+    observer.observe(status, {childList:true,characterData:true,subtree:true});
+    widget.update({stage, message, filled: 3, total: 4});
+    expect(observer.takeRecords()).toHaveLength(0);
+    widget.update({stage, message: message + " Updated."});
+    expect(observer.takeRecords()).toHaveLength(1);
+    observer.disconnect();
+    widget.destroy();
+  });
+});
+
+describe("XA-19 action layout preserves workflow authority", () => {
+  it("keeps completion outside the scrolling body without changing its user-action gate", () => {
+    const complete = vi.fn();
+    const widget = createWidget({retry:vi.fn(),clear:vi.fn(),complete});
+    const root = shadowRoot();
+    const button = root.querySelector<HTMLButtonElement>('[data-a="complete"]')!;
+    expect(button.closest(".footer")).not.toBeNull();
+    expect(button.closest(".body")).toBeNull();
+    expect(button.type).toBe("button");
+    expect(button.disabled).toBe(true);
+    widget.showReview([], {onFill:vi.fn(),onSave:vi.fn(),onJumpToField:vi.fn()});
+    expect(button.disabled).toBe(false);
+    widget.update({stage:"ready",message:"Ready for manual completion"});
+    expect(complete).not.toHaveBeenCalled();
+    button.click();
+    expect(complete).toHaveBeenCalledTimes(1);
+    widget.update({stage:"failed",message:"Completion could not be saved"});
+    expect(root.querySelector('[role="status"]')?.textContent).toBe("Completion could not be saved");
+    expect(button.disabled).toBe(false);
+    expect(complete).toHaveBeenCalledTimes(1);
+    widget.destroy();
+  });
+});
+
+describe("submission confirmation prompt", () => {
+  it.each([
+    ["yes", "confirmSubmitted"],
+    ["no", "confirmNotSubmitted"]
+  ] as const)("records an explicit %s choice once and closes only after success", async (choice, handlerName) => {
+    let resolve!: (value: { ok: boolean }) => void;
+    const handler = vi.fn(() => new Promise<{ ok: boolean }>((done) => { resolve = done; }));
+    const widget = createWidget({
+      retry: vi.fn(), clear: vi.fn(), complete: vi.fn(),
+      confirmSubmitted: handlerName === "confirmSubmitted" ? handler : vi.fn(async () => ({ ok: true })),
+      confirmNotSubmitted: handlerName === "confirmNotSubmitted" ? handler : vi.fn(async () => ({ ok: true }))
+    });
+    widget.showSubmissionConfirmation();
+    const root = shadowRoot();
+    const prompt = root.querySelector<HTMLElement>(".submission-confirmation")!;
+    const button = root.querySelector<HTMLButtonElement>(`[data-confirm="${choice}"]`)!;
+    expect(prompt.textContent).toContain("Did you submit it?");
+    button.click();
+    button.click();
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(root.querySelectorAll<HTMLButtonElement>("[data-confirm]")[0].disabled).toBe(true);
+    resolve({ ok: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prompt.classList.contains("open")).toBe(false);
+    widget.destroy();
+  });
+
+  it("keeps the prompt actionable when persistence fails", async () => {
+    const widget = createWidget({
+      retry: vi.fn(), clear: vi.fn(), complete: vi.fn(),
+      confirmSubmitted: vi.fn(async () => ({ ok: false, error: "Could not save" })),
+      confirmNotSubmitted: vi.fn(async () => ({ ok: true }))
+    });
+    widget.showSubmissionConfirmation();
+    const root = shadowRoot();
+    root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(root.querySelector(".submission-confirmation")?.classList.contains("open")).toBe(true);
+    expect(root.querySelector(".confirmation-status")?.textContent).toBe("Could not save");
+    expect(root.querySelector<HTMLButtonElement>('[data-confirm="yes"]')!.disabled).toBe(false);
     widget.destroy();
   });
 });

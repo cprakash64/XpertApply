@@ -10,6 +10,7 @@ function session(): ApplicationSessionData {
     atsType: "greenhouse",
     officialUrl: "https://boards.greenhouse.io/acme/1",
     jobTitle: "Backend Engineer",
+    jobLocation: "San Francisco, CA",
     company: "Acme",
     unresolvedQuestions: [{ canonical_key: "gender", reason: "EEO" }],
     answers: [
