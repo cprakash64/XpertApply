@@ -4851,14 +4851,6 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
             "professional_email": None,
             "verified_at": None,
         }
-    try:
-        rate_limit(f"email:{user.id}", settings.people_email_rate_limit_per_hour)
-    except HTTPException:
-        return {
-            "status": "rate_limited",
-            "professional_email": None,
-            "verified_at": None,
-        }
     if _email_budget_exceeded(db, user.id):
         return {
             "status": "budget_exceeded",
@@ -4902,6 +4894,16 @@ async def find_email(db: Session, user: User, job_id: int, recommendation_id: in
                 ),
                 "verified_at": person.email_verified_at,
                 "cached": True,
+            }
+        # The hourly allowance is spent only by a request that is really about to contact the provider. Cache hits, an unusable name,
+        # an exhausted budget, an employer mismatch or a duplicate-lock miss all return above and never use a slot.
+        try:
+            rate_limit(f"email:{user.id}", settings.people_email_rate_limit_per_hour)
+        except HTTPException:
+            return {
+                "status": "rate_limited",
+                "professional_email": None,
+                "verified_at": None,
             }
         provider = get_email_provider()
         metric("people_email_find_requests_total", provider="hunter")

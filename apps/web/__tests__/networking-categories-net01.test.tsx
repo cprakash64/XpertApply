@@ -207,7 +207,7 @@ describe("Networking categories and Get Email (NET-01)", () => {
   });
 
   it.each([
-    ["rate_limited", /rate limit has been reached/],
+    ["rate_limited", /lookups are limited per hour/],
     ["provider_unavailable", /temporarily unavailable/],
     ["provider_error", /service problem/],
     ["searching", /already running/]

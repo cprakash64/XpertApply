@@ -1664,9 +1664,11 @@ class HunterEmailProvider(_HttpProvider):
                 return WorkEmailResult(status="not_found", email=None, professional=False, provider="hunter")
             raise
         self._raise_if_pending()
-        self.credits += 1
         body = data.get("data") or {}
         email = body.get("email")
+        # Hunter charges nothing when no address is found, so only a returned address counts against the application's budget.
+        if email:
+            self.credits += 1
         if str(body.get("provenance") or "").lower() == "inferred":
             # Hunter builds "inferred" addresses from the company's usual
             # pattern. That is a guess about this person, so it is never shown

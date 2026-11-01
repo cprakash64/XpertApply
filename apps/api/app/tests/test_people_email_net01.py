@@ -784,3 +784,78 @@ def test_log_tokens_are_reduced_to_a_safe_alphabet() -> None:
     assert service._log_token("provider_timeout") == "provider_timeout"
     for hostile in ("a@b.c", "Rita Recruiter", "x" * 200, "domain.example", "", None):
         assert service._log_token(hostile) in {"other"}
+
+
+# ---- NET-PROD-06: the hourly allowance is spent only by a real provider attempt -----------------------------------------------
+def test_requests_that_never_reach_the_provider_do_not_use_the_hourly_allowance(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 2)
+    person.current_company_domain = "other.example"                 # a gate that returns before the provider
+    db.commit()
+    fake = FakeHunter(_found(), (200, {"data": {"status": "valid"}}))
+    fake.install(monkeypatch)
+    assert [_run(db, user, job, rec)["status"] for _ in range(4)] == ["employment_conflict"] * 4
+    assert fake.calls == []
+    person.current_company_domain = DOMAIN                           # the contact is fixed: the first real attempt still has its full allowance
+    db.commit()
+    assert _run(db, user, job, rec)["status"] == "verified"
+    service._RATE_BUCKETS.clear()
+
+
+def test_an_exhausted_budget_does_not_use_the_hourly_allowance(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 1)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 0)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 2)
+    FakeHunter(_found(), (200, {"data": {"status": "valid"}})).install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "verified"           # one real attempt: the whole hourly allowance (1)
+    _expire_cache(db, person)
+    assert [_run(db, user, job, rec)["status"] for _ in range(3)] == ["budget_exceeded"] * 3    # budget answers first, not rate_limited
+    service._RATE_BUCKETS.clear()
+
+
+def test_real_attempts_still_use_the_allowance_and_the_third_is_blocked_without_contacting_hunter(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user, job, person, rec = _persist_recommendation(db)
+    service._RATE_BUCKETS.clear()
+    monkeypatch.setattr(settings, "people_email_rate_limit_per_hour", 2)
+    fake = FakeHunter((503, {}), _found())
+    fake.install(monkeypatch)
+    assert [_run(db, user, job, rec)["status"] for _ in range(3)] == ["provider_unavailable", "provider_unavailable", "rate_limited"]
+    assert fake.count("finder") <= 2
+    service._RATE_BUCKETS.clear()
+
+
+# ---- NET-PROD-06: a no-match Finder answer is free at Hunter, so it costs the application budget nothing ----------------------
+def test_a_not_found_answer_costs_no_application_credit(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy import func, select
+
+    from app.models.entities import PeopleDiscoveryRun
+
+    user, job, person, rec = _persist_recommendation(db)
+    monkeypatch.setattr(settings, "people_email_per_user_daily_limit", 1)
+    monkeypatch.setattr(settings, "people_email_daily_credit_budget", 1)
+    FakeHunter(_found(None), _found()).install(monkeypatch)
+    for _ in range(4):                                               # repeated no-match lookups never touch the 1-credit budget
+        assert _run(db, user, job, rec)["status"] == "not_found"
+        _expire_cache(db, person)
+    runs = db.scalar(select(func.sum(PeopleDiscoveryRun.provider_credits_used)).where(PeopleDiscoveryRun.provider == "hunter"))
+    assert runs == 0
+
+
+def test_a_found_address_still_costs_two_credits_finder_plus_verifier(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy import func, select
+
+    from app.models.entities import PeopleDiscoveryRun
+
+    user, job, person, rec = _persist_recommendation(db)
+    FakeHunter(_found(), (200, {"data": {"status": "valid"}})).install(monkeypatch)
+    assert _run(db, user, job, rec)["status"] == "verified"
+    assert db.scalar(select(func.sum(PeopleDiscoveryRun.provider_credits_used)).where(PeopleDiscoveryRun.provider == "hunter")) == 2
