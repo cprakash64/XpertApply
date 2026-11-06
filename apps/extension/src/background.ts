@@ -35,7 +35,7 @@ import {
   setApplicationOverride
 } from "./api/client";
 import { validateOverrideRequest } from "./content/reviewActions";
-import { DEFAULT_API_BASE, EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS, resolveWebBase } from "./config";
+import { BUILD_PROFILE, DEFAULT_API_BASE, EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin, JOBPILOT_WEB_ORIGINS, resolveWebBase } from "./config";
 import {
   classifyEnvironment,
   safeApiBase,
@@ -202,7 +202,8 @@ chrome.runtime.onInstalled.addListener((details) => {
   // First install only: one intentional, optional onboarding page where the person can enable automatic
   // assistance on supported job sites in a single Chrome prompt. Updates never open it (existing users
   // meet the same choice from the toolbar badge on a supported application page, or Options).
-  if (details?.reason === "install") {
+  // The e2e profile never opens it: automated specs assert that no extension page opens beside the assistant.
+  if (details?.reason === "install" && BUILD_PROFILE !== "e2e") {
     void chrome.tabs.create({ url: chrome.runtime.getURL("access.html?welcome=1") }).catch(() => undefined);
   }
 });

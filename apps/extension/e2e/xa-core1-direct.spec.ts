@@ -39,7 +39,7 @@ const readAuth = (worker: import("@playwright/test").Worker, expire = false) => 
 }), expire);
 
 const widgetsOpen = (e: Awaited<ReturnType<typeof env>>) =>
-  e.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://") && !u.includes("/access.html?welcome=1")));
+  e.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://")));
 
 async function expectWaymoFilled(p: Page, user = 7) {
   const want = PROFILES[user];
