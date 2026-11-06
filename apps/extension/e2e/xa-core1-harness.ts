@@ -304,8 +304,8 @@ export async function startDirectApi() {
   return { server, origin, log, sessions, state, close: () => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); }) };
 }
 
-export async function launchSignedIn(opts: { api: Awaited<ReturnType<typeof startDirectApi>>; tls: Awaited<ReturnType<typeof employerTls>>; userId?: number | null; profileDir?: string }) {
-  const dist = process.env.XA_E2E_DIST!;
+export async function launchSignedIn(opts: { api: Awaited<ReturnType<typeof startDirectApi>>; tls: Awaited<ReturnType<typeof employerTls>>; userId?: number | null; profileDir?: string; dist?: string }) {
+  const dist = opts.dist ?? process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...opts.tls.args] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 20_000 });
   const signIn = (userId: number) => worker.evaluate(async ([uid, email]) => {

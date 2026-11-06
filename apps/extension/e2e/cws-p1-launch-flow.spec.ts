@@ -45,7 +45,7 @@ test("Greenhouse: website launch -> single in-page assistant -> verified fields 
   });
   try {
     const info = await h.presence();
-    expect(info, "deployed presence check must find the installed extension").toMatchObject({ installed: true, version: "0.3.0", protocolVersion: 3 });
+    expect(info, "deployed presence check must find the installed extension").toMatchObject({ installed: true, version: "0.3.1", protocolVersion: 3 });
     expect(await h.worker.evaluate(async () => (await chrome.storage.local.get("apiBase")).apiBase)).toBe(h.employer.origin);
 
     const { empPage, ack } = await h.start();
@@ -62,7 +62,7 @@ test("Greenhouse: website launch -> single in-page assistant -> verified fields 
     expect(JSON.stringify(h.apiLog)).not.toContain(SENT);
 
     // Exactly one XpertApply interface: no extension window or extension page was opened, only the in-page assistant.
-    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://")))).toEqual([]);
+    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://") && !u.includes("/access.html?welcome=1")))).toEqual([]);
 
     const tokens = h.apiLog.filter(l => l === "POST /application-sessions/token").length;
     await empPage.reload();
@@ -114,6 +114,6 @@ document.getElementById('application-form').addEventListener('submit',e=>{e.prev
     for (const name of ["eeo[gender]", "eeo[race]", "eeo[veteran]"]) expect(await empPage.inputValue(`[name="${name}"]`)).toBe("");
     expect(await empPage.locator('input[name="pronouns"]:checked').count()).toBe(0);
     expect(await empPage.evaluate(() => (window as any).__emp)).toEqual({ submits: 0, clicks: 0 });
-    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://")))).toEqual([]);
+    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://") && !u.includes("/access.html?welcome=1")))).toEqual([]);
   } finally { await h.close(); }
 });

@@ -1,4 +1,5 @@
 import { lastError } from "../logger";
+import { grantPatternFor } from "../siteGrants";
 import { MSG, type LaunchViewState } from "../messages";
 import {
   createApplicationAssistant,
@@ -122,7 +123,7 @@ export function mountApplicationAssistantOverlay(options: {
         // assistant window) whose own button makes the request. Never relay the
         // request itself through the worker, where user activation is not authoritative.
         if (typeof chrome !== "undefined" && chrome.permissions?.request) {
-          return chrome.permissions.request({ origins: [pattern] });
+          return chrome.permissions.request({ origins: [grantPatternFor(pattern)] });
         }
         const response = await sendWorker<ActionResponse & { surface?: string | null }>({ type: MSG.OVERLAY_OPEN_PERMISSION_SURFACE });
         // "granted": Chrome's dialog was accepted and the worker re-checks it with permissions.contains before anything resumes.

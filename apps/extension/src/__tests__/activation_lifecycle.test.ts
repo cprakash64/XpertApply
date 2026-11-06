@@ -53,7 +53,8 @@ describe("persistent registration plan", () => {
       "https://api.xpertapply.com/*"
     ], [], opts);
     expect(plan.register.map((s) => s.matches[0]).sort()).toEqual([
-      "https://api.xpertapply.com/*", "https://job-boards.greenhouse.io/*", "https://jobs.lever.co/*"
+      // jobs.lever.co is covered by the supported-ATS group grant, so the group's one script serves it.
+      "https://*.lever.co/*", "https://api.xpertapply.com/*", "https://job-boards.greenhouse.io/*"
     ]);
     expect(plan.unregister).toEqual([]);
     for (const script of plan.register) {
@@ -157,7 +158,8 @@ describe("gesture-bound origin request", () => {
     vi.stubGlobal("chrome", { permissions: { request } });
     const pending = requestAtsOriginInGesture("https://jobs.lever.co/zoox/abc/apply");
     expect(request).toHaveBeenCalledTimes(1);              // called before the first await resolves
-    expect(request).toHaveBeenCalledWith({ origins: ["https://jobs.lever.co/*"] });
+    // A supported ATS is requested as its group (all of Lever's subdomains) so the next company needs no new prompt.
+    expect(request).toHaveBeenCalledWith({ origins: ["https://*.lever.co/*"] });
     expect(await pending).toBe(true);
     for (const url of ["https://example.com/", "https://apply.indeed.com/x", "http://jobs.lever.co/x", null, undefined, "chrome://extensions"]) {
       expect(await requestAtsOriginInGesture(url as string)).toBe(false);

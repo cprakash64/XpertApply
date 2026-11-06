@@ -9,6 +9,7 @@ export function collectManifestFiles(manifest) {
   else for (const icon of Object.values(manifest.action?.default_icon ?? {})) files.push(icon);
   if (manifest.background?.service_worker) files.push(manifest.background.service_worker);
   if (manifest.side_panel?.default_path) files.push(manifest.side_panel.default_path);
+  if (manifest.options_ui?.page) files.push(manifest.options_ui.page);
   for (const entry of manifest.content_scripts ?? []) {
     for (const js of entry.js ?? []) files.push(js);
     for (const css of entry.css ?? []) files.push(css);
@@ -28,6 +29,8 @@ export const EXPECTED_BUILD_OUTPUTS = [
   "sidepanel.html",
   "fieldentry.html",
   "fieldentry.js",
+  "access.html",
+  "access.js",
   "manifest.json",
   "icons/xpertapply-16.png",
   "icons/xpertapply-32.png",

@@ -1,4 +1,5 @@
 import type { AssistantContext } from "../assistantWindow";
+import { grantPatternFor } from "../siteGrants";
 import { lastError } from "../logger";
 import { MSG, type AutofillReason, type LaunchViewState } from "../messages";
 import { STORAGE_KEYS } from "../state";
@@ -97,7 +98,7 @@ const assistant = createApplicationAssistant({
       tabId,
       sessionId
     }),
-    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [pattern] }),
+    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [grantPatternFor(pattern)] }),
     reportSiteAccess: (tabId, pattern, granted) => sendWorker({
       type: MSG.ASSISTANT_SITE_ACCESS_RESULT,
       tabId,

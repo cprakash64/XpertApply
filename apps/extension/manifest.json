@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "XpertApply — Assisted Apply",
   "short_name": "XpertApply",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AI-powered job application autofill and career copilot by XpertApply. You always review and submit every application yourself.",
   "icons": {
     "16": "icons/xpertapply-16.png",
@@ -66,5 +66,9 @@
       ],
       "use_dynamic_url": true
     }
-  ]
+  ],
+  "options_ui": {
+    "page": "access.html",
+    "open_in_tab": true
+  }
 }

@@ -28,6 +28,7 @@ const ENTRY_POINTS = new Set([
   "ui/sidepanel.ts",
   "ui/assistant.ts",
   "ui/fieldentry.ts",
+  "ui/access.ts",
   "e2e-harness.ts",
   "e2eToolbarHook.ts"
 ]);

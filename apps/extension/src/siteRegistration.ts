@@ -13,6 +13,8 @@
  * extension update reconciles it again. The script itself reads nothing: it announces itself and
  * the worker decides whether this tab has a workflow.
  */
+import { isSupportedAtsWildcard, anyGrantCovers } from "./siteGrants";
+
 export const SITE_SCRIPT_PREFIX = "xa-site-";
 
 export interface SiteScript {
@@ -41,14 +43,19 @@ export interface PlanOptions {
 const HTTPS_EXACT = /^https:\/\/([a-z0-9][a-z0-9.-]*)\/\*$/;
 const LOOPBACK_EXACT = /^http:\/\/(localhost|127\.0\.0\.1)\/\*$/;
 
-/** A granted pattern that names exactly one host. Wildcard hosts and non-web schemes are never registered. */
+/**
+ * A granted pattern that names exactly one host, or one of the four supported-ATS group wildcards that
+ * XpertApply itself requests (see siteGrants.ts). Any other wildcard host and every non-web scheme is
+ * never registered, whatever Chrome reports as granted.
+ */
 export function registrablePattern(pattern: string, allowLoopback: boolean): boolean {
+  if (isSupportedAtsWildcard(pattern)) return true;
   if (HTTPS_EXACT.test(pattern)) return true;
   return allowLoopback && LOOPBACK_EXACT.test(pattern);
 }
 
 export function scriptIdFor(pattern: string): string {
-  const host = pattern.replace(/^https?:\/\//, "").replace(/\/\*$/, "");
+  const host = pattern.replace(/^https?:\/\//, "").replace(/\/\*$/, "").replace(/^\*\./, "ats-");
   return `${SITE_SCRIPT_PREFIX}${host.replace(/[^a-z0-9.-]/g, "-")}`;
 }
 
@@ -62,6 +69,9 @@ export function planRegistration(
   for (const pattern of grantedOrigins) {
     if (options.excluded.includes(pattern)) continue;
     if (!registrablePattern(pattern, options.allowLoopback)) continue;
+    // An exact host already covered by a granted group wildcard is served by the wildcard's script: two
+    // scripts on one page would only race to claim the document.
+    if (!isSupportedAtsWildcard(pattern) && anyGrantCovers(grantedOrigins.filter(isSupportedAtsWildcard), pattern)) continue;
     wanted.set(scriptIdFor(pattern), {
       id: scriptIdFor(pattern), matches: [pattern], js: ["content.js"],
       runAt: "document_idle", allFrames: false, persistAcrossSessions: true

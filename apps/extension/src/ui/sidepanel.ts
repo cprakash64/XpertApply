@@ -12,6 +12,7 @@
  */
 
 import { lastError } from "../logger";
+import { grantPatternFor } from "../siteGrants";
 import { BUILD_INFO } from "../buildInfo";
 import { getApiBase } from "../config";
 import { MSG, type LaunchViewState } from "../messages";
@@ -86,7 +87,7 @@ const assistant = createApplicationAssistant({
     startAutofill: (tabId, reason) => sendBackground({ type: MSG.START_AUTOFILL, tabId, reason }),
     clearSession: (tabId) => sendBackground({ type: MSG.CLEAR_SESSION, tabId }),
     completeSession: (_tabId, sessionId) => sendBackground({ type: MSG.COMPLETE_SESSION, sessionId }),
-    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [pattern] }),
+    requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [grantPatternFor(pattern)] }),
     reportSiteAccess: (tabId, pattern, granted) => sendBackground({ type: MSG.SITE_ACCESS_RESULT, tabId, pattern, granted })
   },
   diagnostics: {

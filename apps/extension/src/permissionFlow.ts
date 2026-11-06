@@ -1,4 +1,5 @@
 import type { LaunchViewState } from "./messages";
+import { anyGrantCovers } from "./siteGrants";
 
 export interface PermissionFlowDeps {
   workflowTabIds(): Promise<number[]>;
@@ -6,6 +7,8 @@ export interface PermissionFlowDeps {
   patchView(tabId: number, patch: Partial<LaunchViewState>): Promise<unknown>;
   /** Re-checks Chrome, records the result and resumes the workflow (applySiteAccessResult). */
   applySiteAccessResult(tabId: number, pattern: string, granted: boolean): Promise<unknown>;
+  /** Optional: is the exact origin still granted by anything else (an exact grant beside a removed group)? */
+  stillGranted?(pattern: string): Promise<boolean>;
 }
 
 /**
@@ -21,10 +24,13 @@ export function createPermissionsChangedHandler(deps: PermissionFlowDeps) {
     for (const tabId of await deps.workflowTabIds()) {
       const view = await deps.getView(tabId);
       const pattern = view?.siteAccessPattern;
-      if (!view || !pattern || !origins.includes(pattern)) continue;
+      // A group grant (https://*.greenhouse.io/*) covers every host under it, so a tab waiting on
+      // job-boards.greenhouse.io resumes when the group is granted.
+      if (!view || !pattern || !anyGrantCovers(origins, pattern)) continue;
       if (granted && view.siteAccess !== "site_access_granted") {
         await deps.applySiteAccessResult(tabId, pattern, true).catch(() => undefined);
       } else if (!granted && view.siteAccess === "site_access_granted") {
+        if (deps.stillGranted && await deps.stillGranted(pattern).catch(() => false)) continue;
         await deps.patchView(tabId, { siteAccess: "site_access_revoked", contentReady: false, siteAccessRequestedAt: undefined }).catch(() => undefined);
       }
     }

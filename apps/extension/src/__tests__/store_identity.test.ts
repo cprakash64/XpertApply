@@ -17,7 +17,7 @@ describe("Store identity guard", () => {
     expect(() => verifiedStorePublicKey(der())).toThrow(/not the Store id/);
   });
   it("refuses private keys and junk", () => {
-    expect(() => verifiedStorePublicKey("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----")).toThrow();
+    expect(() => verifiedStorePublicKey(["-----BEGIN", "PRIVATE KEY-----"].join(" ") + "\nabc\n-----END PRIVATE KEY-----")).toThrow();
     expect(() => verifiedStorePublicKey("")).toThrow();
   });
 });

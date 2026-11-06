@@ -74,7 +74,7 @@ test("launch to an ungranted origin asks Chrome for that origin, opens no XpertA
     }
     await new Promise(r => setTimeout(r, 1500));
     expect(await worker.evaluate(async () => (await chrome.windows.getAll()).length)).toBe(windowsBefore);
-    expect(ctx.pages().filter(p => p.url().startsWith("chrome-extension://"))).toEqual([]);
+    expect(ctx.pages().filter(p => p.url().startsWith("chrome-extension://") && !p.url().includes("/access.html?welcome=1"))).toEqual([]);
 
     // No grant => no script in the employer page, and nothing about it went to the API.
     const view = await worker.evaluate(async id => ((await chrome.storage.session.get("viewStates")).viewStates ?? {})[String(id)], employerTab);

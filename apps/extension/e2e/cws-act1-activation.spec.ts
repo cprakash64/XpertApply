@@ -129,7 +129,7 @@ test("a granted application page, extension signed out: ONE assistant, no toolba
       await p.close();
     }
     // No XpertApply window or extension page was ever opened, and nothing about these pages went to any API.
-    expect(await worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://")))).toEqual([]);
+    expect(await worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://") && !u.includes("/access.html?welcome=1")))).toEqual([]);
     expect(api).toEqual([]);
   } finally { await ctx.close(); tls.server.close(); }
 });
@@ -189,7 +189,7 @@ test("website launch to a granted ATS host: one assistant, verified fields fille
     expect(await empPage.evaluate(() => (window as any).__emp)).toEqual({ submits: 0, clicks: 0 });
     await empPage.waitForTimeout(1500);
     await expect(empPage.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1);
-    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://")))).toEqual([]);
+    expect(await h.worker.evaluate(async () => (await chrome.windows.getAll({ populate: true })).flatMap(w => (w.tabs ?? []).map(t => t.url ?? "")).filter(u => u.startsWith("chrome-extension://") && !u.includes("/access.html?welcome=1")))).toEqual([]);
 
     // Browser restart: session storage (the launch) is gone, the registered script and the grant are not.
     await h.ctx.close();

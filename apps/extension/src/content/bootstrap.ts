@@ -136,6 +136,8 @@ import {
   type PreparedQuestion,
   type ResolutionResult
 } from "./questionBatch";
+import { FORM_WATCH, createWatchBudget, plausibleApplicationForm, watchRouteChanges } from "./formWatch";
+import { applicationProviderForUrl } from "../ats/providers";
 import { enumerateOptions, selectApprovedOption, type TransactionResult } from "./dropdownTransaction";
 import {
   STAGE_LABEL,
@@ -634,19 +636,23 @@ function mirrorFrameProgress(progress: ProgressPayload): void {
 
 // A form that renders late (Apply Now, a React route, a delayed widget) is recognised by
 // looking again when the document changes. Bounded on every axis: one observer, one pending
-// timer, a minimum gap between looks, a cap on looks and on total time, reset only by a real
-// URL change. It stops the moment the page binds or the budget is spent.
-const DIRECT_RECHECK_GAP_MS = 2_500;
-const DIRECT_RECHECK_MAX = 12;
-const DIRECT_RECHECK_WINDOW_MS = 3 * 60_000;
+// timer, a minimum gap between looks, a cap on looks that reach the worker and on total time per
+// navigation (formWatch.ts). A mutation that adds no form control costs a capped selector query and
+// no budget. A same-document route change (SPA step, "Apply" tab) restores the budget. It stops the
+// moment the page binds, and when the budget is spent on a supported application URL the person is
+// told so and can look again, rather than waiting on a silent page.
 let directWatchActive = false;
+let directWatchWanted = false;
+let routeWatchInstalled = false;
+const watchBudget = createWatchBudget();
 
 function watchForDirectApplication(): void {
-  if (!isTopFrame || directWatchActive || started || !document.documentElement) return;
+  if (!isTopFrame || started || !document.documentElement) return;
+  directWatchWanted = true;
+  installRouteRearm();
+  if (directWatchActive) return;
   directWatchActive = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let checks = 0;
-  let windowStart = Date.now();
   let href = location.href;
   const stop = () => {
     directWatchActive = false;
@@ -657,15 +663,37 @@ function watchForDirectApplication(): void {
   const look = () => {
     timer = null;
     if (started || matched || !isCurrentInstance()) return stop();
-    if (location.href !== href) { href = location.href; checks = 0; windowStart = Date.now(); }
-    if (checks >= DIRECT_RECHECK_MAX || Date.now() - windowStart > DIRECT_RECHECK_WINDOW_MS) return stop();
-    checks += 1;
+    const now = Date.now();
+    if (location.href !== href) { href = location.href; watchBudget.reset(now); }
+    if (watchBudget.exhausted(now)) { offerManualScan(); return stop(); }
+    // No plausible form yet: wait for the next mutation, spend nothing.
+    if (!plausibleApplicationForm(document)) return;
+    if (!watchBudget.spend(now)) { offerManualScan(); return stop(); }
     void checkHandoffAndStart("automatic_launch").finally(() => { if (started || matched) stop(); });
   };
   const observer = new MutationObserver(() => {
-    if (timer === null) timer = setTimeout(look, DIRECT_RECHECK_GAP_MS);
+    if (timer === null) timer = setTimeout(look, FORM_WATCH.gapMs);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  // The form may already be on the page (the first look ran before it rendered): do not wait for a mutation.
+  if (timer === null) timer = setTimeout(look, FORM_WATCH.gapMs);
+}
+
+/** A route change inside the same document: restore the budget and look again, once, without a reload. */
+function installRouteRearm(): void {
+  if (routeWatchInstalled) return;
+  routeWatchInstalled = true;
+  watchRouteChanges(window, () => {
+    if (!isTopFrame || started || matched || !directWatchWanted || !isCurrentInstance()) return;
+    watchBudget.reset(Date.now());
+    watchForDirectApplication();
+  });
+}
+
+/** The watch ran out on a page that IS a supported application URL: ask the worker to open the one in-page assistant with an actionable line. */
+function offerManualScan(): void {
+  if (started || matched || !applicationProviderForUrl(location.href)) return;
+  void sendRuntime({ type: MSG.SCAN_EXHAUSTED });
 }
 
 async function checkHandoffAndStart(reason: AutofillReason): Promise<void> {

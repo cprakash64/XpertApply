@@ -45,7 +45,7 @@ describe("XA-RC-06 gesture-bound origin request", () => {
       await expect(requestAtsOriginInGesture("https://careers.withwaymo.com/jobs/123/apply")).resolves.toBe(false);
       expect(request).not.toHaveBeenCalled();
       await expect(requestAtsOriginInGesture("https://job-boards.greenhouse.io/acme/jobs/4012345")).resolves.toBe(true);
-      expect(request).toHaveBeenCalledWith({ origins: ["https://job-boards.greenhouse.io/*"] });
+      expect(request).toHaveBeenCalledWith({ origins: ["https://*.greenhouse.io/*"] });
     } finally { (globalThis as { chrome?: unknown }).chrome = original; }
   });
 });

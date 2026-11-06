@@ -98,6 +98,7 @@ const FAILURE_LABEL: Record<string, string> = {
   AUTH_REJECTED: "The sign-in response couldn’t be verified, so nothing was connected. Try again.",
   AUTH_UNAVAILABLE: "XpertApply couldn’t be reached to finish signing in. Check your connection and try again.",
   DIRECT_SIGNED_OUT: "This looks like a job application, but XpertApply isn’t connected. Choose “Connect XpertApply” to sign in; nothing is filled until you do.",
+  DIRECT_FORM_NOT_FOUND: "XpertApply hasn’t found the application form on this page yet. Open the form, then choose “Try again”. Nothing has been filled.",
   DIRECT_UNAVAILABLE: "XpertApply couldn’t prepare this application. Check that your profile is complete and you’re online, then try again.",
   HANDOFF_NOT_FOUND: "No application from XpertApply is open on this page. Choose Apply with XpertApply on a job at xpertapply.com, then use the page it opens.",
   HANDOFF_URL_MISMATCH: "This page doesn’t match the prepared application. Open it from XpertApply.",
@@ -339,7 +340,7 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const terminal = current.failureCode != null && current.failureRecoverable === false;
     // An application the worker recognised but cannot act on yet: the one button is the way forward.
     const needsConnect = !workflowAvailable && current.failureCode === "DIRECT_SIGNED_OUT";
-    const needsRetry = !workflowAvailable && current.failureCode === "DIRECT_UNAVAILABLE";
+    const needsRetry = !workflowAvailable && (current.failureCode === "DIRECT_UNAVAILABLE" || current.failureCode === "DIRECT_FORM_NOT_FOUND");
     button("fill").disabled = needsConnect || needsRetry ? false : !workflowAvailable || current.running || terminal;
     setText("fill", needsConnect ? "Connect XpertApply" : needsRetry ? "Try again" : current.running ? "Filling…" : "Fill application");
     for (const id of ["rescan", "next", "clear", "complete"]) button(id).disabled = !workflowAvailable;

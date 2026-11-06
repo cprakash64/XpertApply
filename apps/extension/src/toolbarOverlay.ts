@@ -2,6 +2,7 @@ import { MSG } from "./messages";
 import { toolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { originPatternFor } from "./security/siteAccess";
 import { providerForUrl } from "./ats/providers";
+import { grantPatternFor } from "./siteGrants";
 
 export const TOOLBAR_OVERLAY_BUNDLE = "overlayBootstrap.js";
 
@@ -73,8 +74,10 @@ export type OriginRequestOutcome = "granted" | "denied" | "no_gesture" | "unavai
  * to Chrome's own toolbar access request), or the API is missing ("unavailable"). Folding them into
  * one `false` is what left a custom careers domain looping on "Allow" with no dialog ever shown.
  *
- * Only an exact https host is ever requested: never a wildcard, never a scheme other than https. The
- * URL is Chrome's own record of the tab, not anything a page supplied.
+ * An exact https host is requested, except for the four supported ATSs (Greenhouse, Lever, Ashby, Workday),
+ * where the one grant covers that ATS's own subdomains so the person is not asked again for the next
+ * company (siteGrants.ts). Never any other wildcard, never a scheme other than https. The URL is Chrome's
+ * own record of the tab, not anything a page supplied.
  */
 export function requestOriginInGesture(
   url: string | null | undefined,
@@ -84,7 +87,7 @@ export function requestOriginInGesture(
   if (!pattern || !/^https:\/\/[a-z0-9][a-z0-9.-]*\/\*$/.test(pattern)) return Promise.resolve("not_requested");
   if (typeof api?.request !== "function") return Promise.resolve("unavailable");
   try {
-    return api.request({ origins: [pattern] }).then(
+    return api.request({ origins: [grantPatternFor(pattern)] }).then(
       (granted) => (granted ? "granted" : "denied"),
       (error: unknown) => (/user gesture/i.test(String((error as { message?: string } | null)?.message ?? error)) ? "no_gesture" : "unavailable")
     );

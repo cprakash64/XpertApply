@@ -142,6 +142,8 @@ import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
 import { applicationProviderForUrl, providerForUrl } from "./ats/providers";
 import { isAutoOpenDisabled, setAutoOpenDisabled } from "./activationPrefs";
+import { grantPatternFor } from "./siteGrants";
+import { clearSuppression, forgetOffered, markOffered, suppress, suppressedReason, wasOffered } from "./siteAccessStore";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 import {
   AuthUnavailableError,
@@ -195,8 +197,14 @@ void restoreAssistantAfterServiceWorkerWake().catch(() => undefined);
 // every worker start so an older installed build cannot keep opening the panel.
 disableSidePanelToolbarOpen();
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   void reviveOpenJobPilotTabs();
+  // First install only: one intentional, optional onboarding page where the person can enable automatic
+  // assistance on supported job sites in a single Chrome prompt. Updates never open it (existing users
+  // meet the same choice from the toolbar badge on a supported application page, or Options).
+  if (details?.reason === "install") {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("access.html?welcome=1") }).catch(() => undefined);
+  }
 });
 
 installToolbarOverlayAction();
@@ -812,7 +820,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // click is the user gesture that opens Chrome's grant prompt. Nothing on the page is read, no request goes to
 // XpertApply, and nothing is requested for a site that is not a known application page. Once the user allows
 // the origin, the persistent registration and the direct-application flow take over.
-const accessOffered = new Set<string>();
+const offeredThisWake = new Set<string>();
 const ACCESS_BADGE_TITLE = "XpertApply: click to allow this site and fill this application";
 
 async function setAccessBadge(tabId: number, on: boolean): Promise<void> {
@@ -832,7 +840,7 @@ async function offerSiteAccessForSupportedApplication(tabId: number, url: string
     const pattern = originPatternFor(url);
     if (!url || !pattern || !applicationProviderForUrl(url)) {
       // A navigation away from an application page takes the prompt with it.
-      if (url && accessOffered.has(`${tabId}:badge`)) { accessOffered.delete(`${tabId}:badge`); await setAccessBadge(tabId, false); }
+      if (await wasOffered(`${tabId}:badge`)) { await forgetOffered(`${tabId}:badge`); await setAccessBadge(tabId, false); }
       return;
     }
     const origin = new URL(url).origin;
@@ -841,12 +849,19 @@ async function offerSiteAccessForSupportedApplication(tabId: number, url: string
       await setAccessBadge(tabId, false);
       return;
     }
-    accessOffered.add(`${tabId}:badge`);
+    // The badge stays (the person can still click it); the unprompted Chrome request does not repeat for an
+    // origin they declined or revoked, and it is remembered across service-worker restarts.
+    await markOffered(`${tabId}:badge`);
     await setAccessBadge(tabId, true);
     const key = `${tabId}:${origin}`;
-    if (accessOffered.has(key)) return;               // one request per tab and origin: reloads never repeat it
-    accessOffered.add(key);
-    if (accessOffered.size > 400) accessOffered.delete(accessOffered.values().next().value as string);
+    // The in-memory set is claimed synchronously (tabs.onUpdated fires url and complete events together);
+    // the stored copy is what survives a worker suspension.
+    if (offeredThisWake.has(key)) return;
+    offeredThisWake.add(key);
+    if (offeredThisWake.size > 400) offeredThisWake.delete(offeredThisWake.values().next().value as string);
+    if (await wasOffered(key)) return;               // one request per tab and origin: reloads and worker restarts never repeat it
+    await markOffered(key);
+    if (await suppressedReason(grantPatternFor(pattern))) return;
     const api = chrome.permissions as unknown as HostAccessApi;
     if (typeof api.addHostAccessRequest === "function") await api.addHostAccessRequest({ tabId, pattern }).catch(() => undefined);
   } catch (error) {
@@ -934,7 +949,11 @@ function routeRuntimeMessage(
       void requireAuthorizedOverlayContextSender(sender)
         .then(async ({ tabId }) => {
           const outcome = await asked;
-          if (outcome === "denied") return "denied" as const;
+          if (outcome === "denied") {
+            const needed = originPatternFor(sender.tab?.url ?? sender.url);
+            if (needed) await suppress(grantPatternFor(needed), "declined").catch(() => undefined);
+            return "denied" as const;
+          }
           return openPermissionSurface(tabId, sender.tab?.windowId, outcome === "granted");
         })
         .then((surface) => sendResponse({ ok: surface !== null && surface !== "denied", surface }))
@@ -1159,6 +1178,12 @@ function routeRuntimeMessage(
 
     case MSG.CONTENT_READY:
       void handleContentReady(sender, sendResponse, generation);
+      return true;
+
+    case MSG.SCAN_EXHAUSTED:
+      void handleScanExhausted(sender, generation)
+        .then(() => sendResponse({ ok: true }))
+        .catch(() => sendResponse({ ok: false }));
       return true;
 
     case MSG.GET_PENDING_LAUNCH:
@@ -1705,6 +1730,27 @@ async function runConnect(senderTabId: number | undefined): Promise<{ ok: boolea
   }
 }
 
+/**
+ * The page's bounded form watch ran out on a supported application URL. Chrome's own record of the sender
+ * decides whether that is believable: top frame, a granted origin, a supported ATS application URL, no live
+ * workflow already on the tab and the person's per-site off switch respected. The one in-page assistant then
+ * opens with an honest, actionable line instead of leaving the page silent. Nothing is read or sent.
+ */
+async function handleScanExhausted(sender: chrome.runtime.MessageSender, generation: AuthorityGeneration): Promise<void> {
+  const tabId = sender.tab?.id;
+  const url = sender.tab?.url ?? sender.url;
+  const documentId = typeof sender.documentId === "string" && sender.documentId.length > 0 ? sender.documentId : null;
+  if (tabId == null || sender.frameId !== 0 || !documentId || !url || !applicationProviderForUrl(url)) return;
+  const pattern = originPatternFor(url);
+  if (!pattern || !(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return;
+  if (await isAutoOpenDisabled(new URL(url).origin)) return;
+  const existing = await getView(tabId);
+  if (existing && existing.sessionId != null) return;
+  if (generation !== captureAuthorityGeneration()) return;
+  await putView(tabId, noticeView(tabId, "DIRECT_FORM_NOT_FOUND", new URL(url).host), generation);
+  void autoShowOverlay(tabId, documentId, generation);
+}
+
 async function autoShowOverlay(tabId: number, documentId: string, generation: AuthorityGeneration): Promise<void> {
   const key = `${tabId}:${documentId}`;
   if (autoShownDocuments.has(key)) return;
@@ -1825,16 +1871,20 @@ const permissionsChanged = createPermissionsChangedHandler({
   getView,
   patchView: (tabId, patch) => patchView(tabId, patch, captureAuthorityGeneration()),
   applySiteAccessResult: (tabId, pattern, granted) =>
-    applySiteAccessResult(tabId, pattern, granted, captureAuthorityGeneration())
+    applySiteAccessResult(tabId, pattern, granted, captureAuthorityGeneration()),
+  stillGranted: (pattern) => chrome.permissions.contains({ origins: [pattern] })
 });
 chrome.permissions.onAdded?.addListener((permissions) => {
   const origins = permissions.origins ?? [];
   for (const pattern of origins) {
-    void chrome.tabs.query({ url: pattern }).then((tabs) => tabs.forEach((t) => { if (t.id != null) { accessOffered.delete(`${t.id}:badge`); void setAccessBadge(t.id, false); } })).catch(() => undefined);
+    void clearSuppression(pattern).catch(() => undefined);
+    void chrome.tabs.query({ url: pattern }).then((tabs) => tabs.forEach((t) => { if (t.id != null) { void forgetOffered(`${t.id}:badge`).catch(() => undefined); void setAccessBadge(t.id, false); } })).catch(() => undefined);
   }
   void reconcileSiteScripts().then(() => injectIntoOpenTabs(origins)).then(() => permissionsChanged(origins, true));
 });
 chrome.permissions.onRemoved?.addListener((permissions) => {
+  // Remember that the person took access away: nothing re-requests it behind their back.
+  for (const pattern of permissions.origins ?? []) void suppress(pattern, "revoked").catch(() => undefined);
   void reconcileSiteScripts().then(() => permissionsChanged(permissions.origins ?? [], false));
 });
 
@@ -2881,7 +2931,7 @@ async function startAutofillForTab(
     // worker already judged real. The button is the user's go-ahead: sign in (Chrome's own window)
     // when that is what is missing, then let the page resolve again from the top.
     const notice = await getView(id);
-    if (notice?.sessionId == null && (notice?.failureCode === "DIRECT_SIGNED_OUT" || notice?.failureCode === "DIRECT_UNAVAILABLE")) {
+    if (notice?.sessionId == null && (notice?.failureCode === "DIRECT_SIGNED_OUT" || notice?.failureCode === "DIRECT_UNAVAILABLE" || notice?.failureCode === "DIRECT_FORM_NOT_FOUND")) {
       if (notice.failureCode === "DIRECT_SIGNED_OUT") {
         const connected = await connectExtension(id);
         if (!connected.ok) return connected;

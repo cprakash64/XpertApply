@@ -18,7 +18,7 @@ describe("site-access privacy disclosure", () => {
     expect(renderedText).toContain("may be sent to XpertApply's service");
     expect(renderedText).toContain("site_access_denied");
     expect(html.indexOf('id="siteAccessText"')).toBeLessThan(html.indexOf('id="grantSiteAccess"'));
-    expect(panel).toContain("requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [pattern] })");
+    expect(panel).toContain("requestSiteAccess: (pattern) => chrome.permissions.request({ origins: [grantPatternFor(pattern)] })");
     expect(assistant).not.toContain("chrome.permissions.request");
   });
 
@@ -40,9 +40,9 @@ describe("site-access privacy disclosure", () => {
     const toolbarCode = toolbar.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     // XA-RC-06: there is still exactly ONE call site. The toolbar click and launches reach it only through the provider gate
     // (requestAtsOriginInGesture); the assistant's own Allow button reaches it for any https origin, which must be one exact host.
-    expect(toolbarCode.match(/\.request\(\{ origins: \[pattern\] \}\)/g)).toHaveLength(1);
+    expect(toolbarCode.match(/\.request\(\{ origins: \[grantPatternFor\(pattern\)\] \}\)/g)).toHaveLength(1);
     expect(toolbarCode).toMatch(/\^https:\\\/\\\/\[a-z0-9\]\[a-z0-9\.-\]\*\\\/\\\*\$/);
-    expect(toolbar).toContain("origins: [pattern]");
+    expect(toolbar).toContain("origins: [grantPatternFor(pattern)]");
     expect(toolbar).toContain("providerForUrl(url)");
     expect(toolbar).toContain("originPatternFor(url)");
     expect(toolbar).not.toMatch(/origins:\s*\[\s*["'`]/);          // never a literal or wildcard origin

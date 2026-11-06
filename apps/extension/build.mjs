@@ -122,7 +122,8 @@ await build({
     overlayBootstrap: "src/content/overlayBootstrap.ts",
     sidepanel: "src/ui/sidepanel.ts",
     assistant: "src/ui/assistant.ts",
-    fieldentry: "src/ui/fieldentry.ts"
+    fieldentry: "src/ui/fieldentry.ts",
+    access: "src/ui/access.ts"
   },
   outdir
 });
@@ -140,6 +141,7 @@ await build({
 cpSync("src/ui/sidepanel.html", `${outdir}/sidepanel.html`);
 cpSync("src/ui/assistant.html", `${outdir}/assistant.html`);
 cpSync("src/ui/fieldentry.html", `${outdir}/fieldentry.html`);
+cpSync("src/ui/access.html", `${outdir}/access.html`);
 cpSync("icons", `${outdir}/icons`, { recursive: true });
 
 // Fail the build if the manifest references a file that does not exist in dist/

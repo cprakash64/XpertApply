@@ -95,7 +95,7 @@ describe("toolbar exact-tab overlay cutover", () => {
   });
 
   it("adds only activeTab and the private-entry page without changing host authority or version", () => {
-    expect(manifest.version).toBe("0.3.0");
+    expect(manifest.version).toBe("0.3.1");
     expect(manifest.permissions).toEqual(["activeTab", "identity", "sidePanel", "storage", "scripting", "tabs"]);
     expect(manifest.host_permissions).toEqual([
       "https://api.xpertapply.com/*", "https://xpertapply.com/*", "https://www.xpertapply.com/*"

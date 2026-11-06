@@ -105,6 +105,7 @@ export type ReasonCode =
   | "DIRECT_SIGNED_OUT"
   | "DIRECT_DISABLED"
   | "DIRECT_UNAVAILABLE"
+  | "DIRECT_FORM_NOT_FOUND"
   | "NO_MATCHING_FRAME"
   | "FORM_NOT_RENDERED"
   | "NO_FIELDS_DISCOVERED"
@@ -302,6 +303,8 @@ export const MSG = {
   /** Worker -> employer tab when the authorization behind a session is gone (sign-out, revocation). The page stops
    * writing and drops its annotations; values already on the employer form are left exactly as they are. */
   SESSION_DETACH: "XPERTAPPLY_SESSION_DETACH",
+  /** Top frame of a supported application URL: the bounded form watch ran out without finding a form. */
+  SCAN_EXHAUSTED: "XPERTAPPLY_SCAN_EXHAUSTED",
   COMPLETE_SESSION: "JOBPILOT_COMPLETE_SESSION",
   /** Content script asks the service worker to navigate to a validated
    * application destination. The content script never touches chrome.tabs. */
@@ -443,6 +446,7 @@ export type RuntimeMessage =
   | { type: typeof MSG.STAGE_LAUNCH; payload: LaunchPayload }
   | { type: typeof MSG.CONTENT_READY }
   | { type: typeof MSG.GET_PENDING_LAUNCH; url: string }
+  | { type: typeof MSG.SCAN_EXHAUSTED }
   | { type: typeof MSG.PING_CONTENT }
   | { type: typeof MSG.CONTENT_RECONNECT }
   | { type: typeof MSG.PONG_CONTENT; url: string }
@@ -634,7 +638,7 @@ export type ObservedFramePayload = {
 };
 
 const RUNTIME_TYPES = new Set<string>([
-  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
+  MSG.LAUNCH_REQUEST, MSG.STAGE_LAUNCH, MSG.CONTENT_READY, MSG.SCAN_EXHAUSTED, MSG.GET_PENDING_LAUNCH, MSG.PING_CONTENT, MSG.CONTENT_RECONNECT, MSG.PONG_CONTENT,
   MSG.AUTOFILL_START, MSG.AUTOFILL_PROGRESS, MSG.AUTOFILL_RESULT, MSG.AUTOFILL_FAILED,
   MSG.REQUEST_DOCUMENT, MSG.AUDIT_EVENT, MSG.START_AUTOFILL, MSG.CLEAR_SESSION, MSG.SESSION_DETACH,
   MSG.COMPLETE_SESSION, MSG.PREPARE_APPLICATION_LAUNCH, MSG.ACTIVATE_APPLICATION_DESTINATION, MSG.RECONNECT_APPLICATION_WORKFLOW, MSG.RESOLVE_QUESTIONS, MSG.DRAFT_ANSWERS, MSG.GET_VIEW_STATE, MSG.SAVE_ANSWER, MSG.CONFIRM_NAME,
@@ -736,6 +740,7 @@ const RUNTIME_SCHEMA: Record<string, Record<string, FieldSpec>> = {
   [MSG.STAGE_LAUNCH]: { payload: { kind: "object", required: true } },
   [MSG.LAUNCH_REQUEST]: { payload: { kind: "object", required: true } },
   [MSG.CONTENT_READY]: {},
+  [MSG.SCAN_EXHAUSTED]: {},
   [MSG.ASSISTANT_GET_CONTEXT]: {},
   [MSG.ASSISTANT_CONTEXT_CHANGED]: {},
   [MSG.ASSISTANT_START_AUTOFILL]: {
