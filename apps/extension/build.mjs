@@ -34,7 +34,10 @@ const STAGING = BUILD_PROFILE === "staging";
 // --------------------------------------------------------------------------- //
 const sourceManifest = JSON.parse(readSync("manifest.json", "utf-8"));
 const BUILD_VERSION = sourceManifest.version;
-const BUILT_AT = new Date().toISOString();
+// SOURCE_DATE_EPOCH (seconds) makes release builds reproducible; otherwise use the wall clock.
+const BUILT_AT = process.env.SOURCE_DATE_EPOCH
+  ? new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000).toISOString()
+  : new Date().toISOString();
 /**
  * Build identity.
  *
