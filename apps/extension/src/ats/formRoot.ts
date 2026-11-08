@@ -15,6 +15,7 @@
  * chosen root — never a global scan.
  */
 
+import { classifyWorkdayStep } from "./workdayStep";
 import {
   deepClosest,
   deepContains,
@@ -195,6 +196,13 @@ function scoreCandidate(el: Element): { score: number; signals: string[]; fieldC
   if (deepQuery(el, '[data-automation-id]')) {
     score += 3;
     signals.push("workday_markers");
+    // A recognised Workday application step (progress bar + step heading) is application evidence even when the step has
+    // no identity fields: My Experience and a one-question Application Questions page otherwise score below the bar.
+    const stepKind = classifyWorkdayStep(el.ownerDocument);
+    if (["my_information", "my_experience", "application_questions", "voluntary_disclosures", "self_identify"].includes(stepKind)) {
+      score += 5;
+      signals.push("workday_step");
+    }
   }
 
   // An "Apply for this job" heading on the container OR on a close ancestor, so

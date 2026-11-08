@@ -12,7 +12,7 @@
  * Nothing here requests anything. It is pure so it can be unit tested; callers hold the user gesture.
  */
 export interface SiteGroup {
-  id: "greenhouse" | "lever" | "ashby" | "workday";
+  id: "greenhouse" | "lever" | "ashby" | "workday" | "workdaysite";
   label: string;
   /** Plain-language support level, shown next to the toggle. */
   support: "full" | "limited";
@@ -26,7 +26,10 @@ export const SITE_GROUPS: readonly SiteGroup[] = [
   { id: "greenhouse", label: "Greenhouse", support: "full", suffix: "greenhouse.io", pattern: "https://*.greenhouse.io/*" },
   { id: "lever", label: "Lever", support: "full", suffix: "lever.co", pattern: "https://*.lever.co/*" },
   { id: "ashby", label: "Ashby", support: "full", suffix: "ashbyhq.com", pattern: "https://*.ashbyhq.com/*" },
-  { id: "workday", label: "Workday", support: "limited", suffix: "myworkdayjobs.com", pattern: "https://*.myworkdayjobs.com/*" }
+  { id: "workday", label: "Workday", support: "limited", suffix: "myworkdayjobs.com", pattern: "https://*.myworkdayjobs.com/*" },
+  // Workday's second public hosting domain (wdN.myworkdaysite.com/recruiting/...). Source: third-party extension listings;
+  // not verified against a live tenant in this build.
+  { id: "workdaysite", label: "Workday (myworkdaysite)", support: "limited", suffix: "myworkdaysite.com", pattern: "https://*.myworkdaysite.com/*" }
 ];
 
 /** Every pattern the first-run onboarding requests, in one dialog. */

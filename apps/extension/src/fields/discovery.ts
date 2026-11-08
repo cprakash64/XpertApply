@@ -15,6 +15,7 @@
  * one control collapse to a single uid.
  */
 
+import { workdayAutomationLabel } from "../ats/workdayStep";
 import type { DiscoveredField, ExcludedControl, FieldControl } from "../types";
 import {
   deepClosest,
@@ -574,7 +575,7 @@ function isVisible(el: HTMLElement): boolean {
 export type LabelSource =
   | "label_for" | "wrapping_label" | "aria_labelledby" | "fieldset_legend"
   | "ats_question_wrapper" | "aria_label" | "placeholder" | "field_container_text"
-  | "host_label_attribute" | "none";
+  | "host_label_attribute" | "workday_automation_id" | "none";
 
 /**
  * Resolve a control's QUESTION in strict priority order (section B). Arbitrary
@@ -644,6 +645,9 @@ export function resolveQuestion(el: HTMLElement): { label: string; source: Label
     const text = textWithout(wrapper, el);
     if (text) return { label: text.slice(0, 160), source: "field_container_text" };
   }
+  // Last resort, Workday only: a control with no usable visible label still carries Workday's own automation id.
+  const hinted = workdayAutomationLabel(el);
+  if (hinted) return { label: hinted, source: "workday_automation_id" };
   return { label: "", source: "none" };
 }
 

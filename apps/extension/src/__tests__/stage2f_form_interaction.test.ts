@@ -428,8 +428,7 @@ describe("final-submit classification (XA-07)", () => {
     expect(findWorkdayNextControl(mount(["Continue", "Submit Application"], true))).toBeNull();
   });
 
-  it("picks the intermediate control, never the submit, when both are present", () => {
-    const found = findWorkdayNextControl(mount(["Submit Application", "Continue"]));
-    expect(found?.textContent).toBe("Continue");
+  it("treats a visible Submit as the final boundary and offers no forward control at all (EXT-LIVE-05W: stricter than before)", () => {
+    expect(findWorkdayNextControl(mount(["Submit Application", "Continue"]))).toBeNull();
   });
 });

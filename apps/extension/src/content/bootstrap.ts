@@ -1,3 +1,5 @@
+import * as wf from "../application/workflowEngine";
+import { classifyWorkdayStep, findWorkdaySafeNext, workdayValidationErrors, USER_BOUNDARY_KINDS } from "../ats/workdayStep";
 import { questionLedger } from "./workflowLedger";
 import { toolbarDisclosureAccepted } from "../toolbarDisclosure";
 /**
@@ -952,6 +954,33 @@ function ensureWidget(): ReturnType<typeof createWidget> {
         });
       },
       openApplication: () => { void manuallyOpenApplication(); },
+      workflow: {
+        start: () => {
+          if (!session || outcome?.result.atsId !== "workday") return;
+          workflowRun = wf.startRun("application", workflowIdentity());
+          persistWorkflow();
+          showWorkflow();
+          automaticRunSettled = false;
+          void discoverAndFill("manual_retry");
+        },
+        pause: () => { if (workflowRun) { workflowRun = wf.pause(workflowRun, Date.now()); persistWorkflow(); showWorkflow(); } },
+        resume: () => {
+          if (!workflowRun) return;
+          reconcileDirectUserAnswers();
+          workflowRun = wf.resume(workflowRun);
+          persistWorkflow();
+          showWorkflow();
+          automaticRunSettled = false;
+          void discoverAndFill("manual_retry");
+        },
+        cancel: () => {
+          if (workflowRun) workflowRun = wf.cancel(workflowRun);
+          const store = workflowStore();
+          if (store) wf.clearRun(store);
+          workflowRun = null;
+          showWorkflow();
+        }
+      },
       reconnect: () => {
         widget?.update({ stage: "detecting", message: "Reconnecting to XpertApply…", reconnecting: true, offerReconnect: true });
         void requestReconnect();
@@ -2159,6 +2188,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     // fresh root resolution and field inventory happens NOW, after every fill
     // and repeater render, so a blank required live control cannot be omitted
     // from REVIEW_READY merely because an earlier descriptor disappeared.
+    if (workflowRun?.mode === "application") reconcileUserAnsweredQuestions(formRoot?.root ?? document);
     lifecycle.transition("FINAL_LIVE_DOM_RESCAN", "reacquire_current_application_root");
     const finalRoot = resolveApplicationForm(document);
     if (!finalRoot.confident) {
@@ -2217,11 +2247,7 @@ async function fill(reason: AutofillReason): Promise<void> {
       },
       progress: completedWorkflowProgress
     });
-    if (
-      lastFinalVerification.canEnterReviewReady
-      && lastFinalVerification.manualConsentActions === 0
-      && await advanceWorkdayWhenSafe()
-    ) {
+    if (await driveWorkflowAfterFill()) {
       // Workday replaces the page inside the same SPA. The mutation observer
       // will detect the next step and run the same verified fill pipeline.
       widget?.update({
@@ -3587,22 +3613,77 @@ async function applyResolvedAnswer(
   return { status, reason: result.reason, displayed: result.displayed, backing: result.backing, transaction: result };
 }
 
-// A repeated DOM mutation must never click the same navigation control twice.
-// The signature contains no entered values or other PII.
-const workdayNavigationKeys = new Set<string>();
+// --------------------------------------------------------------------------- //
+// "Complete application": bounded multi-step run (EXT-LIVE-05W). Decisions live in
+// application/workflowEngine.ts; this only observes the page and performs the one
+// action the engine returns. Run state holds no field values and lives in the page's
+// sessionStorage, so it is bound to this tab and origin and survives reloads.
+// --------------------------------------------------------------------------- //
+let workflowRun: wf.WorkflowRun | null = null;
 
-async function advanceWorkdayWhenSafe(): Promise<boolean> {
-  if (!outcome || !ledgerCounts || outcome.result.atsId !== "workday") return false;
-  const context = { url: location.href, document };
-  if (outcome.adapter.isReviewPage?.(context)) return false;
-  // No navigation while anything on this or an earlier page remains unresolved.
-  if (ledgerCounts.pending > 0 || ledgerCounts.requiredBlank > 0 || ledgerCounts.technical > 0) return false;
-  const next = outcome.adapter.findNextControl?.(context);
-  if (!next) return false;
-  const label = (next.textContent || (next as HTMLInputElement).value || "").replace(/\s+/g, " ").trim().toLowerCase();
-  const key = `${scanSignature()}|${label}`;
-  if (workdayNavigationKeys.has(key)) return false;
-  workdayNavigationKeys.add(key);
+function workflowIdentity() {
+  return {
+    now: Date.now(),
+    origin: location.origin,
+    applicationKey: String(session?.sessionId ?? ""),
+    accountKey: String(session?.authenticatedUserId ?? "")
+  };
+}
+
+function workflowStore(): wf.StorageLike | null {
+  try { return window.sessionStorage; } catch { return null; }
+}
+
+function persistWorkflow(): void {
+  const store = workflowStore();
+  if (store && workflowRun) wf.saveRun(store, workflowRun);
+}
+
+function workflowIsActive(): boolean {
+  return Boolean(workflowRun && workflowRun.mode === "application" && !["REVIEW_READY", "FAILED", "CANCELLED"].includes(workflowRun.state) && !workflowRun.paused);
+}
+
+function showWorkflow(): void {
+  if (!widget) return;
+  const run = workflowRun;
+  if (!run || ["CANCELLED", "FAILED", "REVIEW_READY"].includes(run.state)) {
+    widget.setWorkflow({ status: run?.state === "REVIEW_READY" ? "Application ready for your review. Submit it yourself." : run?.state === "FAILED" ? wf.pauseMessage(run.reason) : "", mode: "idle" });
+    return;
+  }
+  const base = run.paused ? "Paused." : run.state === "WAITING_FOR_USER" ? wf.pauseMessage(run.reason) : `Completing the application (step ${run.stepsSeen}).`;
+  widget.setWorkflow({ status: base, mode: run.paused ? "paused" : run.state === "WAITING_FOR_USER" ? "waiting" : "running" });
+}
+
+/** Called after every verified Fill pass. Returns true when it clicked the one safe Next control. */
+async function driveWorkflowAfterFill(): Promise<boolean> {
+  if (!outcome || !ledgerCounts || !lastFinalVerification || outcome.result.atsId !== "workday") return false;
+  const store = workflowStore();
+  if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
+  const kind = classifyWorkdayStep(document);
+  if (!workflowRun) { widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" }); return false; }
+  const next = findWorkdaySafeNext(document);
+  const observation: wf.Observation = {
+    ...workflowIdentity(),
+    signature: scanSignature(),
+    stepKind: kind,
+    isReview: kind === "review",
+    boundary: USER_BOUNDARY_KINDS.has(kind) ? kind : null,
+    unresolved: Math.max(ledgerCounts.pending + ledgerCounts.requiredBlank + ledgerCounts.needsConfirmation, lastFinalVerification.requiredRemaining),
+    // canEnterReviewReady also demands at least one required control, which a step like My Experience may not have, so the
+    // individual live-DOM checks are used. Any of them failing is a technical pause, never an advance.
+    technicalIssues: ledgerCounts.technical + lastFinalVerification.technicalIssues
+      + [lastFinalVerification.lifecycleIsCurrent, lastFinalVerification.noStaleGenerationResults, lastFinalVerification.everyKnownAnswerReachedTerminalState,
+        lastFinalVerification.repeatableCandidatesTerminal, lastFinalVerification.everyRequiredLiveControlHasLedgerEntry].filter((ok) => !ok).length,
+    consentActions: lastFinalVerification.manualConsentActions,
+    validationErrors: workdayValidationErrors(document) + lastFinalVerification.applicationValidationErrors,
+    hasSafeNext: Boolean(next),
+    fillVerified: true
+  };
+  const decision = wf.decide(workflowRun, observation);
+  workflowRun = decision.run;
+  persistWorkflow();
+  showWorkflow();
+  if (decision.action.kind !== "advance" || !next) return false;
   lastScanSignature = scanSignature();
   next.scrollIntoView({ block: "center" });
   next.click();
@@ -3774,6 +3855,57 @@ function markLedgerResolved(uid: string, fillSource: string): void {
 function refreshLedgerCounts(): void {
   ledgerCounts = computeCounts(ledger);
   refreshAuthoritativeReview();
+  resumeWorkflowIfAnswered();
+}
+
+/**
+ * The person answered a paused question directly in the employer's own field. On Resume, a control that still has no verified
+ * XpertApply answer but now holds a value is recorded as the person's own answer (read back from the live control, never typed
+ * by us). Consent/legal items are never resolved this way.
+ */
+function reconcileDirectUserAnswers(): void {
+  for (const entry of ledger) {
+    if (entry.verified) continue;
+    const element = lastFields.get(entry.uid)?.element as (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | undefined);
+    if (!element || !element.isConnected || !("value" in element)) continue;
+    if ((element as HTMLInputElement).type === "checkbox" || (element as HTMLInputElement).type === "radio" || (element as HTMLInputElement).type === "file") continue;
+    if (String(element.value ?? "").trim()) markLedgerResolved(entry.uid, "user");
+  }
+  refreshLedgerCounts();
+}
+
+/**
+ * During a user-started run, a question XpertApply had no answer for but whose live text control now holds the person's own value
+ * is recorded as answered by them, read back from the real form. Consent/legal items, choices and uploads are never resolved this way.
+ */
+function reconcileUserAnsweredQuestions(root: ParentNode): void {
+  const live = new Map(discoverQuestionFields(root).map((field) => [`f_${field.frameId}_${field.uid}`, field]));
+  for (const entry of questionLedger.all()) {
+    if (!["answer_missing", "requires_confirmation", "optional_skipped"].includes(entry.state) || entry.sensitivity === "consent") continue;
+    const element = live.get(entry.fieldKey)?.element as HTMLInputElement | HTMLTextAreaElement | undefined;
+    if (!element || element.isConnected === false || !("value" in element)) continue;
+    if (element instanceof HTMLInputElement && !["text", "search", "tel", "email", "url", "number"].includes(element.type)) continue;
+    if (!String(element.value ?? "").trim()) continue;
+    questionLedger.recordFinalVerification({ fieldKey: entry.fieldKey, state: "filled_verified", reasonCode: "USER_ANSWERED_ON_FORM", required: entry.required, canonicalCategory: entry.canonicalCategory, applicationOverride: true });
+  }
+}
+
+/** A run paused for missing answers continues by itself once the person has answered them all. */
+let resumeScheduled = false;
+function resumeWorkflowIfAnswered(): void {
+  const run = workflowRun;
+  if (!run || run.paused || run.state !== "WAITING_FOR_USER" || !/_needs_answer$/.test(run.reason ?? "")) return;
+  if (!ledgerCounts || ledgerCounts.pending + ledgerCounts.requiredBlank + ledgerCounts.needsConfirmation > 0 || running || resumeScheduled) return;
+  resumeScheduled = true;
+  window.setTimeout(() => {
+    resumeScheduled = false;
+    if (!workflowRun || workflowRun.runId !== run.runId || running) return;
+    workflowRun = wf.resume(workflowRun);
+    persistWorkflow();
+    showWorkflow();
+    automaticRunSettled = false;
+    void discoverAndFill("manual_retry");
+  }, 600);
 }
 
 /**
@@ -4174,7 +4306,8 @@ function observeMutations(): void {
         if (confirmed) return;
         // Continue filling any newly rendered fields. The fill engine skips
         // fields already filled or edited by the user.
-        if (toolbarFillAuthorized && session && !running && started && !automaticRunSettled && scanSignature() !== lastScanSignature) {
+        if (toolbarFillAuthorized && session && !running && started && (!automaticRunSettled || workflowIsActive()) && scanSignature() !== lastScanSignature) {
+          automaticRunSettled = false;
           void discoverAndFill("continue_after_navigation");
         }
         else emitProgressOnly();

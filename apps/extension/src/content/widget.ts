@@ -191,6 +191,8 @@ export function createWidget(actions: {
   captureControl?: () => void;
   /** Toggle "Teach XpertApply" observation. */
   teach?: (enabled: boolean) => void;
+  /** One-click multi-step run (EXT-LIVE-05W). Offered only where an adapter supports safe forward navigation. */
+  workflow?: { start: () => void; pause: () => void; resume: () => void; cancel: () => void };
   confirmSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
   confirmNotSubmitted?: () => Promise<{ ok: boolean; error?: string }>;
 }): {
@@ -214,6 +216,8 @@ export function createWidget(actions: {
   askToRemember: (prompt: RememberPrompt) => void;
   showSubmissionConfirmation: () => void;
   hideSubmissionConfirmation: () => void;
+  /** Workflow status line and which controls apply: idle (Complete application), running (Pause/Cancel), paused (Resume/Cancel). */
+  setWorkflow: (view: { status: string; mode: "idle" | "running" | "waiting" | "paused" }) => void;
   destroy: () => void;
 } {
   // Child ATS contexts report progress through the worker; they never own
@@ -224,7 +228,7 @@ export function createWidget(actions: {
       update: ignore, showReview: ignore, showActions: ignore,
       refreshCounts: ignore, showTransactions: ignore,
       setInteractionMode: ignore, askToRemember: ignore,
-      showSubmissionConfirmation: ignore, hideSubmissionConfirmation: ignore,
+      showSubmissionConfirmation: ignore, hideSubmissionConfirmation: ignore, setWorkflow: ignore,
       destroy: ignore
     };
   }
@@ -382,6 +386,11 @@ export function createWidget(actions: {
           <!-- Primary recovery when the workflow binding is missing. Retrying
                field detection with no session would just fail again. -->
           <button type="button" data-a="reconnect" style="display:none">Reconnect to XpertApply</button>
+          <p class="workflow-status" data-w="status" style="display:none;grid-column:1/-1;margin:0;font-size:12px"></p>
+          <button type="button" data-w="start" style="display:none;grid-column:1/-1;background:#1b704a;border-color:#1b704a;color:#fff">Complete application</button>
+          <button type="button" data-w="pause" style="display:none">Pause</button>
+          <button type="button" data-w="resume" style="display:none">Resume</button>
+          <button type="button" data-w="cancel" style="display:none">Cancel</button>
           <button type="button" data-a="retry">Retry autofill</button>
           <button type="button" data-a="continue">Continue filling</button>
           <button type="button" data-a="next">Jump to next issue</button>
@@ -455,6 +464,13 @@ export function createWidget(actions: {
   const openApplicationBtn = root.querySelector<HTMLButtonElement>('[data-a="open-application"]')!;
   if (actions.openApplication) {
     openApplicationBtn.addEventListener("click", actions.openApplication);
+  }
+  const wf = (name: string) => root.querySelector<HTMLElement>(`[data-w="${name}"]`)!;
+  if (actions.workflow) {
+    wf("start").addEventListener("click", actions.workflow.start);
+    wf("pause").addEventListener("click", actions.workflow.pause);
+    wf("resume").addEventListener("click", actions.workflow.resume);
+    wf("cancel").addEventListener("click", actions.workflow.cancel);
   }
   root.querySelector('[data-a="retry"]')?.addEventListener("click", actions.retry);
   root.querySelector('[data-a="continue"]')?.addEventListener("click", actions.retry);
@@ -1032,6 +1048,16 @@ export function createWidget(actions: {
   }
 
   return {
+    setWorkflow(view) {
+      if (!actions.workflow) return;
+      const status = wf("status");
+      status.textContent = view.status;
+      status.style.display = view.status ? "" : "none";
+      wf("start").style.display = view.mode === "idle" ? "" : "none";
+      wf("pause").style.display = view.mode === "running" ? "" : "none";
+      wf("resume").style.display = view.mode === "paused" || view.mode === "waiting" ? "" : "none";
+      wf("cancel").style.display = view.mode === "idle" ? "none" : "";
+    },
     update(value) {
       const labels: Record<WidgetStage, string> = { preparing:"Preparing", opening:"Opening application", detecting:"Detecting fields", filling:"Filling", uploading:"Uploading resume", review:"Needs review", ready:"Ready for review", failed:"Failed" };
       const title = value.stageLabel ?? labels[value.stage];

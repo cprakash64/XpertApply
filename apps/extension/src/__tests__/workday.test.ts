@@ -59,9 +59,12 @@ describe("dedicated Workday adapter", () => {
   it("allows only safe page navigation and stops at Review", () => {
     document.body.innerHTML = `
       <h2>My Information</h2>
-      <button>Save and Continue</button>
-      <button>Submit</button>`;
+      <button>Save and Continue</button>`;
     expect(findWorkdayNextControl({ url: location.href, document })?.textContent).toContain("Save and Continue");
+
+    // Any visible Submit means the final boundary: no forward control is offered at all.
+    document.body.innerHTML = `<h2>My Information</h2><button>Save and Continue</button><button>Submit</button>`;
+    expect(findWorkdayNextControl({ url: location.href, document })).toBeNull();
 
     document.body.innerHTML = `
       <div aria-current="step">Review</div>
@@ -72,16 +75,19 @@ describe("dedicated Workday adapter", () => {
     expect(WorkdayAdapter.findSubmitControl({ url: location.href, document })?.textContent).toBe("Submit");
   });
 
-  it("starts Workday through its resume-import path before the underlying Apply action", () => {
+  it("never clicks the start-choice buttons, Apply on a posting, Sign in or Create Account", () => {
     document.body.innerHTML = `
       <button>Apply</button>
       <section role="dialog">
         <button>Autofill with Resume</button>
         <button>Apply Manually</button>
       </section>`;
-    expect(findWorkdayNextControl({ url: location.href, document })?.textContent).toBe("Autofill with Resume");
+    expect(findWorkdayNextControl({ url: location.href, document })).toBeNull();
 
-    document.body.innerHTML = `<button>Apply</button><button>Submit</button>`;
-    expect(findWorkdayNextControl({ url: location.href, document })?.textContent).toBe("Apply");
+    document.body.innerHTML = `<button>Apply</button>`;
+    expect(findWorkdayNextControl({ url: location.href, document })).toBeNull();
+
+    document.body.innerHTML = `<h2>Create Account</h2><input type="password"><input type="password"><button data-automation-id="createAccountSubmitButton">Create Account</button><button>Continue</button>`;
+    expect(findWorkdayNextControl({ url: location.href, document })).toBeNull();
   });
 });

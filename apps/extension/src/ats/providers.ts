@@ -35,7 +35,7 @@ export const PROVIDERS: readonly AtsProvider[] = [
     applicationPath: /\/apply\/?(?:[?#]|$)/i, singlePage: false },
   { id: "ashby", displayName: "Ashby", hosts: ["ashbyhq.com"], support: "adapter", mayEmbed: true,
     applicationPath: /\/application\/?(?:[?#]|$)|[?&]ashby_jid=/i, singlePage: true },
-  { id: "workday", displayName: "Workday", hosts: ["myworkdayjobs.com", "workday.com"], support: "limited", mayEmbed: false,
+  { id: "workday", displayName: "Workday", hosts: ["myworkdayjobs.com", "myworkdaysite.com", "workday.com"], support: "limited", mayEmbed: false,
     applicationPath: /\/(?:apply|applyManually|autofillWithResume)\b|\/job\/.+\/apply/i, singlePage: true },
   { id: "smartrecruiters", displayName: "SmartRecruiters", hosts: ["smartrecruiters.com"], support: "limited", mayEmbed: false,
     applicationPath: /\/(?:apply|oneclick-ui)\b/i, singlePage: true },
