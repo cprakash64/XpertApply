@@ -7,6 +7,14 @@ Candidate: `xpertapply-extension-0.3.1-ba2941f.zip`, sha256
 `36d65c40119707380da7f9192ba230b2289bfae2f317fde8c9cf6a9193f1ab39`. Extension ID
 `gnibjomjfdobadlockphjiibbpmiehcj`.
 
+## Which phase each section belongs to
+| Phase | Sections | Build under test | Claim allowed when it passes |
+|-------|----------|------------------|------------------------------|
+| Pre-publication native test | B, C, D, E, F, and G rows that need no Store (G1-G4) | Unpacked `dist-store-id/` made from the candidate ZIP's source with the Store public key (see `scripts/store-id-unpacked.mjs`; never upload that folder) | "Candidate behaves correctly in native Chrome under the production ID" |
+| Post-publication Store upgrade | A, and any G row that depends on Store delivery | Store-delivered 0.3.1 over a profile that had Store 0.3.0 | "Store upgrade 0.3.0 to 0.3.1 verified" |
+
+Do not report Store upgrade acceptance until the Store has actually delivered 0.3.1 to the test profile.
+
 ## Ground rules
 - Use a brand-new Chrome profile (no other extensions) and a disposable XpertApply account with disposable
   resume and profile data. No real personal data.

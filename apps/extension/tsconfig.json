@@ -36,6 +36,7 @@
     "src/__tests__/application_answer_fixture.test.ts",
     "src/__tests__/bootstrap_capability.test.ts",
     "src/__tests__/extension_build_authority.test.ts",
-    "src/__tests__/staging_profile.test.ts"
+    "src/__tests__/staging_profile.test.ts",
+    "src/__tests__/store_identity.test.ts"
   ]
 }
