@@ -38,8 +38,8 @@ The verified 0.3.1 candidate ZIP (`xpertapply-extension-0.3.1-44c107e.zip`, sha2
 - Boundaries: sign-in, account creation, verification/CAPTCHA/MFA, start-choice, Voluntary Disclosures and Self-Identify are
   user-only. XpertApply never clicks Create Account, Sign In, Autofill with Resume, Apply, or any Submit. A visible Submit means review.
 - Hosts: `myworkdaysite.com` added to the Workday provider and as a fifth optional group grant (`https://*.myworkdaysite.com/*`).
-  No manifest change (the pattern is inside the existing `optional_host_permissions: https://*/*`). NEEDS PRODUCT APPROVAL: the
-  one onboarding dialog now names five domains. Source for the host is third-party; unverified live.
+  No manifest change (the pattern is inside the existing `optional_host_permissions: https://*/*`). PRODUCT APPROVED (2026-11-09, by the
+  operator): keep the fifth group. The one onboarding dialog now names five domains. Source for the host is third-party; unverified live.
 
 ## Validation
 `npx tsc --noEmit` clean; `npx vitest run` 109 files / 1628 tests; real-Chromium `e2e/workday-complete.spec.ts` (3 tests); full
