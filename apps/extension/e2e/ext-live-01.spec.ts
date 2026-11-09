@@ -146,7 +146,7 @@ test("L6. The access page reads Chrome's real state and offers the single enable
     const id = new URL(e.worker.url()).host;
     const p: Page = await e.ctx.newPage();
     await p.goto(`chrome-extension://${id}/access.html?welcome=1`);
-    await expect(p.locator("#groups .row")).toHaveCount(5);
+    await expect(p.locator("#groups .row")).toHaveCount(4);
     await expect(p.locator("#groups")).toContainText("Greenhouse");
     await expect(p.locator("#groups")).toContainText("Allowed");     // this build is the post-grant state
     await expect(p.locator("#title")).toHaveText("Welcome to XpertApply");
@@ -166,7 +166,7 @@ test("L7. Fresh install of the production build: no site access, one onboarding 
     expect(granted.sort()).toEqual(["https://api.xpertapply.com/*", "https://www.xpertapply.com/*", "https://xpertapply.com/*"]);
     expect(await worker.evaluate(async () => (await chrome.scripting.getRegisteredContentScripts()).length)).toBe(0);
     const page = ctx.pages().find(p => p.url().includes("/access.html"))!;
-    await expect(page.locator("#groups .row")).toHaveCount(5);
+    await expect(page.locator("#groups .row")).toHaveCount(4);
     await expect(page.locator("#groups")).not.toContainText("Allowed");
     await expect(page.locator("#enable")).toBeVisible();
     await expect(page.locator("#title")).toHaveText("Welcome to XpertApply");

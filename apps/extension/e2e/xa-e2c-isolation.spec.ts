@@ -77,10 +77,25 @@ test("2. the account changes while the worker is stopped: the old draft is dropp
     const p = await open(e, 7);
     const oldDraft = [...e.api.sessions.keys()][0];
     const cdp = await e.ctx.newCDPSession(p);
+    const scopes: string[] = [];
+    cdp.on("ServiceWorker.workerRegistrationUpdated", (ev) => { for (const r of ev.registrations) scopes.push(r.scopeURL); });
     await cdp.send("ServiceWorker.enable");
     await cdp.send("ServiceWorker.stopAllWorkers");
-    const worker = e.ctx.serviceWorkers()[0] ?? await e.ctx.waitForEvent("serviceworker", { timeout: 20_000 });
-    await e.signIn(9).catch(async () => { await worker.evaluate(() => 0); await e.signIn(9); });
+    // Root cause of the historical hang: `e.signIn` used the ORIGINAL worker handle. After stopAllWorkers that handle never resolves
+    // and never rejects, so `.catch` never ran and the test sat until its timeout. Start the worker again and write through the NEW handle.
+    const extScope = scopes.find((u) => u.startsWith("chrome-extension://"));
+    expect(extScope, "the extension's service worker registration").toBeTruthy();
+    // Wake the worker by opening one of the extension's own pages, then write through whichever handle answers.
+    const nudge = await e.ctx.newPage();
+    await nudge.goto(`${extScope!}access.html`);
+    let worker = e.ctx.serviceWorkers().at(-1);
+    await expect.poll(async () => {
+      worker = e.ctx.serviceWorkers().at(-1);
+      if (!worker) return false;
+      return Promise.race([worker.evaluate(() => true).catch(() => false), new Promise<boolean>((r) => setTimeout(() => r(false), 3000))]);
+    }, { timeout: 30_000 }).toBe(true);
+    await nudge.close();
+    await e.signIn(9, worker!);
     const mark = e.api.log.length;
     await p.reload();
     await p.click("#apply-now");

@@ -15,8 +15,7 @@ function memoryArea() {
 describe("supported-ATS group grants", () => {
   it("asks once for the supported ATS domains and nothing else", () => {
     expect([...ONBOARDING_PATTERNS]).toEqual([
-      "https://*.greenhouse.io/*", "https://*.lever.co/*", "https://*.ashbyhq.com/*", "https://*.myworkdayjobs.com/*",
-      "https://*.myworkdaysite.com/*"
+      "https://*.greenhouse.io/*", "https://*.lever.co/*", "https://*.ashbyhq.com/*", "https://*.myworkdayjobs.com/*"
     ]);
   });
   it("widens only supported ATS hosts; a custom employer domain stays exact", () => {

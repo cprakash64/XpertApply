@@ -308,7 +308,7 @@ export async function launchSignedIn(opts: { api: Awaited<ReturnType<typeof star
   const dist = opts.dist ?? process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...opts.tls.args] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 20_000 });
-  const signIn = (userId: number) => worker.evaluate(async ([uid, email]) => {
+  const signIn = (userId: number, via: Worker = worker) => via.evaluate(async ([uid, email]) => {
     await new Promise<void>((resolve, reject) => {
       const open = indexedDB.open("xpertapply-extension-auth", 1);
       open.onupgradeneeded = () => open.result.createObjectStore("kv");
