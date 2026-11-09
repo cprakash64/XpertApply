@@ -1,0 +1,178 @@
+<!doctype html><meta charset="utf-8"><title>Apply - Acme Careers</title>
+<style>body{font:14px sans-serif;margin:16px} .portal{position:absolute;z-index:50;background:#fff;border:1px solid #888} .portal li{padding:4px 8px;list-style:none;cursor:pointer} [data-automation-id=bottom-navigation-footer]{margin-top:16px} label{display:block} .row{margin:6px 0}</style>
+<div id="app"></div><div id="portal-root"></div>
+<script>
+/* OWNED Workday-shaped fixture (EXT-LIVE-06). Imitates structure publicly described for Workday; it is not a capture of any tenant. */
+const CFG = __CFG__;
+const KEY = 'wd-state-' + CFG.name;
+const CATALOG = {
+  country: ['Canada', 'United States of America', 'Mexico'],
+  state: ['Arizona', 'California', 'Texas'],
+  deviceType: ['Home', 'Mobile', 'Work'],
+  phoneCode: ['Canada (+1)', 'United States of America (+1)', 'Mexico (+52)'],
+  degree: CFG.degreeOptions || ['High School Diploma', "Associate's Degree", "Bachelor's Degree", "Master's Degree", 'Doctorate'],
+  school: CFG.schoolOptions || ['Arizona State University', 'University of Arizona', 'Northern Arizona University', 'Stanford University'],
+  fos: ['Computer Science', 'Data Science', 'Electrical Engineering']
+};
+let S = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+if (!S) {
+  S = { signedIn: !CFG.signIn, step: CFG.startStep || 0, vals: {}, work: JSON.parse(JSON.stringify(CFG.prefill?.work || [])), edu: JSON.parse(JSON.stringify(CFG.prefill?.edu || [])), sites: JSON.parse(JSON.stringify(CFG.prefill?.sites || [])),
+        resume: '', parsing: false, err: 0, errLabels: [], clicks: { next: 0, submit: 0, add: 0, uploads: 0, signin: 0, createAccount: 0 }, visited: [] };
+}
+window.__emp = S;
+const save = () => sessionStorage.setItem(KEY, JSON.stringify(S));
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const STEPS = ['My Information', 'My Experience', 'Application Questions', 'Review'];
+const get = (p) => p.split('.').reduce((o, k) => (o == null ? o : o[k]), S);
+const setp = (p, v) => { const parts = p.split('.'); const last = parts.pop(); parts.reduce((o, k) => o[k], S)[last] = v; save(); };
+
+const txt = (id, label, bind, req, extra = '', auto = '') =>
+  `<div class="row" data-automation-id="formField-${auto || id}"><label for="${id}">${label}${req ? ' *' : ''}</label><input id="${id}" ${auto ? `data-automation-id="${auto}"` : ''} data-bind="${bind}" value="${esc(get(bind))}" ${req ? 'required' : ''} ${extra}></div>`;
+const dd = (key, label, bind, req) => {
+  const v = get(bind);
+  return `<div class="row" data-automation-id="formField-${key}"><label id="lbl-${key}">${label}${req ? ' *' : ''}</label><button type="button" aria-haspopup="listbox" aria-labelledby="lbl-${key}" aria-label="${label}${req ? ' required' : ''} ${v || 'Select One'}" data-automation-id="${key}" data-dd="${key}" data-bind="${bind}" ${req ? 'aria-required="true"' : ''}>${esc(v || 'Select One')}</button></div>`;
+};
+const date = (id, label, base, req, yearOnly) =>
+  `<div class="row" data-automation-id="formField-${id}"><label>${label}${req ? ' *' : ''}</label><div data-automation-id="${id}"><div data-automation-id="dateInputWrapper">` +
+  (yearOnly ? '' : `<input role="spinbutton" aria-label="Month" data-automation-id="dateSectionMonth-input" data-date="${base}m" value="${esc(get(base + 'm') || '')}" placeholder="MM">`) +
+  `<input role="spinbutton" aria-label="Year" data-automation-id="dateSectionYear-input" data-date="${base}y" value="${esc(get(base + 'y') || '')}" placeholder="YYYY"></div></div></div>`;
+const typeahead = (key, label, list, req) =>
+  `<div class="row" data-automation-id="formField-${key}"><label>${label}${req ? ' *' : ''}</label><div data-automation-id="${key}"><div data-automation-id="multiSelectContainer"><ul data-automation-id="selectedItemList">${(list || []).map((x) => `<li data-automation-id="selectedItem">${esc(x)}</li>`).join('')}</ul><input type="text" data-automation-id="searchBox" data-ta="${key}" aria-label="${label}" placeholder="Search"></div></div></div>`;
+
+function stepBody() {
+  if (!S.signedIn) return '<h2>Sign In</h2><div class="row"><label for="si-e">Email Address</label><input id="si-e" type="email"></div><div class="row"><label for="si-p">Password</label><input id="si-p" type="password"></div><button type="button" data-automation-id="signInSubmitButton" id="signin">Sign In</button>';
+  if (S.step === 0) {
+    return dd('countryDropdown', 'Country', 'vals.country', true) + txt('fn', 'First Name', 'vals.fn', true, '', 'legalNameSection_firstName') + txt('ln', 'Last Name', 'vals.ln', true, '', 'legalNameSection_lastName') +
+      txt('addr', 'Address Line 1', 'vals.addr', false, '', 'addressSection_addressLine1') + txt('city', 'City', 'vals.city', true, '', 'addressSection_city') + dd('addressSection_countryRegion', 'State', 'vals.state', true) +
+      txt('zip', 'Postal Code', 'vals.zip', false, '', 'addressSection_postalCode') + txt('em', 'Email Address', 'vals.em', true, 'type="email"', 'email') +
+      dd('phone-device-type', 'Phone Device Type', 'vals.deviceType', false) + dd('country-phone-code', 'Country Phone Code', 'vals.phoneCode', true) + txt('ph', 'Phone Number', 'vals.ph', true, 'type="tel"', 'phone-number');
+  }
+  if (S.step === 1) return experienceBody();
+  if (S.step === 2) return questionsBody();
+  return '<h2>Review</h2><p>Please review your application.</p>';
+}
+
+function workRow(w, i) {
+  const n = i + 1;
+  return `<div role="group" data-automation-id="workExperience-${n}"><h4>Work Experience ${n}</h4>` +
+    txt(`wt${i}`, 'Job Title', `work.${i}.title`, true, '', 'jobTitle') + txt(`wc${i}`, 'Company', `work.${i}.company`, true, '', 'companyName') + txt(`wl${i}`, 'Location', `work.${i}.location`, false, '', 'location') +
+    `<div class="row"><label><input type="checkbox" data-automation-id="currentlyWorkHere" data-cur="${i}" ${w.current ? 'checked' : ''}> I currently work here</label></div>` +
+    date('startDate', 'From', `work.${i}.s`, true, false) + (w.current ? '' : date('endDate', 'To', `work.${i}.e`, false, false)) +
+    (CFG.noRoleDescription ? '' : `<div class="row" data-automation-id="formField-roleDescription"><label for="wd${i}">Role Description</label><textarea id="wd${i}" data-automation-id="roleDescription" data-bind="work.${i}.desc">${esc(w.desc || '')}</textarea></div>`) +
+    `<button type="button" data-automation-id="delete-workExperience-${n}" data-del="work.${i}">Delete</button></div>`;
+}
+function eduRow(e, i) {
+  const n = i + 1;
+  return `<div role="group" data-automation-id="education-${n}"><h4>Education ${n}</h4>` +
+    typeahead('school', 'School or University', e.school ? [e.school] : [], true).replace('data-ta="school"', `data-ta="school" data-row="${i}"`) +
+    dd('degree', 'Degree', `edu.${i}.degree`, false) + typeahead('fieldOfStudy', 'Field of Study', e.fos || [], false).replace('data-ta="fieldOfStudy"', `data-ta="fieldOfStudy" data-row="${i}"`) +
+    txt(`eg${i}`, 'Overall Result (GPA)', `edu.${i}.gpa`, false, '', 'gradeAverage') + date('firstYearAttended', 'From', `edu.${i}.f`, false, true) + date('lastYearAttended', 'To (Actual or Expected)', `edu.${i}.l`, false, true) +
+    `<button type="button" data-automation-id="delete-education-${n}" data-del="edu.${i}">Delete</button></div>`;
+}
+function siteRow(s, i) {
+  const n = i + 1;
+  return `<div role="group" data-automation-id="website-${n}"><h4>Website ${n}</h4>` + txt(`ws${i}`, 'URL', `sites.${i}.url`, true, '', 'url') + `<button type="button" data-automation-id="delete-website-${n}" data-del="sites.${i}">Delete</button></div>`;
+}
+const addBtn = (list, kind) => `<button type="button" data-automation-id="add-button" data-add="${kind}">${list.length ? 'Add Another' : 'Add'}</button>`;
+
+function experienceBody() {
+  return `<div data-automation-id="resumeSection"><h3>Resume/CV</h3><input type="file" data-automation-id="file-upload-input-ref" id="resume-file">` +
+    (S.parsing ? '<div data-automation-id="file-upload-progress" aria-busy="true">Parsing your resume…</div>' : '') +
+    (S.resume && !S.parsing ? `<div data-automation-id="file-upload-successful">${esc(S.resume)}</div>` : '') + '</div>' +
+    `<div data-automation-id="workExperienceSection"><h3>Work Experience</h3>${S.work.map(workRow).join('')}${addBtn(S.work, 'work')}</div>` +
+    `<div data-automation-id="educationSection"><h3>Education</h3>${S.edu.map(eduRow).join('')}${addBtn(S.edu, 'edu')}</div>` +
+    (CFG.noWebsites ? '' : `<div data-automation-id="websiteSection"><h3>Websites</h3>${S.sites.map(siteRow).join('')}${addBtn(S.sites, 'sites')}</div>`) +
+    (CFG.submitDecoy ? '<div><button type="button" data-automation-id="pageFooterSubmitButton" id="decoy-submit">Submit</button></div>' : '');
+}
+function questionsBody() {
+  if (CFG.noLegal) return '<p>There are no additional questions for this role.</p>';
+  return `<fieldset data-automation-id="formField-auth"><legend>Are you legally authorized to work in the country in which this job is located? *</legend>` +
+    ['Yes', 'No'].map((v) => `<label><input type="radio" name="auth" value="${v}" id="auth-${v}" ${S.vals.auth === v ? 'checked' : ''} required> ${v}</label>`).join('') + '</fieldset>' +
+    (S.vals.auth === 'No' || CFG.conditional ? txt('visa', 'If you require sponsorship, describe your status', 'vals.visa', false) : '') +
+    txt('src', 'How did you hear about us?', 'vals.src', true);
+}
+
+function render() {
+  const names = ['Sign In', ...STEPS];
+  S.visited.push(S.signedIn ? STEPS[S.step] : 'Sign In');
+  const last = S.signedIn && S.step === STEPS.length - 1;
+  document.getElementById('app').innerHTML =
+    (S.signedIn ? `<div data-automation-id="progressBar"><ol>${STEPS.map((s, k) => `<li ${k === S.step ? 'aria-current="step" data-automation-id="progressBarActiveStep"' : ''}>${s}</li>`).join('')}</ol></div>` : '') +
+    `<main data-automation-id="applicationPage"><h2>${S.signedIn ? STEPS[S.step] : 'Sign In'}</h2><form novalidate>${stepBody()}</form>` +
+    (S.err ? `<div data-automation-id="errorBanner" role="alert">Errors found: ${esc(S.errLabels.join(', '))}</div>` : '') +
+    (S.signedIn ? `<div data-automation-id="bottom-navigation-footer">${last ? '<button type="button" data-automation-id="pageFooterSubmitButton" id="submit">Submit</button>' : '<button type="button" data-automation-id="pageFooterBackButton">Back</button><button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>'}</div>` : '') + '</main>';
+  save();
+}
+function closePortal() { document.getElementById('portal-root').innerHTML = ''; }
+function openList(anchor, options, onPick) {
+  closePortal();
+  const r = anchor.getBoundingClientRect();
+  const ul = document.createElement('ul'); ul.className = 'portal'; ul.setAttribute('role', 'listbox'); ul.setAttribute('data-automation-id', 'activeListContainer');
+  ul.style.left = (r.left + scrollX) + 'px'; ul.style.top = (r.bottom + scrollY) + 'px';
+  options.forEach((o) => { const li = document.createElement('li'); li.setAttribute('role', 'option'); li.setAttribute('data-automation-id', 'promptOption'); li.textContent = o; li.addEventListener('click', () => { closePortal(); onPick(o); }); ul.appendChild(li); });
+  document.getElementById('portal-root').appendChild(ul);
+}
+
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePortal(); });
+document.addEventListener('mousedown', (e) => { if (!e.target.closest('.portal,[data-dd],[data-ta]')) closePortal(); });
+const app = document.getElementById('app');
+app.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.matches('[data-bind]') && !t.matches('button')) { setp(t.getAttribute('data-bind'), t.value); }
+  if (t.matches('[data-date]')) {
+    const m = t.getAttribute('data-date'); const isM = m.endsWith('m'); let v = t.value.replace(/\D/g, '');
+    const bad = isM ? (Number(v) < 1 || Number(v) > 12) : (v.length === 4 && (Number(v) < 1950 || Number(v) > 2100));
+    if (v && bad) { v = ''; t.value = ''; }
+    setp(m, isM && v ? String(Number(v)).padStart(2, '0') : v);
+    if (t.value !== get(m) && get(m) !== undefined) t.value = get(m);
+  }
+  if (t.matches('[data-ta]')) {
+    const key = t.getAttribute('data-ta'); const q = t.value.toLowerCase(); const row = Number(t.getAttribute('data-row'));
+    if (!q) return closePortal();
+    setTimeout(() => {
+      const list = (key === 'school' ? CATALOG.school : CATALOG.fos).filter((o) => o.toLowerCase().includes(q));
+      if (!list.length) return closePortal();
+      openList(t, list, (o) => { const ul = t.closest('[data-automation-id=multiSelectContainer]').querySelector('ul'); if (key === 'school') { S.edu[row].school = o; ul.innerHTML = ''; } else (S.edu[row].fos = S.edu[row].fos || []).push(o); const li = document.createElement('li'); li.setAttribute('data-automation-id', 'selectedItem'); li.textContent = o; ul.appendChild(li); t.value = ''; save(); });
+    }, CFG.latency || 120);
+  }
+});
+app.addEventListener('click', (e) => {
+  const t = e.target.closest('button,input[type=checkbox],input[type=radio]'); if (!t) return;
+  if (t.matches('[data-dd]')) { openList(t, CATALOG[ddKey(t)], (o) => { setp(t.getAttribute('data-bind'), o); t.textContent = o; t.setAttribute('aria-label', t.getAttribute('aria-label').replace(/ [^ ]+( [^ ]+)*$/, '') + ' ' + o); }); return; }
+  if (t.matches('[data-add]')) { S.clicks.add++; const k = t.getAttribute('data-add'); (k === 'work' ? S.work : k === 'edu' ? S.edu : S.sites).push(k === 'work' ? { title: '', company: '' } : k === 'edu' ? { school: '', fos: [] } : { url: '' }); render(); return; }
+  if (t.matches('[data-del]')) { const [k, i] = t.getAttribute('data-del').split('.'); S[k].splice(Number(i), 1); render(); return; }
+  if (t.matches('[data-cur]')) { S.work[Number(t.getAttribute('data-cur'))].current = t.checked; render(); return; }
+  if (t.matches('input[type=radio]')) { S.vals.auth = t.value; save(); return; }
+  if (t.id === 'signin') { S.clicks.signin++; S.signedIn = true; render(); return; }
+  if (t.id === 'submit' || t.id === 'decoy-submit') { S.clicks.submit++; save(); return; }
+  if (t.id === 'next') nextStep();
+});
+const ddKey = (t) => ({ countryDropdown: 'country', 'addressSection_countryRegion': 'state', 'phone-device-type': 'deviceType', 'country-phone-code': 'phoneCode', degree: 'degree' }[t.getAttribute('data-dd')]);
+app.addEventListener('keydown', (e) => { if (e.target.matches('[data-ta]') && e.key === 'Enter') e.target.dispatchEvent(new Event('input', { bubbles: true })); });
+app.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.id === 'resume-file' && t.files?.length) {
+    S.clicks.uploads++; S.resume = t.files[0].name; S.parsing = !!CFG.asyncParse; render();
+    if (CFG.asyncParse) setTimeout(() => { S.parsing = false; S.work = JSON.parse(JSON.stringify(CFG.parsed.work)); S.edu = JSON.parse(JSON.stringify(CFG.parsed.edu)); render(); }, CFG.asyncParse);
+  }
+});
+function nextStep() {
+  S.clicks.next++;
+  const missing = [];
+  const v = S.vals;
+  if (S.step === 0) { [['fn', 'First Name'], ['ln', 'Last Name'], ['em', 'Email Address'], ['ph', 'Phone Number'], ['country', 'Country'], ['phoneCode', 'Country Phone Code'], ['city', 'City'], ['state', 'State']].forEach(([k, l]) => { if (!v[k]) missing.push(l); }); }
+  if (S.step === 1) {
+    S.work.forEach((w, i) => { if (!w.title) missing.push(`Work Experience ${i + 1} Job Title`); if (!w.company) missing.push(`Work Experience ${i + 1} Company`); if (!w.sm || !w.sy) missing.push(`Work Experience ${i + 1} From`); });
+    S.edu.forEach((e, i) => { if (!e.school) missing.push(`Education ${i + 1} School`); });
+    S.sites.forEach((s, i) => { if (!s.url) missing.push(`Website ${i + 1}`); });
+  }
+  if (S.step === 2 && !CFG.noLegal) { if (!v.auth) missing.push('Authorization'); if (!v.src) missing.push('Source'); }
+  if (missing.length) { S.err = missing.length; S.errLabels = missing; render(); return; }
+  S.err = 0; S.errLabels = []; S.step++; history.pushState({}, '', location.pathname + '?step=' + S.step); render();
+}
+if (CFG.parseOnLoad && !S.resume) {
+  S.resume = 'resume.pdf'; S.parsing = true; S.clicks.uploads++;
+  setTimeout(() => { S.parsing = false; S.work = JSON.parse(JSON.stringify(CFG.parsed.work)); S.edu = JSON.parse(JSON.stringify(CFG.parsed.edu)); render(); }, CFG.parseOnLoad);
+}
+render();
+</script>

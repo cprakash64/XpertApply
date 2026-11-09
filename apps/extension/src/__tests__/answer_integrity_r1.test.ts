@@ -348,19 +348,29 @@ describe("XA-05/R1 · demographic answers fail closed on the live path", () => {
 // --------------------------------------------------------------------------- //
 
 describe("fieldset/legend work-authorization question", () => {
-  it("fails closed rather than asserting anything", async () => {
-    // With the question in a <legend>, the radio's own label is "Yes" and the
-    // word "country" in the legend wins the keyword race, so the control is
-    // classified `country` rather than work_authorization_us. That is a
-    // CLASSIFICATION defect, but it cannot produce a false assertion: there is
-    // no `country` answer that is a valid Yes/No option, so nothing is written.
-    document.body.innerHTML = `<form id="app"><fieldset>
+  const markup = `<form id="app"><fieldset>
       <legend>Are you legally authorized to work in the country where the job is located?</legend>
       <label><input type="radio" name="q" id="q_0" value="Yes" required> Yes</label>
       <label><input type="radio" name="q" id="q_1" value="No"> No</label>
     </fieldset></form>`;
+
+  it("is classified from its legend as work authorization, not as the Country field (EXT-LIVE-06)", async () => {
+    // The question lives in the <legend>; the radio's own label is only "Yes". The word "country" inside the legend used to win the
+    // keyword race and classify this legal Yes/No question as the Country field. The group label is now used and a legal question
+    // is never treated as Country.
+    document.body.innerHTML = markup;
     const data = session();
-    data.answers.push(answer("country", "United States"));
+    const fields = discoverFields(document.querySelector("#app")!);
+    const { mappings } = buildMappings(fields, data);
+    expect(mappings[0]?.canonicalKey).toBe("work_authorization_us");
+    await applyFill(fields, mappings, data);
+    expect((document.querySelector('input[name="q"]:checked') as HTMLInputElement | null)?.value).toBe("Yes");
+  });
+
+  it("writes nothing when the only saved answer is a Country (no false assertion)", async () => {
+    document.body.innerHTML = markup;
+    const data = session();
+    data.answers = [answer("country", "United States")];
     const fields = discoverFields(document.querySelector("#app")!);
     const { mappings } = buildMappings(fields, data);
     await applyFill(fields, mappings, data);

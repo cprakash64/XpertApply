@@ -71,6 +71,8 @@ export interface FinalVerificationResult {
 }
 
 export interface FinalVerificationInput {
+  /** Controls another module owns and verifies itself (Workday repeatable rows). Excluded from this inventory. */
+  excludeElement?: (el: HTMLElement) => boolean;
   root: ParentNode;
   session: ApplicationSessionData;
   domGeneration: number;
@@ -103,6 +105,7 @@ export function verifyFinalLiveDom(input: FinalVerificationInput): FinalVerifica
     input.step ?? 0
   );
   current.fields = mergeTikTokLegalFields(current.fields, tiktok);
+  if (input.excludeElement) current.fields = current.fields.filter((field) => !field.element || !input.excludeElement!(field.element));
   const tiktokByUid = new Map(
     tiktok.slots.filter((slot) => slot.field).map((slot) => [slot.identity, slot])
   );
@@ -380,6 +383,10 @@ function committedBackingPresent(field: DiscoveredField, displayed: boolean): bo
     if (element.type === "checkbox") return element.checked;
     if (field.control !== "combobox" && field.control !== "listbox") return Boolean(element.value.trim());
   }
+  // Workday's prompt dropdown is a <button aria-haspopup="listbox"> whose rendered text IS the committed value: it has no
+  // separate backing input to compare. A non-placeholder label on that button is the evidence (valuePresent already rejects
+  // "Select One"); this applies only to buttons inside Workday's automation-id markup, never to other custom selects.
+  if (element instanceof HTMLButtonElement && element.getAttribute("aria-haspopup") === "listbox" && element.closest("[data-automation-id]")) return displayed;
   if (field.control === "combobox" || field.control === "listbox") {
     const scope = element.closest("fieldset,[role=group],[data-field],[class*='field']") ?? element.parentElement ?? element;
     const hidden = Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="hidden"]'));

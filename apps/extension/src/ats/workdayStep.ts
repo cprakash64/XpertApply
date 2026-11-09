@@ -21,11 +21,12 @@ export type WorkdayStepKind =
   | "voluntary_disclosures"
   | "self_identify"
   | "review"            // final boundary: never advanced past by XpertApply
+  | "ambiguous_submit"  // a Submit button on a step the employer labels as an ordinary application step
   | "unknown_step";
 
 /** Kinds where XpertApply must stop and hand control to the person. */
 export const USER_BOUNDARY_KINDS: ReadonlySet<WorkdayStepKind> = new Set([
-  "sign_in", "create_account", "verification", "start_choice", "voluntary_disclosures", "self_identify"
+  "sign_in", "create_account", "verification", "start_choice", "voluntary_disclosures", "self_identify", "ambiguous_submit"
 ]);
 
 const text = (el: Element | null | undefined): string => (el?.textContent || (el as HTMLInputElement | null)?.value || "").replace(/\s+/g, " ").trim();
@@ -70,8 +71,12 @@ export function findWorkdayFinalSubmit(doc: ParentNode): HTMLElement | null {
 }
 
 export function classifyWorkdayStep(doc: ParentNode): WorkdayStepKind {
-  if (findWorkdayFinalSubmit(doc)) return "review";
   const step = activeStepLabel(doc);
+  if (findWorkdayFinalSubmit(doc)) {
+    // A Submit that sits on a step the employer's own progress bar names as an ordinary section is NOT proof of a review
+    // page. Treat it as uncertain: stop and say so, never advance and never claim "ready for review".
+    return /(my information|my experience|application questions|voluntary disclosures|self identify)/.test(step) ? "ambiguous_submit" : "review";
+  }
   const heads = headings(doc);
   if (/^(review|preview)\b/.test(step) || /\breview (your )?application\b|^review$|\| review\b/.test(heads)) return "review";
 
@@ -142,6 +147,8 @@ const AUTOMATION_LABELS: Readonly<Record<string, string>> = {
   "addressSection_postalCode": "Postal Code",
   "addressSection_countryRegion": "State",
   "countryDropdown": "Country",
+  "country-phone-code": "Country Phone Code",
+  "phone-device-type": "Phone Device Type",
   "jobTitle": "Job Title",
   "companyName": "Company",
   "school": "School or University",
@@ -157,4 +164,13 @@ export function workdayAutomationLabel(el: Element): string | null {
     if (id && AUTOMATION_LABELS[id]) return AUTOMATION_LABELS[id]!;
   }
   return null;
+}
+
+/** Step position, only when the employer's own progress bar exposes it. Never inferred or invented. */
+export function workdayProgress(doc: ParentNode): { index: number; total: number; label: string } | null {
+  const items = Array.from(doc.querySelectorAll<HTMLElement>('[data-automation-id="progressBar"] li, [data-automation-id="progressBarItem"], ol[data-automation-id*="progress" i] > li'));
+  if (items.length < 2) return null;
+  const at = items.findIndex((i) => i.getAttribute("aria-current") === "step" || i.matches('[data-automation-id="progressBarActiveStep"]') || Boolean(i.querySelector('[aria-current="step"], [data-automation-id="progressBarActiveStep"]')));
+  if (at < 0) return null;
+  return { index: at + 1, total: items.length, label: text(items[at]).replace(/^(current\s+step\s*\d*\s*of\s*\d*\s*)/i, "") };
 }

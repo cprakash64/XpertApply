@@ -12,6 +12,7 @@
  *   sensitive: never auto-fill unless explicitly verified + enabled
  */
 
+import { workdayAutomationLabel } from "../ats/workdayStep";
 import { answerMapFor } from "./answerMap";
 import type { ApplicationSessionData, DiscoveredField, FieldMapping, FieldMappingResult } from "../types";
 import { detectSensitive } from "./sensitive";
@@ -67,7 +68,7 @@ const KEYWORD_RULES: { key: CanonicalField; pattern: RegExp; confidence: number 
   // country code" is treated as the number field and receives "+16028161309".
   {
     key: "phone_country",
-    pattern: /\b(country code|phone country|dial(?:ing)? code|calling code|country\s*\/\s*region code)\b/i,
+    pattern: /\b(country code|phone country|country phone code|phone code|dial(?:ing)? code|calling code|country\s*\/\s*region code)\b/i,
     confidence: 0.94
   },
   { key: "phone", pattern: /\b(phone|mobile|telephone|cell)\b/i, confidence: 0.92 },
@@ -77,7 +78,9 @@ const KEYWORD_RULES: { key: CanonicalField; pattern: RegExp; confidence: number 
   { key: "postal_code", pattern: /\b(zip|postal code|postcode)\b/i, confidence: 0.9 },
   { key: "city", pattern: /\b(city|town)\b/i, confidence: 0.85 },
   { key: "state", pattern: /\b(state|province|region)\b/i, confidence: 0.82 },
-  { key: "country", pattern: /\bcountry\b/i, confidence: 0.9 },
+  // A work-authorization or sponsorship QUESTION often says "...in the country where the job is located"; that word must not turn a
+  // legal Yes/No question into the Country field.
+  { key: "country", pattern: /^(?!.*(?:authori[sz]ed to work|work authori[sz]ation|right to work|sponsorship)).*\bcountry\b/i, confidence: 0.9 },
   { key: "address", pattern: /\b(street address|address line|mailing address|\baddress\b)\b/i, confidence: 0.85 },
   { key: "current_company", pattern: /\b(current (?:employer|company)|company name)\b/i, confidence: 0.85 },
   { key: "current_title", pattern: /\b(current (?:title|role|position)|job title)\b/i, confidence: 0.83 },
@@ -175,11 +178,30 @@ const EXACT_STANDALONE_LABELS: ReadonlyMap<string, { key: CanonicalField; confid
 
 /** Classify a single field into a canonical key (session-independent). */
 export function classifyField(field: DiscoveredField): Classification {
+  const base = classifyFieldBase(field);
+  // Workday names its own controls (data-automation-id). When that identity classifies to the SAME canonical key as the visible
+  // label, the two independent signals agree and the field is filled rather than parked for review at label-only confidence.
+  if (base.canonicalKey === "unknown" || base.confidence >= AUTO_FILL_THRESHOLD || !field.element) return base;
+  const known = workdayAutomationLabel(field.element);
+  if (!known) return base;
+  const viaMarkup = classifyFieldBase({ ...field, label: known, ariaLabel: "", placeholder: "", name: "", id: "", nearbyText: "", sectionHeading: "" });
+  return viaMarkup.canonicalKey === base.canonicalKey
+    ? { ...base, confidence: Math.max(base.confidence, AUTO_FILL_THRESHOLD), explanation: `${base.explanation} Confirmed by the employer's own control identifier.` }
+    : base;
+}
+
+function classifyFieldBase(field: DiscoveredField): Classification {
   const text = combinedText(field);
   const primaryText = [field.name, field.id, field.ariaLabel, field.label, field.placeholder]
     .filter(Boolean)
     .join(" ");
   const accessiblePrompt = (field.label || field.ariaLabel || field.placeholder || "").trim();
+
+  // "Phone Device Type" (Home/Mobile/Work) is a property of the number, not the number. The generic phone rule below would
+  // try to put the phone number into that list, so it is classified as unmapped and left for the person.
+  if (/\bphone\s*(device\s*)?type\b/i.test(accessiblePrompt)) {
+    return { canonicalKey: "unknown", confidence: 0, source: "deterministic", sensitive: false, explanation: "Phone device type is not a saved profile fact." };
+  }
 
   // Employers commonly shorten the standard motivation question to just
   // “Why Anthropic?” / “Why OpenAI?”. Keep this deliberately narrow so

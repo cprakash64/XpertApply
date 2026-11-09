@@ -173,6 +173,7 @@ export function pauseMessage(reason: string | null): string {
     start_choice: "Choose how to start (Autofill with Resume or Apply Manually). XpertApply continues on the next page.",
     voluntary_disclosures: "Voluntary disclosures are your decision. Answer them yourself, then continue.",
     self_identify: "Self-identification is your decision. Answer it yourself, then continue.",
+    ambiguous_submit: "A Submit button is showing on a step that is not the review page. XpertApply stopped; continue yourself.",
     consent_needs_you: "A consent or attestation needs your own choice.",
     technical_issue: "A field could not be filled and verified. Check it, then continue.",
     validation_errors: "The page shows validation errors. Fix them, then continue.",

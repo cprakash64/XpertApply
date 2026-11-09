@@ -613,6 +613,19 @@ export function resolveQuestion(el: HTMLElement): { label: string; source: Label
     if (text) return { label: text, source: "ats_question_wrapper" };
   }
 
+  // 1d. A RADIO's wrapping <label> is only its option ("Yes"/"No"). The question belongs to the group: a radiogroup/group/fieldset's
+  // aria-labelledby, aria-label or legend. Without this a grouped yes/no question is asked of the employer as the question "Yes".
+  if (input.type === "radio") {
+    const group = deepClosest<HTMLElement>(el, '[role="radiogroup"], [role="group"], fieldset');
+    if (group) {
+      const viaRef = ariaLabelledBy(group);
+      const own = clean(group.getAttribute("aria-label"));
+      const legendText = clean(group.querySelector("legend")?.textContent);
+      const groupLabel = viaRef || own || legendText;
+      if (groupLabel) return { label: groupLabel, source: "fieldset_legend" };
+    }
+  }
+
   // 2. Wrapping <label> — minus the control's own rendered text.
   const wrapping = deepClosest(el, "label");
   if (wrapping) {

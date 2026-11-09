@@ -1,5 +1,6 @@
 import * as wf from "../application/workflowEngine";
-import { classifyWorkdayStep, findWorkdaySafeNext, workdayValidationErrors, USER_BOUNDARY_KINDS } from "../ats/workdayStep";
+import { classifyWorkdayStep, findWorkdaySafeNext, workdayProgress, workdayValidationErrors, USER_BOUNDARY_KINDS } from "../ats/workdayStep";
+import { blankRequiredInSections, fillWorkdaySections, hasWorkdaySections, isInWorkdaySectionEntry, sectionIssueSummary, type WorkdaySectionTrace } from "../ats/workdaySections";
 import { questionLedger } from "./workflowLedger";
 import { toolbarDisclosureAccepted } from "../toolbarDisclosure";
 /**
@@ -1076,6 +1077,12 @@ async function discoverAndFill(reason: AutofillReason): Promise<void> {
   // finished hydrating before the content script announced readiness. Discover
   // immediately rather than paying the settling window for nothing.
   outcome = detectAdapter({ url: location.href, document });
+  // A Workday step with no controls at all (an informational page, or Review) has nothing to fill and no form root to wait for;
+  // waiting for one is what stalled a run there. The workflow engine reads the step directly instead.
+  if (outcome?.result.atsId === "workday" && !document.querySelector('input:not([type=hidden]):not([type=file]), textarea, select, [role=combobox], button[aria-haspopup]') && !hasWorkdaySections(document) && await driveWithoutForm()) {
+    automaticRunSettled = false;
+    return;
+  }
   if (page.state === "application_form_ready" || hasApplicationEvidence(collectApplicationEvidence(document))) {
     log.debug("application evidence present at entry", { ats: outcome?.result.atsId ?? null });
     await fill(reason);
@@ -1950,6 +1957,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     // Otherwise the application may simply not be on screen yet. Try to reveal
     // it, then let the run coordinator decide — a single frame may no longer
     // publish a terminal "no application" verdict for the whole tab.
+    if (await driveWithoutForm()) { automaticRunSettled = false; return; }
     const activation = await activateApplicationSurfaceOnce();
     // Nothing (new) to click and no resolvable root. Returning here left the
     // widget on "Detecting fields" with no timeout — the live symptom. Hand
@@ -2082,7 +2090,19 @@ async function fill(reason: AutofillReason): Promise<void> {
   // Employment and education are collections, not scalar answers. Expand and
   // fill those rows first so the generic scanner sees the final DOM shape and
   // cannot overwrite every repeated row with the current employer/school.
-  const repeaterResults = await fillStructuredRepeaters(currentRoot, session).catch((error) => {
+  // Workday has its own record-matching section filler (ats/workdaySections.ts). The generic expander would click
+  // Workday's "Add Another" while counting labels it does not recognise and create blank rows, so it is skipped there.
+  const onWorkday = outcome?.result.atsId === "workday";
+  if (onWorkday) {
+    lastWorkdaySections = await fillWorkdaySections(currentRoot, session.profileData ?? {});
+    log.info("workday sections processed", {
+      sections: lastWorkdaySections.length,
+      added: lastWorkdaySections.reduce((n, t) => n + t.added, 0),
+      written: lastWorkdaySections.reduce((n, t) => n + t.fieldsWritten, 0),
+      issues: lastWorkdaySections.reduce((n, t) => n + t.issues.length, 0)
+    });
+  }
+  const repeaterResults = onWorkday ? [] : await fillStructuredRepeaters(currentRoot, session).catch((error) => {
     // A third-party form can replace a section while it is being expanded.
     // Keep the scalar fill usable and make the structured failure diagnosable
     // instead of leaving the content runner permanently stuck in `running`.
@@ -2153,7 +2173,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     }, currentStep());
     if (!isCurrentInstance() || !lifecycle.accepts(postParseToken)) return;
     lifecycle.transition("FILLING_REPEATABLE_SECTIONS", "structured_section_takeover", domMetrics(currentRoot));
-    lastSectionTraces = await fillRepeatableSections(currentRoot, session).catch(() => []);
+    lastSectionTraces = onWorkday ? [] : await fillRepeatableSections(currentRoot, session).catch(() => []);
     if (!lifecycle.accepts(postParseToken)) return;
     lifecycle.transition(
       lastSectionTraces.some((item) =>
@@ -2205,6 +2225,7 @@ async function fill(reason: AutofillReason): Promise<void> {
     }
     lifecycle.transition("REQUIRED_CONTROL_VALIDATION", "fresh_required_inventory");
     lastFinalVerification = verifyFinalLiveDom({
+      excludeElement: outcome?.result.atsId === "workday" ? isInWorkdaySectionEntry : undefined,
       root: finalRoot.root as ParentNode,
       session,
       domGeneration: lifecycle.domGeneration(),
@@ -2364,7 +2385,10 @@ let lastTikTokAdapterTrace: TikTokAdapterTrace | null = null;
 function discoverQuestionFields(root: ParentNode): DiscoveredField[] {
   const inventory = discoverTikTokApplication(location.href, root, currentStep());
   if (inventory.trace.urlMatch || inventory.trace.workAuthorizationSectionFound) lastTikTokAdapterTrace = inventory.trace;
-  return mergeTikTokLegalFields(discoverFields(root), inventory);
+  const merged = mergeTikTokLegalFields(discoverFields(root), inventory);
+  // Workday rows (Work Experience / Education / Websites) are written and read back by ats/workdaySections.ts; the generic
+  // label mapper would otherwise copy the current employer into every row.
+  return outcome?.result.atsId === "workday" ? merged.filter((f) => !f.element || !isInWorkdaySectionEntry(f.element)) : merged;
 }
 
 function beginResolutionRun(): { id: string; createdAt: string } {
@@ -3251,6 +3275,7 @@ async function applyTikTokAssistedAnswer(fieldKey: string) {
   const finalRoot = resolveApplicationForm(document);
   if (finalRoot.confident && activeAtsLifecycle) {
     lastFinalVerification = verifyFinalLiveDom({
+      excludeElement: outcome?.result.atsId === "workday" ? isInWorkdaySectionEntry : undefined,
       root: finalRoot.root as ParentNode,
       session,
       domGeneration: activeAtsLifecycle.domGeneration(),
@@ -3620,6 +3645,8 @@ async function applyResolvedAnswer(
 // sessionStorage, so it is bound to this tab and origin and survives reloads.
 // --------------------------------------------------------------------------- //
 let workflowRun: wf.WorkflowRun | null = null;
+/** Workday row-level outcomes from the last fill pass (labels and reason codes only, never values). */
+let lastWorkdaySections: WorkdaySectionTrace[] = [];
 
 function workflowIdentity() {
   return {
@@ -3643,15 +3670,43 @@ function workflowIsActive(): boolean {
   return Boolean(workflowRun && workflowRun.mode === "application" && !["REVIEW_READY", "FAILED", "CANCELLED"].includes(workflowRun.state) && !workflowRun.paused);
 }
 
+/** Fields verified per step signature on this page load (counts only; reset by a reload). */
+const verifiedBySignature = new Map<string, number>();
+
+function workflowSummary(): string {
+  const parts: string[] = [];
+  const p = workdayProgress(document);
+  if (p) parts.push(`Step ${p.index} of ${p.total}${p.label ? ` · ${p.label}` : ""}`);
+  const verified = Array.from(verifiedBySignature.values()).reduce((n, v) => n + v, 0);
+  if (verified > 0) parts.push(`${verified} field${verified === 1 ? "" : "s"} verified`);
+  return parts.join(" · ");
+}
+
+function workflowAttention(): string {
+  const labels = sectionIssueSummary(lastWorkdaySections);
+  return labels.length ? `Needs attention: ${labels.slice(0, 3).join("; ")}${labels.length > 3 ? ` (+${labels.length - 3} more)` : ""}.` : "";
+}
+
+function reviewSummary(): string {
+  const added = lastWorkdaySections.reduce((n, t) => n + t.added, 0);
+  const kept = lastWorkdaySections.reduce((n, t) => n + t.keptDifferent, 0);
+  const verified = Array.from(verifiedBySignature.values()).reduce((n, v) => n + v, 0);
+  const bits = [`${verified} field${verified === 1 ? "" : "s"} verified`];
+  if (added > 0) bits.push(`${added} entr${added === 1 ? "y" : "ies"} added`);
+  if (kept > 0) bits.push(`${kept} employer value${kept === 1 ? "" : "s"} kept (differs from your profile)`);
+  return `Ready for your review: ${bits.join(", ")}. Check everything and submit it yourself.`;
+}
+
 function showWorkflow(): void {
   if (!widget) return;
   const run = workflowRun;
   if (!run || ["CANCELLED", "FAILED", "REVIEW_READY"].includes(run.state)) {
-    widget.setWorkflow({ status: run?.state === "REVIEW_READY" ? "Application ready for your review. Submit it yourself." : run?.state === "FAILED" ? wf.pauseMessage(run.reason) : "", mode: "idle" });
+    widget.setWorkflow({ status: run?.state === "REVIEW_READY" ? reviewSummary() : run?.state === "FAILED" ? wf.pauseMessage(run.reason) : "", mode: "idle" });
     return;
   }
-  const base = run.paused ? "Paused." : run.state === "WAITING_FOR_USER" ? wf.pauseMessage(run.reason) : `Completing the application (step ${run.stepsSeen}).`;
-  widget.setWorkflow({ status: base, mode: run.paused ? "paused" : run.state === "WAITING_FOR_USER" ? "waiting" : "running" });
+  const summary = workflowSummary();
+  const base = run.paused ? "Paused." : run.state === "WAITING_FOR_USER" ? `${wf.pauseMessage(run.reason)} ${workflowAttention()}`.trim() : "Completing the application…";
+  widget.setWorkflow({ status: [summary, base].filter(Boolean).join(" — "), mode: run.paused ? "paused" : run.state === "WAITING_FOR_USER" ? "waiting" : "running" });
 }
 
 /** Called after every verified Fill pass. Returns true when it clicked the one safe Next control. */
@@ -3668,10 +3723,12 @@ async function driveWorkflowAfterFill(): Promise<boolean> {
     stepKind: kind,
     isReview: kind === "review",
     boundary: USER_BOUNDARY_KINDS.has(kind) ? kind : null,
-    unresolved: Math.max(ledgerCounts.pending + ledgerCounts.requiredBlank + ledgerCounts.needsConfirmation, lastFinalVerification.requiredRemaining),
+    // Only REQUIRED blanks and items awaiting confirmation stop a run. Optional empty fields (Address Line 2, Postal Code, Phone Device Type)
+    // are normal on a real Workday form and must not pause it; `pending` counted them, which stalled every step.
+    unresolved: Math.max(ledgerCounts.requiredBlank + ledgerCounts.needsConfirmation, lastFinalVerification.requiredRemaining) + blankRequiredInSections(document),
     // canEnterReviewReady also demands at least one required control, which a step like My Experience may not have, so the
     // individual live-DOM checks are used. Any of them failing is a technical pause, never an advance.
-    technicalIssues: ledgerCounts.technical + lastFinalVerification.technicalIssues
+    technicalIssues: ledgerCounts.technical + lastFinalVerification.technicalIssues + lastWorkdaySections.reduce((n, t) => n + t.issues.length, 0)
       + [lastFinalVerification.lifecycleIsCurrent, lastFinalVerification.noStaleGenerationResults, lastFinalVerification.everyKnownAnswerReachedTerminalState,
         lastFinalVerification.repeatableCandidatesTerminal, lastFinalVerification.everyRequiredLiveControlHasLedgerEntry].filter((ok) => !ok).length,
     consentActions: lastFinalVerification.manualConsentActions,
@@ -3679,11 +3736,56 @@ async function driveWorkflowAfterFill(): Promise<boolean> {
     hasSafeNext: Boolean(next),
     fillVerified: true
   };
+  verifiedBySignature.set(observation.signature, ledgerCounts.filled + lastWorkdaySections.reduce((n, t) => n + t.fieldsWritten + t.fieldsAlreadyCorrect, 0));
   const decision = wf.decide(workflowRun, observation);
   workflowRun = decision.run;
   persistWorkflow();
   showWorkflow();
   if (decision.action.kind !== "advance" || !next) return false;
+  lastScanSignature = scanSignature();
+  next.scrollIntoView({ block: "center" });
+  next.click();
+  await delay(250);
+  return true;
+}
+
+/**
+ * A Workday step can have nothing to fill (an informational "Application Questions" page, the Review page). There is then no
+ * application form root, so no fill pass would ever run and the workflow engine would never see the page. This reads the step
+ * directly and lets the same engine decide. Returns true when the page was handled here.
+ */
+async function driveWithoutForm(): Promise<boolean> {
+  if (!outcome || outcome.result.atsId !== "workday" || !session) return false;
+  const kind = classifyWorkdayStep(document);
+  const handled = kind === "review" || USER_BOUNDARY_KINDS.has(kind) || kind === "my_information" || kind === "my_experience" || kind === "application_questions";
+  if (!handled) return false;
+  const store = workflowStore();
+  if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
+  if (!workflowRun) {
+    widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" });
+    return kind === "review";
+  }
+  lastWorkdaySections = [];
+  const next = findWorkdaySafeNext(document);
+  const observation: wf.Observation = {
+    ...workflowIdentity(),
+    signature: scanSignature(),
+    stepKind: kind,
+    isReview: kind === "review",
+    boundary: USER_BOUNDARY_KINDS.has(kind) ? kind : null,
+    unresolved: blankRequiredInSections(document),
+    technicalIssues: 0,
+    consentActions: 0,
+    validationErrors: workdayValidationErrors(document),
+    hasSafeNext: Boolean(next),
+    fillVerified: true
+  };
+  verifiedBySignature.set(observation.signature, 0);
+  const decision = wf.decide(workflowRun, observation);
+  workflowRun = decision.run;
+  persistWorkflow();
+  showWorkflow();
+  if (decision.action.kind !== "advance" || !next) return true;
   lastScanSignature = scanSignature();
   next.scrollIntoView({ block: "center" });
   next.click();

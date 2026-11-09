@@ -23,7 +23,7 @@ export type LaunchOptions = {
   html: string;
   sessionId: number;
   atsType: string;
-  profile: Record<string, string>;
+  profile: Record<string, unknown>;
   answers: ReturnType<typeof answer>[];
   /** Map a rendered question label to a canonical key for the owned resolver. */
   keyFor: (label: string) => string | null;
@@ -35,6 +35,8 @@ export type LaunchOptions = {
   /** Shown as the job in the assistant (default "Software Engineer" at "Acme"). */
   jobTitle?: string;
   company?: string;
+  /** Job location the employer posting states; legal US-only questions need a known jurisdiction (default: unknown). */
+  location?: string;
   /** Drafts the owned backend returns for open-ended questions (default: none). */
   drafts?: (questions: any[]) => unknown[];
 };
@@ -55,9 +57,9 @@ export async function launchFromWebsite(opts: LaunchOptions) {
     const found = sessionsByLaunchToken.get(String(body.launch_token));
     return found ? r.fulfill(json({ session_token: employer.sessionToken, session: found })) : r.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "unknown_launch_token" }) });
   }));
-  const addJob = async (job: { sessionId: number; atsType: string; officialUrl: string; jobTitle?: string; company?: string; profile: Record<string, string>; answers: ReturnType<typeof answer>[]; keyFor: (label: string) => string | null; launchToken: string; drafts?: (questions: any[]) => unknown[] }) => {
+  const addJob = async (job: { sessionId: number; atsType: string; officialUrl: string; jobTitle?: string; company?: string; location?: string; profile: Record<string, unknown>; answers: ReturnType<typeof answer>[]; keyFor: (label: string) => string | null; launchToken: string; drafts?: (questions: any[]) => unknown[] }) => {
     const sid = job.sessionId;
-    const session = { session_id: sid, ats_type: job.atsType, official_application_url: job.officialUrl, job: { title: job.jobTitle ?? "Software Engineer", company: job.company ?? "Acme" },
+    const session = { session_id: sid, ats_type: job.atsType, official_application_url: job.officialUrl, job: { title: job.jobTitle ?? "Software Engineer", company: job.company ?? "Acme", ...(job.location ? { location: job.location } : {}) },
       resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: job.profile };
     sessionsByLaunchToken.set(job.launchToken, session);
     await employer.route(`**/application-sessions/${sid}`, tap(r => r.fulfill(json(session))));
@@ -69,6 +71,12 @@ export async function launchFromWebsite(opts: LaunchOptions) {
       const results = (body.questions ?? []).map((q: any) => {
         const k = job.keyFor(String(q.question ?? ""));
         const v = k ? values.get(k) : undefined;
+        // A saved Yes/No legal answer for a question that offers options is returned the way the backend does: a boolean with the
+        // matching option reference. Specs that never ask such a question are unaffected.
+        if (k === "work_authorization_us" && v && Array.isArray(q.options) && q.options.length > 0) {
+          const option = q.options.find((o: any) => String(o.label).toLowerCase() === v.toLowerCase());
+          if (option) return { field_ref: q.field_ref, status: "resolved", canonical_key: k, answer_type: "boolean", selected_option_ref: option.option_ref, safe_source: "saved_profile", confidence: 1, reason_code: "exact_option", typed_answer: v.toLowerCase() === "yes", display_answer: v, source_values: [v.toLowerCase() === "yes"], sensitivity: "legal" };
+        }
         return k && v ? { field_ref: q.field_ref, status: "resolved", canonical_key: k, answer_type: "text", selected_option_ref: null, safe_source: "saved_profile", confidence: 1, reason_code: "exact", typed_answer: v, display_answer: v, source_values: [v], sensitivity: null }
           : { field_ref: q.field_ref, status: "missing", canonical_key: null, answer_type: null, selected_option_ref: null, safe_source: "none", confidence: 0, reason_code: "answer_missing", typed_answer: null, display_answer: null, source_values: [] };
       });
@@ -81,7 +89,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
       return r.fulfill(json({ drafts: job.drafts ? job.drafts(body.questions ?? []) : [], drafted: 0 }));
     }));
   };
-  await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts });
+  await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, location: opts.location, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts });
   const dist = process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.launchArgs ?? [])] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 15_000 });

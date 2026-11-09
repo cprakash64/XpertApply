@@ -7,6 +7,7 @@
  * summary. It never clicks Submit.
  */
 
+import { workdayResumeAlreadyAttached } from "../ats/workdaySections";
 import { answerMapFor } from "../fields/answerMap";
 import type { DetectionOutcome } from "../ats/registry";
 import { pickApplicationForm } from "../ats/base";
@@ -229,7 +230,8 @@ export async function prepareDocumentUploads(
   const uploaded: ("resume" | "cover_letter")[] = [];
   const reviewDocs: ("resume" | "cover_letter")[] = [];
   const fieldResults: FieldFillResult[] = [];
-  const uploadTargets = resolveUploadTargets(scanned.fields, scanned.mappings, root);
+  // A résumé the employer already holds (Workday lists it after a refresh) is never uploaded a second time.
+  const uploadTargets = resolveUploadTargets(scanned.fields, scanned.mappings, root).filter((target) => !workdayResumeAlreadyAttached(target.input));
   for (const target of uploadTargets) {
     const publicKind: "resume" | "cover_letter" = target.kind === "cover-letter" ? "cover_letter" : "resume";
     let file: File | null = null;
