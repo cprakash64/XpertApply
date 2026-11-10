@@ -29,7 +29,9 @@ for (const [name, record] of RECORDS) {
       expect(directDrafts(api)).toHaveLength(1);
       const ov = overlayCdp(p);
       expect((await ov.text("#errors")) ?? "").toBe("");
-      expect(await ov.text("#ats")).not.toBe("Detecting…");
+      // The label is updated by the worker's next view push, which can trail the last field write by a round trip. It must resolve (not stay
+      // stuck on "Detecting…"); Measured 4-15 ms over 30 runs.
+      await expect.poll(async () => (await ov.text("#ats")) ?? "", { timeout: 15_000 }).not.toBe("Detecting…");
       expect(await submitsUntouched(p)).toEqual({ submits: 0, clicks: 0 });
     } finally { await b.close(); tls.server.close(); await api.close(); }
   });
