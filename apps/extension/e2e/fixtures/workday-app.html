@@ -153,9 +153,19 @@ app.addEventListener('change', (e) => {
   const t = e.target;
   if (t.id === 'resume-file' && t.files?.length) {
     S.clicks.uploads++; S.resume = t.files[0].name; S.parsing = !!CFG.asyncParse; render();
-    if (CFG.asyncParse) setTimeout(() => { S.parsing = false; S.work = JSON.parse(JSON.stringify(CFG.parsed.work)); S.edu = JSON.parse(JSON.stringify(CFG.parsed.edu)); render(); }, CFG.asyncParse);
+    if (CFG.asyncParse) setTimeout(finishParse, CFG.asyncParse);
   }
 });
+/* Parse completion. parseMode: replace (default) | append (parsed rows are added after existing ones, which can duplicate them).
+   parseFail: the parse ends with no rows. trickle: the spinner clears, then rows arrive one by one. */
+function finishParse() {
+  S.parsing = false;
+  if (CFG.parseFail) { render(); return; }
+  const w = JSON.parse(JSON.stringify(CFG.parsed.work)); const e = JSON.parse(JSON.stringify(CFG.parsed.edu));
+  const apply = (ww, ee) => { if (CFG.parseMode === 'append') { S.work = S.work.concat(ww); S.edu = S.edu.concat(ee); } else { S.work = ww; S.edu = ee; } };
+  if (CFG.trickle) { render(); w.forEach((row, i) => setTimeout(() => { S.work.push(row); render(); }, 500 * (i + 1))); e.forEach((row, i) => setTimeout(() => { S.edu.push(row); render(); }, 500 * (w.length + i + 1))); return; }
+  apply(w, e); render();
+}
 function nextStep() {
   S.clicks.next++;
   const missing = [];
@@ -172,7 +182,7 @@ function nextStep() {
 }
 if (CFG.parseOnLoad && !S.resume) {
   S.resume = 'resume.pdf'; S.parsing = true; S.clicks.uploads++;
-  setTimeout(() => { S.parsing = false; S.work = JSON.parse(JSON.stringify(CFG.parsed.work)); S.edu = JSON.parse(JSON.stringify(CFG.parsed.edu)); render(); }, CFG.parseOnLoad);
+  setTimeout(finishParse, CFG.parseOnLoad);
 }
 render();
 </script>

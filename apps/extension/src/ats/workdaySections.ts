@@ -255,6 +255,9 @@ export async function fillWorkExperience(root: ParentNode, profile: Rec): Promis
     await ensureText(entry(), ["roleDescription"], /^role description/i, rec.description, ctx("Role Description"), c);
   }
   trace.rowsAfter = rows().length;
+  const seenWork = new Map<string, number>();
+  for (const r of rows().map(readWork)) { if (blankWork(r)) continue; const k = `${r.company}|${r.title}|${r.startYear}`; seenWork.set(k, (seenWork.get(k) ?? 0) + 1); }
+  if ([...seenWork.values()].some((n) => n > 1)) c.issues.push({ section: "work_experience", row: 0, field: "Possible duplicate entries", reason: "DUPLICATE_ROWS_PRESENT" });
   trace.fieldsWritten = c.written; trace.fieldsAlreadyCorrect = c.correct; trace.keptDifferent = c.kept; trace.issues = c.issues;
   return trace;
 }
@@ -322,6 +325,9 @@ export async function fillEducation(root: ParentNode, profile: Rec): Promise<Wor
     await ensureDate(entry(), ["lastYearAttended", "endDate"], /^to/i, rec.end, ctx("To"), c);
   }
   trace.rowsAfter = rows().length;
+  const seenEdu = new Map<string, number>();
+  for (const r of rows().map(readEdu)) { if (blankEdu(r)) continue; const k = `${r.school}|${r.degree}`; seenEdu.set(k, (seenEdu.get(k) ?? 0) + 1); }
+  if ([...seenEdu.values()].some((n) => n > 1)) c.issues.push({ section: "education", row: 0, field: "Possible duplicate entries", reason: "DUPLICATE_ROWS_PRESENT" });
   trace.fieldsWritten = c.written; trace.fieldsAlreadyCorrect = c.correct; trace.keptDifferent = c.kept; trace.issues = c.issues;
   return trace;
 }
@@ -362,20 +368,46 @@ export function workdayParseInProgress(root: ParentNode): boolean {
   return Boolean(liveRoot(root).querySelector(PARSE_BUSY));
 }
 
-/** Waits (bounded) for an in-flight résumé parse to finish so its rows are reconciled, not raced or duplicated. */
-export async function waitForWorkdayParse(root: ParentNode, maxMs = 25_000): Promise<"none" | "settled" | "timeout"> {
+export type ParseBarrier = "none" | "settled" | "timeout";
+
+function rowCount(root: ParentNode): number {
+  let n = 0;
+  for (const def of Object.values(DEFS)) { const c = findContainer(root, def); if (c) n += entriesOf(c, def).length; }
+  return n;
+}
+
+/**
+ * Parse-reconciliation barrier. While Workday is parsing an uploaded résumé its rows are still being created by the employer, so
+ * nothing is added. Once the busy marker clears, the row count must also be QUIET (unchanged for `quietMs`) before rows are re-read:
+ * a parse that streams rows in after its spinner goes away is not mistaken for "settled". "timeout" means the state stayed
+ * ambiguous; the caller must pause, not add rows.
+ */
+export async function waitForWorkdayParse(root: ParentNode, maxMs = 25_000, quietMs = 900): Promise<ParseBarrier> {
   if (!workdayParseInProgress(root)) return "none";
   const end = Date.now() + maxMs;
   while (Date.now() < end) {
-    if (!workdayParseInProgress(root)) { await sleep(400); return "settled"; }
-    await sleep(100);
+    if (!workdayParseInProgress(root)) {
+      let last = rowCount(root);
+      let since = Date.now();
+      while (Date.now() < end) {
+        await sleep(100);
+        if (workdayParseInProgress(root)) break;
+        const now = rowCount(root);
+        if (now !== last) { last = now; since = Date.now(); }
+        else if (Date.now() - since >= quietMs) return "settled";
+      }
+    } else await sleep(100);
   }
   return "timeout";
 }
 
 export async function fillWorkdaySections(root: ParentNode, profile: Rec): Promise<WorkdaySectionTrace[]> {
   const out: WorkdaySectionTrace[] = [];
-  if (await waitForWorkdayParse(root) === "timeout") return out;
+  if (await waitForWorkdayParse(root) === "timeout") {
+    // Ambiguous parse state: add nothing and ask the person, rather than risk duplicating rows the parser may still create.
+    out.push({ ...newTrace("work_experience", 0, 0), issues: [{ section: "work_experience", row: 0, field: "Résumé parsing", reason: "PARSE_NOT_SETTLED" }] });
+    return out;
+  }
   for (const run of [fillWorkExperience, fillEducation, fillWebsites]) {
     const t = await run(root, profile).catch(() => null);
     if (t) out.push(t);
@@ -385,7 +417,7 @@ export async function fillWorkdaySections(root: ParentNode, profile: Rec): Promi
 
 export function sectionIssueSummary(traces: WorkdaySectionTrace[]): string[] {
   const names: Record<SectionKind, string> = { work_experience: "Work Experience", education: "Education", websites: "Websites" };
-  return traces.flatMap((t) => t.issues.map((i) => `${names[i.section]} ${i.row} · ${i.field}`));
+  return traces.flatMap((t) => t.issues.map((i) => (i.row === 0 ? `${names[i.section]} · ${i.field}` : `${names[i.section]} ${i.row} · ${i.field}`)));
 }
 
 export { pickExact };

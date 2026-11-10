@@ -75,7 +75,10 @@ export function classifyWorkdayStep(doc: ParentNode): WorkdayStepKind {
   if (findWorkdayFinalSubmit(doc)) {
     // A Submit that sits on a step the employer's own progress bar names as an ordinary section is NOT proof of a review
     // page. Treat it as uncertain: stop and say so, never advance and never claim "ready for review".
-    return /(my information|my experience|application questions|voluntary disclosures|self identify)/.test(step) ? "ambiguous_submit" : "review";
+    // Real tenants label the progress bar only "current step N of M" (no names), so the heading names the step.
+    const ordinary = /(my information|my experience|application questions|voluntary disclosures|self identify)/;
+    const reviewish = /\breview\b/.test(headings(doc));
+    return ordinary.test(step) || (ordinary.test(headings(doc)) && !reviewish) ? "ambiguous_submit" : "review";
   }
   const heads = headings(doc);
   if (/^(review|preview)\b/.test(step) || /\breview (your )?application\b|^review$|\| review\b/.test(heads)) return "review";
@@ -84,7 +87,8 @@ export function classifyWorkdayStep(doc: ParentNode): WorkdayStepKind {
   const verifyInput = doc.querySelector('input[autocomplete="one-time-code"], [data-automation-id*="verification" i] input, [data-automation-id*="verificationCode" i]');
   if (hasCaptcha(doc) || verifyInput || /\b(verify your (email|identity|phone)|verification code|two-factor|multi-factor|security check)\b/.test(heads)) return "verification";
   if (auto(doc, "createAccountSubmitButton") || auto(doc, "createAccountCheckbox") || (hasPassword && doc.querySelectorAll('input[type="password"]').length >= 2)) return "create_account";
-  if (auto(doc, "signInSubmitButton") || (hasPassword && /sign in|log in/.test(heads))) return "sign_in";
+  // Real tenant landing page: heading "Sign In" with Google / LinkedIn / email choices and no password field yet.
+  if (auto(doc, "signInSubmitButton") || auto(doc, "signInContent") || auto(doc, "SignInWithEmailButton") || auto(doc, "GoogleSignInButton") || (hasPassword && /sign in|log in/.test(heads))) return "sign_in";
 
   if (/my information/.test(step)) return "my_information";
   if (/my experience/.test(step)) return "my_experience";
@@ -97,7 +101,10 @@ export function classifyWorkdayStep(doc: ParentNode): WorkdayStepKind {
   if (/voluntary disclosures/.test(heads)) return "voluntary_disclosures";
   if (/self[- ]identify|self identification/.test(heads)) return "self_identify";
 
+  // Observed on a real tenant: the start-choice page and the posting's Apply control are ANCHORS (not buttons) carrying these ids.
+  if (["autofillWithResume", "applyManually", "useMyLastApplication", "applyWithLinkedIn"].some((id) => auto(doc, id))) return "start_choice";
   const labels = workdayControls(doc).filter(usable).map((c) => text(c).toLowerCase());
+  if (auto(doc, "adventureButton") && doc.querySelectorAll("input:not([type=hidden]):not([type=password]),select,textarea").length === 0) return "job_description";
   if (labels.some((l) => /^(autofill with resume|apply manually|use my last application)$/.test(l))) return "start_choice";
   const formControls = doc.querySelectorAll("input:not([type=hidden]):not([type=password]),select,textarea").length;
   if (formControls === 0 && labels.includes("apply")) return "job_description";
