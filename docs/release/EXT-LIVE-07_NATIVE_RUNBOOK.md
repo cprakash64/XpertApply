@@ -51,6 +51,22 @@ Use two different jobs of the same employer on ONE ATS (for example two Lever or
 9. Resume after a restart: during a Workday run restart Chrome (or reload the extension). The assistant must NOT continue by itself; it offers "Complete application" again and says it could not verify the earlier run. Click it to resume.
 10. Open the service-worker console (chrome://extensions > service worker) and each employer tab console: record any red errors.
 
+## 2c. EXT-LIVE-10 operator checklist (fresh Chrome profile; run before Workday)
+A. Install the exact candidate (build command in `EXT-LIVE-10_CANDIDATE.md`) in a FRESH Chrome profile. Compare the ZIP/unpacked SHA-256 with the record.
+B. chrome://extensions: the ID must be `gnibjomjfdobadlockphjiibbpmiehcj` (Developer mode, Load unpacked).
+C. Site permission: one Chrome dialog for the approved ATS groups, once; nothing else is requested.
+D. After granting, open a supported application page: the assistant appears by itself, with no further click.
+E. Two jobs on one ATS in two tabs: job 2 opened by hand stays empty; launching job 2 fills only job 2. Repeat with two URLs that differ only by `?jobId=`.
+F. Tesla-style multistep application (own account): runs through every step, stops at Review, never clicks Submit.
+G. Real Workday (authorised account only): My Information, My Experience, Education, questions, Review. Stop at Review.
+H. Pause/resume: leave a required question blank, answer it yourself, choose Complete application again. Restart Chrome mid-run: the assistant offers to resume and never continues silently.
+I. No duplicate Work Experience/Education rows; no extra employer tabs.
+J. Edit a field yourself mid-run: your value is kept.
+K. Submit is never clicked by XpertApply.
+L. Sign-in: Connect, then Disconnect, then Connect again WITHOUT reloading. The assistant becomes usable immediately and shows only the current account's data. Cancel the Chrome sign-in window once: the notice says it was cancelled and a retry works.
+M. Record red errors from the service-worker console and each employer tab console.
+Live employer acceptance (G, F, E on real sites) is separate from the synthetic/fixture tests in the report; do not treat one as the other.
+
 ## 3. Store version
 Choose the upload version only after reading the version history in the Developer Dashboard (not visible from the development
 environment). Do not bump merely because several unpublished 0.3.1 ZIPs exist.
