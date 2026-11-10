@@ -1,0 +1,27 @@
+<!doctype html><meta charset="utf-8"><title>Acme - Apply</title>
+<style>body{font:14px sans-serif;margin:16px} .application-question{margin:8px 0} .application-label{font-weight:600} .required{color:#c00}</style>
+<!-- OWNED Lever-shaped fixture (EXT-LIVE-07). Structure follows Lever's public hosted application form (application-question /
+     application-label / application-field wrappers, name="name" / "email" / "org" / "urls[...]", custom cards[...] questions,
+     #btn-submit). Not a capture of any employer's page. -->
+<div class="posting-page"><h1>Software Engineer</h1>
+<form id="application-form" method="post" action="/submit" onsubmit="event.preventDefault(); window.__emp.submits++; return false;">
+ <div class="application-question resume"><label><div class="application-label">Resume/CV</div><input type="file" name="resume" id="resume-upload-input"></label></div>
+ <div class="application-question"><label><div class="application-label">Full name<span class="required">✱</span></div><div class="application-field"><input type="text" name="name" required></div></label></div>
+ <div class="application-question"><label><div class="application-label">Email<span class="required">✱</span></div><div class="application-field"><input type="email" name="email" required></div></label></div>
+ <div class="application-question"><label><div class="application-label">Phone</div><div class="application-field"><input type="text" name="phone"></div></label></div>
+ <div class="application-question"><label><div class="application-label">Current company</div><div class="application-field"><input type="text" name="org" id="org"></div></label></div>
+ <div class="application-question"><label><div class="application-label">LinkedIn URL</div><div class="application-field"><input type="text" name="urls[LinkedIn]"></div></label></div>
+ <div class="application-question"><label><div class="application-label">GitHub URL</div><div class="application-field"><input type="text" name="urls[GitHub]"></div></label></div>
+ <div class="application-question custom-question"><label><div class="application-label">How did you hear about this job?<span class="required">✱</span></div><div class="application-field">
+   <select name="cards[src][field0]" required><option value="">Select…</option><option>LinkedIn</option><option>Company website</option><option>Referral</option></select></div></label></div>
+ <div class="application-question custom-question"><div class="application-label">Are you legally authorized to work in the country where this job is located?<span class="required">✱</span></div><div class="application-field">
+   <ul><li><label><input type="radio" name="cards[auth][field0]" value="Yes" required> Yes</label></li><li><label><input type="radio" name="cards[auth][field0]" value="No"> No</label></li></ul></div></div>
+ <div class="application-question custom-question"><label><div class="application-label">What are your preferred pronouns?</div><div class="application-field"><input type="text" name="cards[pronouns][field0]"></div></label></div>
+ <div class="application-question custom-question"><div class="application-label">Which of these tools have you used?</div><div class="application-field">
+   <ul><li><label><input type="checkbox" name="cards[tools][field0]" value="Python"> Python</label></li><li><label><input type="checkbox" name="cards[tools][field0]" value="Go"> Go</label></li></ul></div></div>
+ <div class="application-question"><label><div class="application-label">Additional information</div><div class="application-field"><textarea name="comments"></textarea></div></label></div>
+ <div class="application-question"><label><input type="checkbox" name="consent" value="1"> I agree to the privacy policy</label></div>
+ <button type="submit" id="btn-submit" class="postings-btn template-btn-submit">Submit application</button>
+</form></div>
+<script>window.__emp = { submits: 0 }; document.getElementById('btn-submit').addEventListener('click', () => { window.__emp.clicks = (window.__emp.clicks || 0) + 1; });
+const pre = new URLSearchParams(location.search).get('pre'); if (pre) document.getElementById('org').value = pre;</script>
