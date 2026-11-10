@@ -32,6 +32,8 @@ export type LaunchOptions = {
   /** Extra Chromium switches (host-resolver MAP rules, certificate flags). */
   launchArgs?: string[];
   profileDir?: string;
+  /** Load this extension build instead of the shared granted bundle. It must be registered in extension-build-authority for the calling spec. */
+  extensionPath?: string;
   /** Shown as the job in the assistant (default "Software Engineer" at "Acme"). */
   jobTitle?: string;
   company?: string;
@@ -90,7 +92,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
     }));
   };
   await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, location: opts.location, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts });
-  const dist = process.env.XA_E2E_DIST!;
+  const dist = opts.extensionPath ?? process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.launchArgs ?? [])] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 15_000 });
   await worker.evaluate(async b => chrome.storage.local.set({ apiBase: b }), employer.origin);

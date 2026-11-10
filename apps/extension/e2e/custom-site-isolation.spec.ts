@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { answer, launchFromWebsite } from "./cws-p1-launch-harness";
 import { site } from "./employer-site";
 
@@ -8,6 +10,20 @@ import { site } from "./employer-site";
  * Tesla / SmartRecruiters / employer site was contacted). Job X is launched from XpertApply; job Y is only ever opened by hand until it is
  * launched explicitly.
  */
+// These fixtures use hostnames that are NOT in the shared granted bundle (whose host count other specs assert), so this spec builds and uses its
+// own derivative with them pre-granted, then restores the shared path for whatever spec runs next in this worker.
+const SHARED_DIST = path.resolve("dist-e2e-granted");
+const CUSTOM_DIST = path.resolve("dist-e2e-custom-sites");
+test.beforeAll(() => {
+  // A copy of the approved granted bundle with only three extra OWNED hostnames added to host_permissions (the shared bundle is untouched).
+  rmSync(CUSTOM_DIST, { recursive: true, force: true });
+  cpSync(SHARED_DIST, CUSTOM_DIST, { recursive: true });
+  const file = path.join(CUSTOM_DIST, "manifest.json");
+  const manifest = JSON.parse(readFileSync(file, "utf8"));
+  manifest.host_permissions = [...new Set([...manifest.host_permissions, ...["www.tesla.com", "careers.acme-corp.example", "jobs.smartrecruiters.com"].map((h) => `https://${h}/*`)])];
+  writeFileSync(file, JSON.stringify(manifest, null, 2));
+});
+
 const form = (title: string) => `<!doctype html><meta charset="utf-8"><title>${title}</title>
 <main><h1>${title}</h1><form id="application-form" novalidate>
 <div><label for="first_name">First Name *</label><input id="first_name" name="first_name" autocomplete="given-name" required></div>
@@ -34,7 +50,7 @@ async function launch(f: Family, sid: number) {
   const s = await site({ [f.x]: () => ({ body: form(`Job X - ${f.name}`) }), [f.y]: () => ({ body: form(`Job Y - ${f.name}`) }) }, [f.host]);
   const h = await launchFromWebsite({
     html: "<!doctype html><title>u</title>", sessionId: sid, atsType: f.atsType, officialUrl: `https://${f.host}${f.x}`, launchArgs: s.args,
-    profile: who("Riley"), answers: answersFor("Riley"), keyFor: labelKey, jobTitle: "Job X", company: "Acme"
+    profile: who("Riley"), answers: answersFor("Riley"), keyFor: labelKey, jobTitle: "Job X", company: "Acme", extensionPath: CUSTOM_DIST
   });
   await h.addJob({ sessionId: sid + 1, atsType: f.atsType, officialUrl: `https://${f.host}${f.y}`, jobTitle: "Job Y", company: "Acme", profile: who("Morgan"), answers: answersFor("Morgan"), keyFor: labelKey, launchToken: "synthetic-launch-b" });
   const payloadY = { requestId: `req-${sid + 1}`, launchToken: "synthetic-launch-b", sessionId: sid + 1, jobId: sid + 1, officialUrl: `https://${f.host}${f.y}`, atsType: f.atsType, webApiBase: h.employer.origin, webAuthenticatedUserId: 1 };
