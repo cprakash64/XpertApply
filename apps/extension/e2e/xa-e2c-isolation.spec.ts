@@ -33,7 +33,7 @@ const readAuth = (worker: import("@playwright/test").Worker, expire = false) => 
 
 async function open(e: Env, user: number) {
   const p = await e.ctx.newPage();
-  p.on("dialog", d => void d.accept());
+  p.on("dialog", d => void d.accept().catch(() => undefined));   // the page may already have dismissed it (reload); accepting a gone dialog is not a product failure
   await p.goto(POSTING);
   await p.click("#apply-now");
   await expect.poll(() => p.inputValue("#first_name"), { timeout: 45_000 }).toBe(PROFILES[user].first_name);
