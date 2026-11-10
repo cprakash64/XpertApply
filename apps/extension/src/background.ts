@@ -91,9 +91,12 @@ import {
   workflowTabIds,
   withAuthorityMutation,
   type AuthorityGeneration,
-  type SessionPackage
+  type SessionPackage,
+  getRunAuth,
+  putRunAuth,
+  clearRunAuth
 } from "./state";
-import { urlsMatchForHandoff } from "./url";
+import { atsJobIdentity, urlsMatchForHandoff } from "./url";
 import {
   authorizeFrameForSubmission,
   authorizeFrameForLaunch,
@@ -1181,6 +1184,12 @@ function routeRuntimeMessage(
       void handleContentReady(sender, sendResponse, generation);
       return true;
 
+    case MSG.WORKFLOW_START:
+    case MSG.WORKFLOW_CHECK:
+    case MSG.WORKFLOW_CANCEL:
+      void handleWorkflowAuthority(message as { type: string; runId?: string }, sender, sendResponse, generation);
+      return true;
+
     case MSG.TAB_IDENTITY: {
       // Identity is read from Chrome's sender, so a page script cannot claim another tab's id. Only the tab's own id is returned.
       const who = describeSender(sender);
@@ -2160,6 +2169,62 @@ async function settleReadyRefusal(
  * frame against the workflow's origin graph — so an embedded ATS widget still
  * fills and an unrelated ad, analytics or chat frame gets nothing.
  */
+
+// --------------------------------------------------------------------------- //
+// Worker-owned run authorization (EXT-LIVE-09)
+// --------------------------------------------------------------------------- //
+// A continuous run clicks Next and fills across steps. Its authorization therefore lives HERE, in storage.session (trusted contexts only),
+// never in the page's sessionStorage, which the employer's own scripts can read and write. The content script keeps progress metadata for
+// its own convenience and must ask this worker before it acts on a run. Every answer is derived from Chrome's sender metadata and from
+// worker-held state: the payload contributes only the run id being asked about.
+async function handleWorkflowAuthority(
+  message: { type: string; runId?: string },
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (r: unknown) => void,
+  generation: AuthorityGeneration
+): Promise<void> {
+  const deny = (reason: string) => sendResponse({ ok: false, reason });
+  try {
+    const who = describeSender(sender);
+    if (!who || !who.isTopFrame || !who.frameOrigin || !who.tabUrl) return deny("NOT_TOP_FRAME_OF_A_TAB");
+    const tabId = who.tabId;
+    if (message.type === MSG.WORKFLOW_CANCEL) {
+      const existing = await getRunAuth(tabId);
+      if (existing && existing.runId === message.runId) await clearRunAuth(tabId);
+      return sendResponse({ ok: true });
+    }
+    const pending = await getPending(tabId);
+    const pkg = await getPackage(tabId);
+    if (!pending || !pkg) return deny("TAB_HAS_NO_APPLICATION");
+    if (generation !== captureAuthorityGeneration() || !isSessionAuthorityActive(pending.sessionId)) return deny("STALE_AUTHORITY");
+    if (Date.now() > pending.expiresAt) return deny("SESSION_EXPIRED");
+    const origin = who.frameOrigin.origin;
+    const pattern = patternForOrigin(origin);
+    if (!pattern || !(await chrome.permissions.contains({ origins: [pattern] }).catch(() => false))) return deny("SITE_ACCESS_MISSING");
+    const accountKey = String(pkg.session.authenticatedUserId ?? "");
+    const jobKey = atsJobIdentity(who.tabUrl) ?? "";
+    if (message.type === MSG.WORKFLOW_START) {
+      // Only a page that IS the prepared application may start a run: its posting identity must match the session's own.
+      const expected = atsJobIdentity(pending.officialUrl ?? pending.applicationUrl) ?? "";
+      if (expected !== jobKey) return deny("TAB_SHOWS_A_DIFFERENT_JOB");
+      const runId = crypto.randomUUID();
+      await putRunAuth({ runId, tabId, origin, sessionId: pending.sessionId, accountKey, jobKey, startedAt: Date.now() });
+      return sendResponse({ ok: true, runId });
+    }
+    // CHECK: every field comes from the worker's records and Chrome's sender, compared with the stored authorization.
+    const auth = await getRunAuth(tabId);
+    if (!auth || auth.runId !== message.runId) return deny("UNKNOWN_RUN");
+    if (auth.tabId !== tabId) return deny("RUN_BELONGS_TO_ANOTHER_TAB");
+    if (auth.origin !== origin) return deny("ORIGIN_CHANGED");
+    if (auth.sessionId !== pending.sessionId) return deny("APPLICATION_CHANGED");
+    if (auth.accountKey !== accountKey) return deny("ACCOUNT_CHANGED");
+    if (auth.jobKey !== jobKey) return deny("TAB_SHOWS_A_DIFFERENT_JOB");
+    return sendResponse({ ok: true });
+  } catch {
+    return deny("UNAVAILABLE");
+  }
+}
+
 async function handleContentReady(
   sender: chrome.runtime.MessageSender,
   sendResponse: (r: unknown) => void,

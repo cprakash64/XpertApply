@@ -467,7 +467,8 @@ export function createWidget(actions: {
   }
   const wf = (name: string) => root.querySelector<HTMLElement>(`[data-w="${name}"]`)!;
   if (actions.workflow) {
-    wf("start").addEventListener("click", actions.workflow.start);
+    // Only a real user gesture starts a run: a script-dispatched click (isTrusted === false) is ignored.
+    wf("start").addEventListener("click", (event) => { if (event.isTrusted) actions.workflow!.start(); });
     wf("pause").addEventListener("click", actions.workflow.pause);
     wf("resume").addEventListener("click", actions.workflow.resume);
     wf("cancel").addEventListener("click", actions.workflow.cancel);

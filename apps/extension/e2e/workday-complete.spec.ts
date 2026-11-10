@@ -58,7 +58,7 @@ test("Complete application: fills My Information, advances once per step, pauses
     expect((await emp(empPage)).next).toBe(0);
     // One click.
     await expect.poll(() => ov.evaluateWidget((r) => (r.querySelector<HTMLElement>('[data-w="start"]')?.style.display ?? "none") !== "none"), { timeout: 60_000 }).toBe(true);
-    await ov.evaluateWidget((r) => r.querySelector<HTMLButtonElement>('[data-w="start"]')!.click());
+    await ov.clickWidgetTrusted('[data-w="start"]');
     await expect.poll(async () => (await emp(empPage)).steps.at(-1), { timeout: 90_000 }).toBe("Application Questions");
     // Paused on the unanswered question: nothing invented, no further Next.
     await empPage.waitForTimeout(3000);
@@ -105,7 +105,7 @@ test("a legal/eligibility answer typed straight into the employer form is NOT ac
     const ov = overlayCdp(empPage);
     await expect.poll(() => empPage.inputValue("#city"), { timeout: 60_000 }).toBe("Phoenix");
     await expect.poll(() => ov.evaluateWidget((r) => (r.querySelector<HTMLElement>('[data-w="start"]')?.style.display ?? "none") !== "none"), { timeout: 60_000 }).toBe(true);
-    await ov.evaluateWidget((r) => r.querySelector<HTMLButtonElement>('[data-w="start"]')!.click());
+    await ov.clickWidgetTrusted('[data-w="start"]');
     await expect.poll(async () => (await emp(empPage)).steps.at(-1), { timeout: 90_000 }).toBe("Application Questions");
     expect(await empPage.inputValue("#auth")).toBe("");
     await empPage.fill("#auth", "Yes");

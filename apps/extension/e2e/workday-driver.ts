@@ -14,7 +14,8 @@ export async function launch(s: Awaited<ReturnType<typeof site>>, id: number, ex
 export type Emp = { signedIn: boolean; step: number; vals: Record<string, string>; work: any[]; edu: any[]; sites: any[]; resume: string; clicks: Record<string, number>; visited: string[]; err: number; errLabels: string[] };
 export const emp = (p: Page) => p.evaluate(() => (window as unknown as { __emp: unknown }).__emp as Emp);
 export const startReady = (ov: ReturnType<typeof overlayCdp>) => ov.evaluateWidget((r) => (r.querySelector<HTMLElement>('[data-w="start"]')?.style.display ?? "none") !== "none");
-export const clickWidget = (ov: ReturnType<typeof overlayCdp>, w: string) => ov.evaluateWidget((r, name) => r.querySelector<HTMLButtonElement>(`[data-w="${name}"]`)!.click(), w);
+// Starting a run needs a real user gesture (the widget ignores script-dispatched clicks), so "start" is a trusted mouse click.
+export const clickWidget = (ov: ReturnType<typeof overlayCdp>, w: string) => w === "start" ? ov.clickWidgetTrusted(`[data-w="start"]`) : ov.evaluateWidget((r, name) => r.querySelector<HTMLButtonElement>(`[data-w="${name}"]`)!.click(), w);
 export const status = (ov: ReturnType<typeof overlayCdp>) => ov.evaluateWidget((r) => r.querySelector('[data-w="status"]')?.textContent ?? "");
 
 /** What the person would SEE for each rendered work/education row, read from the live DOM (not from the fixture's model). */

@@ -10,21 +10,8 @@ export function normalizeApplicationUrl(raw: string): URL | null {
   } catch { return null; }
 }
 
-const IGNORED_PATH_TOKENS = new Set(["jobs", "job", "careers", "career", "apply", "application", "positions", "position"]);
-
-/** Job-title words that appear in countless unrelated postings. Sharing one is not evidence of the same job. */
-const GENERIC_TITLE_TOKENS = new Set([
-  "engineer", "engineers", "engineering", "software", "senior", "junior", "staff", "principal", "manager", "management", "developer",
-  "analyst", "associate", "lead", "director", "intern", "internship", "scientist", "specialist", "coordinator", "consultant", "designer",
-  "architect", "technician", "operations", "remote", "hybrid", "full", "time", "part", "team", "global", "united", "states", "america"
-]);
-
 /** Query parameters that name ONE posting. */
 const JOB_ID_PARAMS = ["gh_jid", "jid", "job_id", "jobid", "jobId", "requisition", "reqid", "token", "lever-source"];
-
-function pathTokens(path: string): string[] {
-  return path.toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length >= 4 && !IGNORED_PATH_TOKENS.has(x));
-}
 
 function jobIdOf(url: URL): string | null {
   for (const name of JOB_ID_PARAMS) {
@@ -35,19 +22,6 @@ function jobIdOf(url: URL): string | null {
 }
 
 const stripApplySuffix = (path: string): string => path.replace(/\/(apply|application)$/i, "") || "/";
-
-/** Same job-posting path: equal, the same path plus the expected `/apply` or `/application` continuation, or a shared, SPECIFIC token.
- * "Specific" excludes generic title words (engineer, senior, software…): two different roles at one employer both say "engineer", and
- * a stale handoff for one must never be treated as a match for the other. This is what stops a handoff for one job from attaching to a
- * different job, including two postings under the same ATS family or on the same careers site. */
-function pathsCorrespond(pathA: string, pathB: string): boolean {
-  if (pathA === pathB) return true;
-  if (stripApplySuffix(pathA) === stripApplySuffix(pathB)) return true;
-  const tokensA = new Set(pathTokens(pathA).filter((token) => !GENERIC_TITLE_TOKENS.has(token)));
-  const tokensB = pathTokens(pathB).filter((token) => !GENERIC_TITLE_TOKENS.has(token));
-  if (tokensA.size === 0 || tokensB.length === 0) return false;
-  return tokensB.some((token) => tokensA.has(token));
-}
 
 const UUIDISH = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
 
@@ -96,24 +70,58 @@ export function urlsMatchForHandoff(expected: string, actual: string): boolean {
   // Two pages of the SAME hosted ATS family with an identity-bearing URL are compared by identity only. A cross-host pair (an employer's
   // own page embedding gh_jid, say) still goes through the explicit-id rules below.
   if (fa !== null && fa === fb && (ia !== null || ib !== null)) return ia !== null && ia === ib;
-  // An explicit posting id outranks path heuristics: two different ids are two different jobs, and the same id on the same host (or
-  // ATS family) is the same job wherever its path points.
+  // An explicit posting id (query parameter) outranks everything else: two different ids are two different jobs, and the same id on the
+  // same site is the same job wherever its path points.
   const idA = jobIdOf(a), idB = jobIdOf(b);
   if (idA && idB && idA !== idB) return false;
-  const sameSite = a.hostname === b.hostname || ATS_FAMILIES.some((f) => (a.hostname === f || a.hostname.endsWith(`.${f}`)) && (b.hostname === f || b.hostname.endsWith(`.${f}`)));
-  if (idA && idB && idA === idB && sameSite) return true;
-  const family = ATS_FAMILIES.find((f) => a.hostname === f || a.hostname.endsWith(`.${f}`));
-  if (family) {
-    // Same ATS family is necessary but never sufficient on its own — every
-    // employer using that ATS shares the hostname, so the job-identifying
-    // path must also correspond. Without this, a stale handoff for Temporal
-    // could attach to an unrelated Ashby job just because both are hosted on
-    // jobs.ashbyhq.com.
-    if (!(b.hostname === family || b.hostname.endsWith(`.${family}`))) return false;
-    return pathsCorrespond(a.pathname, b.pathname);
+  const sameSite = a.hostname === b.hostname || (fa !== null && fa === fb);
+  if (!sameSite) return false;
+  if (idA && idB && idA === idB) return true;
+  return postingsRelated(a, b);
+}
+
+/** Path segments that are an application's own continuation (form, step, review...), never a different posting. */
+const CONTINUATION_SEGMENT = /^(apply|application|applications|form|step-?\d*|\d{1,2}|questions|review|details|resume|start|continue|thanks)$/;
+
+/**
+ * Tokens that NAME one posting: long numeric ids, UUIDs, long hex ids, requisition codes (R-1234, JR1234). A slug, a title word or an
+ * employer segment is not here: those are shared by many postings.
+ */
+export function postingIdTokens(url: URL): Set<string> {
+  const out = new Set<string>();
+  for (const part of url.pathname.split(/[^A-Za-z0-9-]+/).filter(Boolean)) {
+    if (UUIDISH.test(part)) { out.add(part.toLowerCase().replace(/-/g, "")); continue; }
+    for (const token of part.split("-")) {
+      const t = token.toLowerCase();
+      if (/^\d{5,}$/.test(t)) out.add(t);
+      else if (/^[0-9a-f]{12,}$/.test(t) && /\d/.test(t)) out.add(t);
+      else if (/^(jr|r|req|reqid)\d{3,}$/.test(t)) out.add(t);
+    }
   }
-  if (a.hostname !== b.hostname) return false;
-  return pathsCorrespond(a.pathname, b.pathname);
+  return out;
+}
+
+/**
+ * Two pages on one site are the same posting only on positive evidence, never on shared words:
+ *   1. identical canonical path (an `/apply` or `/application` suffix aside);
+ *   2. both name posting ids and share one;
+ *   3. neither names an id, and one path is the other plus ONLY application-continuation segments (apply, step-2, review...).
+ * Everything else is "not the same", so an unknown career site never inherits another job's workflow.
+ */
+function postingsRelated(a: URL, b: URL): boolean {
+  const pa = stripApplySuffix(a.pathname), pb = stripApplySuffix(b.pathname);
+  if (pa === pb) return true;
+  const ia = postingIdTokens(a), ib = postingIdTokens(b);
+  if (ia.size > 0 && ib.size > 0) return [...ia].some((x) => ib.has(x));
+  if (ia.size > 0 || ib.size > 0) return false;
+  const sa = a.pathname.split("/").filter(Boolean).map((x) => x.toLowerCase());
+  const sb = b.pathname.split("/").filter(Boolean).map((x) => x.toLowerCase());
+  const [short, long] = sa.length <= sb.length ? [sa, sb] : [sb, sa];
+  const base = short.filter((x, i) => !(i >= short.length - 1 && CONTINUATION_SEGMENT.test(x)) || i < short.length - 1);
+  const stem = base.length === short.length ? short : short.slice(0, -1);
+  if (stem.length < 2 || stem.length > long.length) return false;
+  if (!stem.every((x, i) => long[i] === x)) return false;
+  return long.slice(stem.length).every((x) => CONTINUATION_SEGMENT.test(x));
 }
 
 export function isKnownAtsHost(raw: string): boolean {

@@ -72,7 +72,12 @@ function isComboboxLike(el: HTMLElement): boolean {
 let writeAuthorityWithdrawn = false;
 export function withdrawFillAuthority(): void { writeAuthorityWithdrawn = true; }
 export function restoreFillAuthority(): void { writeAuthorityWithdrawn = false; }
-export function fillAuthorityActive(): boolean { return !writeAuthorityWithdrawn; }
+/** A second, document-scoped condition: writes are also refused while this returns false (set by the content script: "this tab still
+ * shows the posting the session was prepared for"). It is evaluated at the moment of each write, so a response that was in flight when
+ * the tab moved to another job cannot land in the new job's form. */
+let fillGate: (() => boolean) | null = null;
+export function setFillGate(gate: (() => boolean) | null): void { fillGate = gate; }
+export function fillAuthorityActive(): boolean { return !writeAuthorityWithdrawn && (fillGate ? fillGate() : true); }
 
 /** Fill one field with a value. Returns the outcome for the audit trail.
  * Async: custom/JS-controlled dropdowns (comboboxes, React Select, etc.) may
@@ -82,7 +87,7 @@ export function fillAuthorityActive(): boolean { return !writeAuthorityWithdrawn
  * from two different open dropdowns can never be confused with each other. */
 export async function fillField(field: DiscoveredField, value: string | string[], options: FillOptions = {}): Promise<FillOutcome> {
   const el = field.element;
-  if (writeAuthorityWithdrawn) return { uid: field.uid, status: "skipped", reason: "authorization withdrawn" };
+  if (!fillAuthorityActive()) return { uid: field.uid, status: "skipped", reason: "authorization withdrawn" };
   if (!el) {
     return { uid: field.uid, status: "error", reason: "no element" };
   }

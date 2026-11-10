@@ -31,7 +31,7 @@ import {
   tikTokFailureCode,
   type TikTokAdapterTrace
 } from "../ats/tiktokApplication";
-import { clearJobPilotFields, fillField, restoreFillAuthority, withdrawFillAuthority } from "../fields/fill";
+import { clearJobPilotFields, fillField, restoreFillAuthority, setFillGate, withdrawFillAuthority } from "../fields/fill";
 import { resetFieldStatusPresentation } from "../fields/statusPresentation";
 import { EXTENSION_CAPABILITIES, getApiBase, isApprovedJobPilotOrigin } from "../config";
 import { log } from "../logger";
@@ -966,7 +966,9 @@ function ensureWidget(): ReturnType<typeof createWidget> {
             // A run is bound to this tab; if the worker cannot name the tab, nothing starts.
             if (!atsJobIdentity(location.href)) { widget?.setWorkflow({ status: "XpertApply could not tell which job this page is, so it will not run automatically. Fill this page, or reload from the job.", mode: "idle" }); return; }
             if (!(await ensureTabKey())) { widget?.setWorkflow({ status: "XpertApply could not confirm which tab this is. Reload the page and try again.", mode: "idle" }); return; }
-            workflowRun = wf.startRun("application", workflowIdentity());
+            const granted = (await sendRuntime({ type: MSG.WORKFLOW_START }).catch(() => null)) as { ok?: boolean; runId?: string; reason?: string } | null;
+            if (!granted?.ok || !granted.runId) { widget?.setWorkflow({ status: "XpertApply could not start a run for this page. Open the application from XpertApply and try again.", mode: "idle" }); return; }
+            workflowRun = wf.startRun("application", workflowIdentity(), granted.runId);
             persistWorkflow();
             showWorkflow();
             automaticRunSettled = false;
@@ -984,7 +986,7 @@ function ensureWidget(): ReturnType<typeof createWidget> {
           void discoverAndFill("manual_retry");
         },
         cancel: () => {
-          if (workflowRun) workflowRun = wf.cancel(workflowRun);
+          if (workflowRun) { void sendRuntime({ type: MSG.WORKFLOW_CANCEL, runId: workflowRun.runId }).catch(() => undefined); workflowRun = wf.cancel(workflowRun); }
           const store = workflowStore();
           if (store) wf.clearRun(store);
           workflowRun = null;
@@ -1058,7 +1060,13 @@ let rootRecoveryAttempted = false;
  * Does this document still show the posting the session was prepared for? Only a CONFIRMED difference between two hosted-ATS postings
  * counts (both identities known and unequal); an unknown page (login host, redirect) is left to the existing workflow rules.
  */
+// Evaluated at the moment of every write (see fields/fill.ts): a fill still in flight when the tab moves to another job writes nothing.
+setFillGate(() => documentStillMatchesSession());
+
 function tabStillOnApplication(): boolean {
+  return documentStillMatchesSession();
+}
+function documentStillMatchesSession(): boolean {
   if (!session) return true;
   const expected = atsJobIdentity(session.officialUrl ?? "");
   const actual = atsJobIdentity(location.href);
@@ -3688,6 +3696,28 @@ async function ensureTabKey(): Promise<string> {
   return myTabKey;
 }
 
+/**
+ * Run authorization is owned by the worker. Progress metadata lives in this tab's sessionStorage, which the page can edit, so a run found
+ * there is never trusted: it is acted on only while the worker confirms it (sender tab, origin, application, account, posting, site access).
+ */
+async function workerAllowsRun(run: wf.WorkflowRun): Promise<boolean> {
+  const answer = (await sendRuntime({ type: MSG.WORKFLOW_CHECK, runId: run.runId }).catch(() => null)) as { ok?: boolean } | null;
+  return answer?.ok === true;
+}
+
+/** Load a stored run and keep it only if the worker vouches for it; otherwise forget it and offer an explicit restart. */
+async function restoreRunIfAuthorized(): Promise<void> {
+  if (workflowRun) return;
+  const store = workflowStore();
+  if (!store) return;
+  await ensureTabKey();
+  const loaded = wf.loadRun(store, workflowIdentity());
+  if (!loaded) return;
+  if (await workerAllowsRun(loaded)) { workflowRun = loaded; return; }
+  wf.clearRun(store);
+  widget?.setWorkflow({ status: "XpertApply could not verify the earlier run (the browser or extension restarted, or this is not the tab that started it). Click Complete application to resume.", mode: "idle" });
+}
+
 function workflowIdentity() {
   return {
     tabKey: myTabKey,
@@ -3754,9 +3784,7 @@ function showWorkflow(): void {
 /** Called after every verified Fill pass. Returns true when it clicked the one safe Next control. */
 async function driveWorkflowAfterFill(): Promise<boolean> {
   if (!outcome || !ledgerCounts || !lastFinalVerification || outcome.result.atsId !== "workday") return false;
-  const store = workflowStore();
-  await ensureTabKey();
-  if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
+  await restoreRunIfAuthorized();
   const kind = classifyWorkdayStep(document);
   if (!workflowRun) { widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" }); return false; }
   const next = findWorkdaySafeNext(document);
@@ -3785,6 +3813,7 @@ async function driveWorkflowAfterFill(): Promise<boolean> {
   persistWorkflow();
   showWorkflow();
   if (decision.action.kind !== "advance" || !next) return false;
+  if (!(await workerAllowsRun(workflowRun))) { workflowRun = wf.cancel(workflowRun); persistWorkflow(); showWorkflow(); return false; }
   lastScanSignature = scanSignature();
   next.scrollIntoView({ block: "center" });
   next.click();
@@ -3802,9 +3831,7 @@ async function driveWithoutForm(): Promise<boolean> {
   const kind = classifyWorkdayStep(document);
   const handled = kind === "review" || USER_BOUNDARY_KINDS.has(kind) || kind === "my_information" || kind === "my_experience" || kind === "application_questions";
   if (!handled) return false;
-  const store = workflowStore();
-  await ensureTabKey();
-  if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
+  await restoreRunIfAuthorized();
   if (!workflowRun) {
     widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" });
     return kind === "review";
@@ -3830,6 +3857,7 @@ async function driveWithoutForm(): Promise<boolean> {
   persistWorkflow();
   showWorkflow();
   if (decision.action.kind !== "advance" || !next) return true;
+  if (!(await workerAllowsRun(workflowRun))) { workflowRun = wf.cancel(workflowRun); persistWorkflow(); showWorkflow(); return true; }
   lastScanSignature = scanSignature();
   next.scrollIntoView({ block: "center" });
   next.click();

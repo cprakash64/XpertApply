@@ -229,6 +229,34 @@ export class OverlayCdp {
     await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
   }
+
+  /** A TRUSTED click on a control of the workflow widget (real mouse events, isTrusted true). */
+  async clickWidgetTrusted(selector: string, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let point: { x: number; y: number } | null = null;
+    const measure = () => this.evaluateWidget((root, sel) => {
+      const el = root.querySelector<HTMLButtonElement>(sel as string);
+      if (!el || el.hidden || el.disabled || el.style.display === "none") return null;
+      el.scrollIntoView({ block: "center", inline: "center" });
+      const box = el.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) return null;
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    }, selector);
+    while (Date.now() < deadline) {
+      const first = await measure();
+      if (first) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const second = await measure();
+        if (second && Math.abs(second.x - first.x) < 0.5 && Math.abs(second.y - first.y) < 0.5) { point = second; break; }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!point) throw new Error(`widget control not clickable within ${timeoutMs} ms: ${selector}`);
+    const cdp = await this.session();
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  }
 }
 
 /** Shorthand used by the specs. */

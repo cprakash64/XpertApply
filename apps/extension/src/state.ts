@@ -13,6 +13,9 @@ import type { LaunchViewState, PendingLaunch } from "./messages";
 
 const PENDING_KEY = "pendingLaunches";
 const PACKAGE_KEY = "sessionPackages";
+/** Worker-owned authorization for continuous runs, keyed by Chrome tab id. storage.session is trusted-contexts-only by default (no
+ * setAccessLevel anywhere), so neither the page nor a content script can read or write it. */
+const RUN_KEY = "workflowRunAuthV1";
 const VIEW_KEY = "viewStates";
 
 /**
@@ -403,6 +406,7 @@ export async function clearAllWorkflowState(generation = captureAuthorityGenerat
     const workflow = workflowStorage();
     await workflow.remove(ACTIVE_KEY);
     await workflow.remove(UNBOUND_KEY);
+    await workflow.remove(RUN_KEY);
     await workflow.remove(PENDING_KEY);
     await workflow.remove(VIEW_KEY);
     if (packageStorage() !== workflow) await packageStorage().remove(PACKAGE_KEY);
@@ -445,7 +449,34 @@ export async function clearWorkflowSession(sessionId: number, generation = captu
   });
 }
 
+export interface RunAuth {
+  runId: string;
+  tabId: number;
+  origin: string;
+  sessionId: number;
+  accountKey: string;
+  jobKey: string;
+  startedAt: number;
+}
+
+export async function getRunAuth(tabId: number): Promise<RunAuth | null> {
+  const map = await getMap<RunAuth>(RUN_KEY);
+  return map[String(tabId)] ?? null;
+}
+
+export async function putRunAuth(auth: RunAuth): Promise<void> {
+  const map = await getMap<RunAuth>(RUN_KEY);
+  map[String(auth.tabId)] = auth;
+  await workflowStorage().set({ [RUN_KEY]: map });
+}
+
+export async function clearRunAuth(tabId: number): Promise<void> {
+  const map = await getMap<RunAuth>(RUN_KEY);
+  if (String(tabId) in map) { delete map[String(tabId)]; await workflowStorage().set({ [RUN_KEY]: map }); }
+}
+
 export async function clearTab(tabId: number, generation = captureAuthorityGeneration()): Promise<void> {
+  await clearRunAuth(tabId).catch(() => undefined);
   await withAuthorityMutation(generation, async () => {
     for (const key of [PENDING_KEY, VIEW_KEY]) {
       const map = await getMap<unknown>(key);

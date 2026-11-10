@@ -19,7 +19,7 @@ async function launch(s: Awaited<ReturnType<typeof site>>, id: number, extra: Re
 export type Emp = { signedIn: boolean; step: number; vals: Record<string, string>; work: any[]; edu: any[]; sites: any[]; resume: string; clicks: Record<string, number>; visited: string[]; err: number; errLabels: string[] };
 const emp = (p: Page) => p.evaluate(() => (window as unknown as { __emp: unknown }).__emp as Emp);
 const startReady = (ov: ReturnType<typeof overlayCdp>) => ov.evaluateWidget((r) => (r.querySelector<HTMLElement>('[data-w="start"]')?.style.display ?? "none") !== "none");
-const clickWidget = (ov: ReturnType<typeof overlayCdp>, w: string) => ov.evaluateWidget((r, name) => r.querySelector<HTMLButtonElement>(`[data-w="${name}"]`)!.click(), w);
+const clickWidget = (ov: ReturnType<typeof overlayCdp>, w: string) => w === "start" ? ov.clickWidgetTrusted(`[data-w="start"]`) : ov.evaluateWidget((r, name) => r.querySelector<HTMLButtonElement>(`[data-w="${name}"]`)!.click(), w);
 const status = (ov: ReturnType<typeof overlayCdp>) => ov.evaluateWidget((r) => r.querySelector('[data-w="status"]')?.textContent ?? "");
 
 /** What the person would SEE for each rendered work/education row, read from the live DOM (not from the fixture's model). */
