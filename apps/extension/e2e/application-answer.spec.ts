@@ -270,13 +270,18 @@ async function seed(worker: Worker, url: string) {
   }, url);
 }
 
-// Observe semantic readiness in the browser throughout the existing five-second
-// budget. Node expect.poll can stop early when its next backoff exceeds the deadline.
+// Observe semantic readiness in the browser throughout the bounded budget below. Node expect.poll can stop early when its next backoff exceeds the deadline.
 async function waitForPreparedApplication(page: import("@playwright/test").Page, worker: Worker) {
   // The overlay root is closed, so the page cannot be asked about it: read it over CDP. An explicit
   // deadline loop, for the reason above (and the root is briefly absent while the content script
   // replaces its host, which a failed read here simply retries).
-  const deadline = Date.now() + 5_000;
+  // ROOT CAUSE of the historical "not ready within 5000 ms" failure (EXT-LIVE-08): a tab that opens through the website launch uploads the
+  // person's résumé and then DELIBERATELY waits for the employer form to finish reacting (waitForAtsParse: 0.9 s activity grace, then a
+  // 1.4 s quiet window after any change, capped at 15 s). That takes ~3.2 s on a quiet machine, so the old 5 s budget left ~1.7 s of
+  // slack and failed whenever a mutation (the overlay mounting, the upload field updating) extended the quiet window. The wait is
+  // bounded by the product's own cap, so the deadline is that cap plus margin, and readiness is still observed, not slept for.
+  const startedAt = Date.now();
+  const deadline = startedAt + 15_000 + 10_000;
   for (;;) {
     const ready = await overlayCdp(page).evaluate((root) => {
       const fill = root.getElementById("fill") as HTMLButtonElement | null;
@@ -284,8 +289,13 @@ async function waitForPreparedApplication(page: import("@playwright/test").Page,
         && Number(root.getElementById("discovered")?.textContent) > 0
         && Boolean(fill && !fill.disabled);
     }).catch(() => false);
-    if (ready) break;
-    if (Date.now() > deadline) throw new Error("the prepared application was not ready within 5000 ms");
+    if (ready) { console.log(`READY_MS ${Date.now() - startedAt}`); break; }
+    if (Date.now() > deadline) {
+      // Evidence for a failure: what the overlay and the worker held at the deadline (structure only, no values).
+      const overlay = await overlayCdp(page).evaluate((root) => ({ stage: root.getElementById("stage")?.textContent ?? null, discovered: root.getElementById("discovered")?.textContent ?? null, fillDisabled: (root.getElementById("fill") as HTMLButtonElement | null)?.disabled ?? null })).catch((e) => ({ error: String(e).slice(0, 80) }));
+      const wk = await worker.evaluate(async (u) => { const tab = (await chrome.tabs.query({})).find((t) => t.url === u); const st = await chrome.storage.session.get(["viewStates", "pendingLaunches"]); const v = tab?.id != null ? st.viewStates?.[tab.id] : null; return { tab: tab?.id != null, state: v?.state ?? null, contentReady: v?.contentReady ?? null, packageLoaded: v?.packageLoaded ?? null, failureCode: v?.failureCode ?? null, pending: tab?.id != null ? Boolean(st.pendingLaunches?.[tab.id]) : null }; }, page.url()).catch((e) => ({ error: String(e).slice(0, 80) }));
+      throw new Error(`the prepared application was not ready within the ATS-parse barrier cap (15 s) plus 10 s margin; overlay=${JSON.stringify(overlay)} worker=${JSON.stringify(wk)}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   // One authoritative snapshot, without a second readiness wait or credential output.
