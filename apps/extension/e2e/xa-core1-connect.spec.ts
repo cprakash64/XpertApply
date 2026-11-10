@@ -219,6 +219,9 @@ test("interruptions: declined consent, closed window, forged state, wrong extens
     await ov.click("#fill");
     const u = new URL(await s.authUrl());
     await s.completeWith(`https://${s.extId}.chromiumapp.org/xpertapply?code=whatever&state=forged-state`);
+    // The security property first, independent of what the notice shows: a forged state stores no credential.
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(await s.credential()).toBeNull();
     await notice(/couldn.t be verified/i);
     expect(await s.credential()).toBeNull();
 
