@@ -452,7 +452,7 @@ async function initAtsPage(): Promise<void> {
     if (message.type === MSG.PING_CONTENT) {
       // `started` lets the worker tell a live workflow from a registered instance that found no
       // handoff when its page loaded and has been dormant since.
-      sendResponse({ ok: true, url: location.href, started, dormant });
+      sendResponse({ ok: true, url: location.href, started, dormant, matched });
       return false;
     }
     if (message.type === MSG.CONTENT_RECONNECT) {

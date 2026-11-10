@@ -245,6 +245,12 @@ export interface LaunchViewState {
   /** false for a terminal failure (expired/consumed handoff, URL mismatch) —
    * the UI must not offer a Retry that will just repeat the same failure. */
   failureRecoverable: boolean | null;
+  /**
+   * Why the LAST sign-in attempt on this tab did not connect (one of AUTH_NOTICE_CODES). It lives in the view, not in the
+   * page's DOM, so a re-render or a re-resolution of the same "not connected" notice cannot erase it. Cleared by the next
+   * attempt, and gone with the notice itself once a connection succeeds or the account changes.
+   */
+  authNotice?: string | null;
   /** Chrome host access for this workflow. `site_access_required` means the
    * side panel must ask; the worker cannot (no user gesture in a service
    * worker). */

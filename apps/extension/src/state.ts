@@ -372,6 +372,9 @@ export function initialView(tabId: number, launch: PendingLaunch, company: strin
   };
 }
 
+/** The only sign-in outcomes that are kept on a tab's notice; anything else is a transient error. */
+export const AUTH_NOTICE_CODES: ReadonlySet<string> = new Set(["AUTH_CANCELLED", "AUTH_DENIED", "AUTH_REJECTED", "AUTH_UNAVAILABLE"]);
+
 /** A tab that holds an application XpertApply cannot yet act on (signed out, draft not prepared).
  * It has no session, so the assistant can say what to do instead of showing "waiting". */
 export function noticeView(tabId: number, failureCode: string, company: string | null): LaunchViewState {

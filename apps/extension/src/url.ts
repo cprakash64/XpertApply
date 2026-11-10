@@ -10,13 +10,24 @@ export function normalizeApplicationUrl(raw: string): URL | null {
   } catch { return null; }
 }
 
-/** Query parameters that name ONE posting. */
-const JOB_ID_PARAMS = ["gh_jid", "jid", "job_id", "jobid", "jobId", "requisition", "reqid", "token", "lever-source"];
+/**
+ * Query parameters that name ONE posting, compared by their spelling-insensitive form (case, `-` and `_` ignored): `jobId`,
+ * `JobID` and `job_id` are one key. Tracking parameters (utm_*, ref, source, lever-source) are deliberately absent.
+ */
+const JOB_ID_KEYS = [
+  "ghjid", "jid", "jobid", "job", "jobnumber", "jobno", "jobcode", "requisition", "requisitionid", "reqid", "req",
+  "postingid", "posting", "positionid", "position", "openingid", "opening", "vacancyid", "id", "token"
+];
 
 function jobIdOf(url: URL): string | null {
-  for (const name of JOB_ID_PARAMS) {
-    const value = url.searchParams.get(name);
-    if (value && /^[A-Za-z0-9_-]{3,64}$/.test(value) && name !== "lever-source") return `${name.toLowerCase()}:${value.toLowerCase()}`;
+  const found = new Map<string, string>();
+  for (const [name, value] of url.searchParams) {
+    const key = name.toLowerCase().replace(/[-_]/g, "");
+    if (JOB_ID_KEYS.includes(key) && !found.has(key) && /^[A-Za-z0-9_-]{1,64}$/.test(value)) found.set(key, value.toLowerCase());
+  }
+  for (const key of JOB_ID_KEYS) {
+    const value = found.get(key);
+    if (value !== undefined) return `${key}:${value}`;
   }
   return null;
 }

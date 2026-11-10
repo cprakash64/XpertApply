@@ -43,11 +43,20 @@ type Family = { name: string; host: string; atsType: string; x: string; y: strin
 const FAMILIES: Family[] = [
   { name: "Tesla-style (/careers/search/job/apply/<id>)", host: "www.tesla.com", atsType: "generic", x: "/careers/search/job/apply/201111", y: "/careers/search/job/apply/202222" },
   { name: "custom employer, shared prefix and similar titles", host: "careers.acme-corp.example", atsType: "generic", x: "/jobs/senior-backend-engineer/apply", y: "/jobs/senior-backend-engineer-payments/apply" },
+  // EXT-LIVE-10: the SAME path; only a query parameter names the job.
+  { name: "same path, job named only by ?jobId=", host: "www.tesla.com", atsType: "generic", x: "/careers/apply?jobId=201111", y: "/careers/apply?jobId=202222" },
+  { name: "same path, job named only by ?JobID= (capitalised)", host: "www.tesla.com", atsType: "generic", x: "/careers/apply2?JobID=301", y: "/careers/apply2?JobID=302" },
+  { name: "same path, job named only by ?reqId=", host: "careers.acme-corp.example", atsType: "generic", x: "/open-roles/apply?reqId=R-1001", y: "/open-roles/apply?reqId=R-1002" },
+  { name: "same path, single-character ?postingId=", host: "www.tesla.com", atsType: "generic", x: "/careers/apply3?postingId=1", y: "/careers/apply3?postingId=2" },
   { name: "SmartRecruiters, one company, identical title", host: "jobs.smartrecruiters.com", atsType: "generic", x: "/Acme/743999111111111-data-engineer", y: "/Acme/743999222222222-data-engineer" }
 ];
 
 async function launch(f: Family, sid: number) {
-  const s = await site({ [f.x]: () => ({ body: form(`Job X - ${f.name}`) }), [f.y]: () => ({ body: form(`Job Y - ${f.name}`) }) }, [f.host]);
+  const pathOf = (u: string) => u.split("?")[0];
+  const s = await site({
+    [pathOf(f.x)]: (url) => ({ body: form(`${url.search === (new URL(`https://${f.host}${f.y}`)).search ? "Job Y" : "Job X"} - ${f.name}`) }),
+    ...(pathOf(f.y) !== pathOf(f.x) ? { [pathOf(f.y)]: () => ({ body: form(`Job Y - ${f.name}`) }) } : {})
+  }, [f.host]);
   const h = await launchFromWebsite({
     html: "<!doctype html><title>u</title>", sessionId: sid, atsType: f.atsType, officialUrl: `https://${f.host}${f.x}`, launchArgs: s.args,
     profile: who("Riley"), answers: answersFor("Riley"), keyFor: labelKey, jobTitle: "Job X", company: "Acme", extensionPath: CUSTOM_DIST

@@ -94,7 +94,8 @@ import {
   type SessionPackage,
   getRunAuth,
   putRunAuth,
-  clearRunAuth
+  clearRunAuth,
+  AUTH_NOTICE_CODES
 } from "./state";
 import { atsJobIdentity, urlsMatchForHandoff } from "./url";
 import {
@@ -2294,7 +2295,10 @@ async function handleContentReady(
         // be prepared): the user needs to be told what to do, so the one in-page assistant opens.
         if (isTopFrame && typeof sender.documentId === "string"
           && (direct.reason === "DIRECT_SIGNED_OUT" || direct.reason === "DIRECT_UNAVAILABLE")) {
-          await putView(tabId, noticeView(tabId, direct.reason, context.frameUrl?.host ?? null), generation);
+          // Re-resolving the same "not connected" state must not erase why the last sign-in attempt failed.
+          const prior = await getView(tabId);
+          const carried = prior?.sessionId == null && prior?.failureCode === direct.reason ? prior.authNotice ?? null : null;
+          await putView(tabId, { ...noticeView(tabId, direct.reason, context.frameUrl?.host ?? null), ...(carried ? { authNotice: carried } : {}) }, generation);
           void autoShowOverlay(tabId, sender.documentId, generation);
         }
         return;
@@ -3016,11 +3020,18 @@ async function startAutofillForTab(
     const notice = await getView(id);
     if (notice?.sessionId == null && (notice?.failureCode === "DIRECT_SIGNED_OUT" || notice?.failureCode === "DIRECT_UNAVAILABLE" || notice?.failureCode === "DIRECT_FORM_NOT_FOUND")) {
       if (notice.failureCode === "DIRECT_SIGNED_OUT") {
+        // A new attempt starts from a clean notice; its own outcome is recorded below, in the view.
+        if (notice.authNotice) await patchView(id, { authNotice: null }, generation).catch(() => undefined);
         const connected = await connectExtension(id);
-        if (!connected.ok) return connected;
+        if (!connected.ok) {
+          if (connected.error && AUTH_NOTICE_CODES.has(connected.error)) {
+            await patchView(id, { authNotice: connected.error }, generation).catch(() => undefined);
+          }
+          return connected;
+        }
       }
       await clearTab(id, generation);
-      await ensureContentReady(id, generation);
+      await ensureContentReady(id, generation, true);
       return { ok: true };
     }
     return { ok: false, error: "SESSION_PACKAGE_FAILED" };
@@ -3044,7 +3055,9 @@ async function startAutofillForTab(
 /** Ping the content script; if silent, inject it and ping again with backoff. */
 async function ensureContentReady(
   tabId: number,
-  generation = captureAuthorityGeneration()
+  generation = captureAuthorityGeneration(),
+  /** The caller has just restored what this page was waiting for (a sign-in): a script that was detached must resolve again. */
+  rewake = false
 ): Promise<boolean> {
   // Checked first and every time. Without a grant there is no XpertApply code
   // on the page at all — a stronger position than a script that is present and
@@ -3062,6 +3075,9 @@ async function ensureContentReady(
       // A script is already on the page. A REGISTERED one runs at load, before any handoff exists, finds
       // none and goes dormant; re-injecting would be ignored (one owner per document), so wake it.
       if (present.dormant && !present.started) await sendToTab(tabId, { type: MSG.AUTOFILL_START, reason: "automatic_launch" });
+      // After a sign-out the worker detaches the page (SESSION_DETACH): it keeps running but is bound to nothing and, having
+      // started once, is not "dormant", so nothing would ever ask it to resolve again. A sign-in that just succeeded does.
+      else if (rewake && !present.matched) await sendToTab(tabId, { type: MSG.AUTOFILL_START, reason: "automatic_launch" });
       return true;
     }
     // Inject the compiled content script. The host permission this needs is
@@ -3082,13 +3098,13 @@ async function ensureContentReady(
 }
 
 /** The top frame's answer to a ping: present, and whether its workflow has started. */
-function pingContentState(tabId: number): Promise<{ started: boolean; dormant: boolean } | null> {
+function pingContentState(tabId: number): Promise<{ started: boolean; dormant: boolean; matched: boolean } | null> {
   return new Promise((resolve) => {
     try {
       chrome.tabs.sendMessage(tabId, { type: MSG.PING_CONTENT }, { frameId: 0 }, (resp) => {
         if (lastError()) return resolve(null);
-        const reply = resp as { ok?: boolean; started?: boolean; dormant?: boolean } | undefined;
-        resolve(reply?.ok ? { started: reply.started !== false, dormant: reply.dormant === true } : null);
+        const reply = resp as { ok?: boolean; started?: boolean; dormant?: boolean; matched?: boolean } | undefined;
+        resolve(reply?.ok ? { started: reply.started !== false, dormant: reply.dormant === true, matched: reply.matched === true } : null);
       });
     } catch {
       resolve(null);

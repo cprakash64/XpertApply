@@ -332,7 +332,8 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     const errorBox = element("errors");
     if (current.failureCode) {
       errorBox.hidden = false;
-      errorBox.textContent = FAILURE_LABEL[current.failureCode] ?? genericFailureText(current);
+      const authNotice = current.failureCode === "DIRECT_SIGNED_OUT" && current.sessionId == null ? current.authNotice : null;
+      errorBox.textContent = (authNotice ? FAILURE_LABEL[authNotice] : undefined) ?? FAILURE_LABEL[current.failureCode] ?? genericFailureText(current);
     } else {
       errorBox.hidden = true;
     }
@@ -355,11 +356,18 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     renderDiagnostics(current);
   }
 
-  async function refresh(): Promise<void> {
+  /**
+   * `inPlace` is a re-read of the SAME tab after the worker said something changed. It keeps what is on screen until the answer
+   * arrives: blanking first disabled the buttons and cleared the notice for the length of a round trip, so a click or a reading in
+   * that window was lost. A tab change or an explicit refresh starts from a blank state, so one tab's data is never shown for another.
+   */
+  async function refresh(inPlace = false): Promise<void> {
     const generation = ++refreshGeneration;
-    context = { available: false, status: "waiting" };
-    view = null;
-    render();
+    if (!inPlace) {
+      context = { available: false, status: "waiting" };
+      view = null;
+      render();
+    }
     const nextContext = await options.context.get();
     if (disposed || generation !== refreshGeneration) return;
     context = nextContext;
@@ -377,12 +385,17 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     void refreshAccount();
   }
 
-  function scheduleRefresh(): void {
-    if (disposed || refreshQueued) return;
+  let queuedInPlace = true;
+  function scheduleRefresh(inPlace = false): void {
+    if (disposed) return;
+    queuedInPlace = queuedInPlace && inPlace;      // any request for a blank refresh wins
+    if (refreshQueued) return;
     refreshQueued = true;
     queueMicrotask(() => {
       refreshQueued = false;
-      if (!disposed) void refresh();
+      const soft = queuedInPlace;
+      queuedInPlace = true;
+      if (!disposed) void refresh(soft);
     });
   }
 
@@ -394,7 +407,9 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     }
     const response = await operation(id);
     if (response?.ok === false) {
-      showButtonError(`${label}: ${FAILURE_LABEL[response.error ?? ""] ?? "Something went wrong. Try again."}`);
+      const known = FAILURE_LABEL[response.error ?? ""];
+      // A sign-in outcome is also kept in the view, which renders exactly this text; show it unprefixed so both agree.
+      showButtonError(response.error?.startsWith("AUTH_") && known ? known : `${label}: ${known ?? "Something went wrong. Try again."}`);
     }
   }
 
@@ -491,10 +506,10 @@ export function createApplicationAssistant(options: ApplicationAssistantOptions)
     if (response?.ok === false) showButtonError(response.error === "REQUIRED_REVIEW_REMAINING" ? "Review the remaining required fields before marking complete." : "Couldn’t mark complete. Try again.");
   });
 
-  ownedListeners.push(options.context.subscribe(scheduleRefresh));
+  ownedListeners.push(options.context.subscribe(() => scheduleRefresh(false)));
   ownedListeners.push(options.views.subscribe((tabId, nextView) => {
     if (nextView === undefined) {
-      scheduleRefresh();
+      scheduleRefresh(true);
       return;
     }
     if (disposed || tabId !== context.tabId) return;

@@ -68,11 +68,11 @@ async function stack() {
     })) as typeof chrome.identity.launchWebAuthFlow;
   });
   const call = (p: string, init?: RequestInit) => fetch(`${apiOrigin}${p}`, init);
-  const signup = async (email: string) => {
+  const signup = async (email: string, fullName = "Chandra Pandey") => {
     const r = await call("/auth/signup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: PASSWORD }) });
     const token = (await r.json()).access_token as string;
     const h = { "content-type": "application/json", authorization: `Bearer ${token}` };
-    await call("/profile", { method: "PUT", headers: h, body: JSON.stringify({ full_name: "Chandra Pandey", phone: "602-555-0100", location_city: "Phoenix", location_state: "AZ", location_country: "United States", work_authorization: "authorized_us", target_roles: ["Backend Engineer"], target_levels: ["Junior"], preferred_locations: ["United States"], remote_preference: "remote", skills: ["Python"] }) });
+    await call("/profile", { method: "PUT", headers: h, body: JSON.stringify({ full_name: fullName, phone: "602-555-0100", location_city: "Phoenix", location_state: "AZ", location_country: "United States", work_authorization: "authorized_us", target_roles: ["Backend Engineer"], target_levels: ["Junior"], preferred_locations: ["United States"], remote_preference: "remote", skills: ["Python"] }) });
     await call("/profile/career", { method: "PUT", headers: h, body: JSON.stringify({ education: [{ school: "Arizona State University", degree: "BS" }], experience: [{ company: "Cardinal Health", title: "ML Engineer Intern", bullets: ["Built Python services"], technologies: ["Python"], currently_working: true }], projects: [], certifications: [], awards: [] }) });
     return token;
   };
@@ -258,5 +258,193 @@ test("signed-out website user: the consent page asks to sign in first and return
     expect(await signIn.getAttribute("href")).toContain("/login?next=%2Fextension%2Fconnect");
     expect(decodeURIComponent((await signIn.getAttribute("href"))!)).toContain(new URL(url).searchParams.get("challenge")!);
     await s.closeWindow();
+  } finally { await s.close(); }
+});
+
+// EXT-LIVE-10: a failed sign-in is STATE on the tab, not a transient string in the page. The worker re-resolves the same
+// "not connected" application whenever the page reloads or a form-watch cycle ends; that used to write a fresh generic
+// notice over the reason the last attempt failed. Every outcome below is asserted twice: the notice the person sees AND
+// the stored authentication state (no credential unless a verified exchange succeeded).
+test("sign-in outcomes: the reason survives re-resolution, duplicates are inert, retry and account change start clean", async () => {
+  test.setTimeout(480_000);
+  const s = await stack();
+  try {
+    const tokenA = await s.signup("e2e.auth.a@mailbox.test-domain.co");
+    const tokenB = await s.signup("e2e.auth.b@mailbox.test-domain.co");
+    const employer = await s.employerApply();
+    const ov = overlayCdp(employer);
+    const notice = async (re: RegExp) => expect.poll(async () => (await ov.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(re);
+    let live = ov;        // the overlay of the CURRENT document (a reload replaces it)
+    const reopen = async () => {
+      await employer.reload();
+      await employer.click("#apply-now");
+      await expect(employer.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 40_000 });
+      live = overlayCdp(employer);
+      return live;
+    };
+    const noticeHidden = async () => {
+      try { await expect.poll(async () => live.call<boolean>("function(){return this.getElementById('errors').hidden}"), { timeout: 30_000 }).toBe(true); }
+      catch (e) { console.log("NOTICE NOT HIDDEN:", JSON.stringify(await live.text("#errors"))); throw e; }
+    };
+    await notice(/isn.t connected/i);
+    expect(await s.credential()).toBeNull();
+
+    // Forged state, delivered TWICE (a duplicate callback): rejected, nothing stored, reason shown.
+    await ov.click("#fill");
+    await s.authUrl();
+    await s.worker.evaluate(() => {
+      const a = (globalThis as any).__auth; (globalThis as any).__auth = null;
+      const forged = `https://${chrome.runtime.id}.chromiumapp.org/xpertapply?code=whatever&state=forged-state`;
+      a.resolve(forged); a.resolve(forged);
+    });
+    await notice(/couldn.t be verified/i);
+    expect(await s.credential()).toBeNull();
+
+    // A DELAYED "not connected" answer: the worker re-resolves this same application (a real reload runs the real path).
+    // The earlier outcome is the tab's state, so it is still what the person reads.
+    let ov2 = await reopen();
+    await expect.poll(async () => (await ov2.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/couldn.t be verified|isn.t connected/i);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect((await ov2.text("#errors")) ?? "").toMatch(/couldn.t be verified/i);
+    expect(await s.credential()).toBeNull();
+
+    // Network failure replaces the earlier reason (a new attempt starts clean); still nothing stored.
+    await ov2.click("#fill");
+    const url2 = await s.authUrl();
+    const okRedirect = await s.captureRedirect(await s.websiteTab(tokenA), url2, async p => { await consent(p); });
+    await s.worker.evaluate(async () => chrome.storage.local.set({ apiBase: "http://127.0.0.1:9" }));
+    await s.completeWith(okRedirect);
+    await expect.poll(async () => (await ov2.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/couldn.t be reached/i);
+    expect((await ov2.text("#errors")) ?? "").not.toMatch(/couldn.t be verified/i);
+    expect(await s.credential()).toBeNull();
+    await s.worker.evaluate(async a => chrome.storage.local.set({ apiBase: a }), s.apiOrigin);
+
+    // Retry succeeds as account A: the stale error is gone and the verified credential is stored.
+    await ov2.click("#fill");
+    const urlA = await s.authUrl();
+    const redirectA = await s.captureRedirect(await s.websiteTab(tokenA), urlA, async p => { await consent(p); });
+    await s.completeWith(redirectA);
+    await expect.poll(async () => (await s.credential())?.email ?? null, { timeout: 30_000 }).toBe("e2e.auth.a@mailbox.test-domain.co");
+    await noticeHidden();
+
+    // Account switch: disconnect A; the "not connected" notice is clean (nothing of A's attempts leaks), a cancelled
+    // attempt is reported as cancelled, and a successful attempt as B leaves a clean notice and B's credential only.
+    await ov2.click("#disconnect");
+    await expect.poll(() => s.credential(), { timeout: 20_000 }).toBeNull();
+    await expect.poll(async () => (await ov2.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+    ov2 = await reopen();                 // after Disconnect the page is detached; a person reopens the application
+    await expect.poll(async () => (await ov2.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+    expect((await ov2.text("#errors")) ?? "").not.toMatch(/couldn.t be verified|couldn.t be reached/i);
+    await ov2.click("#fill");
+    await s.authUrl();
+    await s.closeWindow();
+    await notice(/cancelled/i);
+    expect(await s.credential()).toBeNull();
+    await ov2.click("#fill");
+    const urlB = await s.authUrl();
+    const redirectB = await s.captureRedirect(await s.websiteTab(tokenB), urlB, async p => { await consent(p); });
+    await s.completeWith(redirectB);
+    await expect.poll(async () => (await s.credential())?.email ?? null, { timeout: 30_000 }).toBe("e2e.auth.b@mailbox.test-domain.co");
+    await noticeHidden();
+    expect(await employer.evaluate(() => (window as any).__emp)).toEqual({ submits: 0, clicks: 0 });
+  } finally { await s.close(); }
+});
+
+// EXT-LIVE-10: Chrome may stop the MV3 worker while Chrome's sign-in window is open. The in-flight attempt dies with the
+// worker; nothing is stored, and the person simply starts again.
+test("sign-in survives worker suspension: the dead attempt stores nothing and a fresh attempt connects", async () => {
+  test.setTimeout(360_000);
+  const s = await stack();
+  try {
+    const token = await s.signup("e2e.suspend@mailbox.test-domain.co");
+    const employer = await s.employerApply();
+    const ov = overlayCdp(employer);
+    await expect.poll(async () => (await ov.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+    await ov.click("#fill");
+    await s.authUrl();                                        // Chrome's window is "open"
+
+    const cdp = await s.ctx.newCDPSession(employer);
+    const scopes: string[] = [];
+    cdp.on("ServiceWorker.workerRegistrationUpdated", (ev) => { for (const r of ev.registrations) scopes.push(r.scopeURL); });
+    await cdp.send("ServiceWorker.enable");
+    await cdp.send("ServiceWorker.stopAllWorkers");
+    await expect.poll(() => scopes.find((u) => u.startsWith("chrome-extension://")) ?? null, { timeout: 15_000 }).not.toBeNull();
+    const nudge = await s.ctx.newPage();
+    await nudge.goto(`${scopes.find((u) => u.startsWith("chrome-extension://"))!}access.html`);
+    let worker = s.ctx.serviceWorkers().at(-1)!;
+    await expect.poll(async () => {
+      worker = s.ctx.serviceWorkers().at(-1)!;
+      return worker ? Promise.race([worker.evaluate(() => true).catch(() => false), new Promise<boolean>((r) => setTimeout(() => r(false), 3000))]) : false;
+    }, { timeout: 30_000 }).toBe(true);
+    await worker.evaluate(() => {                              // the new worker has no test stand-in for Chrome's window yet
+      const g = globalThis as any; g.__auth = null;
+      chrome.identity.launchWebAuthFlow = ((d: { url: string }) => new Promise((resolve, reject) => { g.__auth = { url: d.url, resolve, reject }; })) as typeof chrome.identity.launchWebAuthFlow;
+    });
+    await nudge.close();
+    const stored = () => worker.evaluate(() => new Promise<unknown>((resolve, reject) => {
+      const open = indexedDB.open("xpertapply-extension-auth", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("kv");
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => { const get = open.result.transaction("kv").objectStore("kv").get("xaExtensionAuthV1"); get.onsuccess = () => resolve(get.result ?? null); };
+    }));
+    expect(await stored()).toBeNull();                         // the interrupted attempt stored nothing
+
+    // The person reopens the application and tries again; this attempt is complete and verified.
+    await employer.reload();
+    await employer.click("#apply-now");
+    await expect(employer.locator("#xpertapply-assistant-overlay-v1")).toHaveCount(1, { timeout: 40_000 });
+    const ov2 = overlayCdp(employer);
+    await expect.poll(async () => (await ov2.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+    await ov2.click("#fill");
+    await expect.poll(() => worker.evaluate(() => (globalThis as any).__auth?.url ?? null), { timeout: 30_000 }).not.toBeNull();
+    const url = await worker.evaluate(() => (globalThis as any).__auth.url as string);
+    const redirect = await s.captureRedirect(await s.websiteTab(token), url, async p => { await consent(p); });
+    await worker.evaluate(r => { const a = (globalThis as any).__auth; (globalThis as any).__auth = null; a.resolve(r); }, redirect);
+    await expect.poll(async () => ((await stored()) as { email?: string } | null)?.email ?? null, { timeout: 30_000 }).toBe("e2e.suspend@mailbox.test-domain.co");
+    await expect.poll(async () => ov2.call<boolean>("function(){return this.getElementById('errors').hidden}"), { timeout: 30_000 }).toBe(true);
+  } finally { await s.close(); }
+});
+
+// EXT-LIVE-10: Connect -> Disconnect -> Connect again on the SAME document, as a different account. No reload: the open page
+// resolves again as soon as the new sign-in lands, shows only the new account's data, and leaves one assistant and one draft.
+test("same-page reconnect: Disconnect then Connect (another account) rebinds the open tab without a reload", async () => {
+  test.setTimeout(480_000);
+  const s = await stack();
+  try {
+    const tokenA = await s.signup("e2e.re.a@mailbox.test-domain.co", "Alice Alpha");
+    const tokenB = await s.signup("e2e.re.b@mailbox.test-domain.co", "Brenda Beta");
+    const employer = await s.employerApply();
+    const ov = overlayCdp(employer);
+    await expect.poll(async () => (await ov.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+    const connectAs = async (token: string) => {
+      await ov.click("#fill");
+      const url = await s.authUrl();
+      const redirect = await s.captureRedirect(await s.websiteTab(token), url, async p => { await consent(p); });
+      await s.completeWith(redirect);
+    };
+    const resumeName = () => employer.inputValue("#resume");        // the attached résumé carries the account's own name
+    await connectAs(tokenA);
+    await expect.poll(resumeName, { timeout: 60_000 }).toContain("Alice_Alpha");
+    const credA = await s.credential();
+    expect(credA.email).toBe("e2e.re.a@mailbox.test-domain.co");
+
+    await ov.click("#disconnect");
+    await expect.poll(() => s.credential(), { timeout: 20_000 }).toBeNull();
+    await expect.poll(async () => (await s.call("/extension/me", { headers: { authorization: `Bearer ${credA.accessToken}` } })).status, { timeout: 20_000 }).toBe(401);
+    await expect.poll(async () => (await ov.text("#errors")) ?? "", { timeout: 30_000 }).toMatch(/isn.t connected/i);
+
+    // Same document, no reload. The employer form is the person's: clear what A's run wrote so B's value is unambiguous.
+    await employer.evaluate(() => { for (const id of ["resume", "cover"]) (document.getElementById(id) as HTMLInputElement).value = ""; });   // the person clears the earlier attachments
+    await connectAs(tokenB);
+    await expect.poll(resumeName, { timeout: 60_000 }).toContain("Brenda_Beta");
+    await expect.poll(async () => Number(await ov.text("#discovered")), { timeout: 60_000 }).toBeGreaterThanOrEqual(5);
+    await expect.poll(async () => (await ov.text("#account")) ?? "", { timeout: 30_000 }).toMatch(/Connected as e2e\.re\.b@mailbox\.test-domain\.co/);
+    expect(await ov.call<boolean>("function(){return this.getElementById('errors').hidden}")).toBe(true);
+    expect((await s.credential()).email).toBe("e2e.re.b@mailbox.test-domain.co");
+    expect(await employer.locator("#xpertapply-assistant-overlay-v1").count()).toBe(1);
+    const drafts = await s.worker.evaluate(async () => Object.keys(((await chrome.storage.session.get("pendingLaunches")) as any).pendingLaunches ?? {}).length);
+    expect(drafts).toBe(1);
+    expect((await s.call("/extension/me", { headers: { authorization: `Bearer ${credA.accessToken}` } })).status).toBe(401);   // A stays revoked
+    expect(await employer.evaluate(() => (window as any).__emp)).toEqual({ submits: 0, clicks: 0 });
   } finally { await s.close(); }
 });
