@@ -1,6 +1,6 @@
 # EXT-LIVE-07 / 08 native Chrome runbook (operator-run; nothing here has been run by the engineer)
 
-> EXT-LIVE-08 supersedes the candidate named below: use the candidate recorded in `docs/release/EXT-LIVE-08_CANDIDATE.md`. The checks in section 2 still apply; section 2b is new.
+> EXT-LIVE-09 supersedes the candidate named below: use the candidate recorded in `docs/release/EXT-LIVE-09_CANDIDATE.md`. The checks in section 2 still apply; section 2b is new.
 
 Candidate: `/Users/cprakash/Developer/XpertApply-builds/xpertapply-extension-0.3.1-07-1aeffe9.zip`
 SHA-256: `74da925f69f373368cd35ea8d37be94dc439d23b7d276ff9056696a0f76ad673` (commit `1aeffe9`, version 0.3.1, no manifest key)
@@ -47,7 +47,9 @@ Use two different jobs of the same employer on ONE ATS (for example two Lever or
 5. In tab 1 mid-run, navigate (link/back) to a different job: the run stops with a message; nothing is filled until you start again from that job.
 6. Duplicate tab 1 (right-click tab > Duplicate) while running: the copy must NOT continue the run.
 7. In chrome://extensions > XpertApply > Site access, remove the site during a run: the run stops.
-8. Open the service-worker console (chrome://extensions > service worker) and each employer tab console: record any red errors.
+8. Custom career sites and smaller ATSs (Tesla-style, SmartRecruiters, any employer's own domain): repeat steps 1-3 with two different jobs. Open job 2 by hand in a new TAB and in a new WINDOW (Window > New Window): both must stay empty. Then in tab 1 follow a link/back/forward to job 2: nothing carries over.
+9. Resume after a restart: during a Workday run restart Chrome (or reload the extension). The assistant must NOT continue by itself; it offers "Complete application" again and says it could not verify the earlier run. Click it to resume.
+10. Open the service-worker console (chrome://extensions > service worker) and each employer tab console: record any red errors.
 
 ## 3. Store version
 Choose the upload version only after reading the version history in the Developer Dashboard (not visible from the development
