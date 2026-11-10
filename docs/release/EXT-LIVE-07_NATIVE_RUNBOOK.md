@@ -1,4 +1,6 @@
-# EXT-LIVE-07 native Chrome runbook (operator-run; nothing here has been run by the engineer)
+# EXT-LIVE-07 / 08 native Chrome runbook (operator-run; nothing here has been run by the engineer)
+
+> EXT-LIVE-08 supersedes the candidate named below: use the candidate recorded in `docs/release/EXT-LIVE-08_CANDIDATE.md`. The checks in section 2 still apply; section 2b is new.
 
 Candidate: `/Users/cprakash/Developer/XpertApply-builds/xpertapply-extension-0.3.1-07-1aeffe9.zip`
 SHA-256: `74da925f69f373368cd35ea8d37be94dc439d23b7d276ff9056696a0f76ad673` (commit `1aeffe9`, version 0.3.1, no manifest key)
@@ -35,6 +37,17 @@ navigation failures, interventions, timeouts. Do NOT record credentials, tokens,
 | Q-R | Review page: run ends "Ready for your review"; Submit never clicked |
 
 Any dialog naming all websites, a repeat prompt, an overwritten manual edit, a demographic fill, a duplicate row, or any submission is a blocker.
+
+## 2b. EXT-LIVE-08 two-application isolation (do this BEFORE the Workday rows)
+Use two different jobs of the same employer on ONE ATS (for example two Lever or Greenhouse postings) with your own account.
+1. Launch job 1 from XpertApply. Let it fill. Do not start anything in other tabs.
+2. In a NEW tab open job 2's application URL yourself (paste it). Expected: the form stays EMPTY and nothing is clicked. The assistant may appear and say it has no application for this page. Any fill, navigation or Next click here is a blocker.
+3. Launch job 2 from XpertApply. Expected: its own tab fills with job 2's values; job 1's tab is unchanged; both tabs show their own assistant.
+4. On Workday: click Complete application in tab 1. While it runs, open job 2's URL in another tab: it must stay idle. Then start job 2 yourself: each tab advances only itself.
+5. In tab 1 mid-run, navigate (link/back) to a different job: the run stops with a message; nothing is filled until you start again from that job.
+6. Duplicate tab 1 (right-click tab > Duplicate) while running: the copy must NOT continue the run.
+7. In chrome://extensions > XpertApply > Site access, remove the site during a run: the run stops.
+8. Open the service-worker console (chrome://extensions > service worker) and each employer tab console: record any red errors.
 
 ## 3. Store version
 Choose the upload version only after reading the version history in the Developer Dashboard (not visible from the development
