@@ -78,7 +78,7 @@ test("Lever: a value already in the form (the person's or the employer's) is pre
   } finally { await h.close().catch(() => undefined); s.close(); }
 });
 
-test("Lever: site permission persists: a second Lever tab on the granted origin needs no new prompt, opens no extra tab and never submits", async () => {
+test("Lever: site permission persists: a second Lever tab on the granted origin needs no new prompt and opens no extra tab, and does NOT inherit the first job's session", async () => {
   test.setTimeout(240_000);
   const s = await site({ [P1]: () => ({ body: HTML }), [P2]: () => ({ body: HTML }) }, [HOST]);
   const h = await launch(s, 7602, P1);
@@ -88,10 +88,10 @@ test("Lever: site permission persists: a second Lever tab on the granted origin 
     const second = await h.ctx.newPage();
     await second.goto(`https://${HOST}${P2}`);
     await second.waitForTimeout(12_000);
-    // Same-origin tabs join the active workflow by design (originJoinsWorkflow): the granted site needs no new prompt, the form fills,
-    // and nothing is submitted. (Whether a second JOB on the same ATS origin should reuse the first job's session is a product question
-    // recorded in the EXT-LIVE-07 report, not decided here.)
-    await expect.poll(() => val(second, 'input[name="name"]'), { timeout: 60_000 }).toBe("Riley Candidate");
+    // EXT-LIVE-08: a second tab on the same ATS origin is NOT the same application. It needs no new prompt (the group grant persists) and
+    // it opens no tab, but it never receives the first job's session: the form stays untouched and nothing is submitted.
+    await second.waitForTimeout(3000);
+    expect(await val(second, 'input[name="name"]')).toBe("");
     expect((await emp(second)).submits).toBe(0);
     expect(h.ctx.pages().filter((p) => p.url().includes(HOST)).length).toBe(2);
   } finally { await h.close().catch(() => undefined); s.close(); }

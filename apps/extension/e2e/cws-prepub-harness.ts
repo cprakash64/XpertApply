@@ -44,6 +44,17 @@ export async function startHarness(opts: { html: string; unresolved?: Unresolved
     /** Point the worker at the owned API, as a logged-in launch would. */
     async useOwnedApi() { await worker.evaluate(async b => chrome.storage.local.set({ apiBase: b }), fx.origin); },
     async seedPrepared() {
+      // Synchronise with the worker: the page's own load events (tabs.onUpdated "complete") must have been HANDLED before a handoff exists,
+      // otherwise under load the worker processes them afterwards, finds the seeded handoff and (by design) injects the engine for a
+      // matching prepared launch, which these tests assert has not happened yet. Observed: tab complete, then one settled worker turn.
+      await worker.evaluate(async u => {
+        for (let i = 0; i < 100; i += 1) {
+          const tab = (await chrome.tabs.query({})).find(t => t.url === u);
+          if (tab?.status === "complete") break;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        await new Promise(r => setTimeout(r, 750));
+      }, url);
       await worker.evaluate(async u => {
         const now = Date.now();
         await chrome.storage.session.set({ activeAssistedApplyHandoffV1: { version: 1, applicationId: "m2", jobId: "1", applicationUrl: u, status: "prepared", handoffToken: "h", requestId: "m2", sessionId: 55, launchToken: "l", officialUrl: u, expectedOrigin: new URL(u).origin, createdAt: now, expiresAt: now + 900000, state: "waiting_for_content_script", protocolVersion: 3, atsType: null } });
