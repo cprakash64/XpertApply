@@ -25,6 +25,10 @@ export interface WorkflowRun {
   origin: string;
   applicationKey: string;
   accountKey: string;
+  /** Chrome tab the run belongs to (from the worker). A duplicated tab copies sessionStorage but has another id, so it cannot inherit the run. */
+  tabKey: string;
+  /** Identity of the posting the run started on (atsJobIdentity). A run never follows the tab to another job. */
+  jobKey: string;
   state: WorkflowState;
   startedAt: number;
   stepsSeen: number;
@@ -64,6 +68,8 @@ export interface Observation {
   origin: string;
   applicationKey: string;
   accountKey: string;
+  tabKey: string;
+  jobKey: string;
 }
 
 export type Action =
@@ -78,8 +84,8 @@ export function newRunId(rand: () => number = Math.random): string {
   return `run-${Math.floor(rand() * 0xffffffff).toString(16).padStart(8, "0")}${Date.now().toString(16)}`;
 }
 
-export function startRun(mode: WorkflowMode, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey">, runId = newRunId()): WorkflowRun {
-  return { runId, mode, origin: o.origin, applicationKey: o.applicationKey, accountKey: o.accountKey, state: "DETECTING", startedAt: o.now, stepsSeen: 0, advances: 0, advancedFrom: [], awaitingChangeFrom: null, pausedAt: null, advancedAt: null, lastSignature: null, reason: null, paused: false };
+export function startRun(mode: WorkflowMode, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey" | "tabKey" | "jobKey">, runId = newRunId()): WorkflowRun {
+  return { runId, mode, origin: o.origin, applicationKey: o.applicationKey, accountKey: o.accountKey, tabKey: o.tabKey, jobKey: o.jobKey, state: "DETECTING", startedAt: o.now, stepsSeen: 0, advances: 0, advancedFrom: [], awaitingChangeFrom: null, pausedAt: null, advancedAt: null, lastSignature: null, reason: null, paused: false };
 }
 
 const terminal = (s: WorkflowState): boolean => s === "REVIEW_READY" || s === "FAILED" || s === "CANCELLED";
@@ -89,8 +95,8 @@ export function pause(run: WorkflowRun, now: number): WorkflowRun { return termi
 export function resume(run: WorkflowRun): WorkflowRun { return run.state === "WAITING_FOR_USER" || run.paused ? { ...run, paused: false, pausedAt: null, state: "DETECTING", reason: null } : run; }
 
 /** A restored run is only valid for the same origin, application and account, and within its time bound. */
-export function isRunValidFor(run: WorkflowRun, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey">): boolean {
-  return run.origin === o.origin && run.applicationKey === o.applicationKey && run.accountKey === o.accountKey
+export function isRunValidFor(run: WorkflowRun, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey" | "tabKey" | "jobKey">): boolean {
+  return run.origin === o.origin && run.applicationKey === o.applicationKey && run.accountKey === o.accountKey && run.tabKey === o.tabKey && o.tabKey !== "" && run.jobKey === o.jobKey
     && o.now - run.startedAt <= LIMITS.maxMs && !terminal(run.state);
 }
 
@@ -151,7 +157,7 @@ export function saveRun(store: StorageLike, run: WorkflowRun): void {
   try { store.setItem(KEY, JSON.stringify(run)); } catch { /* storage unavailable: run simply will not survive a reload */ }
 }
 export function clearRun(store: StorageLike): void { try { store.removeItem(KEY); } catch { /* ignore */ } }
-export function loadRun(store: StorageLike, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey">): WorkflowRun | null {
+export function loadRun(store: StorageLike, o: Pick<Observation, "now" | "origin" | "applicationKey" | "accountKey" | "tabKey" | "jobKey">): WorkflowRun | null {
   try {
     const raw = store.getItem(KEY);
     if (!raw) return null;

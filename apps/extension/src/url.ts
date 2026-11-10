@@ -49,9 +49,53 @@ function pathsCorrespond(pathA: string, pathB: string): boolean {
   return tokensB.some((token) => tokensA.has(token));
 }
 
+const UUIDISH = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+/**
+ * The identity of ONE job posting on a hosted ATS, or null when this URL names no particular posting (a board index, a listing, an
+ * unknown host). Two URLs on the same ATS host are the same application only when these are equal: the company slug that every
+ * posting of an employer shares is NOT identity. Hostname equality never is.
+ */
+export function atsJobIdentity(raw: string): string | null {
+  const url = normalizeApplicationUrl(raw);
+  if (!url) return null;
+  const host = url.hostname.toLowerCase();
+  const seg = url.pathname.split("/").filter(Boolean).map((x) => decodeURIComponent(x).toLowerCase());
+  if (host === "lever.co" || host.endsWith(".lever.co")) {
+    const i = seg.findIndex((x) => UUIDISH.test(x));
+    return i >= 1 ? `lever:${seg[i - 1]}/${seg[i]!.replace(/-/g, "")}` : null;
+  }
+  if (host === "ashbyhq.com" || host.endsWith(".ashbyhq.com")) {
+    const i = seg.findIndex((x) => UUIDISH.test(x));
+    return i >= 1 ? `ashby:${seg[i - 1]}/${seg[i]!.replace(/-/g, "")}` : null;
+  }
+  if (host === "greenhouse.io" || host.endsWith(".greenhouse.io")) {
+    const q = url.searchParams.get("gh_jid") ?? url.searchParams.get("token") ?? url.searchParams.get("jid");
+    const j = seg.indexOf("jobs");
+    const fromPath = j >= 0 && /^\d{3,}$/.test(seg[j + 1] ?? "") ? seg[j + 1]! : null;
+    const id = fromPath ?? q;
+    return id ? `greenhouse:${id}` : null;
+  }
+  if (host === "myworkdayjobs.com" || host.endsWith(".myworkdayjobs.com") || host === "myworkdaysite.com" || host.endsWith(".myworkdaysite.com")) {
+    const j = seg.indexOf("job");
+    if (j < 0) return null;
+    const rest: string[] = [];
+    for (const part of seg.slice(j + 1)) { if (part === "apply" || part === "applymanually" || part === "autofillwithresume" || part === "usemylastapplication") break; rest.push(part); }
+    return rest.length ? `workday:${host}/${rest.join("/")}` : null;
+  }
+  return null;
+}
+
 export function urlsMatchForHandoff(expected: string, actual: string): boolean {
   const a = normalizeApplicationUrl(expected); const b = normalizeApplicationUrl(actual);
   if (!a || !b) return false;
+  // Hosted ATS postings: identity or nothing. Sharing a hostname, an employer slug or a title word does not make two tabs one application.
+  const ia = atsJobIdentity(expected), ib = atsJobIdentity(actual);
+  const familyOf = (h: string) => ATS_FAMILIES.find((f) => h === f || h.endsWith(`.${f}`)) ?? null;
+  const fa = familyOf(a.hostname), fb = familyOf(b.hostname);
+  // Two pages of the SAME hosted ATS family with an identity-bearing URL are compared by identity only. A cross-host pair (an employer's
+  // own page embedding gh_jid, say) still goes through the explicit-id rules below.
+  if (fa !== null && fa === fb && (ia !== null || ib !== null)) return ia !== null && ia === ib;
   // An explicit posting id outranks path heuristics: two different ids are two different jobs, and the same id on the same host (or
   // ATS family) is the same job wherever its path points.
   const idA = jobIdOf(a), idB = jobIdOf(b);

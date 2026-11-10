@@ -17,7 +17,7 @@ function session(): ApplicationSessionData {
   };
 }
 
-const ident = (now = 1000, account = "11") => ({ now, origin: "https://acme.wd5.myworkdayjobs.com", applicationKey: "7", accountKey: account });
+const ident = (now = 1000, account = "11") => ({ now, origin: "https://acme.wd5.myworkdayjobs.com", applicationKey: "7", accountKey: account, tabKey: "5", jobKey: "workday:job-1" });
 const requiredEmpty = (): number => Array.from(document.querySelectorAll<HTMLInputElement>("input[required]")).filter((i) => (i.type === "checkbox" ? !i.checked : i.value.trim() === "")).length;
 const signature = (): string => `${document.querySelector("h2")?.textContent}|${document.querySelectorAll("input").length}`;
 
@@ -213,5 +213,15 @@ describe("workflow engine safety", () => {
     wf.saveRun(s, wf.startRun("application", ident(), "r9"));
     const raw = [...store.values()].join("");
     for (const secret of Object.values(DATA)) expect(raw).not.toContain(secret);
+  });
+});
+
+describe("EXT-LIVE-08 a run belongs to one tab", () => {
+  it("a run restored in a different tab (Duplicate Tab copies sessionStorage) is discarded and an unknown tab never validates", () => {
+    const run = wf.startRun("application", ident());
+    expect(wf.isRunValidFor(run, ident())).toBe(true);
+    expect(wf.isRunValidFor(run, { ...ident(), tabKey: "6" })).toBe(false);
+    expect(wf.isRunValidFor(run, { ...ident(), tabKey: "" })).toBe(false);
+    expect(wf.isRunValidFor(run, { ...ident(), jobKey: "workday:job-2" })).toBe(false);   // the tab moved to another posting
   });
 });

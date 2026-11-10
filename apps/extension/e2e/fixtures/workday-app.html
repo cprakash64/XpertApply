@@ -167,7 +167,11 @@ function finishParse() {
   apply(w, e); render();
 }
 function nextStep() {
-  S.clicks.next++;
+  S.clicks.next++; save();
+  if (CFG.nextDelay) { setTimeout(advance, CFG.nextDelay); return; }
+  advance();
+}
+function advance() {
   const missing = [];
   const v = S.vals;
   if (S.step === 0) { [['fn', 'First Name'], ['ln', 'Last Name'], ['em', 'Email Address'], ['ph', 'Phone Number'], ['country', 'Country'], ['phoneCode', 'Country Phone Code'], ['city', 'City'], ['state', 'State']].forEach(([k, l]) => { if (!v[k]) missing.push(l); }); }

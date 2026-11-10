@@ -142,7 +142,7 @@ import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
 import { applicationProviderForUrl, providerForUrl } from "./ats/providers";
 import { isAutoOpenDisabled, setAutoOpenDisabled } from "./activationPrefs";
-import { grantPatternFor } from "./siteGrants";
+import { anyGrantCovers, grantPatternFor } from "./siteGrants";
 import { clearSuppression, forgetOffered, markOffered, suppress, suppressedReason, wasOffered } from "./siteAccessStore";
 import { FIELD_ENTRY_MAX_VALUE, FIELD_ENTRY_PAGE, type FieldEntryConfig } from "./fieldEntry";
 import {
@@ -1181,6 +1181,13 @@ function routeRuntimeMessage(
       void handleContentReady(sender, sendResponse, generation);
       return true;
 
+    case MSG.TAB_IDENTITY: {
+      // Identity is read from Chrome's sender, so a page script cannot claim another tab's id. Only the tab's own id is returned.
+      const who = describeSender(sender);
+      sendResponse(who ? { ok: true, tabId: who.tabId } : { ok: false });
+      return true;
+    }
+
     case MSG.SCAN_EXHAUSTED:
       void handleScanExhausted(sender, generation)
         .then(() => sendResponse({ ok: true }))
@@ -1887,6 +1894,16 @@ chrome.permissions.onRemoved?.addListener((permissions) => {
   // Remember that the person took access away: nothing re-requests it behind their back.
   for (const pattern of permissions.origins ?? []) void suppress(pattern, "revoked").catch(() => undefined);
   void reconcileSiteScripts().then(() => permissionsChanged(permissions.origins ?? [], false));
+  // The page is already running our content script; taking the grant away must also stop it. Without this a run that is
+  // mid-way keeps filling and clicking Next on a site the person has just revoked.
+  void (async () => {
+    for (const tabId of await workflowTabIds()) {
+      const pattern = (await getView(tabId))?.siteAccessPattern;
+      if (!pattern || !anyGrantCovers(permissions.origins ?? [], pattern)) continue;
+      if (await chrome.permissions.contains({ origins: [pattern] }).catch(() => false)) continue;
+      void sendToTab(tabId, { type: MSG.SESSION_DETACH }).catch(() => undefined);
+    }
+  })();
 });
 
 function handleLaunchRequest(

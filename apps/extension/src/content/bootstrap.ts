@@ -1,3 +1,4 @@
+import { atsJobIdentity } from "../url";
 import * as wf from "../application/workflowEngine";
 import { classifyWorkdayStep, findWorkdaySafeNext, workdayProgress, workdayValidationErrors, USER_BOUNDARY_KINDS } from "../ats/workdayStep";
 import { blankRequiredInSections, fillWorkdaySections, hasWorkdaySections, isInWorkdaySectionEntry, sectionIssueSummary, type WorkdaySectionTrace } from "../ats/workdaySections";
@@ -507,6 +508,9 @@ async function initAtsPage(): Promise<void> {
       // in-memory package and drop XpertApply's annotations. Nothing on the employer form is changed or cleared.
       if (_sender.id !== chrome.runtime.id) return false;
       withdrawFillAuthority();
+      // A continuous run is authorized by the same grant: it ends with it and is never resumed from stored state.
+      if (workflowRun && !["CANCELLED", "FAILED", "REVIEW_READY"].includes(workflowRun.state)) { workflowRun = wf.cancel(workflowRun); persistWorkflow(); }
+      widget?.setWorkflow({ status: "", mode: "idle" });
       session = null;
       matched = false;
       preparedDocuments = null;
@@ -958,11 +962,16 @@ function ensureWidget(): ReturnType<typeof createWidget> {
       workflow: {
         start: () => {
           if (!session || outcome?.result.atsId !== "workday") return;
-          workflowRun = wf.startRun("application", workflowIdentity());
-          persistWorkflow();
-          showWorkflow();
-          automaticRunSettled = false;
-          void discoverAndFill("manual_retry");
+          void (async () => {
+            // A run is bound to this tab; if the worker cannot name the tab, nothing starts.
+            if (!atsJobIdentity(location.href)) { widget?.setWorkflow({ status: "XpertApply could not tell which job this page is, so it will not run automatically. Fill this page, or reload from the job.", mode: "idle" }); return; }
+            if (!(await ensureTabKey())) { widget?.setWorkflow({ status: "XpertApply could not confirm which tab this is. Reload the page and try again.", mode: "idle" }); return; }
+            workflowRun = wf.startRun("application", workflowIdentity());
+            persistWorkflow();
+            showWorkflow();
+            automaticRunSettled = false;
+            void discoverAndFill("manual_retry");
+          })();
         },
         pause: () => { if (workflowRun) { workflowRun = wf.pause(workflowRun, Date.now()); persistWorkflow(); showWorkflow(); } },
         resume: () => {
@@ -1045,8 +1054,30 @@ let readinessInFlight = false;
  * root cannot bounce between the two forever. Cleared by Retry/Rescan/Reconnect. */
 let rootRecoveryAttempted = false;
 
+/**
+ * Does this document still show the posting the session was prepared for? Only a CONFIRMED difference between two hosted-ATS postings
+ * counts (both identities known and unequal); an unknown page (login host, redirect) is left to the existing workflow rules.
+ */
+function tabStillOnApplication(): boolean {
+  if (!session) return true;
+  const expected = atsJobIdentity(session.officialUrl ?? "");
+  const actual = atsJobIdentity(location.href);
+  return expected === null || actual === null || expected === actual;
+}
+
 async function discoverAndFill(reason: AutofillReason): Promise<void> {
   if (!isCurrentInstance() || !session) return;
+
+  // The tab moved to a DIFFERENT job (single-page navigation, a link, history). The old job's session, answers and run authorization
+  // never carry over: stop, say so, and require a fresh explicit start from the new application.
+  if (!tabStillOnApplication()) {
+    if (workflowRun && !["CANCELLED", "FAILED", "REVIEW_READY"].includes(workflowRun.state)) { workflowRun = wf.cancel(workflowRun); persistWorkflow(); }
+    running = false;
+    automaticRunSettled = true;
+    widget?.update({ stage: "failed", message: "This tab is showing a different job from the one XpertApply prepared. Nothing was filled. Start again from that job's own application." });
+    widget?.setWorkflow({ status: "", mode: "idle" });
+    return;
+  }
 
   // Ask what kind of page this is BEFORE waiting for controls. Waiting is only
   // the right answer for one of the possible answers.
@@ -3648,8 +3679,19 @@ let workflowRun: wf.WorkflowRun | null = null;
 /** Workday row-level outcomes from the last fill pass (labels and reason codes only, never values). */
 let lastWorkdaySections: WorkdaySectionTrace[] = [];
 
+/** This document's Chrome tab id, answered by the worker from Chrome's sender metadata. Empty until known; a run needs it. */
+let myTabKey = "";
+async function ensureTabKey(): Promise<string> {
+  if (myTabKey) return myTabKey;
+  const response = (await sendRuntime({ type: MSG.TAB_IDENTITY }).catch(() => null)) as { ok?: boolean; tabId?: number } | null;
+  if (response?.ok && typeof response.tabId === "number") myTabKey = String(response.tabId);
+  return myTabKey;
+}
+
 function workflowIdentity() {
   return {
+    tabKey: myTabKey,
+    jobKey: atsJobIdentity(location.href) ?? "",
     now: Date.now(),
     origin: location.origin,
     applicationKey: String(session?.sessionId ?? ""),
@@ -3713,6 +3755,7 @@ function showWorkflow(): void {
 async function driveWorkflowAfterFill(): Promise<boolean> {
   if (!outcome || !ledgerCounts || !lastFinalVerification || outcome.result.atsId !== "workday") return false;
   const store = workflowStore();
+  await ensureTabKey();
   if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
   const kind = classifyWorkdayStep(document);
   if (!workflowRun) { widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" }); return false; }
@@ -3760,6 +3803,7 @@ async function driveWithoutForm(): Promise<boolean> {
   const handled = kind === "review" || USER_BOUNDARY_KINDS.has(kind) || kind === "my_information" || kind === "my_experience" || kind === "application_questions";
   if (!handled) return false;
   const store = workflowStore();
+  await ensureTabKey();
   if (!workflowRun && store) workflowRun = wf.loadRun(store, workflowIdentity());
   if (!workflowRun) {
     widget?.setWorkflow({ status: kind === "review" ? "Application ready for your review. Submit it yourself." : "", mode: "idle" });
