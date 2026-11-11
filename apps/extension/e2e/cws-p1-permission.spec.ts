@@ -21,7 +21,10 @@ import path from "node:path";
 const HOST = "employer-gh.test";
 const employerHtml = `<!doctype html><title>Employer</title><form id="f"><label for="first_name">First Name</label><input id="first_name" autocomplete="given-name"></form>`;
 
-test("launch to an ungranted origin asks Chrome for that origin, opens no XpertApply window and reads nothing", async () => {
+// EXT-LIVE-11: the Apply click now asks Chrome for the launch origin itself (permissions.request, in the click's gesture). Two outcomes are
+// pinned: Chrome's dialog answered "no" (respected: recorded, no second prompt), and a click whose gesture did not reach the worker (falls
+// back to Chrome's per-tab access request). Either way: no XpertApply window, nothing read, nothing sent to the API.
+for (const mode of ["denied", "no_gesture"] as const) test(`launch to an ungranted origin asks Chrome for that origin (${mode}), opens no XpertApply window and reads nothing`, async () => {
   test.setTimeout(120_000);
   const dir = mkdtempSync(path.join(tmpdir(), "xa-tls-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", `${dir}/k.pem`, "-out", `${dir}/c.pem`, "-days", "1", "-subj", `/CN=${HOST}`], { stdio: "ignore" });
@@ -46,6 +49,14 @@ test("launch to an ungranted origin asks Chrome for that origin, opens no XpertA
     const site = await ctx.newPage();
     await site.goto(`http://localhost:${webPort}/`);
     const payload = { requestId: "perm-req", launchToken: "synthetic", sessionId: 5005, jobId: 5005, officialUrl: applicationUrl, atsType: "greenhouse", webApiBase: `http://127.0.0.1:${(apiServer.address() as { port: number }).port}`, webAuthenticatedUserId: 1 };
+    await worker.evaluate((m) => {
+      const g = globalThis as any; g.__asked = [];
+      (chrome.permissions as any).request = async (req: unknown) => {
+        g.__asked.push(req);
+        if (m === "denied") return false;                               // Chrome's dialog: "Deny" / dismissed
+        throw new Error("This function must be called during a user gesture");
+      };
+    }, mode);
     // Record what the worker asks Chrome for, passing the call through.
     const hasApi = await worker.evaluate(() => {
       const g = globalThis as any; g.__hostAccess = [];
@@ -68,9 +79,13 @@ test("launch to an ungranted origin asks Chrome for that origin, opens no XpertA
     expect(employerTab).not.toBeNull();
 
     // Chrome is asked, with ITS access prompt for exactly this origin. XpertApply opens no window or page of its own.
-    {
+    await expect.poll(() => worker.evaluate(() => (globalThis as any).__asked), { timeout: 20_000 }).toEqual([{ origins: [`https://${HOST}/*`] }]);
+    if (mode === "no_gesture") {
       await expect.poll(() => worker.evaluate(() => (globalThis as any).__hostAccess), { timeout: 20_000 })
         .toEqual([{ tabId: employerTab, pattern: `https://${HOST}/*` }]);
+    } else {
+      await new Promise(r => setTimeout(r, 2000));
+      expect(await worker.evaluate(() => (globalThis as any).__hostAccess)).toEqual([]);      // a refusal is respected: no second request
     }
     await new Promise(r => setTimeout(r, 1500));
     expect(await worker.evaluate(async () => (await chrome.windows.getAll()).length)).toBe(windowsBefore);
@@ -78,7 +93,7 @@ test("launch to an ungranted origin asks Chrome for that origin, opens no XpertA
 
     // No grant => no script in the employer page, and nothing about it went to the API.
     const view = await worker.evaluate(async id => ((await chrome.storage.session.get("viewStates")).viewStates ?? {})[String(id)], employerTab);
-    expect(view.siteAccess).toBe("site_access_required");
+    expect(view.siteAccess).toBe(mode === "denied" ? "site_access_denied" : "site_access_required");
     expect(view.fieldsDiscovered).toBe(0);
     const employerPage = ctx.pages().find(p => p.url().startsWith(`https://${HOST}`));
     if (employerPage) {

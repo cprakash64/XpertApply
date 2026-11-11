@@ -146,7 +146,7 @@ test("L6. The access page reads Chrome's real state and offers the single enable
     const id = new URL(e.worker.url()).host;
     const p: Page = await e.ctx.newPage();
     await p.goto(`chrome-extension://${id}/access.html?welcome=1`);
-    await expect(p.locator("#groups .row")).toHaveCount(4);
+    await expect(p.locator("#groups .row")).toHaveCount(5);       // Greenhouse, Lever, Ashby, Workday, Workable
     await expect(p.locator("#groups")).toContainText("Greenhouse");
     await expect(p.locator("#groups")).toContainText("Allowed");     // this build is the post-grant state
     await expect(p.locator("#title")).toHaveText("Welcome to XpertApply");
