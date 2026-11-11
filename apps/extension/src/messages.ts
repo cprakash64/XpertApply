@@ -230,8 +230,8 @@ export interface LaunchViewState {
   reviewRequired: number;
   /** Trusted ledger projection; absent until requiredness has been verified. */
   requiredReviewRemaining?: number;
-  resumeStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
-  coverStatus: "pending" | "uploaded" | "review" | "unavailable" | "—";
+  resumeStatus: "pending" | "uploaded" | "review" | "unavailable" | "not_applicable" | "—";
+  coverStatus: "pending" | "uploaded" | "review" | "unavailable" | "not_applicable" | "—";
   reachedFinalStep: boolean;
   contentReady: boolean;
   packageLoaded: boolean;

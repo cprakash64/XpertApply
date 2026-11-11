@@ -107,6 +107,19 @@ export function requestAtsOriginInGesture(url: string | null | undefined): Promi
   return requestOriginInGesture(url).then((outcome) => outcome === "granted");
 }
 
+/**
+ * The Apply click on XpertApply names the destination: the person picked this job and its employer page. That click is therefore
+ * the right moment to ask Chrome for exactly that origin, whether it is a supported ATS (its group grant) or an employer's own domain
+ * (the exact host, never a wildcard). Already-granted origins resolve with no dialog. The outcome is returned, not folded into a boolean:
+ * a "denied" answer must be respected (no second prompt), while a click whose gesture did not reach this call falls back to the
+ * permission surface. Unsupported providers (no fill engine) are never asked.
+ */
+export function requestLaunchOriginInGesture(url: string | null | undefined): Promise<OriginRequestOutcome> {
+  const provider = providerForUrl(url);
+  if (provider?.support === "unsupported") return Promise.resolve("not_requested");
+  return requestOriginInGesture(url);
+}
+
 export function installToolbarOverlayAction(): void {
   chrome.action?.onClicked?.addListener((tab) => {
     // First statement, no await before it: the click is the gesture Chrome's grant dialog needs.

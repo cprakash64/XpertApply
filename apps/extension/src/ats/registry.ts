@@ -9,9 +9,10 @@ import { hostMatches } from "./base";
 import { GenericFormAdapter } from "./generic";
 import { GreenhouseAdapter } from "./greenhouse";
 import { LeverAdapter } from "./lever";
+import { WorkableAdapter } from "./workable";
 import { WorkdayAdapter } from "./workday";
 
-export const SPECIFIC_ADAPTERS: ATSAdapter[] = [GreenhouseAdapter, LeverAdapter, AshbyAdapter, WorkdayAdapter];
+export const SPECIFIC_ADAPTERS: ATSAdapter[] = [GreenhouseAdapter, LeverAdapter, AshbyAdapter, WorkdayAdapter, WorkableAdapter];
 export const ADAPTERS: ATSAdapter[] = [...SPECIFIC_ADAPTERS, GenericFormAdapter];
 
 export interface DetectionOutcome {

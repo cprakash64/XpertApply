@@ -17,3 +17,5 @@ dist-store-id/
 dist-ats-group-granted/
 dist-staging*/
 dist-e2e-custom-sites/
+
+dist-e2e-workable/

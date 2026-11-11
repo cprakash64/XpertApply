@@ -597,6 +597,9 @@ async function verifyUpload(input: HTMLInputElement, filename: string): Promise<
   // employer's form now holds — and reporting that as upload_verified is a
   // false success on the one field the user cannot check from the ledger.
   // A replaced input with no visible filename is honestly unverifiable.
+  // Workable shows the chosen file's name in its own dropzone. An input that holds the file while the form shows nothing has not been
+  // accepted by the employer's component, so it is handed back for manual attachment instead of being reported as uploaded.
+  if (/(^|\.)workable\.com$/i.test(input.ownerDocument.location?.hostname ?? "")) return false;
   return Boolean(
     input.isConnected && input.files && input.files.length === 1 && input.files[0].name === filename
   );

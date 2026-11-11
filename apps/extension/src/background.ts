@@ -140,7 +140,8 @@ import {
   requireAuthorizedAssistantJobTab,
   restoreAssistantAfterServiceWorkerWake
 } from "./assistantWindow";
-import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestAtsOriginInGesture, requestOriginInGesture, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
+import type { OriginRequestOutcome } from "./toolbarOverlay";
+import { TOOLBAR_OVERLAY_BUNDLE, continueToolbarOverlay, requestLaunchOriginInGesture, requestOriginInGesture, disableSidePanelToolbarOpen, installToolbarOverlayAction } from "./toolbarOverlay";
 import { recordToolbarDisclosureAccepted } from "./toolbarDisclosure";
 import { createPermissionsChangedHandler } from "./permissionFlow";
 import { createSiteRegistrar, registrablePattern } from "./siteRegistration";
@@ -1178,7 +1179,7 @@ function routeRuntimeMessage(
       );
       // First statement that can use the Apply click's gesture: ask Chrome for the employer origin
       // now, without delaying the acknowledgement the website is waiting for.
-      handleLaunchRequest(message.payload, sender, sendResponse, generation, requestAtsOriginInGesture(message.payload.officialUrl));
+      handleLaunchRequest(message.payload, sender, sendResponse, generation, requestLaunchOriginInGesture(message.payload.officialUrl));
       return true;
 
     case MSG.CONTENT_READY:
@@ -1921,7 +1922,7 @@ function handleLaunchRequest(
   sender: chrome.runtime.MessageSender,
   sendResponse: (r: unknown) => void,
   generation: AuthorityGeneration,
-  gestureGrant: Promise<boolean> = Promise.resolve(false)
+  gestureGrant: Promise<OriginRequestOutcome> = Promise.resolve("not_requested")
 ): void {
   const windowId = sender.tab?.windowId;
   void (async () => {
@@ -1968,8 +1969,13 @@ function handleLaunchRequest(
       // This message was sent from the user's real Apply click, so open that page now.
       if (access.state === "site_access_required") {
         // After the acknowledgement: the user may take a while to answer Chrome's dialog.
-        void gestureGrant.then(async (granted) => {
-          if (granted) await applySiteAccessResult(tabId, access.pattern ?? "", true, generation).catch(() => undefined);
+        void gestureGrant.then(async (outcome) => {
+          if (outcome === "granted") await applySiteAccessResult(tabId, access.pattern ?? "", true, generation).catch(() => undefined);
+          // The person answered Chrome's own dialog with "no": that is the answer. Record it; do not open a second request.
+          else if (outcome === "denied") {
+            if (access.pattern) await suppress(grantPatternFor(access.pattern), "declined").catch(() => undefined);
+            await applySiteAccessResult(tabId, access.pattern ?? "", false, generation).catch(() => undefined);
+          }
           else await openPermissionSurface(tabId, windowId);
         });
       }
@@ -2055,8 +2061,11 @@ async function recordSiteAccess(
   framePathShape: string | null = null,
   generation = captureAuthorityGeneration()
 ): Promise<void> {
+  // A refusal the person gave in Chrome's own dialog stays a refusal: a later re-check of the same origin must not turn it back into a
+  // fresh request ("permission required") that the next page event would raise again.
+  const remembered = need.state === "site_access_required" && need.pattern ? await suppressedReason(grantPatternFor(need.pattern)).catch(() => null) : null;
   await patchView(tabId, {
-    siteAccess: need.state,
+    siteAccess: remembered === "declined" ? "site_access_denied" : need.state,
     siteAccessPattern: need.pattern,
     siteAccessOrigin: need.origin,
     siteAccessScope: need.scope,
@@ -2139,9 +2148,14 @@ async function settleReadyRefusal(
     const current = await getPending(tabId);
     if (!current || current.sessionId !== pending.sessionId) return;
     if (code === "HOST_PERMISSION_MISSING") {
-      // The user (or Chrome) withdrew the grant: say so with the button that asks again, not a spinner.
+      // Say what actually happened. "Access was removed" is only true when the person took a grant away (onRemoved recorded it). A page the
+      // toolbar opened under activeTab has only TEMPORARY access, which Chrome does not report as a permission: that is "permission
+      // required" (a persistent one is still to be given), and a declined dialog stays declined. Contradicting a grant the person just made
+      // with "removed" was the reported defect.
+      const remembered = site?.pattern ? await suppressedReason(grantPatternFor(site.pattern)).catch(() => null) : null;
+      const accessState = remembered === "revoked" ? "site_access_revoked" : remembered === "declined" ? "site_access_denied" : "site_access_required";
       await patchView(tabId, {
-        running: false, siteAccess: "site_access_revoked", siteAccessPattern: site?.pattern ?? null,
+        running: false, siteAccess: accessState, siteAccessPattern: site?.pattern ?? null,
         siteAccessOrigin: site?.origin ?? null, siteAccessScope: "page"
       }, generation);
       return;
@@ -3182,6 +3196,17 @@ async function ensurePackage(
   }
 }
 
+/**
+ * What a document's row says once the run has finished and it was neither uploaded nor handed back for manual attachment. A website
+ * "ready" badge is not proof the form has somewhere to put it: this separates "the document was never generated" (the person must
+ * generate it) from "it is ready but this form has no upload control for it" (nothing to do).
+ */
+function settledDocumentStatus(sessionStatus: string | undefined, kind: "resume" | "cover_letter"): "unavailable" | "not_applicable" | "—" {
+  if (sessionStatus === "ready") return "not_applicable";
+  if (sessionStatus === "missing") return kind === "resume" ? "unavailable" : "—";
+  return "—";
+}
+
 async function fetchDocument(
   tabId: number | undefined,
   sessionId: number,
@@ -3694,6 +3719,7 @@ async function applyProgress(
   const resumeUploaded = p.documentsUploaded.includes("resume");
   const coverUploaded = p.documentsUploaded.includes("cover_letter");
   const finished = p.state === "completed" || p.state === "completed_with_review" || p.state === "failed";
+  const packaged = finished ? await getPackage(tabId).catch(() => null) : null;
   await patchView(tabId, {
     ...(superseded ? { failureCode: null, failureMessage: null, failureRecoverable: null } : {}),
     state: p.state,
@@ -3708,8 +3734,8 @@ async function applyProgress(
     reachedFinalStep: p.reachedFinalStep,
     // "Preparing…" is only true while the run is still going. Once it has finished, a document that was neither uploaded nor
     // handed back for manual attachment simply has nothing to attach on this form, and saying "Preparing…" forever is wrong.
-    resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : finished ? "—" : "pending",
-    coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : finished ? "—" : "pending"
+    resumeStatus: resumeUploaded ? "uploaded" : p.reviewDocuments.includes("resume") ? "review" : finished ? settledDocumentStatus(packaged?.session.documents?.resume.status, "resume") : "pending",
+    coverStatus: coverUploaded ? "uploaded" : p.reviewDocuments.includes("cover_letter") ? "review" : finished ? settledDocumentStatus(packaged?.session.documents?.coverLetter.status, "cover_letter") : "pending"
   }, generation);
   // Only the top frame owns the floating widget, but the authoritative fill may
   // run inside an embedded ATS iframe. Mirror the PII-free progress back to the

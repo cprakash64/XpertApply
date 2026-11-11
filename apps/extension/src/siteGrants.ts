@@ -12,7 +12,7 @@
  * Nothing here requests anything. It is pure so it can be unit tested; callers hold the user gesture.
  */
 export interface SiteGroup {
-  id: "greenhouse" | "lever" | "ashby" | "workday";
+  id: "greenhouse" | "lever" | "ashby" | "workday" | "workable";
   label: string;
   /** Plain-language support level, shown next to the toggle. */
   support: "full" | "limited";
@@ -26,7 +26,10 @@ export const SITE_GROUPS: readonly SiteGroup[] = [
   { id: "greenhouse", label: "Greenhouse", support: "full", suffix: "greenhouse.io", pattern: "https://*.greenhouse.io/*" },
   { id: "lever", label: "Lever", support: "full", suffix: "lever.co", pattern: "https://*.lever.co/*" },
   { id: "ashby", label: "Ashby", support: "full", suffix: "ashbyhq.com", pattern: "https://*.ashbyhq.com/*" },
-  { id: "workday", label: "Workday", support: "limited", suffix: "myworkdayjobs.com", pattern: "https://*.myworkdayjobs.com/*" }
+  { id: "workday", label: "Workday", support: "limited", suffix: "myworkdayjobs.com", pattern: "https://*.myworkdayjobs.com/*" },
+  // Workable applications live on ONE host (apply.workable.com/<company>/j/<code>/apply/, verified on public postings), so the grant is that
+  // exact host, not the registrable domain: company career sites and marketing pages on other workable.com hosts are never widened.
+  { id: "workable", label: "Workable", support: "limited", suffix: "apply.workable.com", pattern: "https://apply.workable.com/*" }
   // myworkdaysite.com is deliberately NOT a group: see docs/plans/ext-live-06-workday-fidelity.md (permission assessment).
 ];
 

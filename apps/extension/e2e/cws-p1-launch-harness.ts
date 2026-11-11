@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext, type Page, type Worker } from "@playwright/test";
 import { createServer } from "node:http";
-import { OwnedPackageFixture } from "./owned-package-fixture";
+import { OwnedPackageFixture, syntheticSessionPdf } from "./owned-package-fixture";
 
 /** Verbatim shape of the deployed site's presence check (production /jobs chunk). */
 export const deployedPresence = `new Promise(t=>{let r=!1,a=e=>{r||(r=!0,window.removeEventListener("message",s),t(e))},
@@ -41,6 +41,8 @@ export type LaunchOptions = {
   location?: string;
   /** Drafts the owned backend returns for open-ended questions (default: none). */
   drafts?: (questions: any[]) => unknown[];
+  /** Tailored documents the owned backend has generated for the session (default: none; the session then says "missing"). */
+  documents?: { resume?: boolean; coverLetter?: boolean };
 };
 
 /** The deployed website's protocol, driven against a real unpacked extension. */
@@ -59,10 +61,15 @@ export async function launchFromWebsite(opts: LaunchOptions) {
     const found = sessionsByLaunchToken.get(String(body.launch_token));
     return found ? r.fulfill(json({ session_token: employer.sessionToken, session: found })) : r.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "unknown_launch_token" }) });
   }));
-  const addJob = async (job: { sessionId: number; atsType: string; officialUrl: string; jobTitle?: string; company?: string; location?: string; profile: Record<string, unknown>; answers: ReturnType<typeof answer>[]; keyFor: (label: string) => string | null; launchToken: string; drafts?: (questions: any[]) => unknown[] }) => {
+  const addJob = async (job: { sessionId: number; atsType: string; officialUrl: string; jobTitle?: string; company?: string; location?: string; profile: Record<string, unknown>; answers: ReturnType<typeof answer>[]; keyFor: (label: string) => string | null; launchToken: string; drafts?: (questions: any[]) => unknown[]; documents?: { resume?: boolean; coverLetter?: boolean } }) => {
     const sid = job.sessionId;
+    const doc = (kind: "resume" | "cover-letter", on: boolean | undefined, id: number) => on
+      ? { status: "ready", document_id: id, download_url: `/application-sessions/${sid}/${kind}` }
+      : { status: kind === "resume" ? "ready" : "not_requested", document_id: null, download_url: null };
+    if (job.documents?.resume) await employer.document(sid, "resume", syntheticSessionPdf());
+    if (job.documents?.coverLetter) await employer.document(sid, "cover-letter", syntheticSessionPdf());
     const session = { session_id: sid, ats_type: job.atsType, official_application_url: job.officialUrl, job: { title: job.jobTitle ?? "Software Engineer", company: job.company ?? "Acme", ...(job.location ? { location: job.location } : {}) },
-      resume: { status: "ready", document_id: null, download_url: null }, cover_letter: { status: "not_requested", document_id: null, download_url: null }, profile: job.profile };
+      resume: doc("resume", job.documents?.resume, sid * 10 + 1), cover_letter: doc("cover-letter", job.documents?.coverLetter, sid * 10 + 2), profile: job.profile };
     sessionsByLaunchToken.set(job.launchToken, session);
     await employer.route(`**/application-sessions/${sid}`, tap(r => r.fulfill(json(session))));
     await employer.route(`**/application-sessions/${sid}/answers`, tap(r => r.fulfill(json({ answers: job.answers, unresolved_questions: [], refreshed: false, profile_revision: "r" }))));
@@ -91,7 +98,7 @@ export async function launchFromWebsite(opts: LaunchOptions) {
       return r.fulfill(json({ drafts: job.drafts ? job.drafts(body.questions ?? []) : [], drafted: 0 }));
     }));
   };
-  await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, location: opts.location, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts });
+  await addJob({ sessionId: sid, atsType: opts.atsType, officialUrl: applicationUrl, jobTitle: opts.jobTitle, company: opts.company, location: opts.location, profile: opts.profile, answers: opts.answers, keyFor: opts.keyFor, launchToken: "synthetic-launch", drafts: opts.drafts, documents: opts.documents });
   const dist = opts.extensionPath ?? process.env.XA_E2E_DIST!;
   const ctx: BrowserContext = await chromium.launchPersistentContext(opts.profileDir ?? "", { channel: "chromium", serviceWorkers: "allow", ignoreHTTPSErrors: true, args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, ...(opts.launchArgs ?? [])] });
   const worker: Worker = ctx.serviceWorkers()[0] ?? await ctx.waitForEvent("serviceworker", { timeout: 15_000 });

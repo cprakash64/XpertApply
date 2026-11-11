@@ -537,7 +537,8 @@ function documentLabel(status: LaunchViewState["resumeStatus"], stalled: boolean
     case "uploaded": return "Uploaded ✓";
     case "review": return "Attach manually";
     case "pending": return stalled ? "Not started" : "Preparing…";
-    case "unavailable": return "Unavailable";
+    case "unavailable": return "Not generated yet";
+    case "not_applicable": return "No upload field on this form";
     default: return "—";
   }
 }

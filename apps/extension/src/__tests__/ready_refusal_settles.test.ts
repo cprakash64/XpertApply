@@ -209,6 +209,8 @@ describe("a refusal answered to the page is also a terminal state of the view", 
     expect(first.matched).toBe(true);
     expect((await state.getView(60))?.siteAccess).not.toBe("site_access_revoked");
 
+    // Chrome reported the removal (permissions.onRemoved records it): THIS is "removed".
+    await (await import("../siteAccessStore")).suppress("https://careers.mongodb.com/*", "revoked");
     fakeChrome.permissions.contains.mockResolvedValue(false);
     const refused = (await dispatch(messageListeners, READY, SENDER(60))) as { matched: boolean; error?: string };
     expect(refused).toMatchObject({ matched: false, error: "HOST_PERMISSION_MISSING" });
@@ -223,6 +225,22 @@ describe("a refusal answered to the page is also a terminal state of the view", 
     const again = (await dispatch(messageListeners, READY, SENDER(60))) as { matched: boolean };
     expect(again.matched).toBe(true);
     await vi.waitFor(async () => expect((await state.getView(60))?.siteAccess).toBe("site_access_granted"));
+  });
+
+  it("a page that only ever had temporary (activeTab) access is 'permission required', never 'access was removed'", async () => {
+    installFakeFetch();
+    const { fakeChrome, messageListeners } = installFakeChrome();
+    const state = await import("../state");
+    await state.putActive(seedHandoff());
+    await import("../background");
+    fakeChrome.permissions.contains.mockResolvedValue(false);       // no persistent grant; the script runs under activeTab
+    const refused = (await dispatch(messageListeners, READY, SENDER(62))) as { matched: boolean; error?: string };
+    expect(refused).toMatchObject({ matched: false, error: "HOST_PERMISSION_MISSING" });
+    await vi.waitFor(async () => {
+      const view = await state.getView(62);
+      expect(view?.siteAccess).toBe("site_access_required");
+      expect(view?.siteAccess).not.toBe("site_access_revoked");
+    });
   });
 
   it("a page whose document Chrome cannot identify ends in a stated failure, and a retry clears it", async () => {
