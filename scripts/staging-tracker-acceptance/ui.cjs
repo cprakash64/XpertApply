@@ -1,4 +1,4 @@
-const { chromium } = require("/Users/cprakash/Developer/XpertApply-stage50d/apps/web/node_modules/playwright");
+const { chromium } = require(require("node:path").resolve(__dirname, "..", "..", "apps", "web", "node_modules", "playwright"));
 const fs = require("fs"); const acc = JSON.parse(fs.readFileSync("accounts.json")).a;
 const W = "https://staging.xpertapply.com"; const log = (...a) => console.log(...a);
 async function login(page) {
