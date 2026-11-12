@@ -35,3 +35,12 @@ paths on purpose: they are historical. Remote VPS paths are untouched.
 
 Also untracked and local-only: `docs/release/evidence/pui-stg2/` (325 MB staging image tar), `apps/extension/dist-*`
 (regenerable), `.env` (secrets, never copy), `jobpilot-after-0013.dump` (DB dump, ignored by `*.dump`).
+
+## Git directory (updated 2026-11-12)
+`.git` is now a real directory inside this folder (previously a gitfile pointing at
+`~/.xpertapply-runtime/XpertApply-git-20260902-162256`). It was copied with `cp -Rp`, `core.worktree` was removed and
+`git fsck --full` was clean. The external directory is untouched. The extlive and extfinal worktree registrations were
+carried over; those worktrees still use the old directory until they are retired (`git worktree remove` is a later,
+user-approved step). The old gitfile is kept as `.git.external-gitfile.bak` (locally excluded).
+Backups: `/Volumes/VeoTrexBackup/XpertApply-backup-20261112/` (all-refs bundle, raw copy of the old git dir,
+`local-artifacts/`). That is a second disk on the same machine, not off-site.
