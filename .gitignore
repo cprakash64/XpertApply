@@ -91,3 +91,11 @@ docker-compose.override.yml
 
 # XA-STG0: the real staging environment file is generated on the host and never committed.
 infra/staging/.env.staging
+
+# --- Canonical consolidation (2026-11-11): local-only artifacts, never tracked ------- #
+# Release ZIPs, recovery bundles/evidence and store assets live here and are NOT on GitHub.
+local-artifacts/
+.git-stray-reinit-backup/
+jobpilot-ai/
+apps/extension/dist-*/
+docs/release/evidence/pui-stg2/

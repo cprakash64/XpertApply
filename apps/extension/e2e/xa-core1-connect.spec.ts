@@ -21,7 +21,7 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const extRoot = path.resolve(here, "..");
 const webRoot = path.resolve(extRoot, "..", "web");
 const apiRoot = path.resolve(extRoot, "..", "api");
-const API_PYTHON = process.env.XA_E2E_API_PYTHON ?? "/Users/cprakash/Developer/XpertApply-prod-auth-release/apps/api/.venv/bin/python";
+const API_PYTHON = process.env.XA_E2E_API_PYTHON ?? path.join(apiRoot, ".venv", "bin", "python");
 const PASSWORD = "password-for-e2e-1";
 
 async function waitFor(url: string, child: ChildProcess, ms = 120_000) {

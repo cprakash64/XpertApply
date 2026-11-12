@@ -162,7 +162,7 @@ class StateDirectory(unittest.TestCase):
 
 
 STORE = "gnibjomjfdobadlockphjiibbpmiehcj"
-REPO = Path(os.environ.get("XA_REPO", str(Path.home() / "Developer" / "XpertApply-extfinal")))
+REPO = Path(os.environ.get("XA_REPO", str(Path(__file__).resolve().parents[3])))
 
 
 class PinnedContent(unittest.TestCase):
